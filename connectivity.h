@@ -59,6 +59,17 @@ class Triangle {
       *n1 = verts[EDGE2_VERT1];
     }
   }
+
+  /**
+   * @brief Return if the two lists of face vertices are flipped
+   *
+   * @param v1
+   * @param v2
+   */
+  template <typename I>
+  inline static bool is_flipped(const I v1[], const I v2[]) {
+    return true;
+  }
 };
 
 /**
@@ -109,6 +120,17 @@ class Quadrilateral {
       *n0 = verts[EDGE3_VERT0];
       *n1 = verts[EDGE3_VERT1];
     }
+  }
+
+  /**
+   * @brief Return if the two lists of vertices have flipped orientation
+   *
+   * @param v1
+   * @param v2
+   */
+  template <typename I>
+  inline static bool is_flipped(const I v1[], const I v2[]) {
+    return true;
   }
 };
 
@@ -223,7 +245,7 @@ class Tetrahedron {
       f[1] = verts[2];
       f[2] = verts[1];
     }
-    return Triangle::NVERTS;  // Vodes on each face
+    return Triangle::NVERTS;  // Verts on each face
   }
 };
 
@@ -523,107 +545,108 @@ class Connectivity3D {
       quad_elements = new int[num_quads];
       quad_face_indices = new int[num_quads];
 
-      // Make sure the boundary tris are a match with the interior faces
-      for (int j = 0; j < num_local_and_halo_tris; j++) {
-        bool tri_found = false;
+      // // Make sure the boundary tris are a match with the interior faces
+      // for (int j = 0; j < num_tris; j++) {
+      //   bool tri_found = false;
 
-        // Find elements connected via the first node
-        int n0 = tris[j].nodes[0];
-        for (int k = node_ptr[n0]; k < node_ptr[n0 + 1]; k++) {
-          int adj_elem = node_elems[k];
+      //   // Find elements connected via the first node
+      //   int n0 = tris[j].verts[0];
+      //   for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
+      //     int adj_elem = node_elems[k];
 
-          int nfaces = conn->get_num_faces(adj_elem);
-          for (int p = 0; p < nfaces; p++) {
-            int adj_nodes[QuadInfo::NNODES];
-            int nnodes = conn->get_face_nodes(adj_elem, p, adj_nodes);
+      //     int nfaces = conn->get_num_faces(adj_elem);
+      //     for (int p = 0; p < nfaces; p++) {
+      //       int adj_nodes[QuadInfo::NNODES];
+      //       int nnodes = conn->get_face_nodes(adj_elem, p, adj_nodes);
 
-            if (nnodes == TriInfo::NNODES) {
-              // Check if all the nodes on the boundary mach
-              bool match = true;
-              for (int ii = 0; ii < TriInfo::NNODES; ii++) {
-                bool found = false;
-                for (int jj = 0; jj < TriInfo::NNODES; jj++) {
-                  if (tris[j].nodes[ii] == adj_nodes[jj]) {
-                    found = true;
-                  }
-                }
-                if (!found) {
-                  match = false;
-                  break;
-                }
-              }
+      //       if (nnodes == TriInfo::NNODES) {
+      //         // Check if all the nodes on the boundary mach
+      //         bool match = true;
+      //         for (int ii = 0; ii < TriInfo::NNODES; ii++) {
+      //           bool found = false;
+      //           for (int jj = 0; jj < TriInfo::NNODES; jj++) {
+      //             if (tris[j].nodes[ii] == adj_nodes[jj]) {
+      //               found = true;
+      //             }
+      //           }
+      //           if (!found) {
+      //             match = false;
+      //             break;
+      //           }
+      //         }
 
-              // We've found a match for the boundary, set the triangle so
-              // it shares the connectivity with the element
-              if (match) {
-                tri_elements[j] = adj_elem;
-                tri_face_indices[j] = p;
-                tris[j].nodes[0] = adj_nodes[0];
-                tris[j].nodes[1] = adj_nodes[1];
-                tris[j].nodes[2] = adj_nodes[2];
-                tri_found = true;
-                break;
-              }
-            }
-          }
+      //         // We've found a match for the boundary, set the triangle so
+      //         // it shares the connectivity with the element
+      //         if (match) {
+      //           tri_elements[j] = adj_elem;
+      //           tri_face_indices[j] = p;
+      //           tris[j].nodes[0] = adj_nodes[0];
+      //           tris[j].nodes[1] = adj_nodes[1];
+      //           tris[j].nodes[2] = adj_nodes[2];
+      //           tri_found = true;
+      //           break;
+      //         }
+      //       }
+      //     }
 
-          if (tri_found) {
-            break;
-          }
-        }
-      }
+      //     if (tri_found) {
+      //       break;
+      //     }
+      //   }
+      // }
 
-      // Find the quadrilaterals and match them
-      // Make sure the boundary tris are a match with the interior faces
-      for (int j = 0; j < num_local_and_halo_quads; j++) {
-        bool quad_found = false;
+      // // Find the quadrilaterals and match them
+      // // Make sure the boundary tris are a match with the interior faces
+      // for (int j = 0; j < num_local_and_halo_quads; j++) {
+      //   bool quad_found = false;
 
-        // Find elements connected via the first node
-        int n0 = quads[j].nodes[0];
-        for (int k = node_ptr[n0]; k < node_ptr[n0 + 1]; k++) {
-          int adj_elem = node_elems[k];
+      //   // Find elements connected via the first node
+      //   int n0 = quads[j].nodes[0];
+      //   for (int k = node_ptr[n0]; k < node_ptr[n0 + 1]; k++) {
+      //     int adj_elem = node_elems[k];
 
-          int nfaces = conn->get_num_faces(adj_elem);
-          for (int p = 0; p < nfaces; p++) {
-            int adj_nodes[QuadInfo::NNODES];
-            int nnodes = conn->get_element_face_verts(adj_elem, p, adj_nodes);
+      //     int nfaces = conn->get_num_faces(adj_elem);
+      //     for (int p = 0; p < nfaces; p++) {
+      //       int adj_nodes[QuadInfo::NNODES];
+      //       int nnodes = conn->get_element_face_verts(adj_elem, p,
+      //       adj_nodes);
 
-            if (nnodes == QuadInfo::NNODES) {
-              // Check if all the nodes on the boundary mach
-              bool match = true;
-              for (int ii = 0; ii < QuadInfo::NNODES; ii++) {
-                bool found = false;
-                for (int jj = 0; jj < QuadInfo::NNODES; jj++) {
-                  if (tris[j].nodes[ii] == adj_nodes[jj]) {
-                    found = true;
-                  }
-                }
-                if (!found) {
-                  match = false;
-                  break;
-                }
-              }
+      //       if (nnodes == QuadInfo::NNODES) {
+      //         // Check if all the nodes on the boundary mach
+      //         bool match = true;
+      //         for (int ii = 0; ii < QuadInfo::NNODES; ii++) {
+      //           bool found = false;
+      //           for (int jj = 0; jj < QuadInfo::NNODES; jj++) {
+      //             if (tris[j].nodes[ii] == adj_nodes[jj]) {
+      //               found = true;
+      //             }
+      //           }
+      //           if (!found) {
+      //             match = false;
+      //             break;
+      //           }
+      //         }
 
-              // We've found a match for the boundary, set the triangle so
-              // it shares the connectivity with the element
-              if (match) {
-                quad_elements[j] = adj_elem;
-                quad_face_indices[j] = p;
-                quads[j].nodes[0] = adj_nodes[0];
-                quads[j].nodes[1] = adj_nodes[1];
-                quads[j].nodes[2] = adj_nodes[2];
-                quads[j].nodes[3] = adj_nodes[3];
-                quad_found = true;
-                break;
-              }
-            }
-          }
+      //         // We've found a match for the boundary, set the triangle so
+      //         // it shares the connectivity with the element
+      //         if (match) {
+      //           quad_elements[j] = adj_elem;
+      //           quad_face_indices[j] = p;
+      //           quads[j].nodes[0] = adj_nodes[0];
+      //           quads[j].nodes[1] = adj_nodes[1];
+      //           quads[j].nodes[2] = adj_nodes[2];
+      //           quads[j].nodes[3] = adj_nodes[3];
+      //           quad_found = true;
+      //           break;
+      //         }
+      //       }
+      //     }
 
-          if (quad_found) {
-            break;
-          }
-        }
-      }
+      //     if (quad_found) {
+      //       break;
+      //     }
+      //   }
+      // }
     }
 
     // Entities that are on the boundary
@@ -1036,7 +1059,7 @@ class Connectivity3D {
       return Wedge::NFACES;
     }
 
-    *edgs = nullptr;
+    *faces = nullptr;
     return 0;
   }
 
@@ -1120,6 +1143,15 @@ class Connectivity3D {
   }
 
  private:
+  /**
+   * @brief Compute an element to element connectivity
+   *
+   * This is used to partition and order the mesh
+   *
+   * @param rowp0 Row pointer
+   * @param cols0 Column indices
+   * @param include_diag Flag to indicate whether to include the diagonal
+   */
   void create_element_csr(int **rowp0, int **cols0,
                           bool include_diag = true) const {
     int *vert_ptr, *vert_elems;
@@ -1204,19 +1236,19 @@ class Connectivity3D {
 
     index = index - num_tets;
     if (index < num_hexs) {
-      *edgs = hex_edges[index].edges;
+      *edgs = hexs[index].edges;
       return Hexahedron::NEDGES;
     }
 
     index = index - num_hexs;
     if (index < num_pyrds) {
-      *edgs = pyrd_edges[index].edges;
+      *edgs = pyrds[index].edges;
       return Pyramid::NEDGES;
     }
 
     index = index - num_pyrds;
     if (index < num_wedges) {
-      *edgs = wedge_edges[index].edges;
+      *edgs = wedges[index].edges;
       return Wedge::NEDGES;
     }
 
@@ -1224,6 +1256,47 @@ class Connectivity3D {
     return 0;
   }
 
+  // Convenience private non-const-qualified version
+  int get_element_faces(const int local_elem, int **faces) {
+    int index = local_elem;
+    if (index < num_tets) {
+      *faces = tets[index].faces;
+      return Tetrahedron::NFACES;
+    }
+
+    index = index - num_tets;
+    if (index < num_hexs) {
+      *faces = hexs[index].faces;
+      return Hexahedron::NFACES;
+    }
+
+    index = index - num_hexs;
+    if (index < num_pyrds) {
+      *faces = pyrds[index].faces;
+      return Pyramid::NFACES;
+    }
+
+    index = index - num_pyrds;
+    if (index < num_wedges) {
+      *faces = wedges[index].faces;
+      return Wedge::NFACES;
+    }
+
+    *faces = nullptr;
+    return 0;
+  }
+
+  /**
+   * @brief Order the edges uniquely across the entire mesh
+   *
+   * This code loops over all the elements and their edges. Edges that have not
+   * been ordered are given a edge number. All adjacent edges are located and
+   * given the same edge number.
+   *
+   * @param vert_ptr The CSR pointer created by init_vert_element_data()
+   * @param vert_elems The CSR element indicies created by
+   * init_vert_element_data()
+   */
   void init_edge_data(const int *vert_ptr, const int *vert_elems) {
     num_edges = 0;
 
@@ -1237,10 +1310,13 @@ class Connectivity3D {
       for (int edge = 0; edge < ne; edge++) {
         // Edge j is not ordered
         if (elem_edges[edge] == NO_LABEL) {
+          // Set the element edge number
+          elem_edges[edge] = num_edges;
+          num_edges++;
+
+          // Find the edges in all of the adjacent elements
           int n0, n1;  // Get the verts for the element
           get_element_edge_verts(elem, edge, &n0, &n1);
-
-          bool adj_edge_located = false;
 
           // Find the elements that are adjacent to nj0
           for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
@@ -1255,89 +1331,96 @@ class Connectivity3D {
                 int adj_n0, adj_n1;
                 get_element_edge_verts(adj_elem, adj_edge, &adj_n0, &adj_n1);
 
-                // Adjacent edges match
+                // Adjacent edge matches
                 if ((n0 == adj_n0 && n1 == adj_n1) ||
                     (n1 == adj_n0 && n0 == adj_n1)) {
-                  if (adj_elem_edges[adj_edge] == NO_LABEL) {
-                    elem_edges[edge] = num_edges;
-                    adj_elem_edges[adj_edge] = num_edges;
-                    num_edges++;
-
-                    adj_edge_located = true;
-                    break;
-                  }
+                  adj_elem_edges[adj_edge] = elem_edges[edge];
                 }
               }
             }
-          }
-
-          // If the adjacent edge wasn't located, this is a boundary edge
-          if (!adj_edge_located) {
-            elem_edges[edge] = num_edges;
-            num_edges++;
           }
         }
       }
     }
   }
 
+  /**
+   * @brief Order the faces uniquely across the entire mesh
+   *
+   * This code loops over all the elements and faces. Faces that have not been
+   * ordered are given a face number and any matching faces in adjacent elements
+   * are located and given the same number.
+   *
+   * @param vert_ptr The CSR pointer created by init_vert_element_data()
+   * @param vert_elems The CSR element indicies created by
+   * init_vert_element_data()
+   */
   void init_face_data(const int *vert_ptr, const int *vert_elems) {
     num_faces = 0;
 
     int num_elems = get_num_elements();
     for (int elem = 0; elem < num_elems; elem++) {
       // Loop over the element edges
-      int *elem_edges;
-      int ne = get_element_edges(elem, &elem_edges);
+      int *elem_faces;
+      int nf = get_element_faces(elem, &elem_faces);
 
-      // Loop over the element edges and check if any are undefined
-      for (int edge = 0; edge < ne; edge++) {
+      // Loop over the element faces and check if any are undefined
+      for (int face = 0; faces < nf; face++) {
         // Edge j is not ordered
-        if (elem_edges[edge] == NO_LABEL) {
-          int n0, n1;  // Get the verts for the element
-          get_element_edge_verts(elem, edge, &n0, &n1);
+        if (elem_faces[face] == NO_LABEL) {
+          // Set the element edge number
+          elem_faces[face] = num_faces;
+          num_faces++;
 
-          bool adj_edge_located = false;
+          // Find the faces in all of the adjacent elements
+          int face_verts[Quadrilateral::NVERTS];
+          int nfv = get_element_face_verts(elem, face, face_verts);
 
           // Find the elements that are adjacent to nj0
           for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
             // Element p may share an edge with element i
             int adj_elem = vert_elems[k];
             if (adj_elem != elem) {
-              int *adj_elem_edges;
-              int adj_ne = get_element_edges(adj_elem, &adj_elem_edges);
+              int *adj_elem_faces;
+              int adj_nf = get_element_faces(adj_elem, &adj_elem_faces);
 
               // Loop to find the matching edge
-              for (int adj_edge = 0; adj_edge < adj_ne; adj_edge++) {
-                int adj_n0, adj_n1;
-                get_element_edge_verts(adj_elem, adj_edge, &adj_n0, &adj_n1);
+              for (int adj_face = 0; adj_face < adj_nf; adj_face++) {
+                int adj_face_verts[Quadrilateral::NVERTS];
+                int adj_nfv =
+                    get_element_face_verts(adj_elem, adj_face, adj_face_verts);
 
-                // Adjacent edges match
-                if ((n0 == adj_n0 && n1 == adj_n1) ||
-                    (n1 == adj_n0 && n0 == adj_n1)) {
-                  if (adj_elem_edges[adj_edge] == NO_LABEL) {
-                    elem_edges[edge] = num_edges;
-                    adj_elem_edges[adj_edge] = num_edges;
-                    num_edges++;
-
-                    adj_edge_located = true;
-                    break;
+                // Adjacent edge matches
+                if (nfv == adj_nfv) {
+                  if (nfv == Triangle::NVERTS &&
+                      Triangle::is_flipped(face_verts, adj_face_verts)) {
+                    adj_elem_face[adj_face] = elem_faces[face];
+                  } else if (nfv == Quadrilateral::NVERT &&
+                             Quadrilateral::is_flipped(face_verts,
+                                                       adj_face_verts)) {
+                    adj_elem_face[adj_face] = elem_faces[face];
                   }
                 }
               }
             }
-          }
-
-          // If the adjacent edge wasn't located, this is a boundary edge
-          if (!adj_edge_located) {
-            elem_edges[edge] = num_edges;
-            num_edges++;
           }
         }
       }
     }
   }
 
+  /**
+   * @brief Initialize a CSR-type data structure that points from vertices to
+   * elements
+   *
+   * The array vert_elems[j] from j = vert_ptr[i] to j = vert_ptr[i + 1] - 1
+   * stores the element indices j that reference vertex i.
+   *
+   * vert_ptr has length num_verts + 1.
+   *
+   * @param vert_ptr Pointer into the vert_elems array of length num_verts + 1
+   * @param vert_elems Elements that contain the specified vertex
+   */
   void init_vert_element_data(int **vert_ptr, int **vert_elems) const {
     int *vert_element_ptr = new int[num_verts + 1];
     std::fill(vert_element_ptr, vert_element_ptr + num_verts + 1, 0);
