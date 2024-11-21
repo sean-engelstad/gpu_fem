@@ -9,7 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "connectivity.h"
+#include "basic_connectivity.h"
 #include "utils.h"
 
 template <typename T>
@@ -108,26 +108,28 @@ class SU2MeshReader {
    *
    * For this function to work problem dimension == 3
    *
-   * @return Connectivity<3>* The connectivity object
+   * @return Connectivity3D* The connectivity object
    */
-  Connectivity3D *create_3D_connectivity() {
+  BasicConnectivity3D *create_connectivity() {
     int num_nodes = points.size() / dimension;
     int num_boundaries = boundaries.size();
-    Connectivity3D *conn = new Connectivity3D(num_nodes, num_boundaries);
+    BasicConnectivity3D *conn =
+        new BasicConnectivity3D(num_nodes, num_boundaries);
 
-    conn->add_mesh(tets.size() / TetInfo::NNODES, tets,
-                   hexs.size() / HexInfo::NNODES, hexs,
-                   pyrmids.size() / PyramidInfo::NNODES, pyrmids,
-                   wedges.size() / WedgeInfo::NNODES, wedges);
+    conn->add_mesh(tets.size() / Tetrahedron::NNODES, tets,
+                   hexs.size() / Hexahedron::NNODES, hexs,
+                   pyrmids.size() / Pyramid::NNODES, pyrmids,
+                   wedges.size() / Wedge::NNODES, wedges);
 
     for (int i = 0; i < num_boundaries; i++) {
-      conn->add_boundary(
-          i, boundaries[i].nodes.size(), boundaries[i].nodes,
-          boundaries[i].tris.size() / TriInfo::NNODES, boundaries[i].tris,
-          boundaries[i].quads.size() / QuadInfo::NNODES, boundaries[i].quads);
+      conn->add_boundary(i, boundaries[i].nodes.size(), boundaries[i].nodes,
+                         boundaries[i].tris.size() / Triangle::NNODES,
+                         boundaries[i].tris,
+                         boundaries[i].quads.size() / Quadrilateral::NNODES,
+                         boundaries[i].quads);
     }
 
-    conn->initialize_boundaries();
+    conn->initialize();
 
     return conn;
   }
