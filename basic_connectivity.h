@@ -73,7 +73,19 @@ public:
    */
   template <typename I>
   inline static bool is_flipped(const I v1[], const I v2[]) {
-    return true;
+    if (v1[0] == v2[0] and v1[1] == v2[2] and v1[2] == v2[1]) {
+      return true; // Same orientation
+    }
+
+    else if (v1[0] == v2[1] and v1[1] == v2[0] and v1[2] == v2[2]) {
+      return true; // Rotated
+    }
+
+    else if (v1[0] == v2[2] and v1[1] == v2[1] and v1[2] == v2[0]) {
+      return true; // Rotated
+    }
+
+    return false; // Flipped
   }
 };
 
@@ -136,7 +148,20 @@ public:
    */
   template <typename I>
   inline static bool is_flipped(const I v1[], const I v2[]) {
-    return true;
+    if (v1[0] == v2[0] and v1[1] == v2[3] and v1[2] == v2[2] and
+        v1[3] == v2[1]) {
+      return true;
+    } else if (v1[0] == v2[1] and v1[1] == v2[0] and v1[2] == v2[3] and
+               v1[3] == v2[2]) {
+      return true;
+    } else if (v1[0] == v2[2] and v1[1] == v2[1] and v1[2] == v2[0] and
+               v1[3] == v2[3]) {
+      return true;
+    } else if (v1[0] == v2[3] and v1[1] == v2[2] and v1[2] == v2[1] and
+               v1[3] == v2[0]) {
+      return true;
+    }
+    return false;
   }
 };
 
@@ -562,7 +587,6 @@ public:
       *n0 = verts[EDGE7_VERT0];
       *n1 = verts[EDGE7_VERT1];
     }
-    return 0;
   }
 
   template <typename I> inline int get_face_verts(const int face, I f[]) {
@@ -670,8 +694,8 @@ public:
   static const int EDGE6_VERT0 = 0;
   static const int EDGE6_VERT1 = 3;
 
-  static const int EDGE7_VERT1 = 1;
-  static const int EDGE7_VERT4 = 4;
+  static const int EDGE7_VERT0 = 1;
+  static const int EDGE7_VERT1 = 4;
 
   static const int EDGE8_VERT0 = 2;
   static const int EDGE8_VERT1 = 5;
@@ -730,7 +754,6 @@ public:
       *n0 = verts[EDGE8_VERT0];
       *n1 = verts[EDGE8_VERT1];
     }
-    return 0;
   }
 
   template <typename I> inline int get_face_verts(const int face, I f[]) {
@@ -818,8 +841,8 @@ public:
     }
 
     // Initialize the boundary information based on what's stored locally
-    void initialize_boundary(const Connectivity3D *conn, const int *vert_ptr,
-                             const int *vert_elems) {
+    void initialize_boundary(const BasicConnectivity3D *conn,
+                             const int *vert_ptr, const int *vert_elems) {
       if (tri_elements) {
         delete[] tri_elements;
         delete[] tri_face_indices;
@@ -958,9 +981,6 @@ public:
     int *quad_elements;
     int *quad_face_indices;
   };
-
-public:
-  const int NO_LABEL = -1;
 
   /**
    * @brief Construct a basic connectivity object on a single processor.
@@ -1223,13 +1243,13 @@ public:
     if (tris) {
       *tris = boundary[index]->tris;
     }
-    return boundar[index]->num_tris;
+    return boundary[index]->num_tris;
   }
   int get_boundary_quads(int index, const Quadrilateral **quads) const {
     if (quads) {
       *quads = boundary[index]->quads;
     }
-    return boundar[index]->num_quads;
+    return boundary[index]->num_quads;
   }
   void get_boundary_tri_elements(int index, const int **elems,
                                  const int **indices) const {
@@ -1253,18 +1273,17 @@ public:
   // Get the element type
   ElementType get_element_type(const int local_elem) const {
     int index = local_elem;
-    index = index - num_local_quads;
-    if (index < num_local_tets) {
+    if (index < num_tets) {
       return TETRAHEDRON;
     }
 
-    index = index - num_local_tets;
-    if (index < num_local_hexs) {
+    index = index - num_tets;
+    if (index < num_hexs) {
       return HEXAHEDRON;
     }
 
-    index = index - num_local_hexs;
-    if (index < num_local_pyrds) {
+    index = index - num_hexs;
+    if (index < num_pyrds) {
       return PYRAMID;
     }
 
@@ -1504,9 +1523,9 @@ private:
         int nverts = get_element_verts(elem, &verts);
 
         for (int k = 0; k < nverts; k++) {
-          if (verts[k] != i && marker[nverts[k]] != i) {
-            marker[nverts[k]] = i;
-            col_index[0] = nverts[k];
+          if (verts[k] != i && marker[verts[k]] != i) {
+            marker[verts[k]] = i;
+            col_index[0] = verts[k];
             col_index++;
           }
         }
@@ -1661,7 +1680,7 @@ private:
       int nf = get_element_faces(elem, &elem_faces);
 
       // Loop over the element faces and check if any are undefined
-      for (int face = 0; faces < nf; face++) {
+      for (int face = 0; face < nf; face++) {
         // Edge j is not ordered
         if (elem_faces[face] == NO_LABEL) {
           // Set the element face number
@@ -1673,6 +1692,7 @@ private:
           int nfv = get_element_face_verts(elem, face, face_verts);
 
           // Find the elements that are adjacent to nj0
+          int n0 = face_verts[0];
           for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
             // Element may share a face with the element
             int adj_elem = vert_elems[k];
@@ -1690,11 +1710,11 @@ private:
                 if (nfv == adj_nfv) {
                   if (nfv == Triangle::NVERTS &&
                       Triangle::is_flipped(face_verts, adj_face_verts)) {
-                    adj_elem_face[adj_face] = elem_faces[face];
-                  } else if (nfv == Quadrilateral::NVERT &&
+                    adj_elem_faces[adj_face] = elem_faces[face];
+                  } else if (nfv == Quadrilateral::NVERTS &&
                              Quadrilateral::is_flipped(face_verts,
                                                        adj_face_verts)) {
-                    adj_elem_face[adj_face] = elem_faces[face];
+                    adj_elem_faces[adj_face] = elem_faces[face];
                   }
                 }
               }
