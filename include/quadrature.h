@@ -13,12 +13,20 @@ class TriangleQuadrature {
       case 0:
         pt[0] = 0.5;
         pt[1] = 0.5;
+        break;
+
       case 1:
         pt[0] = 0.0;
         pt[1] = 0.5;
+        break;
+
       case 2:
         pt[0] = 0.5;
         pt[1] = 0.0;
+        break;
+
+      default:
+        break;
     }
     return 1.0/3.0;
   };

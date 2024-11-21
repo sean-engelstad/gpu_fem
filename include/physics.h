@@ -20,13 +20,12 @@ class PlaneStressPhysics {
   };
 
   using Data = IsotropicData;
-  using PlaneMat = typename A2D::Mat<T, 2, 2>;
 
-  // template <
-  __HOST_DEVICE__ static void computeWeakRes(Data physData, T scale, PlaneMat& dUdx_, PlaneMat& weak_res) {
-    A2D::ADObj<PlaneMat> dUdx(dUdx_);
-    A2D::ADObj<A2D::SymMat<T,2>> strain, stress;
-    A2D::ADObj<T> energy;
+  template <typename T2>
+  __HOST_DEVICE__ static void computeWeakRes(Data physData, T scale, A2D::Mat<T2, 2, 2>& dUdx_, A2D::Mat<T2, 2, 2>& weak_res) {
+    A2D::ADObj<A2D::Mat<T2, 2, 2>> dUdx(dUdx_);
+    A2D::ADObj<A2D::SymMat<T2,2>> strain, stress;
+    A2D::ADObj<T2> energy;
 
     const double mu = 0.5 * physData.E / (1.0 + physData.nu);
     const double lambda = 2 * mu * physData.nu / (1.0 - physData.nu);
