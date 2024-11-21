@@ -1,2 +1,6 @@
 *.out
 *.txt
+*.su2
+.clangd
+.clang-format
+*.dSYM
