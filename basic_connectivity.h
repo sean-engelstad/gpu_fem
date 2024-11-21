@@ -1,7 +1,8 @@
 #ifndef BASIC_CONNECTIVITY_H
 #define BASIC_CONNECTIVITY_H
 
-#include <cstdint.h>
+#include <algorithm>
+#include <cstdint>
 
 enum ElementType {
   EDGE,
@@ -31,7 +32,7 @@ enum ElementType {
  * E0: (1, 2), E1: (2, 0), E2: (0, 1)
  */
 class Triangle {
- public:
+public:
   static const int ndim = 2;
   static const int NVERTS = 3;
   static const int NEDGES = 3;
@@ -40,7 +41,7 @@ class Triangle {
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
 
-  // Edge -> Node info
+  // Edge -> Vert info
   static const int EDGE0_VERT0 = 1;
   static const int EDGE0_VERT1 = 2;
 
@@ -88,7 +89,7 @@ class Triangle {
  *  N0 * * * E0 * * * N1
  */
 class Quadrilateral {
- public:
+public:
   static const int ndim = 2;
   static const int NVERTS = 4;
   static const int NEDGES = 4;
@@ -97,7 +98,7 @@ class Quadrilateral {
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
 
-  // Edge -> Node info
+  // Edge -> Vert info
   static const int EDGE0_VERT0 = 0;
   static const int EDGE0_VERT1 = 1;
 
@@ -167,7 +168,7 @@ class Quadrilateral {
  * Faces: F0: (1, 2, 3), F1: (0, 3, 2), F2: (0, 1, 3), F3: (0, 2, 1)
  */
 class Tetrahedron {
- public:
+public:
   static const int ndim = 3;
   static const int NVERTS = 4;
   static const int NEDGES = 6;
@@ -179,7 +180,7 @@ class Tetrahedron {
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
 
-  // Edge -> Node info
+  // Edge -> Vert info
   static const int EDGE0_VERT0 = 1;
   static const int EDGE0_VERT1 = 2;
 
@@ -228,8 +229,7 @@ class Tetrahedron {
   }
 
   // Get the face verts with an outward facing orientation
-  template <typename I>
-  inline int get_face_verts(const int face, I f[]) {
+  template <typename I> inline int get_face_verts(const int face, I f[]) {
     if (face == 0) {
       // F0: (1, 2, 3)
       f[0] = verts[1];
@@ -251,7 +251,7 @@ class Tetrahedron {
       f[1] = verts[2];
       f[2] = verts[1];
     }
-    return Triangle::NVERTS;  // Verts on each face
+    return Triangle::NVERTS; // Verts on each face
   }
 };
 
@@ -273,7 +273,7 @@ class Tetrahedron {
  */
 
 class Hexahedron {
- public:
+public:
   static const int ndim = 3;
   static const int NVERTS = 8;
   static const int NFACES = 6;
@@ -285,7 +285,7 @@ class Hexahedron {
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
 
-  // Edge -> Node info
+  // Edge -> Vert info
   static const int EDGE0_VERT0 = 0;
   static const int EDGE0_VERT1 = 1;
 
@@ -322,7 +322,7 @@ class Hexahedron {
   static const int EDGE11_VERT0 = 3;
   static const int EDGE11_VERT1 = 7;
 
-  // Face -> Nodes
+  // Face -> Verts
   static const int FACE0_VERT0 = 0;
   static const int FACE0_VERT1 = 4;
   static const int FACE0_VERT2 = 7;
@@ -394,8 +394,7 @@ class Hexahedron {
     }
   }
 
-  template <typename I>
-  inline int get_face_verts(const int face, I f[]) {
+  template <typename I> inline int get_face_verts(const int face, I f[]) {
     if (face == 0) {
       f[0] = verts[FACE0_VERT0];
       f[1] = verts[FACE0_VERT1];
@@ -477,9 +476,9 @@ class Hexahedron {
  * (4)    0 -> 3 -> 2 -> 1    -3, -2, -1, -0
  */
 class Pyramid {
- public:
+public:
   static const int ndim = 3;
-  static const int NNODES = 5;
+  static const int NVERTS = 5;
   static const int NFACES = 5;
   static const int NEDGES = 8;
 
@@ -566,8 +565,7 @@ class Pyramid {
     return 0;
   }
 
-  template <typename I>
-  inline int get_face_verts(const int face, I f[]) {
+  template <typename I> inline int get_face_verts(const int face, I f[]) {
     if (face == 0) {
       f[0] = verts[FACE0_VERT0];
       f[1] = verts[FACE0_VERT1];
@@ -638,9 +636,9 @@ class Pyramid {
  * (4)    0 -> 2 -> 5 -> 3    -2, 8, 5, -6
  */
 class Wedge {
- public:
+public:
   static const int ndim = 3;
-  static const int NNODES = 6;
+  static const int NVERTS = 6;
   static const int NFACES = 5;
   static const int NEDGES = 9;
 
@@ -650,7 +648,7 @@ class Wedge {
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
 
-  // Edge -> node info
+  // Edge -> vert info
   static const int EDGE0_VERT0 = 0;
   static const int EDGE0_VERT1 = 1;
 
@@ -678,7 +676,7 @@ class Wedge {
   static const int EDGE8_VERT0 = 2;
   static const int EDGE8_VERT1 = 5;
 
-  // Face -> nodes
+  // Face -> verts
   static const int FACE0_VERT0 = 0;
   static const int FACE0_VERT1 = 1;
   static const int FACE0_VERT2 = 2;
@@ -735,8 +733,7 @@ class Wedge {
     return 0;
   }
 
-  template <typename I>
-  inline int get_face_verts(const int face, I f[]) {
+  template <typename I> inline int get_face_verts(const int face, I f[]) {
     if (face == 0) {
       f[0] = verts[FACE0_VERT0];
       f[1] = verts[FACE0_VERT1];
@@ -775,12 +772,12 @@ class Wedge {
  *
  */
 class BasicConnectivity3D {
- public:
+public:
   static constexpr int NO_LABEL = -1;
 
   // Structure to store the boundary information
   class BoundaryConnectivity {
-   public:
+  public:
     BoundaryConnectivity() {
       num_verts = 0;
       verts = nullptr;
@@ -842,7 +839,7 @@ class BasicConnectivity3D {
       for (int j = 0; j < num_tris; j++) {
         bool tri_found = false;
 
-        // Find elements connected via the first node
+        // Find elements connected via the first vert
         int n0 = tris[j].verts[0];
         for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
           int elem = vert_elems[k];
@@ -852,12 +849,12 @@ class BasicConnectivity3D {
             int face_verts[Quadrilateral::NVERTS];
             int nfv = conn->get_element_face_verts(elem, face, face_verts);
 
-            if (nfv == Triangle::NNODES) {
-              // Check if all the nodes on the boundary mach
+            if (nfv == Triangle::NVERTS) {
+              // Check if all the verts on the boundary mach
               bool match = true;
-              for (int ii = 0; ii < Triangle::NNODES; ii++) {
+              for (int ii = 0; ii < Triangle::NVERTS; ii++) {
                 bool found = false;
-                for (int jj = 0; jj < Triangle::NNODES; jj++) {
+                for (int jj = 0; jj < Triangle::NVERTS; jj++) {
                   if (tris[j].verts[ii] == face_verts[jj]) {
                     found = true;
                   }
@@ -894,7 +891,7 @@ class BasicConnectivity3D {
       for (int j = 0; j < num_quads; j++) {
         bool quad_found = false;
 
-        // Find elements connected via the first node
+        // Find elements connected via the first vert
         int n0 = quads[j].verts[0];
         for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
           int elem = vert_elems[k];
@@ -905,7 +902,7 @@ class BasicConnectivity3D {
             int nfv = conn->get_element_face_verts(elem, face, face_verts);
 
             if (nfv == Quadrilateral::NVERTS) {
-              // Check if all the nodes on the boundary mach
+              // Check if all the verts on the boundary mach
               bool match = true;
               for (int ii = 0; ii < Quadrilateral::NVERTS; ii++) {
                 bool found = false;
@@ -944,15 +941,15 @@ class BasicConnectivity3D {
     }
 
     // Entities that are on the boundary
-    int num_verts;  // Number of vertices on the boundary
-    int *verts;     // Vertex numbers
+    int num_verts; // Number of vertices on the boundary
+    int *verts;    // Vertex numbers
 
     // 3D mesh boundary information
-    int num_tris;    // Triangles
-    Triangle *tris;  // Triangles on the boundary
+    int num_tris;   // Triangles
+    Triangle *tris; // Triangles on the boundary
 
-    int num_quads;         // Quads
-    Quadrilateral *quads;  // Quadrilaterals on the boundary
+    int num_quads;        // Quads
+    Quadrilateral *quads; // Quadrilaterals on the boundary
 
     // Information required for viscous computations
     int *tri_elements;
@@ -962,7 +959,7 @@ class BasicConnectivity3D {
     int *quad_face_indices;
   };
 
- public:
+public:
   const int NO_LABEL = -1;
 
   /**
@@ -1020,24 +1017,24 @@ class BasicConnectivity3D {
    * @brief Add a serial 3D mesh
    *
    * @param ntets Number of tetrahedron
-   * @param tet_nodes Nodes for each tetrahedron
+   * @param tet_verts Verts for each tetrahedron
    * @param nhex Number of hexahedron
-   * @param hex_nodes Nodes for each hexahedron
+   * @param hex_verts Verts for each hexahedron
    * @param npyrd Number of pyramids
-   * @param pyrd_nodes Nodes for each pyramid
+   * @param pyrd_verts Verts for each pyramid
    * @param nwedges Number of wedges
-   * @param wedge_nodes Nodes for each wedge
+   * @param wedge_verts Verts for each wedge
    */
   template <typename I1, typename I2, typename I3, typename I4>
-  void add_mesh(int ntets, const I1 tet_nodes, int nhex, const I2 hex_nodes,
-                int npyrds, const I3 pyrd_nodes, int nwedges,
-                const I4 wedge_nodes) {
+  void add_mesh(int ntets, const I1 tet_verts, int nhex, const I2 hex_verts,
+                int npyrds, const I3 pyrd_verts, int nwedges,
+                const I4 wedge_verts) {
     num_tets = ntets;
     num_hexs = nhex;
     num_pyrds = npyrds;
     num_wedges = nwedges;
 
-    // Allocate space for the element -> node connectivity
+    // Allocate space for the element -> vert connectivity
     tets = new Tetrahedron[num_tets];
     hexs = new Hexahedron[num_hexs];
     pyrds = new Pyramid[num_pyrds];
@@ -1048,25 +1045,25 @@ class BasicConnectivity3D {
     for (int i = 0; i < num_tets; i++, index++) {
       tets[i].index = index;
       for (int j = 0; j < Tetrahedron::NVERTS; j++) {
-        tets[i].verts[j] = tet_nodes[Tetrahedron::NVERTS * i + j];
+        tets[i].verts[j] = tet_verts[Tetrahedron::NVERTS * i + j];
       }
     }
     for (int i = 0; i < num_hexs; i++, index++) {
       hexs[i].index = index;
       for (int j = 0; j < Hexahedron::NVERTS; j++) {
-        hexs[i].verts[j] = hex_nodes[Hexahedron::NVERTS * i + j];
+        hexs[i].verts[j] = hex_verts[Hexahedron::NVERTS * i + j];
       }
     }
     for (int i = 0; i < num_pyrds; i++, index++) {
       pyrds[i].index = index;
       for (int j = 0; j < Pyramid::NVERTS; j++) {
-        pyrds[i].verts[j] = pyrd_nodes[Pyramid::NVERTS * i + j];
+        pyrds[i].verts[j] = pyrd_verts[Pyramid::NVERTS * i + j];
       }
     }
     for (int i = 0; i < num_wedges; i++, index++) {
       wedges[i].index = index;
       for (int j = 0; j < Wedge::NVERTS; j++) {
-        wedges[i].verts[j] = wedge_nodes[Wedge::NVERTS * i + j];
+        wedges[i].verts[j] = wedge_verts[Wedge::NVERTS * i + j];
       }
     }
   }
@@ -1078,11 +1075,11 @@ class BasicConnectivity3D {
    *
    * @param index Index of the boundary
    * @param nverts Number of vertices on the boundary
-   * @param nodes Array of length nverts of the node numbers on the boundary
+   * @param verts Array of length nverts of the vert numbers on the boundary
    * @param ntris Number of triangles on the boundary
-   * @param tris Triangle nodes for each triangle on the boundary
+   * @param tris Triangle verts for each triangle on the boundary
    * @param nquads Number of quads on the boundary
-   * @param quads Quad nodes for each quad on the boundary
+   * @param quads Quad verts for each quad on the boundary
    */
   template <typename I>
   void add_boundary(int index, int nverts, const I verts, int ntris,
@@ -1279,25 +1276,25 @@ class BasicConnectivity3D {
     int index = local_elem;
     if (index < num_tets) {
       *verts = tets[index].verts;
-      return Tetrahedron::NNODES;
+      return Tetrahedron::NVERTS;
     }
 
     index = index - num_tets;
     if (index < num_hexs) {
       *verts = hexs[index].verts;
-      return Hexahedron::NNODES;
+      return Hexahedron::NVERTS;
     }
 
     index = index - num_hexs;
     if (index < num_pyrds) {
       *verts = pyrds[index].verts;
-      return Pyramid::NNODES;
+      return Pyramid::NVERTS;
     }
 
     index = index - num_pyrds;
     if (index < num_wedges) {
       *verts = wedges[index].verts;
-      return Wedge::NNODES;
+      return Wedge::NVERTS;
     }
 
     *verts = nullptr;
@@ -1441,7 +1438,7 @@ class BasicConnectivity3D {
     return 0;
   }
 
- private:
+private:
   /**
    * @brief Compute an element to element connectivity
    *
@@ -1614,7 +1611,7 @@ class BasicConnectivity3D {
           num_edges++;
 
           // Find the edges in all of the adjacent elements
-          int n0, n1;  // Get the verts for the element
+          int n0, n1; // Get the verts for the element
           get_element_edge_verts(elem, edge, &n0, &n1);
 
           // Find the elements that are adjacent to nj0
@@ -1758,7 +1755,7 @@ class BasicConnectivity3D {
   }
 
   // Input information about the mesh
-  int num_verts;  // Number of verts
+  int num_verts; // Number of verts
 
   // Number of each type of element
   int num_tets;
@@ -1777,8 +1774,8 @@ class BasicConnectivity3D {
   int num_faces;
 
   // Boundary connectivity information
-  int num_boundaries;               // Number of boundaries in the mesh
-  BoundaryConnectivity **boundary;  // Boundary objects
+  int num_boundaries;              // Number of boundaries in the mesh
+  BoundaryConnectivity **boundary; // Boundary objects
 };
 
-#endif  // BASIC_CONNECTIVITY_H
+#endif // BASIC_CONNECTIVITY_H

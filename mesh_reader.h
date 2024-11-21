@@ -12,9 +12,8 @@
 #include "basic_connectivity.h"
 #include "utils.h"
 
-template <typename T>
-class SU2MeshReader {
- public:
+template <typename T> class SU2MeshReader {
+public:
   /**
    * @brief Parse the SU2 file
    *
@@ -54,15 +53,15 @@ class SU2MeshReader {
     out << "Number of nodes  " << points.size() / dimension << std::endl;
 
     if (dimension == 2) {
-      out << "Number of tris   " << tris.size() / TriInfo::NNODES << std::endl;
-      out << "Number of quads  " << quads.size() / QuadInfo::NNODES
+      out << "Number of tris   " << tris.size() / Triangle::NVERTS << std::endl;
+      out << "Number of quads  " << quads.size() / QuadInfo::NVERTS
           << std::endl;
     } else if (dimension == 3) {
-      out << "Number of tets   " << tets.size() / TetInfo::NNODES << std::endl;
-      out << "Number of hexs   " << hexs.size() / HexInfo::NNODES << std::endl;
-      out << "Number of pyrds  " << pyrmids.size() / PyramidInfo::NNODES
+      out << "Number of tets   " << tets.size() / TetInfo::NVERTS << std::endl;
+      out << "Number of hexs   " << hexs.size() / HexInfo::NVERTS << std::endl;
+      out << "Number of pyrds  " << pyrmids.size() / PyramidInfo::NVERTS
           << std::endl;
-      out << "Number of wedges " << wedges.size() / WedgeInfo::NNODES
+      out << "Number of wedges " << wedges.size() / WedgeInfo::NVERTS
           << std::endl;
     }
 
@@ -74,9 +73,9 @@ class SU2MeshReader {
       if (info.dimension == 2) {
         out << "Number of lines " << info.lines.size() / 2 << std::endl;
       } else if (info.dimension == 3) {
-        out << "Number of tris  " << info.tris.size() / TriInfo::NNODES
+        out << "Number of tris  " << info.tris.size() / TriInfo::NVERTS
             << std::endl;
-        out << "Number of quads " << info.quads.size() / QuadInfo::NNODES
+        out << "Number of quads " << info.quads.size() / QuadInfo::NVERTS
             << std::endl;
       }
     }
@@ -116,16 +115,16 @@ class SU2MeshReader {
     BasicConnectivity3D *conn =
         new BasicConnectivity3D(num_nodes, num_boundaries);
 
-    conn->add_mesh(tets.size() / Tetrahedron::NNODES, tets,
-                   hexs.size() / Hexahedron::NNODES, hexs,
-                   pyrmids.size() / Pyramid::NNODES, pyrmids,
-                   wedges.size() / Wedge::NNODES, wedges);
+    conn->add_mesh(tets.size() / Tetrahedron::NVERTS, tets,
+                   hexs.size() / Hexahedron::NVERTS, hexs,
+                   pyrmids.size() / Pyramid::NVERTS, pyrmids,
+                   wedges.size() / Wedge::NVERTS, wedges);
 
     for (int i = 0; i < num_boundaries; i++) {
       conn->add_boundary(i, boundaries[i].nodes.size(), boundaries[i].nodes,
-                         boundaries[i].tris.size() / Triangle::NNODES,
+                         boundaries[i].tris.size() / Triangle::NVERTS,
                          boundaries[i].tris,
-                         boundaries[i].quads.size() / Quadrilateral::NNODES,
+                         boundaries[i].quads.size() / Quadrilateral::NVERTS,
                          boundaries[i].quads);
     }
 
@@ -145,7 +144,7 @@ class SU2MeshReader {
     }
   }
 
- private:
+private:
   // The dimension of the problem
   int dimension;
 
@@ -270,7 +269,7 @@ class SU2MeshReader {
     size_t first = str.find_first_not_of(" \t\n\r\f\v");
     size_t last = str.find_last_not_of(" \t\n\r\f\v");
     if (first == std::string::npos || last == std::string::npos)
-      return "";  // String is either empty or all whitespace
+      return ""; // String is either empty or all whitespace
     return str.substr(first, (last - first + 1));
   }
 
@@ -282,10 +281,10 @@ class SU2MeshReader {
       info.number = index;
 
       std::string line;
-      getline(file, line);  // Skip MARKER_TAG line
+      getline(file, line); // Skip MARKER_TAG line
       info.tag = trim(line.substr(line.find('=') + 1));
 
-      getline(file, line);  // Skip MARKER_ELEMS line
+      getline(file, line); // Skip MARKER_ELEMS line
       int num_elements = std::stoi(line.substr(line.find('=') + 1));
 
       std::unordered_set<int> boundary_nodes;
@@ -304,14 +303,14 @@ class SU2MeshReader {
               boundary_nodes.insert(index);
             }
           } else if (vtk_type == VTKInfo::VTK_TRIANGLE) {
-            for (int j = 0; j < Triangle::NNODES; j++) {
+            for (int j = 0; j < Triangle::NVERTS; j++) {
               int index;
               input >> index;
               info.tris.push_back(index);
               boundary_nodes.insert(index);
             }
           } else if (vtk_type == VTKInfo::VTK_QUADRILATERAL) {
-            for (int j = 0; j < Quadrilateral::NNODES; j++) {
+            for (int j = 0; j < Quadrilateral::NVERTS; j++) {
               int index;
               input >> index;
               info.quads.push_back(index);
@@ -330,4 +329,4 @@ class SU2MeshReader {
   }
 };
 
-#endif  // MESH_READER_H
+#endif // MESH_READER_H
