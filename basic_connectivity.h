@@ -36,6 +36,7 @@ class Triangle {
   static const int NVERTS = 3;
   static const int NEDGES = 3;
 
+  int32_t index;
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
 
@@ -92,6 +93,7 @@ class Quadrilateral {
   static const int NVERTS = 4;
   static const int NEDGES = 4;
 
+  int32_t index;
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
 
@@ -172,6 +174,7 @@ class Tetrahedron {
   static const int NFACES = 4;
 
   // Local information
+  int32_t index;
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
@@ -277,6 +280,7 @@ class Hexahedron {
   static const int NEDGES = 12;
 
   // Local information
+  int32_t index;
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
@@ -480,6 +484,7 @@ class Pyramid {
   static const int NEDGES = 8;
 
   // Local information
+  int32_t index;
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
@@ -640,6 +645,7 @@ class Wedge {
   static const int NEDGES = 9;
 
   // Local information
+  int32_t index;
   int32_t verts[NVERTS];
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
@@ -867,6 +873,7 @@ class BasicConnectivity3D {
               if (match) {
                 tri_elements[j] = elem;
                 tri_face_indices[j] = face;
+                tris[j].index = j;
                 tris[j].verts[0] = face_verts[0];
                 tris[j].verts[1] = face_verts[1];
                 tris[j].verts[2] = face_verts[2];
@@ -918,6 +925,7 @@ class BasicConnectivity3D {
               if (match) {
                 quad_elements[j] = elem;
                 quad_face_indices[j] = face;
+                quads[j].index = j;
                 quads[j].verts[0] = face_verts[0];
                 quads[j].verts[1] = face_verts[1];
                 quads[j].verts[2] = face_verts[2];
@@ -1036,22 +1044,27 @@ class BasicConnectivity3D {
     wedges = new Wedge[num_wedges];
 
     // Set the connectivity: element -> verts
-    for (int i = 0; i < num_tets; i++) {
+    int index = 0;
+    for (int i = 0; i < num_tets; i++, index++) {
+      tets[i].index = index;
       for (int j = 0; j < Tetrahedron::NVERTS; j++) {
         tets[i].verts[j] = tet_nodes[Tetrahedron::NVERTS * i + j];
       }
     }
-    for (int i = 0; i < num_hexs; i++) {
+    for (int i = 0; i < num_hexs; i++, index++) {
+      hexs[i].index = index;
       for (int j = 0; j < Hexahedron::NVERTS; j++) {
         hexs[i].verts[j] = hex_nodes[Hexahedron::NVERTS * i + j];
       }
     }
-    for (int i = 0; i < num_pyrds; i++) {
+    for (int i = 0; i < num_pyrds; i++, index++) {
+      pyrds[i].index = index;
       for (int j = 0; j < Pyramid::NVERTS; j++) {
         pyrds[i].verts[j] = pyrd_nodes[Pyramid::NVERTS * i + j];
       }
     }
-    for (int i = 0; i < num_wedges; i++) {
+    for (int i = 0; i < num_wedges; i++, index++) {
+      wedges[i].index = index;
       for (int j = 0; j < Wedge::NVERTS; j++) {
         wedges[i].verts[j] = wedge_nodes[Wedge::NVERTS * i + j];
       }
@@ -1155,7 +1168,7 @@ class BasicConnectivity3D {
     init_vert_element_data(&vert_ptr, &vert_elems);
 
     init_edge_data(vert_ptr, vert_elems);
-    // init_face_data(vert_ptr, vert_elems);
+    init_face_data(vert_ptr, vert_elems);
 
     for (int i = 0; i < num_boundaries; i++) {
       boundary[i]->initialize_boundary(this, vert_ptr, vert_elems);
