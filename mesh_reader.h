@@ -12,8 +12,9 @@
 #include "basic_connectivity.h"
 #include "utils.h"
 
-template <typename T> class SU2MeshReader {
-public:
+template <typename T>
+class SU2MeshReader {
+ public:
   /**
    * @brief Parse the SU2 file
    *
@@ -54,15 +55,16 @@ public:
 
     if (dimension == 2) {
       out << "Number of tris   " << tris.size() / Triangle::NVERTS << std::endl;
-      out << "Number of quads  " << quads.size() / QuadInfo::NVERTS
+      out << "Number of quads  " << quads.size() / Quadrilateral::NVERTS
           << std::endl;
     } else if (dimension == 3) {
-      out << "Number of tets   " << tets.size() / TetInfo::NVERTS << std::endl;
-      out << "Number of hexs   " << hexs.size() / HexInfo::NVERTS << std::endl;
-      out << "Number of pyrds  " << pyrmids.size() / PyramidInfo::NVERTS
+      out << "Number of tets   " << tets.size() / Tetrahedron::NVERTS
           << std::endl;
-      out << "Number of wedges " << wedges.size() / WedgeInfo::NVERTS
+      out << "Number of hexs   " << hexs.size() / Hexahedron::NVERTS
           << std::endl;
+      out << "Number of pyrds  " << pyrmids.size() / Pyramid::NVERTS
+          << std::endl;
+      out << "Number of wedges " << wedges.size() / Wedge::NVERTS << std::endl;
     }
 
     for (int index = 0; index < boundaries.size(); index++) {
@@ -73,9 +75,9 @@ public:
       if (info.dimension == 2) {
         out << "Number of lines " << info.lines.size() / 2 << std::endl;
       } else if (info.dimension == 3) {
-        out << "Number of tris  " << info.tris.size() / TriInfo::NVERTS
+        out << "Number of tris  " << info.tris.size() / Triangle::NVERTS
             << std::endl;
-        out << "Number of quads " << info.quads.size() / QuadInfo::NVERTS
+        out << "Number of quads " << info.quads.size() / Quadrilateral::NVERTS
             << std::endl;
       }
     }
@@ -144,7 +146,7 @@ public:
     }
   }
 
-private:
+ private:
   // The dimension of the problem
   int dimension;
 
@@ -269,7 +271,7 @@ private:
     size_t first = str.find_first_not_of(" \t\n\r\f\v");
     size_t last = str.find_last_not_of(" \t\n\r\f\v");
     if (first == std::string::npos || last == std::string::npos)
-      return ""; // String is either empty or all whitespace
+      return "";  // String is either empty or all whitespace
     return str.substr(first, (last - first + 1));
   }
 
@@ -281,10 +283,10 @@ private:
       info.number = index;
 
       std::string line;
-      getline(file, line); // Skip MARKER_TAG line
+      getline(file, line);  // Skip MARKER_TAG line
       info.tag = trim(line.substr(line.find('=') + 1));
 
-      getline(file, line); // Skip MARKER_ELEMS line
+      getline(file, line);  // Skip MARKER_ELEMS line
       int num_elements = std::stoi(line.substr(line.find('=') + 1));
 
       std::unordered_set<int> boundary_nodes;
@@ -329,4 +331,4 @@ private:
   }
 };
 
-#endif // MESH_READER_H
+#endif  // MESH_READER_H

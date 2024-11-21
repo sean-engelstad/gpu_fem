@@ -151,9 +151,9 @@ int ComputeInverse(const int n, T* A, int* ipiv, T* Ainv) {
 
     // Find the maximum value and use it as the pivot
     int r = k;
-    double maxv = FVM::fabs(A[nk + k]);
+    double maxv = FEM::fabs(A[nk + k]);
     for (int j = k + 1; j < n; j++) {
-      double t = FVM::fabs(A[n * j + k]);
+      double t = FEM::fabs(A[n * j + k]);
       if (t > maxv) {
         maxv = t;
         r = j;
