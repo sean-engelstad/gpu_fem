@@ -1,3 +1,6 @@
+#ifndef CONNECTIVITY_H
+#define CONNECTIVITY_H
+
 #include <cstdint.h>
 
 enum ElementType {
@@ -812,8 +815,8 @@ class Connectivity3D {
     }
 
     // Initialize the boundary information based on what's stored locally
-    void initialize_boundary(const Connectivity<ndim> *conn,
-                             const int *vert_ptr, const int *vert_elems) {
+    void initialize_boundary(const Connectivity3D *conn, const int *vert_ptr,
+                             const int *vert_elems) {
       if (tri_elements) {
         delete[] tri_elements;
         delete[] tri_face_indices;
@@ -829,108 +832,107 @@ class Connectivity3D {
       quad_elements = new int[num_quads];
       quad_face_indices = new int[num_quads];
 
-      // // Make sure the boundary tris are a match with the interior faces
-      // for (int j = 0; j < num_tris; j++) {
-      //   bool tri_found = false;
+      // Make sure the boundary tris are a match with the interior faces
+      for (int j = 0; j < num_tris; j++) {
+        bool tri_found = false;
 
-      //   // Find elements connected via the first node
-      //   int n0 = tris[j].verts[0];
-      //   for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
-      //     int adj_elem = node_elems[k];
+        // Find elements connected via the first node
+        int n0 = tris[j].verts[0];
+        for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
+          int elem = vert_elems[k];
 
-      //     int nfaces = conn->get_num_faces(adj_elem);
-      //     for (int p = 0; p < nfaces; p++) {
-      //       int adj_nodes[QuadInfo::NNODES];
-      //       int nnodes = conn->get_face_nodes(adj_elem, p, adj_nodes);
+          int nfaces = conn->get_element_num_faces(elem);
+          for (int face = 0; face < nfaces; face++) {
+            int face_verts[Quadrilateral::NVERTS];
+            int nfv = conn->get_element_face_verts(elem, face, face_verts);
 
-      //       if (nnodes == TriInfo::NNODES) {
-      //         // Check if all the nodes on the boundary mach
-      //         bool match = true;
-      //         for (int ii = 0; ii < TriInfo::NNODES; ii++) {
-      //           bool found = false;
-      //           for (int jj = 0; jj < TriInfo::NNODES; jj++) {
-      //             if (tris[j].nodes[ii] == adj_nodes[jj]) {
-      //               found = true;
-      //             }
-      //           }
-      //           if (!found) {
-      //             match = false;
-      //             break;
-      //           }
-      //         }
+            if (nfv == Triangle::NNODES) {
+              // Check if all the nodes on the boundary mach
+              bool match = true;
+              for (int ii = 0; ii < Triangle::NNODES; ii++) {
+                bool found = false;
+                for (int jj = 0; jj < Triangle::NNODES; jj++) {
+                  if (tris[j].verts[ii] == face_verts[jj]) {
+                    found = true;
+                  }
+                }
+                if (!found) {
+                  match = false;
+                  break;
+                }
+              }
 
-      //         // We've found a match for the boundary, set the triangle so
-      //         // it shares the connectivity with the element
-      //         if (match) {
-      //           tri_elements[j] = adj_elem;
-      //           tri_face_indices[j] = p;
-      //           tris[j].nodes[0] = adj_nodes[0];
-      //           tris[j].nodes[1] = adj_nodes[1];
-      //           tris[j].nodes[2] = adj_nodes[2];
-      //           tri_found = true;
-      //           break;
-      //         }
-      //       }
-      //     }
+              // We've found a match for the boundary, set the triangle so
+              // it shares the connectivity with the element
+              if (match) {
+                tri_elements[j] = elem;
+                tri_face_indices[j] = face;
+                tris[j].verts[0] = face_verts[0];
+                tris[j].verts[1] = face_verts[1];
+                tris[j].verts[2] = face_verts[2];
+                tri_found = true;
+                break;
+              }
+            }
+          }
 
-      //     if (tri_found) {
-      //       break;
-      //     }
-      //   }
-      // }
+          if (tri_found) {
+            break;
+          }
+        }
+      }
 
-      // // Find the quadrilaterals and match them
-      // // Make sure the boundary tris are a match with the interior faces
-      // for (int j = 0; j < num_local_and_halo_quads; j++) {
-      //   bool quad_found = false;
+      // Find the quadrilaterals and match them
+      // Make sure the boundary quads are a match with the interior faces
+      for (int j = 0; j < num_quads; j++) {
+        bool quad_found = false;
 
-      //   // Find elements connected via the first node
-      //   int n0 = quads[j].nodes[0];
-      //   for (int k = node_ptr[n0]; k < node_ptr[n0 + 1]; k++) {
-      //     int adj_elem = node_elems[k];
+        // Find elements connected via the first node
+        int n0 = quads[j].verts[0];
+        for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
+          int elem = vert_elems[k];
 
-      //     int nfaces = conn->get_num_faces(adj_elem);
-      //     for (int p = 0; p < nfaces; p++) {
-      //       int adj_nodes[QuadInfo::NNODES];
-      //       int nnodes = conn->get_element_face_verts(adj_elem, p,
-      //       adj_nodes);
+          int nfaces = conn->get_element_num_faces(elem);
+          for (int face = 0; face < nfaces; face++) {
+            int face_verts[Quadrilateral::NVERTS];
+            int nfv = conn->get_element_face_verts(elem, face, face_verts);
 
-      //       if (nnodes == QuadInfo::NNODES) {
-      //         // Check if all the nodes on the boundary mach
-      //         bool match = true;
-      //         for (int ii = 0; ii < QuadInfo::NNODES; ii++) {
-      //           bool found = false;
-      //           for (int jj = 0; jj < QuadInfo::NNODES; jj++) {
-      //             if (tris[j].nodes[ii] == adj_nodes[jj]) {
-      //               found = true;
-      //             }
-      //           }
-      //           if (!found) {
-      //             match = false;
-      //             break;
-      //           }
-      //         }
+            if (nfv == Quadrilateral::NVERTS) {
+              // Check if all the nodes on the boundary mach
+              bool match = true;
+              for (int ii = 0; ii < Quadrilateral::NVERTS; ii++) {
+                bool found = false;
+                for (int jj = 0; jj < Quadrilateral::NVERTS; jj++) {
+                  if (quads[j].verts[ii] == face_verts[jj]) {
+                    found = true;
+                  }
+                }
+                if (!found) {
+                  match = false;
+                  break;
+                }
+              }
 
-      //         // We've found a match for the boundary, set the triangle so
-      //         // it shares the connectivity with the element
-      //         if (match) {
-      //           quad_elements[j] = adj_elem;
-      //           quad_face_indices[j] = p;
-      //           quads[j].nodes[0] = adj_nodes[0];
-      //           quads[j].nodes[1] = adj_nodes[1];
-      //           quads[j].nodes[2] = adj_nodes[2];
-      //           quads[j].nodes[3] = adj_nodes[3];
-      //           quad_found = true;
-      //           break;
-      //         }
-      //       }
-      //     }
+              // We've found a match for the boundary, set the triangle so
+              // it shares the connectivity with the element
+              if (match) {
+                quad_elements[j] = elem;
+                quad_face_indices[j] = face;
+                quads[j].verts[0] = face_verts[0];
+                quads[j].verts[1] = face_verts[1];
+                quads[j].verts[2] = face_verts[2];
+                quads[j].verts[3] = face_verts[3];
+                quad_found = true;
+                break;
+              }
+            }
+          }
 
-      //     if (quad_found) {
-      //       break;
-      //     }
-      //   }
-      // }
+          if (quad_found) {
+            break;
+          }
+        }
+      }
     }
 
     // Entities that are on the boundary
@@ -961,7 +963,7 @@ class Connectivity3D {
    * @param num_verts Number of vertices in the mesh
    * @param num_boundaries Number of boundaries in the mesh
    */
-  Connectivity(int num_verts = 0, int num_boundaries = 0)
+  Connectivity3D(int num_verts = 0, int num_boundaries = 0)
       : num_verts(num_verts), num_boundaries(num_boundaries) {
     // Set the number of local elements
     num_tets = 0;
@@ -1378,7 +1380,7 @@ class Connectivity3D {
   }
 
   // Get the number of faces or edges associated with an element
-  int get_num_faces(const int elem) const {
+  int get_element_num_faces(const int elem) const {
     int index = elem;
     if (index < num_tets) {
       return Tetrahedron::NFACES;
@@ -1644,7 +1646,7 @@ class Connectivity3D {
 
     int num_elems = get_num_elements();
     for (int elem = 0; elem < num_elems; elem++) {
-      // Loop over the element edges
+      // Loop over the element faces
       int *elem_faces;
       int nf = get_element_faces(elem, &elem_faces);
 
@@ -1652,7 +1654,7 @@ class Connectivity3D {
       for (int face = 0; faces < nf; face++) {
         // Edge j is not ordered
         if (elem_faces[face] == NO_LABEL) {
-          // Set the element edge number
+          // Set the element face number
           elem_faces[face] = num_faces;
           num_faces++;
 
@@ -1662,19 +1664,19 @@ class Connectivity3D {
 
           // Find the elements that are adjacent to nj0
           for (int k = vert_ptr[n0]; k < vert_ptr[n0 + 1]; k++) {
-            // Element p may share an edge with element i
+            // Element may share a face with the element
             int adj_elem = vert_elems[k];
             if (adj_elem != elem) {
               int *adj_elem_faces;
               int adj_nf = get_element_faces(adj_elem, &adj_elem_faces);
 
-              // Loop to find the matching edge
+              // Loop to find the matching face
               for (int adj_face = 0; adj_face < adj_nf; adj_face++) {
                 int adj_face_verts[Quadrilateral::NVERTS];
                 int adj_nfv =
                     get_element_face_verts(adj_elem, adj_face, adj_face_verts);
 
-                // Adjacent edge matches
+                // Adjacent faces match
                 if (nfv == adj_nfv) {
                   if (nfv == Triangle::NVERTS &&
                       Triangle::is_flipped(face_verts, adj_face_verts)) {
@@ -1766,4 +1768,4 @@ class Connectivity3D {
   BoundaryConnectivity **boundary;  // Boundary objects
 };
 
-#endif  // FVM_CONNECTIVITY_H
+#endif  // CONNECTIVITY_H
