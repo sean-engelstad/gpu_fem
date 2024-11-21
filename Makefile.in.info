@@ -1,0 +1,14 @@
+A2D_DIR := ${HOME}/git/a2d
+A2D_INCLUDE := -I${A2D_DIR}/include
+
+GPU_FEM_DIR = ${HOME}/git/gpu_fem
+GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
+
+INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE}
+
+# USE_GPU := 1
+USE_GPU := 0
+GPU_CXX = nvcc
+CXX = g++
+CC_FLAGS = -g
+GPU_CC_FLAGS := #-w

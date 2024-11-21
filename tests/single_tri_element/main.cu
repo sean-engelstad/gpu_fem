@@ -13,30 +13,27 @@ int main(void) {
     using Data = typename Physics::IsotropicData;
     using Assembler = ElementAssembler<T, Group>;
 
-    int num_geo_nodes = 500;
-    int num_vars_nodes = 800;
-    int num_elements = 1000;
+    int num_geo_nodes = 3;
+    int num_vars_nodes = 6;
+    int num_elements = 1;
+
+    // simple test for a singular triangular element
+    // of a mesh with:
+    //      node 0 - (0,0)
+    //      node 1 - (2,1)
+    //      node 2 - (1,2)
 
     // make fake element connectivity for testing
     int N = Geo::num_nodes * num_elements;
-    int32_t *geo_conn = new int32_t[N];
-    for (int i = 0; i < N; i++) {
-      geo_conn[i] = rand() % num_geo_nodes;
-    }
+    int32_t geo_conn[N] = {0,1,2};
 
     // randomly generate the connectivity for the variables / basis
     int N2 = Basis::num_nodes * num_elements;
-    int32_t *vars_conn = new int32_t[N2];
-    for (int i = 0; i < N2; i++) {
-      vars_conn[i] = rand() % num_vars_nodes;
-    }
+    int32_t vars_conn[N2] = {0,1,2,3,4,5};
 
     // set the xpts randomly for this example
     int32_t num_xpts = Geo::spatial_dim * num_geo_nodes;
-    T *xpts = new T[num_xpts];
-    for (int ixpt = 0; ixpt < num_xpts; ixpt++) {
-      xpts[ixpt] = static_cast<double>(rand()) / RAND_MAX;
-    }
+    T xpts[num_xpts] = {0, 0, 2, 1, 1, 2};
 
     // initialize ElemData
     double E = 70e9, nu = 0.3, t = 0.005; // aluminum plate
@@ -46,19 +43,17 @@ int main(void) {
     }
 
     // make the assembler
-    Assembler assembler(num_geo_nodes, num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, elemData);
+    Assembler assembler(num_geo_nodes, num_vars_nodes, num_elements, 
+      geo_conn, vars_conn, xpts, elemData);
 
-    // define variables here for testing different vars inputs
-    // set some host data to zero
+    // disp field is u = (x+y)*alpha, v = (x-y)*alpha
     int32_t num_vars = assembler.get_num_vars();
-    T *h_vars = new T[num_vars];
-    memset(h_vars, 0.0, num_vars * sizeof(T));
+    T h_vars[num_vars] = {0.0, 0.0, 3, 1, 3, -1, 3, 0, 1.5, -0.5, 1.5, 0.5};
 
-    bool nz_vars = true;
-    if (nz_vars) {
-      for (int ivar = 0; ivar < num_vars; ivar++) {
-        h_vars[ivar] = static_cast<double>(rand()) / RAND_MAX;
-      }
+    // scale by alpha later
+    T alpha = 1.0;
+    for (int idof = 0; idof < num_vars; idof++) {
+      h_vars[idof] *= alpha;
     }
 
     #ifdef USE_GPU
@@ -88,8 +83,7 @@ int main(void) {
     #endif
 
     // print data of host residual
-    int M = 10;
-    for (int i = 0; i < M; i++) {
+    for (int i = 0; i < num_vars; i++) {
       printf("res[%d] = %.8e\n", i, h_residual[i]);
     }
 
