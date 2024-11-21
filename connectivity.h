@@ -431,6 +431,44 @@ class Hexahedron {
 };
 
 // Geometry information
+/**
+ * @brief Pyramid properties
+ *
+ * Pyramid is a 3D element, its entities include:
+ * - domain
+ * - bound
+ * - edge
+ * - vertex
+ *
+ *           4
+ *        . / \ .
+ *     .   /   \   .
+ *   0 ---/-----\--- 3
+ *   |   /       \   |
+ *   |  /         \  |
+ *   | /           \ |
+ *   |/             \|
+ *   1 --------------2
+ *
+ * The edges are
+ * Idx    Edge
+ * (0)    0 -> 1
+ * (1)    1 -> 2
+ * (2)    2 -> 3
+ * (3)    3 -> 0
+ * (4)    0 -> 4
+ * (5)    1 -> 4
+ * (6)    2 -> 4
+ * (7)    3 -> 4
+ *
+ * The bounds are
+ * Idx    Bound               Edges
+ * (0)    0 -> 1 -> 4         0, 5, -4
+ * (1)    1 -> 2 -> 4         1, 6, -5
+ * (2)    2 -> 3 -> 4         2, 7, -6
+ * (3)    0 -> 4 -> 3         4, -7, 3
+ * (4)    0 -> 3 -> 2 -> 1    -3, -2, -1, -0
+ */
 class Pyramid {
  public:
   static const int ndim = 3;
@@ -443,17 +481,154 @@ class Pyramid {
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
 
+  // Edge -> vert info
+  static const int EDGE0_VERT0 = 0;
+  static const int EDGE0_VERT1 = 1;
+
+  static const int EDGE1_VERT0 = 1;
+  static const int EDGE1_VERT1 = 2;
+
+  static const int EDGE2_VERT0 = 2;
+  static const int EDGE2_VERT1 = 3;
+
+  static const int EDGE3_VERT0 = 3;
+  static const int EDGE3_VERT1 = 0;
+
+  static const int EDGE4_VERT0 = 0;
+  static const int EDGE4_VERT1 = 4;
+
+  static const int EDGE5_VERT0 = 1;
+  static const int EDGE5_VERT1 = 4;
+
+  static const int EDGE6_VERT0 = 2;
+  static const int EDGE6_VERT1 = 4;
+
+  static const int EDGE7_VERT0 = 3;
+  static const int EDGE7_VERT1 = 4;
+
+  // Face -> vert info
+  static const int FACE0_VERT0 = 0;
+  static const int FACE0_VERT1 = 1;
+  static const int FACE0_VERT2 = 4;
+
+  static const int FACE1_VERT0 = 1;
+  static const int FACE1_VERT1 = 2;
+  static const int FACE1_VERT2 = 4;
+
+  static const int FACE2_VERT0 = 2;
+  static const int FACE2_VERT1 = 3;
+  static const int FACE2_VERT2 = 4;
+
+  static const int FACE3_VERT0 = 0;
+  static const int FACE3_VERT1 = 4;
+  static const int FACE3_VERT2 = 3;
+
+  static const int FACE4_VERT0 = 0;
+  static const int FACE4_VERT1 = 3;
+  static const int FACE4_VERT2 = 2;
+  static const int FACE4_VERT3 = 1;
+
   template <typename I>
   inline void get_edge_verts(const int edge, I *n0, I *n1) {
+    if (edge == 0) {
+      *n0 = verts[EDGE0_VERT0];
+      *n1 = verts[EDGE0_VERT1];
+    } else if (edge == 1) {
+      *n0 = verts[EDGE1_VERT0];
+      *n1 = verts[EDGE1_VERT1];
+    } else if (edge == 2) {
+      *n0 = verts[EDGE2_VERT0];
+      *n1 = verts[EDGE2_VERT1];
+    } else if (edge == 3) {
+      *n0 = verts[EDGE3_VERT0];
+      *n1 = verts[EDGE3_VERT1];
+    } else if (edge == 4) {
+      *n0 = verts[EDGE4_VERT0];
+      *n1 = verts[EDGE4_VERT1];
+    } else if (edge == 5) {
+      *n0 = verts[EDGE5_VERT0];
+      *n1 = verts[EDGE5_VERT1];
+    } else if (edge == 6) {
+      *n0 = verts[EDGE6_VERT0];
+      *n1 = verts[EDGE6_VERT1];
+    } else if (edge == 7) {
+      *n0 = verts[EDGE7_VERT0];
+      *n1 = verts[EDGE7_VERT1];
+    }
     return 0;
   }
 
   template <typename I>
   inline int get_face_verts(const int face, I f[]) {
+    if (face == 0) {
+      f[0] = verts[FACE0_VERT0];
+      f[1] = verts[FACE0_VERT1];
+      f[2] = verts[FACE0_VERT2];
+      return Triangle::NVERTS;
+    } else if (face == 1) {
+      f[0] = verts[FACE1_VERT0];
+      f[1] = verts[FACE1_VERT1];
+      f[2] = verts[FACE1_VERT2];
+      return Triangle::NVERTS;
+    } else if (face == 2) {
+      f[0] = verts[FACE2_VERT0];
+      f[1] = verts[FACE2_VERT1];
+      f[2] = verts[FACE2_VERT2];
+      return Triangle::NVERTS;
+    } else if (face == 3) {
+      f[0] = verts[FACE3_VERT0];
+      f[1] = verts[FACE3_VERT1];
+      f[2] = verts[FACE3_VERT2];
+      return Triangle::NVERTS;
+    } else if (face == 4) {
+      f[0] = verts[FACE4_VERT0];
+      f[1] = verts[FACE4_VERT1];
+      f[2] = verts[FACE4_VERT2];
+      f[3] = verts[FACE4_VERT3];
+      return Quadrilateral::NVERTS;
+    }
     return 0;
   }
 };
-
+/**
+ * @brief Wedge properties
+ *
+ * Wedge is a 3D element, its entities include:
+ * - domain
+ * - bound
+ * - edge
+ * - vertex
+ *
+ *        2 ------E8------ 5
+ *      / |             / |
+ *    E2  |          E5   |
+ *    /   |           /   |
+ *   0 ---|---E6------3   E4
+ *    \   |           \   |
+ *    E0  E1          E3  |
+ *      \ |             \ |
+ *        1 -----E7------- 4
+ *
+ * The edges are
+ * Idx    Edge
+ * (0)    0 -> 1
+ * (1)    1 -> 2
+ * (2)    2 -> 0
+ * (3)    3 -> 4
+ * (4)    4 -> 5
+ * (5)    5 -> 3
+ * (6)    0 -> 3
+ * (7)    1 -> 4
+ * (8)    2 -> 5
+ *
+ * The bounds are
+ * Idx    Bound               Edges
+ * (0)    0 -> 1 -> 2         0, 1, 2
+ * (1)    3 -> 4 -> 5         3, 4, 5
+ * (2)    0 -> 3 -> 4 -> 1    6, 3, -7, -0
+ * (3)    1 -> 4 -> 5 -> 2    7, 4, -8, -1
+ * (4)    0 -> 2 -> 5 -> 3    -2, 8, 5, -6
+ */
 class Wedge {
  public:
   static const int ndim = 3;
@@ -466,13 +641,122 @@ class Wedge {
   int32_t edges[NEDGES];
   int32_t faces[NFACES];
 
+  // Edge -> node info
+  static const int EDGE0_VERT0 = 0;
+  static const int EDGE0_VERT1 = 1;
+
+  static const int EDGE1_VERT0 = 1;
+  static const int EDGE1_VERT1 = 2;
+
+  static const int EDGE2_VERT0 = 2;
+  static const int EDGE2_VERT1 = 0;
+
+  static const int EDGE3_VERT0 = 3;
+  static const int EDGE3_VERT1 = 4;
+
+  static const int EDGE4_VERT0 = 4;
+  static const int EDGE4_VERT1 = 5;
+
+  static const int EDGE5_VERT0 = 5;
+  static const int EDGE5_VERT1 = 3;
+
+  static const int EDGE6_VERT0 = 0;
+  static const int EDGE6_VERT1 = 3;
+
+  static const int EDGE7_VERT1 = 1;
+  static const int EDGE7_VERT4 = 4;
+
+  static const int EDGE8_VERT0 = 2;
+  static const int EDGE8_VERT1 = 5;
+
+  // Face -> nodes
+  static const int FACE0_VERT0 = 0;
+  static const int FACE0_VERT1 = 1;
+  static const int FACE0_VERT2 = 2;
+
+  static const int FACE1_VERT0 = 3;
+  static const int FACE1_VERT1 = 4;
+  static const int FACE1_VERT2 = 5;
+
+  static const int FACE2_VERT0 = 0;
+  static const int FACE2_VERT1 = 3;
+  static const int FACE2_VERT2 = 4;
+  static const int FACE2_VERT3 = 1;
+
+  static const int FACE3_VERT0 = 1;
+  static const int FACE3_VERT1 = 4;
+  static const int FACE3_VERT2 = 5;
+  static const int FACE3_VERT3 = 2;
+
+  static const int FACE4_VERT0 = 0;
+  static const int FACE4_VERT1 = 2;
+  static const int FACE4_VERT2 = 5;
+  static const int FACE4_VERT3 = 3;
+
   template <typename I>
   inline void get_edge_verts(const int edge, I *n0, I *n1) {
+    if (edge == 0) {
+      *n0 = verts[EDGE0_VERT0];
+      *n1 = verts[EDGE0_VERT1];
+    } else if (edge == 1) {
+      *n0 = verts[EDGE1_VERT0];
+      *n1 = verts[EDGE1_VERT1];
+    } else if (edge == 2) {
+      *n0 = verts[EDGE2_VERT0];
+      *n1 = verts[EDGE2_VERT1];
+    } else if (edge == 3) {
+      *n0 = verts[EDGE3_VERT0];
+      *n1 = verts[EDGE3_VERT1];
+    } else if (edge == 4) {
+      *n0 = verts[EDGE4_VERT0];
+      *n1 = verts[EDGE4_VERT1];
+    } else if (edge == 5) {
+      *n0 = verts[EDGE5_VERT0];
+      *n1 = verts[EDGE5_VERT1];
+    } else if (edge == 6) {
+      *n0 = verts[EDGE6_VERT0];
+      *n1 = verts[EDGE6_VERT1];
+    } else if (edge == 7) {
+      *n0 = verts[EDGE7_VERT0];
+      *n1 = verts[EDGE7_VERT1];
+    } else if (edge == 8) {
+      *n0 = verts[EDGE8_VERT0];
+      *n1 = verts[EDGE8_VERT1];
+    }
     return 0;
   }
 
   template <typename I>
   inline int get_face_verts(const int face, I f[]) {
+    if (face == 0) {
+      f[0] = verts[FACE0_VERT0];
+      f[1] = verts[FACE0_VERT1];
+      f[2] = verts[FACE0_VERT2];
+      return Triangle::NVERTS;
+    } else if (face == 1) {
+      f[0] = verts[FACE1_VERT0];
+      f[1] = verts[FACE1_VERT1];
+      f[2] = verts[FACE1_VERT2];
+      return Triangle::NVERTS;
+    } else if (face == 2) {
+      f[0] = verts[FACE2_VERT0];
+      f[1] = verts[FACE2_VERT1];
+      f[2] = verts[FACE2_VERT2];
+      f[3] = verts[FACE2_VERT3];
+      return Quadrilateral::NVERTS;
+    } else if (face == 3) {
+      f[0] = verts[FACE3_VERT0];
+      f[1] = verts[FACE3_VERT1];
+      f[2] = verts[FACE3_VERT2];
+      f[3] = verts[FACE3_VERT3];
+      return Quadrilateral::NVERTS;
+    } else if (face == 4) {
+      f[0] = verts[FACE4_VERT0];
+      f[1] = verts[FACE4_VERT1];
+      f[2] = verts[FACE4_VERT2];
+      f[3] = verts[FACE4_VERT3];
+      return Quadrilateral::NVERTS;
+    }
     return 0;
   }
 };
