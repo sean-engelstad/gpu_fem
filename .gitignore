@@ -1,3 +1,7 @@
 *.out
 *.txt
 Makefile.in
+*.su2
+.clangd
+.clang-format
+*.dSYM
