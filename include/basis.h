@@ -1,6 +1,6 @@
 #pragma once
-#include "quadrature.h"
 #include "a2dcore.h"
+#include "quadrature.h"
 
 template <typename T, class Quadrature_>
 class QuadraticTriangleBasis {
@@ -15,7 +15,7 @@ class QuadraticTriangleBasis {
 
   __HOST_DEVICE__ static void getBasisGrad(const T* xi, T* dNdxi) {
     // compute the basis function gradients at each basis node
-    
+
     // basis fcn 0 : N0 = 2x^2 + 4xy - 3x + 2y^2 - 3y + 1
     dNdxi[0] = 4 * xi[0] + 4 * xi[1] - 3;
     dNdxi[1] = 4 * xi[0] + 4 * xi[1] - 3;
@@ -29,7 +29,7 @@ class QuadraticTriangleBasis {
     dNdxi[6] = 4 * xi[1];
     dNdxi[7] = 4 * xi[0];
     // basis fcn 4 : N4 = 4y * (-x - y + 1)
-    dNdxi[8]  = -4.0 * xi[1];
+    dNdxi[8] = -4.0 * xi[1];
     dNdxi[9] = -4.0 * xi[0] - 8.0 * xi[1] + 4.0;
     // basis fcn 5 : N5 = 4x * (-x - y + 1)
     dNdxi[10] = -8.0 * xi[0] - 4.0 * xi[1] + 4.0;
@@ -62,7 +62,7 @@ class QuadraticTriangleBasis {
         break;
       case 4:
         // basis fcn 4 : N4 = 4y * (-x - y + 1)
-        dNdxi[0]  = -4.0 * xi[1];
+        dNdxi[0] = -4.0 * xi[1];
         dNdxi[1] = -4.0 * xi[0] - 8.0 * xi[1] + 4.0;
         break;
       case 5:
@@ -78,29 +78,30 @@ class QuadraticTriangleBasis {
   // don't use explicit N
   // compute U, dU/dxi
   template <int vars_per_node>
-  __HOST_DEVICE__ static void interpParamGradient(const T* xi, const T* Un, T* dUdxi) {
-
+  __HOST_DEVICE__ static void interpParamGradient(const T* xi, const T* Un,
+                                                  T* dUdxi) {
     T dNdxi[num_nodes * 2];
     getBasisGrad(xi, dNdxi);
 
-    A2D::MatMatMultCore<T, 
-        num_nodes, vars_per_node,
-        num_nodes, 2, 
-        vars_per_node, 2, 
-        A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL, false>(Un, dNdxi, dUdxi);
+    // for (int i = 0; i < 2 * num_nodes; i++) {
+    //   printf("dNdxi[%d] = %.8e\n", i, dNdxi[i]);
+    // }
 
+    A2D::MatMatMultCore<T, num_nodes, vars_per_node, num_nodes, 2,
+                        vars_per_node, 2, A2D::MatOp::TRANSPOSE,
+                        A2D::MatOp::NORMAL, false>(Un, dNdxi, dUdxi);
   }
 
   template <int vars_per_node>
-  __HOST_DEVICE__ static void addInterpParamGradientSens(const T* xi, const T* dUdxi_bar, T* res) {
+  __HOST_DEVICE__ static void addInterpParamGradientSens(const T* xi,
+                                                         const T* dUdxi_bar,
+                                                         T* res) {
     T dNdxi[num_nodes * 2];
     getBasisGrad(xi, dNdxi);
 
     // res += dN/dxi * dUdxi_bar^T
-    A2D::MatMatMultCore<T, 
-        num_nodes, 2, 
-        vars_per_node, 2,
-        num_nodes, vars_per_node, 
-        A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE, true>(dNdxi, dUdxi_bar, res);
+    A2D::MatMatMultCore<T, num_nodes, 2, vars_per_node, 2, num_nodes,
+                        vars_per_node, A2D::MatOp::NORMAL,
+                        A2D::MatOp::TRANSPOSE, true>(dNdxi, dUdxi_bar, res);
   }
 };

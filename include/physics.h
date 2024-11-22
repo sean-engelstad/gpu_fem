@@ -13,8 +13,10 @@ class PlaneStressPhysics {
 
   class IsotropicData {
    public:
-    IsotropicData() : E(0.0), nu(0.0), t(0.0) {};
-    IsotropicData(double E_, double nu_, double t_) : E(E_), nu(nu_), t(t_) {};
+    IsotropicData() = default;
+    // __HOST_DEVICE__ IsotropicData() : E(0.0), nu(0.0), t(0.0) {}
+    __HOST_DEVICE__ IsotropicData(double E_, double nu_, double t_)
+        : E(E_), nu(nu_), t(t_) {}
     double E, nu, t;
   };
 
