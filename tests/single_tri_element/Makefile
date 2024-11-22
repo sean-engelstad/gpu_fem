@@ -1,5 +1,8 @@
 include ../../Makefile.in
 
+TACS_DIR = ${HOME}/git/tacs
+TACS_INCLUDE = ${TACS_DIR}/include
+
 default:
 	@if [ "$(USE_GPU)" = "1" ]; then \
 	    $(MAKE) gpu; \
@@ -14,6 +17,10 @@ gpu:
 cpu:
 	@echo "Building with CPU support"
 	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 main.cu
+
+tacs:
+	@echo "Building tacs verification example"
+	${CXX} ${CC_FLAGS} ${TACS_INCLUDE} tacs-verify.cpp
 
 clean:
 	rm *.out || echo "no .out files"

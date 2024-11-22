@@ -22,6 +22,7 @@ class ElementGroup {
   static constexpr int32_t xpts_per_elem = Geo::spatial_dim * Geo::num_nodes;
   static constexpr int32_t dof_per_elem =
       Phys::vars_per_node * Basis::num_nodes;
+  static constexpr int32_t num_quad_pts = Quadrature::num_quad_pts;
 
   template <class Data>
   __HOST_DEVICE__ static void add_element_quadpt_residual(
@@ -158,8 +159,8 @@ class ElementGroup {
 
 #ifdef USE_GPU
     constexpr int elems_per_block = 32;
-    dim3 block(elems_per_block, 3);
-    dim3 one_element_block(1, 3);
+    dim3 block(elems_per_block, num_quad_pts);
+    dim3 one_element_block(1, num_quad_pts);
 
     int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
     dim3 grid(nblocks);
@@ -190,9 +191,9 @@ class ElementGroup {
 
 #ifdef USE_GPU
     const int elems_per_block = 8;
-    dim3 block(elems_per_block, 12, 3);
+    dim3 block(elems_per_block, dof_per_elem, num_quad_pts);
 
-    dim3 one_element_block(1, 12, 3);
+    dim3 one_element_block(1, dof_per_elem, num_quad_pts);
 
     int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
     dim3 grid(nblocks);
