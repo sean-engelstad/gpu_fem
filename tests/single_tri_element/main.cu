@@ -1,7 +1,10 @@
 #include "analysis.h"
 
 int main(void) {
-  using T = double;
+  using T = float;
+
+  // this GPU can't do atomic add with double due to older compute capability
+  // using T = double;
 
   const A2D::GreenStrainType strain = A2D::GreenStrainType::LINEAR;
 
@@ -84,23 +87,31 @@ int main(void) {
 #endif
 
   // #ifdef USE_GPU
-  // assembler.add_residual(d_residual);
-  // cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T),
-  // cudaMemcpyDeviceToHost); #else assembler.add_residual(h_residual); #endif
+  //   assembler.add_residual(d_residual);
+  //   cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T),
+  //              cudaMemcpyDeviceToHost);
+  // #else
+  //   assembler.add_residual(h_residual);
+  // #endif
 
-  // call add jacobian
+// call add jacobian
 #ifdef USE_GPU
   assembler.add_jacobian(d_residual, d_mat);
   cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T),
              cudaMemcpyDeviceToHost);
-  cudaMemcpy(h_mat, d_mat, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
+  cudaMemcpy(h_mat, d_mat, num_vars2 * sizeof(T), cudaMemcpyDeviceToHost);
 #else
   assembler.add_jacobian(h_residual, h_mat);
 #endif
 
+  printf("done with script\n");
+
   // print data of host residual
   for (int i = 0; i < num_vars; i++) {
     printf("res[%d] = %.8e\n", i, h_residual[i]);
+  }
+
+  for (int i = 0; i < num_vars; i++) {
     for (int j = 0; j < num_vars; j++) {
       printf("mat[%d,%d] = %.8e\n", i, j, h_mat[num_vars * i + j]);
     }

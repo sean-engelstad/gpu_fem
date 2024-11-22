@@ -30,6 +30,10 @@ class ElementGroup {
     T pt[2];
     T weight = Quadrature::getQuadraturePoint(iquad, pt);
 
+    // for (int i = 0; i < 2; i++) {
+    //   printf("pt[%d] = %8.e\n", i, pt[i]);
+    // }
+
     A2D::Mat<T, Geo::spatial_dim, 2> J, Jinv;
     Geo::interpParamGradient(pt, xpts, J.get_data());
     T detJ;
@@ -46,15 +50,28 @@ class ElementGroup {
     A2D::MatMatMult(dUdxi, Jinv, dUdx);
 
     T scale = detJ * weight;
+    // printf("scale = %.8e\n", scale);
 
     // Compute weak residual (derivative of energy w.r.t state gradient)
     Phys::template computeWeakRes<T>(physData, scale, dUdx, dUdx_bar);
 
+    // for (int i = 0; i < 4; i++) {
+    //   printf("dUdx_bar[%d] = %.8e\n", i, dUdx_bar[i]);
+    // }
+
     A2D::MatMatMult<A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(dUdx_bar, Jinv,
                                                                dUdxi_bar);
 
+    // for (int i = 0; i < 4; i++) {
+    //   printf("dUdxi_bar[%d] = %.8e\n", i, dUdxi_bar[i]);
+    // }
+
     Basis::template addInterpParamGradientSens<Phys::vars_per_node>(
         pt, dUdxi_bar.get_data(), res);
+
+    // for (int i = 0; i < 12; i++) {
+    //   printf("res[%d] = %.8e\n", i, res[i]);
+    // }
   }
 
   template <class Data>
@@ -64,6 +81,10 @@ class ElementGroup {
       T matCol[dof_per_elem]) {
     T pt[2];
     T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+    // for (int i = 0; i < 2; i++) {
+    //   printf("pt[%d] = %8.e\n", i, pt[i]);
+    // }
 
     A2D::Mat<T, Geo::spatial_dim, 2> J, Jinv;
     Geo::interpParamGradient(pt, xpts, J.get_data());
@@ -77,6 +98,13 @@ class ElementGroup {
                                                              dUdxi.get_data());
     A2D::Mat<T, Phys::vars_per_node, Geo::spatial_dim> dUdx;
     A2D::MatMatMult(dUdxi, Jinv, dUdx);
+
+    // for (int i = 0; i < 4; i++) {
+    //   printf("dUdxi[%d] = %.8e\n", i, dUdxi[i]);
+    // }
+    // for (int i = 0; i < 4; i++) {
+    //   printf("dUdx[%d] = %.8e\n", i, dUdx[i]);
+    // }
 
     // Compute disp grad pert from qdot (unit vector)
     const int pertNode = ideriv % Basis::num_nodes;
@@ -129,16 +157,20 @@ class ElementGroup {
     using ElemGroup = ElementGroup<T, Geo, Basis, Phys>;
 
 #ifdef USE_GPU
-    const int elems_per_block = 32;
+    constexpr int elems_per_block = 32;
     dim3 block(elems_per_block, 3);
+    dim3 one_element_block(1, 3);
 
     int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
     dim3 grid(nblocks);
 
+    // constexpr int elems_per_block = 1;
+
     // add_residual_gpu<T, ElemGroup, elems_per_block> <<<grid,
     // block>>>(num_elements, geo_conn, vars_conn, X, soln, residual);
-    add_residual_gpu<T, ElemGroup, Data, 1><<<1, 1>>>(
-        num_elements, geo_conn, vars_conn, xpts, vars, physData, residual);
+    add_residual_gpu<T, ElemGroup, Data, elems_per_block>
+        <<<1, one_element_block>>>(num_elements, geo_conn, vars_conn, xpts,
+                                   vars, physData, residual);
 
     gpuErrchk(cudaDeviceSynchronize());
 
@@ -160,14 +192,16 @@ class ElementGroup {
     const int elems_per_block = 8;
     dim3 block(elems_per_block, 12, 3);
 
+    dim3 one_element_block(1, 12, 3);
+
     int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
     dim3 grid(nblocks);
 
     // add_residual_gpu<T, ElemGroup, elems_per_block> <<<grid,
     // block>>>(num_elements, geo_conn, vars_conn, X, soln, residual);
-    add_jacobian_gpu<T, ElemGroup, Data, 1>
-        <<<1, 1>>>(num_vars_nodes, num_elements, geo_conn, vars_conn, xpts,
-                   vars, physData, residual, mat);
+    add_jacobian_gpu<T, ElemGroup, Data, 1><<<1, one_element_block>>>(
+        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData,
+        residual, mat);
 
     gpuErrchk(cudaDeviceSynchronize());
 
@@ -308,7 +342,9 @@ class ElementGroup {
         int local_idim = idof / Basis::num_nodes;
         int iglobal =
             vars_nodes[local_inode] * Phys::vars_per_node + local_idim;
-        residual[iglobal] += elem_res[idof];
+        residual[iglobal] +=
+            elem_res[idof] /
+            vars_per_elem;  // divide because we added into it 12 times
 
         for (int jdof = 0; jdof < vars_per_elem; jdof++) {
           int local_jnode = jdof % Basis::num_nodes;

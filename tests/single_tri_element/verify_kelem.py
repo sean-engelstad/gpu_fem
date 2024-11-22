@@ -17,7 +17,7 @@ t = 0.005
 q = np.array([0, 0, 3, 1, 3, -1, 3, 0, 1.5, -0.5, 1.5, 0.5])
 q = np.reshape(q, newshape=(6,2))
 
-print(f"{xpts=}\n {q=}")
+# print(f"{xpts=}\n {q=}")
 
 nvars = 12
 res = np.zeros((nvars))
@@ -40,12 +40,13 @@ dNdxi_geom = np.array([
 for iquad in range(3):
     pt = quad_pts[iquad]
     weight = 1.0/3.0
+    print(f"{pt=}")
 
     # use geom to compute J = dX/dxi jacobian
     J = xpts.T @ dNdxi_geom
     detJ = np.linalg.det(J)
     Jinv = np.linalg.inv(J)
-    print(f"{J=}\n {detJ=}\n {Jinv=}")
+    # print(f"{J=}\n {detJ=}\n {Jinv=}")
 
     # use basis to compute disp gradients in computation space
     xi = pt[0]
@@ -60,9 +61,13 @@ for iquad in range(3):
     ])
     dUdxi = q.T @ dNdxi_basis
 
+    # print(f"{dNdxi_basis=}\n {dUdxi=}")
+
     # convert disp grad to physical space
     dUdx = dUdxi @ Jinv
     scale = detJ * weight
+
+    print(f"{dUdx=}")
 
     # compute strain energy for linear elasticity
     strain = 0.5 * (dUdx + dUdx.T)
@@ -74,18 +79,24 @@ for iquad in range(3):
     ])
     strain_flat = np.array([strain[0,0], strain[1,1], strain[0,1]]).reshape((3,1))
     stress_flat = C @ strain_flat
-    energy = 0.5 * scale * np.dot(stress_flat[:,0], strain_flat[:,0])
     stress_vec = stress_flat[:,0]
     stress = np.array([
         [stress_vec[0], stress_vec[2]], 
         [stress_vec[2], stress_vec[1]]
     ])
+
+    energy = 0.5 * scale * np.sum(stress * strain)
+    
     # need derivatives denergy/d(dUdx)
-    dUdx_bar = 0.5 * scale * (stress + stress.T)
+    dUdx_bar = 0.5 * scale * t * (stress + stress.T)
+
+    # print(f"{strain=}\n {stress=}\n {energy=}")
     
     # now backprop to outer residual
     dUdxi_bar = dUdx_bar.T @ Jinv
     q_bar = dNdxi_basis @ dUdxi_bar.T
+
+    print(f"{dUdx_bar=}\n {dUdxi_bar=}\n {q_bar=}")
 
     # add into residual
     res += q_bar.reshape((12,))
