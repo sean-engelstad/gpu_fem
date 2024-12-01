@@ -4,25 +4,21 @@
 #include "basis.h"
 #include "geometry.h"
 #include "physics.h"
-
-// include the kernels if on the GPU
-#ifdef USE_GPU
-#include "elem_group.cuh"
-#endif
+#include "../base/elem_group.h"
 
 template <typename T, class Geo_, class Basis_, class Phys_>
-class ElementGroup {
+class PlaneStressElementGroup : public ElementGroup<PlaneStressElementGroup<T, Geo_, Basis_, Phys_>,
+   T, Geo_, Basis_, Phys_> {
  public:
+  using Base = ElementGroup<PlaneStressElementGroup, T, Geo_, Basis_, Phys_>;
   using Geo = Geo_;
   using Basis = Basis_;
   using Phys = Phys_;
   using Quadrature = typename Geo::Quadrature;
   using FADType = typename A2D::ADScalar<T, 1>;
-
-  static constexpr int32_t xpts_per_elem = Geo::spatial_dim * Geo::num_nodes;
-  static constexpr int32_t dof_per_elem =
-      Phys::vars_per_node * Basis::num_nodes;
-  static constexpr int32_t num_quad_pts = Quadrature::num_quad_pts;
+  static constexpr int32_t xpts_per_elem = Base::xpts_per_elem;
+  static constexpr int32_t dof_per_elem = Base::dof_per_elem;
+  static constexpr int32_t num_quad_pts = Base::num_quad_pts;
 
   template <class Data>
   __HOST_DEVICE__ static void add_element_quadpt_residual(
@@ -155,7 +151,7 @@ class ElementGroup {
   static void add_residual(int32_t num_elements, int32_t *geo_conn,
                            int32_t *vars_conn, T *xpts, T *vars, Data *physData,
                            T *residual) {
-    using ElemGroup = ElementGroup<T, Geo, Basis, Phys>;
+    using ElemGroup = PlaneStressElementGroup;
 
 #ifdef USE_GPU
     constexpr int elems_per_block = 32;
@@ -187,7 +183,7 @@ class ElementGroup {
   static void add_jacobian(int32_t num_vars_nodes, int32_t num_elements,
                            int32_t *geo_conn, int32_t *vars_conn, T *xpts,
                            T *vars, Data *physData, T *residual, T *mat) {
-    using ElemGroup = ElementGroup<T, Geo, Basis, Phys>;
+    using ElemGroup = PlaneStressElementGroup;
 
 #ifdef USE_GPU
     const int elems_per_block = 8;

@@ -1,6 +1,9 @@
 
 #include "cuda_utils.h"
 
+// base class methods to launch kernel depending on how many elements per block
+// may override these in some base classes
+
 // add_residual kernel
 // -----------------------
 

@@ -13,7 +13,7 @@ int main(void) {
   using Geo = LinearTriangleGeo<T, Quad>;
   using Basis = QuadraticTriangleBasis<T, Quad>;
   using Physics = PlaneStressPhysics<T, Quad, strain>;
-  using Group = ElementGroup<T, Geo, Basis, Physics>;
+  using Group = PlaneStressElementGroup<T, Geo, Basis, Physics>;
   using Data = typename Physics::IsotropicData;
   using Assembler = ElementAssembler<T, Group>;
 

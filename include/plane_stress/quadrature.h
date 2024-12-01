@@ -29,5 +29,6 @@ class TriangleQuadrature {
       default:
         break;
     }
-  };
+    return 0; // fails
+  }
 };
