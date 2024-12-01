@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-#include "elem_group.h"
+#include "cuda_utils.h"
 
 template <typename T, typename ElemGroup>
 class ElementAssembler {

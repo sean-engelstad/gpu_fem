@@ -1,4 +1,5 @@
-#include "analysis.h"
+#include "assembler.h"
+#include "plane_stress/plane_stress.h"
 
 int main(void) {
   using T = float;
