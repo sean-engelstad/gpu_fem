@@ -11,12 +11,12 @@
 //     namely allows defining a method in base class that calls 
 //     derived class methods at compile time)
 template <typename Derived, typename T, class Geo_, class Basis_, class Phys_>
-class ElementGroup {
+class BaseElementGroup {
  public:
   using Geo = Geo_;
   using Basis = Basis_;
   using Phys = Phys_;
-  using Quadrature = typename Geo::Quadrature;
+  using Quadrature = typename Basis::Quadrature;
   using FADType = typename A2D::ADScalar<T, 1>;
 
   static constexpr int32_t xpts_per_elem = Geo::spatial_dim * Geo::num_nodes;
