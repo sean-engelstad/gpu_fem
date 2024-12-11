@@ -19,9 +19,13 @@ int main(void) {
 
     printf("running!\n");
 
-    int num_geo_nodes = 500e2;
-    int num_vars_nodes = 800e2;
-    int num_elements = 1e5;
+    int num_elements = 1;
+    int num_geo_nodes = 4;
+    int num_vars_nodes = 4;
+
+    // int num_geo_nodes = 500e2;
+    // int num_vars_nodes = 800e2;
+    // int num_elements = 1e5;
 
     // int num_geo_nodes = 500;
     // int num_vars_nodes = 800;
@@ -109,7 +113,7 @@ int main(void) {
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
 
     // print data of host residual
-    int M = 10;
+    int M = 24;
     for (int i = 0; i < M; i++) {
       printf("res[%d] = %.8e\n", i, h_residual[i]);
     }

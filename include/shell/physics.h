@@ -176,7 +176,7 @@ class LinearShell {
       T Uxi_bar[3];
       A2D::Vec<T, 3> zero;
       A2D::VecAddCore<T, 3>(ety_bar[offset + itying], Xxi, Uxi_bar);
-      Basis::template interpFieldsGradTranspose(pt, Uxi_bar, zero.get_data(),
+      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_bar, zero.get_data(),
                                                 res);
 
     }  // end of itying for loop for g11
@@ -198,7 +198,7 @@ class LinearShell {
       T Uxi_bar[3], Ueta_bar[3];
       A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xxi, Uxi_bar);
       A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xeta, Ueta_bar);
-      Basis::template interpFieldsGradTranspose(pt, Uxi_bar, Ueta_bar, res);
+      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_bar, Ueta_bar, res);
     }  // end of itying for loop for g12
 
     // get g13 strain
@@ -219,8 +219,8 @@ class LinearShell {
       A2D::Vec<T, 3> zero;
       A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xxi, d0_bar);
       A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xeta, Uxi_bar);
-      Basis::template interpFieldsGradTranspose(pt, Uxi_bar, zero, res);
-      Basis::template interpFieldsTranspose(pt, d0_bar, d_bar);
+      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_bar, zero.get_data(), res);
+      Basis::template interpFieldsTranspose<3,3>(pt, d0_bar, d_bar);
 
     }  // end of itying for loop for g13
 
@@ -240,7 +240,7 @@ class LinearShell {
       T Ueta_bar[3];
       A2D::Vec<T, 3> zero;
       A2D::VecAddCore<T, 3>(ety_bar[offset + itying], Xeta, Ueta_bar);
-      Basis::template interpFieldsGradTranspose(pt, zero, Ueta_bar, res);
+      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, zero.get_data(), Ueta_bar, res);
 
     }  // end of itying for loop for g22
 
@@ -263,8 +263,8 @@ class LinearShell {
       A2D::Vec<T, 3> zero;
       A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xeta, d0_bar);
       A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], n0, Ueta_bar);
-      Basis::template interpFieldsGradTranspose(pt, zero, Ueta_bar, res);
-      Basis::template interpFieldsTranspose(pt, d0_bar, d_bar);
+      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, zero.get_data(), Ueta_bar, res);
+      Basis::template interpFieldsTranspose<3,3>(pt, d0_bar, d_bar);
     }  // end of itying for loop for g13
 
   }  // end of computeTyingStrainSens

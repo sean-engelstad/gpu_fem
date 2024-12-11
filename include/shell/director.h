@@ -78,7 +78,7 @@ class LinearizedRotation
   template <int vars_per_node, int num_nodes>
   __HOST_DEVICE__ static void computeDirectorSens(const T t[], const T d_bar[],
                                                   T res[]) {
-    const T *q_bar = &res[offset];
+    T *q_bar = &res[offset];
     for (int inode = 0; inode < num_nodes; inode++) {
       // easy to show backprop of cross product is also cross product operation
       // if y = x cross n with n constant then x = n cross y

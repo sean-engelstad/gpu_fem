@@ -97,15 +97,6 @@ class ShellElementGroup
                                      Tmat.get_data());
 
       {  // pre-physics scope block level 2
-        T Xxi[3], Xeta[3], nxi[3], neta[3], n0[3];
-
-        // interpolation of coordinates
-        // is it bad to redo this? or should we store it persistently?
-        // maybe can get this stuff on the fly? TBD
-        Basis::template interpFields<3, 3>(pt, fn, n0);
-        Basis::template interpFields<1, 1>(pt, etn, et.value().get_data());
-        Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
-        Basis::template interpFieldsGrad<3, 3>(pt, fn, nxi, neta);
 
         T gty[6];
         interpTyingStrain<T, Basis>(pt, ety, gty);
@@ -135,12 +126,16 @@ class ShellElementGroup
 
     // transfer from u0x_bar, u1x_bar to res and director d_bar
     T d_bar[3 * num_nodes];
-    T gty_bar[6];  // double check calls here
+    A2D::SymMat<T, 3> gty_bar;  // double check calls here
     {
-      T XdinvT[9];
+      T Xxi[3], Xeta[3], n0[3];
+      Basis::template interpFields<3, 3>(pt, fn, n0);
+      Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
+
+      A2D::Mat<T, 3, 3> XdinvT;
       ShellComputeDispGradSens<T, vars_per_node, Basis>(
           pt, xpts, vars, fn, d, Xxi, Xeta, n0, Tmat.get_data(),
-          XdinvT.get_data(), u0x.bvalue(), u1x.bvalue(), res, d_bar);
+          XdinvT.get_data(), u0x.bvalue().get_data(), u1x.bvalue().get_data(), res, d_bar);
 
       // backprop the e0ty_bar to gty_bar
       // gty_bar^t = XdinvT^t * e0ty_bar^t * XdinvT (but transpose both sides
@@ -152,15 +147,21 @@ class ShellElementGroup
     {
       // backprop from gty_bar to ety_bar the tying strains full array
       T ety_bar[Basis::num_all_tying_points];
-      Basis::template interpTyingStrainTranspose(pt, gty_bar, ety_bar);
+      interpTyingStrainTranspose<T, Basis>(pt, gty_bar.get_data(), ety_bar);
 
       Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar, d_bar,
                                                    res);
     }
 
+    // TODO : add back in drill strain sens
+    ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
+          physData, Xdn, vars, etn);
+
     // directors back to residuals
     Director::template computeDirectorSens<vars_per_node, num_nodes>(d_bar, fn,
                                                                      res);
+
+    // TODO : rotation constraint sens for some director classes (zero for linear rotation)
 
   }  // end of method add_element_quadpt_residual
 

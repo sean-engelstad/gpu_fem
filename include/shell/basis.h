@@ -179,7 +179,7 @@ class ShellQuadBasis {
 
     for (int ifield = 0; ifield < num_fields; ifield++) {
       for (int inode = 0; inode < num_nodes; inode++) {
-        values_bar[inode * vars_per_node + ifield] += field[ifield] * N[inode];
+        values_bar[inode * vars_per_node + ifield] += field_bar[ifield] * N[inode];
       }
     }
   }  // end of interpFieldsTranspose method
@@ -195,7 +195,7 @@ class ShellQuadBasis {
     for (int ifield = 0; ifield < num_fields; ifield++) {
       for (int inode = 0; inode < num_nodes; inode++) {
         values_bar[inode * vars_per_node + ifield] +=
-            dxi[ifield] * dNdxi[inode] + deta[ifield] * dNdeta[inode];
+            dxi_bar[ifield] * dNdxi[inode] + deta_bar[ifield] * dNdeta[inode];
       }
     }
   }  // end of interpFieldsGrad method
@@ -544,7 +544,7 @@ __HOST_DEVICE__ T ShellComputeDispGradSens(
     // transfer back to u0xi, u0eta, d0 bar
     // each vec is columns of u0d_bar or rows of u0d_barT (more efficient since
     // don't need to call extractFrame now)
-    Basis::template interpFieldsTranpspose<3, 3>(pt, &u0d_barT[6], d_bar);
+    Basis::template interpFieldsTranspose<3, 3>(pt, &u0d_barT[6], d_bar);
     Basis::template interpFieldsGradTranspose<vars_per_node, 3>(
         pt, &u0d_barT[0], &u0d_barT[3], res);
   }  // end of u0d_barT scope
