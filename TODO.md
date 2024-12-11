@@ -4,15 +4,20 @@
 Note, writeup what you're doing as you complete each major step in the overleaf.
 
 ### <span style="color:#fde74c">Basic Linear Solve on GPU</span>
-- [ ] fully verify add residual
-    - [ ] add residual : XDSM diagram of each method
-    - [ ] add residual : concept for optimal 
-    - [ ] add residual : update script with optimal memory access methods and min memory storage
+- [ ] fully verify and optimize add residual on GPU
+    - [x] add_residual : demo add residual for shell element
+    - [x] add residual : XDSM diagram of each method
+    - [x] add residual : concept for optimal memory storage in main method
+    - [x] add residual : update code with optimal memory storage in the main method
+    - [ ] add residual : make a chart showing the amount of temp memory stored at each point in the scripts
     - [ ] add residual : verify strain energy in this method against TACS
     - [ ] add residual : verify energy derivs with complex step
     - [ ] add residual : NVIDIA profiling
+    - [ ] add residual : optimize interp tying strain method
+    - [ ] add residual : optimize compute tying strain method
     - [ ] add residual : add each of these results to overleaf
-- [ ] fully verify add jacobian
+    - [ ] add residual : add these to a new ppt
+- [ ] fully verify and optimize add jacobian on GPU
     - [ ] add jacobian : XDSM diagram of each method
     - [ ] add jacobian : concept for optimal 
     - [ ] add jacobian : verify strain energy in this method against TACS
@@ -45,5 +50,4 @@ for example, compute transpose of matrix in some cases so columns available as r
 
 ## <span style="color:#fe4a49">Completed tasks</span>
 - [x] demo add residual for plane stress triangle element
-- [x] demo add jacobian for plane stress triangle element
-- [x] demo add residual for shell element
+- [x] demo add jacobian for plane stress triangle element   

@@ -1,6 +1,8 @@
 #pragma once
 #include "a2dcore.h"
 #include "quadrature.h"
+#include "shell_utils.h"
+#include "a2dshell.h"
 
 template <typename T, class Quadrature_, int order = 2>
 class ShellQuadBasis {
@@ -288,7 +290,7 @@ class ShellQuadBasis {
 
 // Basis related utils
 template <typename T, class Basis>
-__HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[], T Xdn[]) {
+__HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[]) {
   // the nodal normal vectors are used for director methods
   // fn is 3*num_nodes each node normals
   // Xdn is list of shell frames
@@ -303,81 +305,9 @@ __HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[], T Xdn[]) {
     // compute the normal vector fn at each node
     A2D::VecCrossCore<T>(dXdxi, dXdeta, &fn[3 * inode]);
     T norm = sqrt(A2D::VecDotCore<T, 3>(&fn[3 * inode], &fn[3 * inode]));
-
-    // get Xdn frames
-    Basis::assembleFrame(dXdxi, dXdeta, &fn[3 * inode], &Xdn[9 * inode]);
-
-    // removed these parts to have less temp storage on GPU
-    // ----------------------------------------------------
-    // // be careful this doesn't cause warp divergence on GPU (prob not but
-    // just be careful) if (fnorm) {
-    //     fnorm[inode] = norm;
-    // }
-    // if (Xdn) {
-    //     Basis::template assembleFrame(dXdxi, dXdeta, &fn[3*inode],
-    //     &Xdn[9*inode]);
-    // }
   }
 }
 
-template <typename T, int vars_per_node, class Basis>
-__HOST_DEVICE__ T ShellComputeDispGrad(const T pt[], const T xpts[],
-                                       const T vars[], const T fn[],
-                                       const T d[], const T Xxi[],
-                                       const T Xeta[], const T n0[],
-                                       const T Tmat[], T XdinvT[], T u0x[],
-                                       T u1x[]) {
-  // 75 floats used in this method
-  // up to 217 floats here (but then goes back down to 169 floats after out of
-  // scope)
-
-  // shell normal comp gradients
-  T nxi[3], neta[3];
-  Basis::template interpFieldsGrad<3, 3>(pt, fn, nxi, neta);
-
-  // assemble frames
-  A2D::Vec<T, 3> zero;
-  T Xd[9], Xdz[9];
-  Basis::assembleFrame(Xxi, Xeta, n0, Xd);
-  Basis::assembleFrame(nxi, neta, zero.get_data(), Xdz);
-
-  // invert the Xd transformation
-  T Xdinv[9], tmp[9];
-  A2D::MatInvCore<T, 3>(Xd, Xdinv);
-  T detXd = A2D::MatDetCore<T, 3>(Xd);
-
-  // compute XdinvT = Xdinv*T
-  // T XdinvT[9]; // stored as output
-  A2D::MatMatMultCore3x3<T>(Xdinv, Tmat, XdinvT);
-
-  // compute XdinvzT = -Xdinv*Xdz*Xdinv*T
-  T XdinvzT[9];
-  A2D::MatMatMultCore3x3Scale<T>(-1.0, Xdinv, Xdz, tmp);
-  A2D::MatMatMultCore3x3<T>(tmp, XdinvT, XdinvzT);
-
-  // get the disp gradients
-  T d0[3], d0xi[3], d0eta[3];
-  Basis::template interpFields<3, 3>(pt, d, d0);
-  Basis::template interpFieldsGrad<3, 3>(pt, d, d0xi, d0eta);
-
-  T u0xi[3], u0eta[3];
-  Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, u0xi, u0eta);
-
-  // compute untransformed u0_(xi,eta) derivative
-  Basis::assembleFrame(u0xi, u0eta, d0, u0x);
-
-  // compute u1x = T^{T}*u1d*XdinvT + T^{T}*u0d*XdinvzT
-  Basis::assembleFrame(d0xi, d0eta, zero.get_data(), u1x);
-  A2D::MatMatMultCore3x3<T>(u1x, XdinvT, tmp);
-  A2D::MatMatMultCore3x3Add<T>(u0x, XdinvzT, tmp);
-  A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE>(Tmat, tmp, u1x);
-
-  // compute u0x = T^{T}*u0d*Xdinv*T
-  A2D::MatMatMultCore3x3<T>(u0x, XdinvT, tmp);
-  A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE>(Tmat, tmp, u0x);
-
-  return detXd;
-}
 
 template <typename T, class Basis>
 __HOST_DEVICE__ static void interpTyingStrain(const T pt[], const T ety[],
@@ -490,81 +420,170 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[],
   // zero so do nothing
 }
 
-template <typename T, int vars_per_node, class Basis>
-__HOST_DEVICE__ T ShellComputeDispGradSens(
-    const T pt[], const T xpts[], const T vars[], const T fn[], const T d[],
-    const T Xxi[], const T Xeta[], const T n0[], const T Tmat[], T XdinvT[],
-    const T u0x_bar[], const T u1x_bar[], T res[], T d_bar[]) {
-  // 75 floats used in this method
-  // up to 217 floats here (but then goes back down to 169 floats after out of
-  // scope)
-
-  // shell normal comp gradients
-  T nxi[3], neta[3];
-  Basis::template interpFieldsGrad<3, 3>(pt, fn, nxi, neta);
-
-  // assemble frames
-  A2D::Vec<T, 3> zero;
+template <typename T, int vars_per_node, class Basis, class Data>
+__HOST_DEVICE__ T ShellComputeDispGrad(const T pt[], const T refAxis[], const T xpts[],
+                                       const T vars[], const T fn[],
+                                       const T d[], const T ety[],
+                                       T u0x[], T u1x[], A2D::SymMat<T,3>& e0ty) {
+  
+  // Xd, Xdz frame assembly scope
+  A2D::Mat<T,3,3> Tmat;
   T Xd[9], Xdz[9];
-  Basis::assembleFrame(Xxi, Xeta, n0, Xd);
-  Basis::assembleFrame(nxi, neta, zero.get_data(), Xdz);
-
-  // invert the Xd transformation
-  T Xdinv[9], tmp[9];
-  A2D::MatInvCore<T, 3>(Xd, Xdinv);
-  T detXd = A2D::MatDetCore<T, 3>(Xd);
-
-  // compute XdinvT = Xdinv*T
-  // T XdinvT[9]; // stored as output
-  A2D::MatMatMultCore3x3<T>(Xdinv, Tmat, XdinvT);
-
-  // compute XdinvzT = -Xdinv*Xdz*Xdinv*T
-  T XdinvzT[9];
-  A2D::MatMatMultCore3x3Scale<T>(-1.0, Xdinv, Xdz, tmp);
-  A2D::MatMatMultCore3x3<T>(tmp, XdinvT, XdinvzT);
-
-  // scope for u0d_barT
   {
-    T u0d_barT[9];
+    // interpolation of normals and xpts for disp grads
+    T Xxi[3], Xeta[3], nxi[3], neta[3], n0[3];
+    Basis::template interpFields<3, 3>(pt, fn, n0);
+    Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
+    Basis::template interpFieldsGrad<3, 3>(pt, fn, nxi, neta);
 
-    // reverse u0x_bar => u0d_bar
-    // u0d_bar = T^t * Xdinv^-t * u0x_bar * T
-    // compute the transpose version of u0d_bar to make it easier to extract
-    // values though u0d_bar^t = T^t * u0x_bar^t * XdinvT
-    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
-        Tmat, u0x_bar, tmp);
-    A2D::MatMatMultCore3x3<T>(tmp, XdinvT, u0d_barT);
+    // assemble frames dX/dxi in comp coord
+    A2D::Vec<T, 3> zero;
+    Basis::assembleFrame(Xxi, Xeta, n0, Xd);
+    Basis::assembleFrame(nxi, neta, zero.get_data(), Xdz);
 
-    // also u1x_bar => u0d_bar contribution
-    // u0d_bar^t += T^t * u1x_bar^t * XdinvzT
-    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
-        Tmat, u1x_bar, tmp);
-    A2D::MatMatMultCore3x3<T>(tmp, XdinvzT, u0d_barT);
+    // compute shell trasnform
+    ShellComputeTransform<T, Data>(refAxis, Xxi, Xeta, n0, Tmat.get_data());
+  } // Xd, Xdz frame assembly scope
 
-    // transfer back to u0xi, u0eta, d0 bar
-    // each vec is columns of u0d_bar or rows of u0d_barT (more efficient since
-    // don't need to call extractFrame now)
-    Basis::template interpFieldsTranspose<3, 3>(pt, &u0d_barT[6], d_bar);
-    Basis::template interpFieldsGradTranspose<vars_per_node, 3>(
-        pt, &u0d_barT[0], &u0d_barT[3], res);
-  }  // end of u0d_barT scope
+  { // u0x, u1x frame assembly scope
+    // interp directors
+    T d0[3], d0xi[3], d0eta[3];
+    Basis::template interpFields<3, 3>(pt, d, d0);
+    Basis::template interpFieldsGrad<3, 3>(pt, d, d0xi, d0eta);
 
-  // scope for u1d_barT
+    // interp midplane displacements
+    T u0xi[3], u0eta[3];
+    Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, u0xi, u0eta);
+    
+    // assemble the frames for u0x, u1x in computational space first
+    // then we transfer it to 
+    A2D::Vec<T,3> zero;
+    Basis::assembleFrame(u0xi, u0eta, d0, u0x);
+    Basis::assembleFrame(d0xi, d0eta, zero.get_data(), u1x);
+  } // end of u0x, u1x frame assembly scope
+
+  // u0x, u1x conversion to physical space scope
+  T XdinvT[9], detXd;
   {
-    T u1d_barT[9];
+    // invert the Xd transformation
+    T Xdinv[9], tmp[9];
+    A2D::MatInvCore<T, 3>(Xd, Xdinv);
+    detXd = A2D::MatDetCore<T, 3>(Xd);
 
-    // reverse u1x_bar => u1d_barT
-    // u1d_barT = T^t * u1x_bar^t * XdinvT
-    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
-        Tmat, u1x_bar, tmp);
-    A2D::MatMatMultCore3x3<T>(tmp, XdinvT, u1d_barT);
+    // compute XdinvT = Xdinv*T
+    A2D::MatMatMultCore3x3<T>(Xdinv, Tmat.get_data(), XdinvT);
 
-    // recall u1d = {d0xi, d0eta, zero} with assemble frame
-    // rows of u1d_bar^t equiv to columns of u1d_bar aka d0xi, d0eta
-    // transfer back to basis d_bar
-    Basis::template interpFieldsGradTranspose<3, 3>(pt, &u1d_barT[0],
-                                                    &u1d_barT[3], d_bar);
-  }
+    // compute XdinvzT = -Xdinv*Xdz*Xdinv*T
+    T XdinvzT[9];
+    A2D::MatMatMultCore3x3Scale<T>(-1.0, Xdinv, Xdz, tmp);
+    A2D::MatMatMultCore3x3<T>(tmp, XdinvT, XdinvzT);
+
+    // compute u1x = T^{T}*u1d*XdinvT + T^{T}*u0d*XdinvzT
+    A2D::MatMatMultCore3x3<T>(u1x, XdinvT, tmp);
+    A2D::MatMatMultCore3x3Add<T>(u0x, XdinvzT, tmp);
+    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE>(Tmat.get_data(), tmp, u1x);
+
+    // compute u0x = T^{T}*u0d*Xdinv*T
+    A2D::MatMatMultCore3x3<T>(u0x, XdinvT, tmp);
+    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE>(Tmat.get_data(), tmp, u0x);
+  }// end of u0x, u1x conversion to physical space scope
+
+  { // interp and rotate tying strains scope
+    A2D::SymMat<T,3> gty;
+    interpTyingStrain<T, Basis>(pt, ety, gty.get_data());
+    A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty);
+  } // end of interp and rotate tying strains scope
 
   return detXd;
+}
+
+template <typename T, int vars_per_node, class Basis, class Data>
+__HOST_DEVICE__ void ShellComputeDispGradSens(
+    const T pt[], const T refAxis[], const T xpts[], const T vars[], const T fn[],
+    const T u0x_bar[], const T u1x_bar[], A2D::SymMat<T,3>& e0ty, 
+    T res[], T d_bar[], T ety_bar[]) {
+
+  // Xd, Xdz frame assembly scope
+  A2D::Mat<T,3,3> Tmat;
+  T Xd[9], Xdz[9];
+  {
+    // interpolation of normals and xpts for disp grads
+    T Xxi[3], Xeta[3], nxi[3], neta[3], n0[3];
+    Basis::template interpFields<3, 3>(pt, fn, n0);
+    Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
+    Basis::template interpFieldsGrad<3, 3>(pt, fn, nxi, neta);
+
+    // assemble frames dX/dxi in comp coord
+    A2D::Vec<T, 3> zero;
+    Basis::assembleFrame(Xxi, Xeta, n0, Xd);
+    Basis::assembleFrame(nxi, neta, zero.get_data(), Xdz);
+
+    // compute shell trasnform
+    ShellComputeTransform<T, Data>(refAxis, Xxi, Xeta, n0, Tmat.get_data());
+  } // Xd, Xdz frame assembly scope
+
+  T XdinvT[9];
+  { // scope block for backprop of u0x_bar, u1x_bar to res
+    // invert the Xd transformation
+    T Xdinv[9], tmp[9];
+    A2D::MatInvCore<T, 3>(Xd, Xdinv);
+
+    // compute XdinvT = Xdinv*T
+    A2D::MatMatMultCore3x3<T>(Xdinv, Tmat.get_data(), XdinvT);
+
+    // compute XdinvzT = -Xdinv*Xdz*Xdinv*T
+    T XdinvzT[9];
+    A2D::MatMatMultCore3x3Scale<T>(-1.0, Xdinv, Xdz, tmp);
+    A2D::MatMatMultCore3x3<T>(tmp, XdinvT, XdinvzT);
+
+    // scope for u0d_barT
+    {
+      T u0d_barT[9];
+
+      // reverse u0x_bar => u0d_bar
+      // u0d_bar = T^t * Xdinv^-t * u0x_bar * T
+      // compute the transpose version of u0d_bar to make it easier to extract
+      // values though u0d_bar^t = T^t * u0x_bar^t * XdinvT
+      A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
+          Tmat.get_data(), u0x_bar, tmp);
+      A2D::MatMatMultCore3x3<T>(tmp, XdinvT, u0d_barT);
+
+      // also u1x_bar => u0d_bar contribution
+      // u0d_bar^t += T^t * u1x_bar^t * XdinvzT
+      A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
+          Tmat.get_data(), u1x_bar, tmp);
+      A2D::MatMatMultCore3x3<T>(tmp, XdinvzT, u0d_barT);
+
+      // transfer back to u0xi, u0eta, d0 bar
+      // each vec is columns of u0d_bar or rows of u0d_barT (more efficient since
+      // don't need to call extractFrame now)
+      Basis::template interpFieldsTranspose<3, 3>(pt, &u0d_barT[6], d_bar);
+      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(
+          pt, &u0d_barT[0], &u0d_barT[3], res);
+    }  // end of u0d_barT scope
+
+    // scope for u1d_barT
+    {
+      T u1d_barT[9];
+
+      // reverse u1x_bar => u1d_barT
+      // u1d_barT = T^t * u1x_bar^t * XdinvT
+      A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
+          Tmat.get_data(), u1x_bar, tmp);
+      A2D::MatMatMultCore3x3<T>(tmp, XdinvT, u1d_barT);
+
+      // recall u1d = {d0xi, d0eta, zero} with assemble frame
+      // rows of u1d_bar^t equiv to columns of u1d_bar aka d0xi, d0eta
+      // transfer back to basis d_bar
+      Basis::template interpFieldsGradTranspose<3, 3>(pt, &u1d_barT[0],
+                                                      &u1d_barT[3], d_bar);
+    } // end of u0d_barT scope
+  }
+
+  // backprop interp tying strain sens scope block
+  {
+    A2D::SymMat<T, 3> gty_bar;
+    A2D::SymMatRotateFrame<T, 3>(XdinvT, e0ty, gty_bar);
+    interpTyingStrainTranspose<T, Basis>(pt, gty_bar.get_data(), ety_bar);
+  } // end of interp tying strain sens scope
 }

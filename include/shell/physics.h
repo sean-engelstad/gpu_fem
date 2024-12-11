@@ -1,6 +1,7 @@
 #pragma once
 
 #include "a2dcore.h"
+#include "a2dshell.h"
 
 template <typename T, class Data_>
 class LinearShell {

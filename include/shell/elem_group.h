@@ -7,6 +7,7 @@
 #include "director.h"
 #include "physics.h"
 #include "shell_utils.h"
+#include "a2dshell.h"
 
 template <typename T, class Director_, class Basis_, class Phys_>
 class ShellElementGroup
@@ -34,128 +35,66 @@ class ShellElementGroup
       const Data physData, T res[dof_per_elem]) {
     // keep in mind max of ~256 floats on single thread
 
-    // compute node normals
-    T fn[3 * num_nodes], etn[num_nodes];
-    // scope block for Xdn
-    {
-      T Xdn[9 * num_nodes];
-      // remove temp storage of Xdn etc. (36 floats) to backprop (recompute
-      // there)
-      ShellComputeNodeNormals<T, Basis>(xpts, fn, Xdn);
-
-      // compute drill strains
-      // removed XdinvTn, Tn, u0xn, Ctn temp storage to residual to not go over
-      // thread memory limit (removes 144 floats)
-      ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
-          physData, Xdn, vars, etn);
-    }
-
-    // compute director rates
-    T d[3 * num_nodes];
-    Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
-
-    // compute tying strain
-    T ety[Basis::num_all_tying_points];
-    Phys::template computeTyingStrain<Basis>(xpts, fn, vars, d, ety);
-
-    // end of node points section
-
-    // start of quad pt section (interpolate to quad pt level)
-    // -------------------------------------------------------
-
-    // get quadrature point
-    T pt[2];
+    // data to store in forwards + backwards section
+    T fn[3*num_nodes]; // node normals
+    T pt[2]; // quadrature point
     T weight = Quadrature::getQuadraturePoint(iquad, pt);
 
-    // passive variables in pre-physics
-    A2D::Mat<T, 3, 3> Tmat;
-
-    // inputs to physics (pre-physics section)
-    // -----------------------------
+    // in-out of forward & backwards section
     A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;
     A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
     A2D::ADObj<A2D::Vec<T, 1>> et;
-    T detXd;
+    
+    // forward scope block for strain energy
+    // ------------------------------------------------
+    {  
+      // compute node normals fn
+      ShellComputeNodeNormals<T, Basis>(xpts, fn);
 
-    // scope block for some variables needed for interpolation only (reduces
-    // register pressure)
-    // TODO : see if this is optimal set of variables here
-    // -----------------------------------------------
-    {  // pre-physics scope block level 1
-      T Xxi[3], Xeta[3], nxi[3], neta[3], n0[3];
+      // compute the interpolated drill strain
+      ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
+          pt, physData.refAxis, xpts, vars, fn, et.value().get_data());
 
-      // interpolation of coordinates
-      // Basis::template interpFields<3, 3>(pt, xpts, X.get_data()); // X not
-      // needed directly?
-      Basis::template interpFields<3, 3>(pt, fn, n0);
-      Basis::template interpFields<1, 1>(pt, etn, et.value().get_data());
-      Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
-      Basis::template interpFieldsGrad<3, 3>(pt, fn, nxi, neta);
+      // compute directors
+      T d[3 * num_nodes];
+      Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
 
-      // shell transform (natural or ref axis)
-      ShellComputeTransform<T, Data>(physData.refAxis, Xxi, Xeta, n0,
-                                     Tmat.get_data());
+      // compute tying strain
+      T ety[Basis::num_all_tying_points];
+      Phys::template computeTyingStrain<Basis>(xpts, fn, vars, d, ety);
 
-      {  // pre-physics scope block level 2
+      // compute all shell displacement gradients
+      T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+            pt, physData.refAxis, xpts, vars, fn, d, ety, 
+            u0x.value().get_data(), u1x.value().get_data(), e0ty.value());
+      
+      // get the scale for disp grad sens of the energy
+      T scale = detXd * weight;
 
-        T gty[6];
-        interpTyingStrain<T, Basis>(pt, ety, gty);
+      // compute energy + energy-dispGrad sensitivites with physics
+      Phys::template computeWeakRes<T>(physData, scale, u0x, u1x, e0ty, et);
 
-        A2D::Mat<T, 3, 3> XdinvT;
-        // compute computational disp gradients
-        detXd = ShellComputeDispGrad<T, vars_per_node, Basis>(
-            pt, xpts, vars, fn, d, Xxi, Xeta, n0, Tmat.get_data(),
-            XdinvT.get_data(), u0x.value().get_data(), u1x.value().get_data());
+    } // end of forward scope block for strain energy
+    // ------------------------------------------------
 
-        // now transform the strain
-        // double check calls here
-        A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
-        // now XdinvT goes out of scope
-      }  // end of pre-physics scope level 1
+    // beginning of backprop section to final residual derivatives
+    // -----------------------------------------------------
 
-      // outputs are essentially u0x, u1x, e0ty, et, detXd
-    }  // end of pre-physics scope level 2
+    // compute disp grad sens u0x_bar, u1x_bar, e0ty_bar => res, d_bar, ety_bar
+    T d_bar[3*num_nodes], ety_bar[Basis::num_all_tying_points];
+    ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
+          pt, physData.refAxis, xpts, vars, fn, 
+          u0x.bvalue().get_data(), u1x.bvalue().get_data(), e0ty.bvalue(), 
+          res, d_bar, ety_bar
+    );
 
-    // physics : disp gradients in physical space to strain energy
-    // and then get sensitivities of disp gradients from energy
-    T scale = detXd * weight;
-    Phys::template computeWeakRes<T>(physData, scale, u0x, u1x, e0ty, et);
-
-    // in backpropagation section => try to compute all things on the fly
-    // don't add memory just recompute it
-
-    // transfer from u0x_bar, u1x_bar to res and director d_bar
-    T d_bar[3 * num_nodes];
-    A2D::SymMat<T, 3> gty_bar;  // double check calls here
-    {
-      T Xxi[3], Xeta[3], n0[3];
-      Basis::template interpFields<3, 3>(pt, fn, n0);
-      Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
-
-      A2D::Mat<T, 3, 3> XdinvT;
-      ShellComputeDispGradSens<T, vars_per_node, Basis>(
-          pt, xpts, vars, fn, d, Xxi, Xeta, n0, Tmat.get_data(),
-          XdinvT.get_data(), u0x.bvalue().get_data(), u1x.bvalue().get_data(), res, d_bar);
-
-      // backprop the e0ty_bar to gty_bar
-      // gty_bar^t = XdinvT^t * e0ty_bar^t * XdinvT (but transpose both sides
-      // and can use same forward call)
-      A2D::SymMatRotateFrame<T, 3>(XdinvT, e0ty.bvalue(), gty_bar);
-    }
-
-    // tying strain scope block
-    {
-      // backprop from gty_bar to ety_bar the tying strains full array
-      T ety_bar[Basis::num_all_tying_points];
-      interpTyingStrainTranspose<T, Basis>(pt, gty_bar.get_data(), ety_bar);
-
-      Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar, d_bar,
+    // backprop tying strain sens ety_bar to d_bar and res
+    Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar, d_bar,
                                                    res);
-    }
 
-    // TODO : add back in drill strain sens
+    // drill strain sens
     ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
-          physData, Xdn, vars, etn);
+          pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
 
     // directors back to residuals
     Director::template computeDirectorSens<vars_per_node, num_nodes>(d_bar, fn,
