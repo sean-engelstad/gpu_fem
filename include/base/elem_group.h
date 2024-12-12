@@ -1,6 +1,8 @@
 // base class for ElemGroup
 #pragma once
 
+#include "a2dcore.h"
+
 // include the kernels if on the GPU
 #ifdef USE_GPU
 #include "elem_group.cuh"
@@ -87,6 +89,52 @@ class BaseElementGroup {
             vars_nodes[local_inode] * Phys::vars_per_node + local_idim;
         residual[iglobal] += elem_res[idof];
       }  // end of residual assembly
+
+    }  // num_elements for loop
+  }
+
+  template <class Data>
+  static void add_energy_cpu(int32_t num_elements, int32_t *geo_conn,
+                               int32_t *vars_conn, T *xpts, T *vars,
+                               Data *physData, T& Uenergy) {
+    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+
+    Uenergy = 0.0; // set energy initially to zero
+
+    for (int ielem = 0; ielem < num_elements; ielem++) {
+      T elem_xpts[nxpts_per_elem];
+      T elem_vars[vars_per_elem];
+      T elem_res[vars_per_elem];
+      Data elem_physData = physData[ielem];
+
+      // get values for this element
+      const int32_t *geo_nodes = &geo_conn[ielem * Geo::num_nodes];
+      for (int inode = 0; inode < Geo::num_nodes; inode++) {
+        int32_t global_inode = geo_nodes[inode];
+        for (int idim = 0; idim < Geo::spatial_dim; idim++) {
+          elem_xpts[inode * Geo::spatial_dim + idim] =
+              xpts[global_inode * Geo::spatial_dim + idim];
+        }
+      }
+
+      const int32_t *vars_nodes = &vars_conn[ielem * Basis::num_nodes];
+      for (int inode = 0; inode < Basis::num_nodes; inode++) {
+        int global_inode = vars_nodes[inode];
+        for (int idof = 0; idof < Phys::vars_per_node; idof++) {
+          elem_vars[inode * Phys::vars_per_node + idof] =
+              vars[global_inode * Phys::vars_per_node + idof];
+          elem_res[inode * Phys::vars_per_node + idof] = 0.0;
+        }
+      }
+
+      // done getting all elem variables
+
+      // compute element residual
+      for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
+        Derived::template add_element_quadpt_energy<Data>(iquad, elem_xpts, elem_vars,
+                                          elem_physData, Uenergy);
+      }
 
     }  // num_elements for loop
   }

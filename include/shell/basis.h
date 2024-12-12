@@ -21,15 +21,15 @@ class ShellQuadBasis {
   static constexpr int32_t num_all_tying_points = 4 * mitcLevel2 + mitcLevel3;
 
   __HOST_DEVICE__ static constexpr int32_t num_tying_points(int icomp) {
-    // g11, g12, g13, g22, g23, g33=0 (not included g33)
-    int32_t _num_tying_points[] = {mitcLevel2, mitcLevel3, mitcLevel2,
+    // g11, g22, g12, g23, g13, g33=0 (not included g33)
+    int32_t _num_tying_points[] = {mitcLevel2, mitcLevel2, mitcLevel3,
                                    mitcLevel2, mitcLevel2};
     return _num_tying_points[icomp];
   }
 
   __HOST_DEVICE__ static constexpr int32_t tying_point_offsets(int icomp) {
-    // g11, g12, g13, g22, g23, g33=0 (not included g33)
-    int32_t _tying_point_offsets[] = {0, mitcLevel2, mitcLevel2 + mitcLevel3,
+    // g11, g22, g12, g23, g13, g33=0 (not included g33)
+    int32_t _tying_point_offsets[] = {0, mitcLevel2, 2 * mitcLevel2,
                                       2 * mitcLevel2 + mitcLevel3,
                                       3 * mitcLevel2 + mitcLevel3};
     return _tying_point_offsets[icomp];
@@ -39,7 +39,7 @@ class ShellQuadBasis {
   class LinearQuadGeo {
    public:
     // Required for loading nodal coordinates
-    static constexpr int32_t spatial_dim = 2;
+    static constexpr int32_t spatial_dim = 3;
 
     // Required for knowning number of spatial coordinates per node
     static constexpr int32_t num_nodes = 4;
@@ -217,17 +217,17 @@ class ShellQuadBasis {
     getTyingKnots(red_knots, full_knots);
 
     // use constexpr here to prevent warp divergence
-    if constexpr (icomp == 0 || icomp == 2) {  // g11 or g13
+    if constexpr (icomp == 0 || icomp == 4) {  // g11 or g13
       // 1-dir uses reduced knots for 1j strains
       // also order*(order-1) matrix but order-1 columns
       pt[0] = red_knots[n % (order - 1)];
       pt[1] = full_knots[n / (order - 1)];
-    } else if constexpr (icomp == 3 || icomp == 4) {  // g22 or g23
+    } else if constexpr (icomp == 1 || icomp == 3) {  // g22 or g23
       // 2-dir uses reduced knots for 2j strains
       // also order*(order-1) matrix but order columns
       pt[0] = full_knots[n % order];
       pt[1] = red_knots[n / order];
-    } else if constexpr (icomp == 1) {  // g12
+    } else if constexpr (icomp == 2) {  // g12
       // 1-dir and 2-dir use reduced knots here
       pt[0] = red_knots[n % (order - 1)];
       pt[1] = red_knots[n / (order - 1)];
@@ -255,28 +255,28 @@ class ShellQuadBasis {
           N[0] = nar[i] * nb[j];
         }
       }
-    } else if constexpr (icomp == 1) {
+    } else if constexpr (icomp == 2) {
       // g12
       for (int j = 0; j < order - 1; j++) {
         for (int i = 0; i < order - 1; i++, N++) {
           N[0] = nar[i] * nbr[j];
         }
       }
-    } else if constexpr (icomp == 2) {
+    } else if constexpr (icomp == 4) {
       // g13
       for (int j = 0; j < order; j++) {
         for (int i = 0; i < order - 1; i++, N++) {
           N[0] = nar[i] * nb[j];
         }
       }
-    } else if constexpr (icomp == 3) {
+    } else if constexpr (icomp == 1) {
       // g22
       for (int j = 0; j < order - 1; j++) {
         for (int i = 0; i < order; i++, N++) {
           N[0] = na[i] * nbr[j];
         }
       }
-    } else if constexpr (icomp == 4) {
+    } else if constexpr (icomp == 3) {
       // g23
       for (int j = 0; j < order - 1; j++) {
         for (int i = 0; i < order; i++, N++) {
@@ -302,9 +302,18 @@ __HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[]) {
     T dXdxi[3], dXdeta[3];
     Basis::template interpFieldsGrad<3, 3>(pt, Xpts, dXdxi, dXdeta);
 
+    // for (int j = 0; j < 3; j++) {
+    //   printf("Xxi[%d] = %.8e\n", j, dXdxi[j]);
+    // }
+    // for (int j = 0; j < 3; j++) {
+    //   printf("Xeta[%d] = %.8e\n", j, dXdeta[j]);
+    // }
+
     // compute the normal vector fn at each node
-    A2D::VecCrossCore<T>(dXdxi, dXdeta, &fn[3 * inode]);
-    T norm = sqrt(A2D::VecDotCore<T, 3>(&fn[3 * inode], &fn[3 * inode]));
+    T tmp[3];
+    A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
+    T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
+    A2D::VecScaleCore<T,3>(1.0/norm, tmp, &fn[3 * inode]);
   }
 }
 
@@ -326,37 +335,37 @@ __HOST_DEVICE__ static void interpTyingStrain(const T pt[], const T ety[],
   Basis::template getTyingInterp<0>(pt, N_g11);
   gty[0] = A2D::VecDotCore<T, num_tying_g11>(N_g11, &ety[offset]);
 
-  // get g12 tying strain
-  // ------------------------------------
-  offset = Basis::tying_point_offsets(1);
-  constexpr int num_tying_g12 = Basis::num_tying_points(1);
-  T N_g12[num_tying_g12];
-  Basis::template getTyingInterp<1>(pt, N_g12);
-  gty[1] = A2D::VecDotCore<T, num_tying_g12>(N_g12, &ety[offset]);
-
-  // get g13 tying strain
-  // ------------------------------------
-  offset = Basis::tying_point_offsets(2);
-  constexpr int num_tying_g13 = Basis::num_tying_points(2);
-  T N_g13[num_tying_g13];
-  Basis::template getTyingInterp<2>(pt, N_g13);
-  gty[2] = A2D::VecDotCore<T, num_tying_g13>(N_g13, &ety[offset]);
-
   // get g22 tying strain
   // ------------------------------------
-  offset = Basis::tying_point_offsets(3);
-  constexpr int num_tying_g22 = Basis::num_tying_points(3);
+  offset = Basis::tying_point_offsets(1);
+  constexpr int num_tying_g22 = Basis::num_tying_points(1);
   T N_g22[num_tying_g22];
-  Basis::template getTyingInterp<3>(pt, N_g22);
+  Basis::template getTyingInterp<1>(pt, N_g22);
   gty[3] = A2D::VecDotCore<T, num_tying_g22>(N_g22, &ety[offset]);
+
+  // get g12 tying strain
+  // ------------------------------------
+  offset = Basis::tying_point_offsets(2);
+  constexpr int num_tying_g12 = Basis::num_tying_points(2);
+  T N_g12[num_tying_g12];
+  Basis::template getTyingInterp<2>(pt, N_g12);
+  gty[1] = A2D::VecDotCore<T, num_tying_g12>(N_g12, &ety[offset]);
 
   // get g23 tying strain
   // ------------------------------------
-  offset = Basis::tying_point_offsets(4);
-  constexpr int num_tying_g23 = Basis::num_tying_points(4);
+  offset = Basis::tying_point_offsets(3);
+  constexpr int num_tying_g23 = Basis::num_tying_points(3);
   T N_g23[num_tying_g23];
-  Basis::template getTyingInterp<4>(pt, N_g23);
+  Basis::template getTyingInterp<3>(pt, N_g23);
   gty[4] = A2D::VecDotCore<T, num_tying_g23>(N_g23, &ety[offset]);
+
+  // get g13 tying strain
+  // ------------------------------------
+  offset = Basis::tying_point_offsets(4);
+  constexpr int num_tying_g13 = Basis::num_tying_points(4);
+  T N_g13[num_tying_g13];
+  Basis::template getTyingInterp<4>(pt, N_g13);
+  gty[2] = A2D::VecDotCore<T, num_tying_g13>(N_g13, &ety[offset]);
 
   // get g33 tying strain
   // --------------------

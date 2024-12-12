@@ -20,6 +20,11 @@ A2D_FUNCTION void IsotropicShellStressCore(
   T C[6];
   Data::evalTangentStiffness2D(E, nu, C);
 
+  for (int i = 0; i < 6; i++) {
+    printf("C[%d] = %.8e\n", i, C[i]);
+  }
+  printf("tOffset = %.8e\n", tOffset);
+
   // use scale operations to not have to store A,B,D in memory (more memory efficient)
   // much cheaper than storing full 9x9 ABD matrix
 

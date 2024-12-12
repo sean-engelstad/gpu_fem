@@ -1,16 +1,16 @@
-# <span style="color:#ffffff">TODO</span>
-
+# TODO
+*Type Ctrl+Shift+V to view in VScode*
 ## <span style="color:#5bc0eb">Current Tasks</span>
 Note, writeup what you're doing as you complete each major step in the overleaf.
 
-### <span style="color:#fde74c">Basic Linear Solve on GPU</span>
+### <span style="color:#fde74c">Basic Linear Solve with Shell Element on GPU</span>
 - [ ] fully verify and optimize add residual on GPU
     - [x] add_residual : demo add residual for shell element
     - [x] add residual : XDSM diagram of each method
     - [x] add residual : concept for optimal memory storage in main method
     - [x] add residual : update code with optimal memory storage in the main method
     - [ ] add residual : make a chart showing the amount of temp memory stored at each point in the scripts
-    - [ ] add residual : verify strain energy in this method against TACS
+    - [x] add residual : verify strain energy against TACS
     - [ ] add residual : verify energy derivs with complex step
     - [ ] add residual : NVIDIA profiling
     - [ ] add residual : optimize interp tying strain method
@@ -20,13 +20,16 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 - [ ] fully verify and optimize add jacobian on GPU
     - [ ] add jacobian : XDSM diagram of each method
     - [ ] add jacobian : concept for optimal 
-    - [ ] add jacobian : verify strain energy in this method against TACS
+    - [ ] add jacobian : verify strain energy against TACS
     - [ ] add jacobian : verify energy derivs with complex step
     - [ ] add jacobian : NVIDIA profiling
     - [ ] add jacobian : add each of these results to overleaf
 - [ ] linear solve on the GPU
     - [ ] get sparse element storage fill pattern from Aaron => need to 
     - [ ] get linear solver to work with cuSparse 
+
+### Structural Optimizations in GPU_FEM
+- [ ] add blade stiffened constitutive physics? and associated ksfailure there..
 
 ### Performance Improvements
 - [ ] go through add residual, add jacobian of shell element => compute as many things on the fly as possible store minimum amount of data.

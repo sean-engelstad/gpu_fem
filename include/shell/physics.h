@@ -3,16 +3,45 @@
 #include "a2dcore.h"
 #include "a2dshell.h"
 
-template <typename T, class Data_>
-class LinearShell {
+template <typename T, class Data_, bool isNonlinear = false>
+class IsotropicShell {
  public:
   using Data = Data_;
 
   // u, v, w, thx, thy, thz
   static constexpr int32_t vars_per_node = 6;
   // whether strain is linear or nonlinear (in this case linear)
-  static constexpr A2D::ShellStrainType STRAIN_TYPE =
-      A2D::ShellStrainType::LINEAR;
+  static constexpr A2D::ShellStrainType STRAIN_TYPE = 
+    isNonlinear ? A2D::ShellStrainType::NONLINEAR
+                : A2D::ShellStrainType::LINEAR;
+  
+
+  template <typename T2>
+  __HOST_DEVICE__ static void computeStrainEnergy(
+      const Data physData, const T scale, A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
+      A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x, A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
+      A2D::ADObj<A2D::Vec<T2, 1>> et, A2D::ADObj<T2>& Uelem) {
+    A2D::ADObj<A2D::Vec<T2, 9>> E, S;
+    A2D::ADObj<T2> ES_dot;
+
+    // use stack to compute shell strains, stresses and then to strain energy
+    auto strain_energy_stack = A2D::MakeStack(
+        A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+        A2D::IsotropicShellStress<T, Data>(
+            physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
+        // A2D::VecScale(1.0, E, S), // debugging statement
+        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(0.5 * scale) * ES_dot, Uelem));
+
+    // debug
+    for (int i = 0 ; i < 9 ; i++) {
+      printf("E[%d] = %.8e\n", i, E.value().get_data()[i]);
+    }
+    for (int i = 0 ; i < 9 ; i++) {
+      printf("S[%d] = %.8e\n", i, S.value().get_data()[i]);
+    }
+    printf("Uelem = %.8e\n", Uelem.value());
+
+  }  // end of computeStrainEnergy
 
   // could template by ADType = ADObj or A2DObj later to allow different
   // derivative levels maybe
@@ -67,7 +96,7 @@ class LinearShell {
       ety[offset + itying] = A2D::VecDotCore<T, 3>(Uxi, Xxi);
     }  // end of itying for loop for g11
 
-    // get g12 strain
+    // get g22 strain
     // ------------------------------------
     offset = Basis::tying_point_offsets(1);
     num_tying = Basis::num_tying_points(1);
@@ -81,12 +110,11 @@ class LinearShell {
       Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
       Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
 
-      // store g12 strain
-      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Uxi, Xeta) +
-                                    A2D::VecDotCore<T, 3>(Ueta, Xxi));
-    }  // end of itying for loop for g12
+      // store g22 strain
+      ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
+    }  // end of itying for loop for g22
 
-    // get g13 strain
+    // get g12 strain
     // ------------------------------------
     offset = Basis::tying_point_offsets(2);
     num_tying = Basis::num_tying_points(2);
@@ -100,16 +128,12 @@ class LinearShell {
       Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
       Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
 
-      T d0[3], n0[3];
-      Basis::template interpFields<3, 3>(pt, d, d0);
-      Basis::template interpFields<3, 3>(pt, fn, n0);
+      // store g12 strain
+      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Uxi, Xeta) +
+                                    A2D::VecDotCore<T, 3>(Ueta, Xxi));
+    }  // end of itying for loop for g12
 
-      // store g13 strain
-      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xxi, d0) +
-                                    A2D::VecDotCore<T, 3>(n0, Uxi));
-    }  // end of itying for loop for g13
-
-    // get g22 strain
+    // get g23 strain
     // ------------------------------------
     offset = Basis::tying_point_offsets(3);
     num_tying = Basis::num_tying_points(3);
@@ -123,11 +147,16 @@ class LinearShell {
       Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
       Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
 
-      // store g22 strain
-      ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
-    }  // end of itying for loop for g22
+      T d0[3], n0[3];
+      Basis::template interpFields<3, 3>(pt, d, d0);
+      Basis::template interpFields<3, 3>(pt, fn, n0);
 
-    // get g23 strain
+      // store g23 strain
+      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xeta, d0) +
+                                    A2D::VecDotCore<T, 3>(n0, Ueta));
+    }  // end of itying for loop for g23
+
+    // get g13 strain
     // ------------------------------------
     offset = Basis::tying_point_offsets(4);
     num_tying = Basis::num_tying_points(4);
@@ -145,9 +174,9 @@ class LinearShell {
       Basis::template interpFields<3, 3>(pt, d, d0);
       Basis::template interpFields<3, 3>(pt, fn, n0);
 
-      // store g23 strain
-      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xeta, d0) +
-                                    A2D::VecDotCore<T, 3>(n0, Ueta));
+      // store g13 strain
+      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xxi, d0) +
+                                    A2D::VecDotCore<T, 3>(n0, Uxi));
     }  // end of itying for loop for g13
 
   }  // end of computeTyingStrain
@@ -181,6 +210,26 @@ class LinearShell {
                                                 res);
 
     }  // end of itying for loop for g11
+
+    // get g22 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(1);
+    num_tying = Basis::num_tying_points(1);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+      T pt[2];
+      Basis::template getTyingPoint<1>(itying, pt);
+      //   ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
+
+      T Xxi[3], Xeta[3];
+      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+
+      T Ueta_bar[3];
+      A2D::Vec<T, 3> zero;
+      A2D::VecAddCore<T, 3>(ety_bar[offset + itying], Xeta, Ueta_bar);
+      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, zero.get_data(), Ueta_bar, res);
+
+    }  // end of itying for loop for g22
 
     // get g12 strain
     // ------------------------------------
@@ -224,26 +273,6 @@ class LinearShell {
       Basis::template interpFieldsTranspose<3,3>(pt, d0_bar, d_bar);
 
     }  // end of itying for loop for g13
-
-    // get g22 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(3);
-    num_tying = Basis::num_tying_points(3);
-#pragma unroll  // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++) {
-      T pt[2];
-      Basis::template getTyingPoint<3>(itying, pt);
-      //   ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
-
-      T Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-
-      T Ueta_bar[3];
-      A2D::Vec<T, 3> zero;
-      A2D::VecAddCore<T, 3>(ety_bar[offset + itying], Xeta, Ueta_bar);
-      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, zero.get_data(), Ueta_bar, res);
-
-    }  // end of itying for loop for g22
 
     // get g23 strain
     // ------------------------------------

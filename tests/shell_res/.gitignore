@@ -1,3 +1,6 @@
 *.tex
 *.tex
 *.tikz
+*.o
+*.x
+*.out

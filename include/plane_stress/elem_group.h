@@ -21,6 +21,15 @@ class PlaneStressElementGroup : public BaseElementGroup<PlaneStressElementGroup<
   static constexpr int32_t dof_per_elem = Base::dof_per_elem;
   static constexpr int32_t num_quad_pts = Base::num_quad_pts;
 
+// TODO : way to make this more general if num_quad_pts is not a multiple of 3?
+// some if constexpr stuff on type of Basis?
+#ifdef USE_GPU
+  static constexpr dim3 energy_block(32, num_quad_pts, 1);
+  static constexpr dim3 res_block(32, num_quad_pts, 1);
+  static constexpr dim3 jac_block(8, dof_per_elem, num_quad_pts);
+#endif // USE_GPU
+
+
   template <class Data>
   __HOST_DEVICE__ static void add_element_quadpt_residual(
       const int iquad, const T xpts[xpts_per_elem], const T vars[dof_per_elem],
@@ -143,70 +152,6 @@ class PlaneStressElementGroup : public BaseElementGroup<PlaneStressElementGroup<
         pt, dUdxi_bar.get_data(), res);
     Basis::template addInterpParamGradientSens<Phys::vars_per_node>(
         pt, dUdxi_bar_dot.get_data(), matCol);
-  }
-
-  // __device__ void element_jacobian(const T* xpts, const T* vars, T* jac) {}
-
-  // template <int32_t elems_per_block = 1>
-  template <class Data>
-  static void add_residual(int32_t num_elements, int32_t *geo_conn,
-                           int32_t *vars_conn, T *xpts, T *vars, Data *physData,
-                           T *residual) {
-
-#ifdef USE_GPU
-    constexpr int elems_per_block = 32;
-    dim3 block(elems_per_block, num_quad_pts);
-    dim3 one_element_block(1, num_quad_pts);
-
-    int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
-    dim3 grid(nblocks);
-
-    // constexpr int elems_per_block = 1;
-
-    // add_residual_gpu<T, ElemGroup, elems_per_block> <<<grid,
-    // block>>>(num_elements, geo_conn, vars_conn, X, soln, residual);
-    add_residual_gpu<T, ElemGroup, Data, elems_per_block>
-        <<<1, one_element_block>>>(num_elements, geo_conn, vars_conn, xpts,
-                                   vars, physData, residual);
-
-    gpuErrchk(cudaDeviceSynchronize());
-
-#else  // CPU data
-    // maybe a way to call add_residual_kernel as same method on CPU
-    // with elems_per_block = 1
-    add_residual_cpu<Data>(num_elements, geo_conn, vars_conn, xpts, vars,
-                           physData, residual);
-#endif
-  }
-
-  template <class Data>
-  static void add_jacobian(int32_t num_vars_nodes, int32_t num_elements,
-                           int32_t *geo_conn, int32_t *vars_conn, T *xpts,
-                           T *vars, Data *physData, T *residual, T *mat) {
-
-#ifdef USE_GPU
-    const int elems_per_block = 8;
-    dim3 block(elems_per_block, dof_per_elem, num_quad_pts);
-
-    dim3 one_element_block(1, dof_per_elem, num_quad_pts);
-
-    int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
-    dim3 grid(nblocks);
-
-    // add_residual_gpu<T, ElemGroup, elems_per_block> <<<grid,
-    // block>>>(num_elements, geo_conn, vars_conn, X, soln, residual);
-    add_jacobian_gpu<T, ElemGroup, Data, 1><<<1, one_element_block>>>(
-        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData,
-        residual, mat);
-
-    gpuErrchk(cudaDeviceSynchronize());
-
-#else  // CPU data
-    // maybe a way to call add_residual_kernel as same method on CPU
-    // with elems_per_block = 1
-    add_jacobian_cpu<Data>(num_vars_nodes, num_elements, geo_conn, vars_conn,
-                           xpts, vars, physData, residual, mat);
-#endif
   }
 
 };  // end of ElementGroup class

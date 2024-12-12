@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "cuda_utils.h"
+#include "base/elem_group.h"
 
 template <typename T, typename ElemGroup>
 class ElementAssembler {
@@ -99,14 +100,38 @@ class ElementAssembler {
   }
 
   //  template <class ExecParameters>
+  void add_energy(T& Uenergy) {
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+    dim3 block = ElemGroup::energy_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+
+    add_energy_gpu<T, ElemGroup, elems_per_block> <<<grid,
+    block>>>(num_elements, d_geo_conn, d_vars_conn, d_X, d_soln, Uenergy);
+
+    gpuErrchk(cudaDeviceSynchronize());
+#else   // USE_GPU
+    ElemGroup::template add_energy_cpu<Data>(num_elements, h_geo_conn, h_vars_conn,
+                                          h_xpts, h_vars, h_physData, Uenergy);
+#endif  // USE_GPU
+  };
+
+  //  template <class ExecParameters>
   void add_residual(T *res) {
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
-    ElemGroup::template add_residual<Data>(
-        num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData, res);
+    dim3 block = ElemGroup::res_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+
+    add_residual_gpu<T, ElemGroup, elems_per_block> <<<grid,
+    block>>>(num_elements, geo_conn, vars_conn, d_xpts, d_physData, res);
+
+    gpuErrchk(cudaDeviceSynchronize());
 #else   // USE_GPU
-    ElemGroup::template add_residual<Data>(
-        num_elements, h_geo_conn, h_vars_conn, h_xpts, h_vars, h_physData, res);
+    ElemGroup::template add_residual_cpu<Data>(num_elements, h_geo_conn, h_vars_conn,
+                                          h_xpts, h_vars, h_physData, res);
 #endif  // USE_GPU
   };
 
@@ -114,14 +139,23 @@ class ElementAssembler {
   void add_jacobian(T *res, T *mat) {
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
-    ElemGroup::template add_jacobian<Data>(num_vars_nodes, num_elements,
-                                           d_geo_conn, d_vars_conn, d_xpts,
-                                           d_vars, d_physData, res, mat);
-#else   // USE_GPU
-    ElemGroup::template add_jacobian<Data>(num_vars_nodes, num_elements,
-                                           h_geo_conn, h_vars_conn, h_xpts,
-                                           h_vars, h_physData, res, mat);
-#endif  // USE_GPU
+
+    dim3 block = ElemGroup::jac_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+
+    add_residual_gpu<T, ElemGroup, elems_per_block> <<<grid,
+    block>>>(num_vars_nodes, num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData,
+        res, mat);
+
+    gpuErrchk(cudaDeviceSynchronize());
+
+#else  // CPU data
+    // maybe a way to call add_residual_kernel as same method on CPU
+    // with elems_per_block = 1
+    ElemGroup::template add_jacobian_cpu<Data>(num_vars_nodes, num_elements, h_geo_conn, h_vars_conn,
+                           h_xpts, h_vars, h_physData, res, mat);
+#endif
   };
 
  private:

@@ -18,9 +18,9 @@ __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], c
     }
 
     // remove normal component from t1
-    A2D::Vec<T,3> temp, t1hat, d;
-    A2D::VecCross(nhat, t1, d);
-    A2D::VecSum(1.0, t1, -1.0, d, temp);
+    A2D::Vec<T,3> temp, t1hat;
+    T d = A2D::VecDotCore<T,3>(nhat.get_data(), t1.get_data());
+    A2D::VecSum(1.0, t1, -d, nhat, temp);
     A2D::VecNormalize(temp, t1hat);
 
     // compute t2 by cross product of normalized unit vectors
@@ -29,10 +29,9 @@ __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], c
 
     // save values in Tmat 3x3 matrix
     for (int i = 0; i < 3; i++) {
-        T *_tmat = &Tmat[3*i];
-        _tmat[0] = t1hat[i];
-        _tmat[1] = t2hat[i];
-        _tmat[2] = nhat[i];
+        Tmat[3*i] = t1hat[i];
+        Tmat[3*i+1] = t2hat[i];
+        Tmat[3*i+2] = nhat[i];
     }
 }
 
@@ -57,7 +56,6 @@ __HOST_DEVICE__ void ShellComputeDrillStrain(
             Basis::assembleFrame(dXdxi, dXdeta, &fn[3*inode], Xd);
             
             // compute the shell transform based on the ref axis in Data object
-            T Tmat[9];
             ShellComputeTransform<T, Data>(refAxis, dXdxi, dXdeta, &fn[3*inode], Tmat);
         } // end of Xd and shell transform scope
 

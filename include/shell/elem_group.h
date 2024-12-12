@@ -29,6 +29,94 @@ class ShellElementGroup
   static constexpr int32_t num_nodes = Basis::num_nodes;
   static constexpr int32_t vars_per_node = Phys::vars_per_node;
 
+// TODO : way to make this more general if num_quad_pts is not a multiple of 3?
+// some if constexpr stuff on type of Basis?
+#ifdef USE_GPU
+  static constexpr dim3 energy_block(32, num_quad_pts, 1);
+  static constexpr dim3 res_block(32, num_quad_pts, 1);
+  static constexpr dim3 jac_block(8, dof_per_elem, num_quad_pts);
+#endif // USE_GPU
+
+  template <class Data>
+  __HOST_DEVICE__ static void add_element_quadpt_energy(
+      const int iquad, const T xpts[xpts_per_elem], const T vars[dof_per_elem],
+      const Data physData, T& Uelem) {
+    // keep in mind max of ~256 floats on single thread
+
+    // data to store in forwards + backwards section
+    T fn[3*num_nodes]; // node normals
+    T pt[2]; // quadrature point
+    T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+    // in-out of forward & backwards section
+    A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;
+    A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
+    A2D::ADObj<A2D::Vec<T, 1>> et;
+    A2D::ADObj<T> _Uelem;
+    
+    // forward scope block for strain energy
+    // ------------------------------------------------
+    {  
+      // compute node normals fn
+      ShellComputeNodeNormals<T, Basis>(xpts, fn);
+
+      // compute the interpolated drill strain
+      ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
+          pt, physData.refAxis, xpts, vars, fn, et.value().get_data());
+
+      // compute directors
+      T d[3 * num_nodes];
+      Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
+      if (iquad == 0) {
+        for (int i = 0; i < 12; i++) {
+          printf("d[%d] = %.8e\n", i, d[i]);
+        }
+      }
+
+      // compute tying strain
+      T ety[Basis::num_all_tying_points];
+      Phys::template computeTyingStrain<Basis>(xpts, fn, vars, d, ety);
+
+      if (iquad == 0) {
+        for (int i = 0; i < 9; i++) {
+          printf("ety[%d] = %.8e\n", i, ety[i]);
+        }
+      }
+
+      if (iquad == 0) {
+        printf("et = %.8e\n", et.value().get_data()[0]);
+      }
+
+      // compute all shell displacement gradients
+      T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+            pt, physData.refAxis, xpts, vars, fn, d, ety, 
+            u0x.value().get_data(), u1x.value().get_data(), e0ty.value());
+      
+      // get the scale for disp grad sens of the energy
+      T scale = detXd * weight;
+
+      if (iquad == 0) {
+        for (int i = 0; i < 9; i++) {
+          printf("u0x[%d] = %.8e\n", i, u0x.value().get_data()[i]);
+        }
+        for (int i = 0; i < 9; i++) {
+          printf("u1x[%d] = %.8e\n", i, u1x.value().get_data()[i]);
+        }
+        for (int i = 0; i < 6; i++) {
+          printf("e0ty[%d] = %.8e\n", i, e0ty.value().get_data()[i]);
+        }
+      }
+
+      // compute energy + energy-dispGrad sensitivites with physics
+      Phys::template computeStrainEnergy<T>(physData, scale, u0x, u1x, e0ty, et, _Uelem);
+
+    } // end of forward scope block for strain energy
+    // ------------------------------------------------
+
+    Uelem += _Uelem.value();
+  }
+
   template <class Data>
   __HOST_DEVICE__ static void add_element_quadpt_residual(
       const int iquad, const T xpts[xpts_per_elem], const T vars[dof_per_elem],
@@ -111,33 +199,4 @@ class ShellElementGroup
       T matCol[dof_per_elem]) {
     // TODO
   }  // add_element_quadpt_jacobian_col
-
-  // template <int32_t elems_per_block = 1>
-  template <class Data>
-  static void add_residual(int32_t num_elements, int32_t *geo_conn,
-                           int32_t *vars_conn, T *xpts, T *vars, Data *physData,
-                           T *residual) {
-#ifdef USE_GPU
-    constexpr int elems_per_block = 32;
-    dim3 block(elems_per_block, num_quad_pts);
-    dim3 one_element_block(1, num_quad_pts);
-
-    int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
-    dim3 grid(nblocks);
-
-    // constexpr int elems_per_block = 1;
-
-    // add_residual_gpu<T, ElemGroup, elems_per_block> <<<grid,
-    // block>>>(num_elements, geo_conn, vars_conn, X, soln, residual);
-    add_residual_gpu<T, ElemGroup, Data, elems_per_block>
-        <<<1, one_element_block>>>(num_elements, geo_conn, vars_conn, xpts,
-                                   vars, physData, residual);
-
-    gpuErrchk(cudaDeviceSynchronize());
-
-#else  // CPU data
-    Base::template add_residual_cpu<Data>(num_elements, geo_conn, vars_conn,
-                                          xpts, vars, physData, residual);
-#endif
-  }  // end of add_residual method
 };
