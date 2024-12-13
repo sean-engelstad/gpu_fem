@@ -20,10 +20,10 @@ A2D_FUNCTION void IsotropicShellStressCore(
   T C[6];
   Data::evalTangentStiffness2D(E, nu, C);
 
-  for (int i = 0; i < 6; i++) {
-    printf("C[%d] = %.8e\n", i, C[i]);
-  }
-  printf("tOffset = %.8e\n", tOffset);
+  // for (int i = 0; i < 6; i++) {
+  //   printf("C[%d] = %.8e\n", i, C[i]);
+  // }
+  // printf("tOffset = %.8e\n", tOffset);
 
   // use scale operations to not have to store A,B,D in memory (more memory efficient)
   // much cheaper than storing full 9x9 ABD matrix
@@ -31,14 +31,14 @@ A2D_FUNCTION void IsotropicShellStressCore(
   // Nij = A * Eij; A = C * thick
   A2D::SymMatVecCoreScale3x3<T,false>(thick, C, strain, stress);
   // Nij += B * kij; B = C * -thick * tOffset
-  A2D::SymMatVecCoreScale3x3<T,true>(-thick * tOffset, C, &strain[3], stress);
+  A2D::SymMatVecCoreScale3x3<T,true>(-thick * thick * tOffset, C, &strain[3], stress);
   
   // Mij = B * Eij; B = C * -thick tOffset
-  A2D::SymMatVecCoreScale3x3<T,false>(-thick * tOffset, C, strain, &stress[3]);
+  A2D::SymMatVecCoreScale3x3<T,false>(-thick * thick * tOffset, C, strain, &stress[3]);
   // Mij += D * kij; D = t^3/12 * A + tOffset^2 * t^2 * A (the units on second term don't seem correct; error in TACS?)
   T I = thick*thick*thick/12.0;
   A2D::SymMatVecCoreScale3x3<T,true>(I, C, &strain[3], &stress[3]);
-  A2D::SymMatVecCoreScale3x3<T,true>(thick*thick*tOffset*tOffset, C, &strain[3], &stress[3]);
+  A2D::SymMatVecCoreScale3x3<T,true>(thick*thick*thick*tOffset*tOffset, C, &strain[3], &stress[3]);
 
   // transverse shear moments M13, M23
   T As = Data::transverseShearCorrectionFactor * thick * C[5];
@@ -70,14 +70,14 @@ A2D_FUNCTION void IsotropicShellStressReverseCore(
   // Nij = A * Eij; A = C * thick
   A2D::SymMatVecCoreScale3x3<T,false>(thick, C, stressb, strainb);
   // Nij += B * kij; B = C * -thick * tOffset
-  A2D::SymMatVecCoreScale3x3<T,true>(-thick * tOffset, C, stressb, &strainb[3]);
+  A2D::SymMatVecCoreScale3x3<T,false>(-thick * thick * tOffset, C, stressb, &strainb[3]);
   
   // Mij = B * Eij; B = C * -thick tOffset
-  A2D::SymMatVecCoreScale3x3<T,false>(-thick * tOffset, C, &stressb[3], strainb);
+  A2D::SymMatVecCoreScale3x3<T,true>(-thick * thick * tOffset, C, &stressb[3], strainb);
   // Mij += D * kij; D = t^3/12 * A + tOffset^2 * t^2 * A (the units on second term don't seem correct; error in TACS?)
   T I = thick*thick*thick/12.0;
   A2D::SymMatVecCoreScale3x3<T,true>(I, C, &stressb[3], &strainb[3]);
-  A2D::SymMatVecCoreScale3x3<T,true>(thick*thick*tOffset*tOffset, C, &stressb[3], &strainb[3]);
+  A2D::SymMatVecCoreScale3x3<T,true>(thick*thick*thick*tOffset*tOffset, C, &stressb[3], &strainb[3]);
 
   // transverse shear moments M13, M23
   T As = Data::transverseShearCorrectionFactor * thick * C[5];

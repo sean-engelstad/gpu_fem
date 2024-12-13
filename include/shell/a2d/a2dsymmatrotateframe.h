@@ -248,6 +248,47 @@ A2D_FUNCTION void SymMatRotateFrame(const Mat<T, N, N>& A,
   SymMatMatSquareMult<T, N>(get_data(Ctemp), get_data(A), get_data(C));
 }
 
+// template <typename T, int N>
+// A2D_FUNCTION void SymMatRotateFrameReverse(const Mat<T, N, N>& A,
+//                                     const SymMat<T, N>& C_bar, SymMat<T, N>& B_bar) {
+//   Mat<T, N, N> temp;
+//   // temp = A * Cbar
+//   SymMatMatSquareMult<T, N, false, true, false>(get_data(A), get_data(C_bar), get_data(temp));
+//   // Bbar = temp * A^T
+//   SymMatMatRightTrSquareMult<T, N, false, false, true>(get_data(temp), get_data(A), get_data(B_bar));
+// }
+
+// TODO : fix one above later and get rid of this guy
+template <typename T1>
+A2D_FUNCTION static inline void SymMat3x3RotateFrameReverse(const T1 T[],
+                                                const T1 dA[],
+                                                T1 dS[]) {
+  T1 dW[9];
+  dW[0] = T[0] * dA[0];
+  dW[1] = T[0] * dA[1] + T[1] * dA[3];
+  dW[2] = T[0] * dA[2] + T[1] * dA[4] + T[2] * dA[5];
+
+  dW[3] = T[3] * dA[0];
+  dW[4] = T[3] * dA[1] + T[4] * dA[3];
+  dW[5] = T[3] * dA[2] + T[4] * dA[4] + T[5] * dA[5];
+
+  dW[6] = T[6] * dA[0];
+  dW[7] = T[6] * dA[1] + T[7] * dA[3];
+  dW[8] = T[6] * dA[2] + T[7] * dA[4] + T[8] * dA[5];
+
+  dS[0] = (T[0] * dW[0] + T[1] * dW[1] + T[2] * dW[2]);
+  dS[1] = (T[3] * dW[0] + T[4] * dW[1] + T[5] * dW[2] + T[0] * dW[3] +
+           T[1] * dW[4] + T[2] * dW[5]);
+  dS[2] = (T[6] * dW[0] + T[7] * dW[1] + T[8] * dW[2] + T[0] * dW[6] +
+           T[1] * dW[7] + T[2] * dW[8]);
+
+  dS[3] = (T[3] * dW[3] + T[4] * dW[4] + T[5] * dW[5]);
+  dS[4] = (T[6] * dW[3] + T[7] * dW[4] + T[8] * dW[5] + T[3] * dW[6] +
+           T[4] * dW[7] + T[5] * dW[8]);
+
+  dS[5] = (T[6] * dW[6] + T[7] * dW[7] + T[8] * dW[8]);
+}
+
 template <class Atype, class Btype, class Ctype>
 class SymMatRotateFrameExpr {
  public:

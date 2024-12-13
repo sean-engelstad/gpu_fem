@@ -302,13 +302,6 @@ __HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[]) {
     T dXdxi[3], dXdeta[3];
     Basis::template interpFieldsGrad<3, 3>(pt, Xpts, dXdxi, dXdeta);
 
-    // for (int j = 0; j < 3; j++) {
-    //   printf("Xxi[%d] = %.8e\n", j, dXdxi[j]);
-    // }
-    // for (int j = 0; j < 3; j++) {
-    //   printf("Xeta[%d] = %.8e\n", j, dXdeta[j]);
-    // }
-
     // compute the normal vector fn at each node
     T tmp[3];
     A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
@@ -326,6 +319,8 @@ __HOST_DEVICE__ static void interpTyingStrain(const T pt[], const T ety[],
   // interp the final tying strain {g11, g12, g13, g22, g23} at this point with
   // g33 = 0 also
   int32_t offset;
+
+  // probably can add a few scope blocks to make more efficient on the GPU
 
   // get g11 tying strain
   // ------------------------------------
@@ -377,9 +372,9 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[],
                                                        const T gty_bar[],
                                                        T ety_bar[]) {
   // given quadpt pt[] and ety[] the tying strains at each tying point from MITC
-  // in order {g11-n1, g11-n2, ..., g11-nN, g12-n1, g12-n2,...}
-  // interp the final tying strain {g11, g12, g13, g22, g23} at this point with
-  // g33 = 0 also
+  // in order {g11-n1, g11-n2, ..., g11-nN, g22-n1, g22-n2,...}
+  // interp the final tying strain {g11, g22, g12, g23, g13} in ety_bar storage to 
+  // with symMat storage also
   int32_t offset;
 
   // TODO : is this really the most efficient way to do this? Profile on GPU
@@ -392,37 +387,37 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[],
   Basis::template getTyingInterp<0>(pt, N_g11);
   A2D::VecAddCore<T, num_tying_g11>(gty_bar[0], N_g11, &ety_bar[offset]);
 
-  // get g12 tying strain
-  // ------------------------------------
-  offset = Basis::tying_point_offsets(1);
-  constexpr int num_tying_g12 = Basis::num_tying_points(1);
-  T N_g12[num_tying_g12];
-  Basis::template getTyingInterp<1>(pt, N_g12);
-  A2D::VecAddCore<T, num_tying_g11>(gty_bar[1], N_g12, &ety_bar[offset]);
-
-  // get g13 tying strain
-  // ------------------------------------
-  offset = Basis::tying_point_offsets(2);
-  constexpr int num_tying_g13 = Basis::num_tying_points(2);
-  T N_g13[num_tying_g13];
-  Basis::template getTyingInterp<2>(pt, N_g13);
-  A2D::VecAddCore<T, num_tying_g11>(gty_bar[2], N_g13, &ety_bar[offset]);
-
   // get g22 tying strain
   // ------------------------------------
-  offset = Basis::tying_point_offsets(3);
-  constexpr int num_tying_g22 = Basis::num_tying_points(3);
+  offset = Basis::tying_point_offsets(1);
+  constexpr int num_tying_g22 = Basis::num_tying_points(1);
   T N_g22[num_tying_g22];
-  Basis::template getTyingInterp<3>(pt, N_g22);
-  A2D::VecAddCore<T, num_tying_g11>(gty_bar[3], N_g22, &ety_bar[offset]);
+  Basis::template getTyingInterp<1>(pt, N_g22);
+  A2D::VecAddCore<T, num_tying_g22>(gty_bar[3], N_g22, &ety_bar[offset]);
+
+  // get g12 tying strain
+  // ------------------------------------
+  offset = Basis::tying_point_offsets(2);
+  constexpr int num_tying_g12 = Basis::num_tying_points(2);
+  T N_g12[num_tying_g12];
+  Basis::template getTyingInterp<2>(pt, N_g12);
+  A2D::VecAddCore<T, num_tying_g12>(gty_bar[1], N_g12, &ety_bar[offset]);
 
   // get g23 tying strain
   // ------------------------------------
-  offset = Basis::tying_point_offsets(4);
-  constexpr int num_tying_g23 = Basis::num_tying_points(4);
+  offset = Basis::tying_point_offsets(3);
+  constexpr int num_tying_g23 = Basis::num_tying_points(3);
   T N_g23[num_tying_g23];
-  Basis::template getTyingInterp<4>(pt, N_g23);
-  A2D::VecAddCore<T, num_tying_g11>(gty_bar[4], N_g23, &ety_bar[offset]);
+  Basis::template getTyingInterp<3>(pt, N_g23);
+  A2D::VecAddCore<T, num_tying_g23>(gty_bar[4], N_g23, &ety_bar[offset]);
+
+  // get g13 tying strain
+  // ------------------------------------
+  offset = Basis::tying_point_offsets(4);
+  constexpr int num_tying_g13 = Basis::num_tying_points(4);
+  T N_g13[num_tying_g13];
+  Basis::template getTyingInterp<4>(pt, N_g13);
+  A2D::VecAddCore<T, num_tying_g13>(gty_bar[2], N_g13, &ety_bar[offset]);
 
   // get g33 tying strain
   // --------------------
@@ -509,8 +504,12 @@ __HOST_DEVICE__ T ShellComputeDispGrad(const T pt[], const T refAxis[], const T 
 template <typename T, int vars_per_node, class Basis, class Data>
 __HOST_DEVICE__ void ShellComputeDispGradSens(
     const T pt[], const T refAxis[], const T xpts[], const T vars[], const T fn[],
-    const T u0x_bar[], const T u1x_bar[], A2D::SymMat<T,3>& e0ty, 
+    const T u0x_bar[], const T u1x_bar[], A2D::SymMat<T,3>& e0ty_bar, 
     T res[], T d_bar[], T ety_bar[]) {
+
+  // define some custom matrix multiplies
+  constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
+  constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
 
   // Xd, Xdz frame assembly scope
   A2D::Mat<T,3,3> Tmat;
@@ -530,7 +529,7 @@ __HOST_DEVICE__ void ShellComputeDispGradSens(
     // compute shell trasnform
     ShellComputeTransform<T, Data>(refAxis, Xxi, Xeta, n0, Tmat.get_data());
   } // Xd, Xdz frame assembly scope
-
+  
   T XdinvT[9];
   { // scope block for backprop of u0x_bar, u1x_bar to res
     // invert the Xd transformation
@@ -549,23 +548,15 @@ __HOST_DEVICE__ void ShellComputeDispGradSens(
     {
       T u0d_barT[9];
 
-      // reverse u0x_bar => u0d_bar
-      // u0d_bar = T^t * Xdinv^-t * u0x_bar * T
-      // compute the transpose version of u0d_bar to make it easier to extract
-      // values though u0d_bar^t = T^t * u0x_bar^t * XdinvT
-      A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
-          Tmat.get_data(), u0x_bar, tmp);
-      A2D::MatMatMultCore3x3<T>(tmp, XdinvT, u0d_barT);
+      // u0d_bar^t = XdinvT * u0x_bar^t * T^t
+      A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u0x_bar, tmp);
+      A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat.get_data(), u0d_barT);
 
-      // also u1x_bar => u0d_bar contribution
-      // u0d_bar^t += T^t * u1x_bar^t * XdinvzT
-      A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
-          Tmat.get_data(), u1x_bar, tmp);
-      A2D::MatMatMultCore3x3<T>(tmp, XdinvzT, u0d_barT);
+      // u0d_bar^t += XdinvzT * u1x_bar^t * T^t
+      A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvzT, u1x_bar, tmp);
+      A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat.get_data(), u0d_barT);
 
-      // transfer back to u0xi, u0eta, d0 bar
-      // each vec is columns of u0d_bar or rows of u0d_barT (more efficient since
-      // don't need to call extractFrame now)
+      // transfer back to u0xi, u0eta, d0 bar (with transpose so columns now available in rows)
       Basis::template interpFieldsTranspose<3, 3>(pt, &u0d_barT[6], d_bar);
       Basis::template interpFieldsGradTranspose<vars_per_node, 3>(
           pt, &u0d_barT[0], &u0d_barT[3], res);
@@ -575,15 +566,11 @@ __HOST_DEVICE__ void ShellComputeDispGradSens(
     {
       T u1d_barT[9];
 
-      // reverse u1x_bar => u1d_barT
-      // u1d_barT = T^t * u1x_bar^t * XdinvT
-      A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::TRANSPOSE>(
-          Tmat.get_data(), u1x_bar, tmp);
-      A2D::MatMatMultCore3x3<T>(tmp, XdinvT, u1d_barT);
+      // u1d_barT^t = XdinvT * u1x_bar^t * T^t
+      A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u1x_bar, tmp);
+      A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat.get_data(), u1d_barT);
 
-      // recall u1d = {d0xi, d0eta, zero} with assemble frame
-      // rows of u1d_bar^t equiv to columns of u1d_bar aka d0xi, d0eta
-      // transfer back to basis d_bar
+      // prev : cols of u1d are {d0xi, d0eta, zero} => extract from rows of u1d_bar^T => d_bar
       Basis::template interpFieldsGradTranspose<3, 3>(pt, &u1d_barT[0],
                                                       &u1d_barT[3], d_bar);
     } // end of u0d_barT scope
@@ -592,7 +579,7 @@ __HOST_DEVICE__ void ShellComputeDispGradSens(
   // backprop interp tying strain sens scope block
   {
     A2D::SymMat<T, 3> gty_bar;
-    A2D::SymMatRotateFrame<T, 3>(XdinvT, e0ty, gty_bar);
+    A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty_bar.get_data(), gty_bar.get_data());
     interpTyingStrainTranspose<T, Basis>(pt, gty_bar.get_data(), ety_bar);
   } // end of interp tying strain sens scope
 }

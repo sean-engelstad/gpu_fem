@@ -47,6 +47,11 @@ int main() {
     memset(vars, 0.0, num_vars * sizeof(T));
     T *dvars = new T[num_vars];
     memset(dvars, 0.0, num_vars * sizeof(T));
+    T *ddvars = new T[num_vars];
+    memset(ddvars, 0.0, num_vars * sizeof(T));
+
+    T *res = new T[num_vars];
+    memset(res, 0.0, num_vars * sizeof(T));
 
     bool nz_vars = true;
     if (nz_vars) {
@@ -71,12 +76,12 @@ int main() {
     // call compute energies on the one element
     int elemIndex = 0;
     double time = 0.0;
-    TacsScalar *Te = new TacsScalar(0.0);
-    TacsScalar *Ue = new TacsScalar(0.0);
     // printf("TACS Ue 1 = %.8e\n", *Ue);
-    elem->computeEnergies(elemIndex, time, xpts, vars, dvars, Te, Ue);
+    elem->addResidual(elemIndex, time, xpts, vars, dvars, ddvars, res);
 
-    printf("TACS Ue 2 = %.8e\n", *Ue);
+    for (int i = 0; i < 24; i++) {
+      printf("res[%d] = %.8e\n", i, res[i]);
+    }
 
     MPI_Finalize();
 

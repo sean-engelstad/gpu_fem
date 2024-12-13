@@ -20,7 +20,7 @@ __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], c
     // remove normal component from t1
     A2D::Vec<T,3> temp, t1hat;
     T d = A2D::VecDotCore<T,3>(nhat.get_data(), t1.get_data());
-    A2D::VecSum(1.0, t1, -d, nhat, temp);
+    A2D::VecSum(T(1.0), t1, -d, nhat, temp);
     A2D::VecNormalize(temp, t1hat);
 
     // compute t2 by cross product of normalized unit vectors
@@ -84,7 +84,7 @@ __HOST_DEVICE__ void ShellComputeDrillStrain(
         A2D::MatInvCore<T,3>(Xd, tmp);
         A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
 
-        // Compute transformation u0x = T^T * ueta * (Xdinv*T)
+        // Compute transformation u0x = T^T * u0xn * (Xdinv*T)
         A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
         A2D::MatMatMultCore3x3<T,MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
 
@@ -104,8 +104,11 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSens(
     // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
 
     // first interpolate back to nodal level
-    T etn_bar[Basis::num_nodes];
-    Basis::template interpFieldsTranspose<1, 1>(quad_pt, et_bar, etn_bar);
+    A2D::Vec<T,Basis::num_nodes> etn_bar;
+    Basis::template interpFieldsTranspose<1, 1>(quad_pt, et_bar, etn_bar.get_data());
+
+    constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
+    constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
 
     for (int inode = 0; inode < Basis::num_nodes; inode++) {
         T pt[2];
@@ -122,42 +125,38 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSens(
             Basis::assembleFrame(dXdxi, dXdeta, &fn[3*inode], Xd);
             
             // compute the shell transform based on the ref axis in Data object
-            T Tmat[9];
             ShellComputeTransform<T, Data>(refAxis, dXdxi, dXdeta, &fn[3*inode], Tmat);
         } // end of Xd and shell transform scope
 
-        T u0xn_bar[9], C_bar[9];
+        T u0xn_bar[9], C_bar[9]; // really u0x_bar at this point (but don't want two vars for it)
         Director::evalDrillStrainSens(etn_bar[inode], u0xn_bar, C_bar);
 
-        // backwards prop C2_bar to C_bar through T^t * C * T operation
         T tmp[9];
         {
-            using MatOp = A2D::MatOp;
-            A2D::MatMatMultCore3x3<T,MatOp::TRANSPOSE>(Tmat, C_bar, tmp);
-            A2D::MatMatMultCore3x3<T>(tmp, Tmat, C_bar);
+            // C_bar = T * C2_bar * T^t (in reverse)
+            A2D::MatMatMultCore3x3<T>(Tmat, C_bar, tmp);
+            A2D::MatMatMultCore3x3<T,NORM,TRANS>(tmp, Tmat, C_bar);
+
+            // reverse C(vars) to C_bar => res
+            Director::template computeRotationMatSens<vars_per_node, 1>(C_bar, &res[vars_per_node*inode]);
         }
 
         // backprop u0x_bar to u0xn_bar^T
         {
-            T XdinvTn[9];
+            T XdinvT[9];
             A2D::MatInvCore<T,3>(Xd, tmp); // Xdinv
-            A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
+            A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvT);
 
-            // reverse of u0x = T^t * u0xn * XdinvT is:
-            // u0xn_bar = XdinvT^t * u0x_bar * T
-            // but we want transpose version so each row is u0xi, u0eta, zero (formerly columns)
-            // u0xn_bar^t = T^t * u0x_bar^t * XdinvT
-            using MatOp = A2D::MatOp;
-            A2D::MatMatMultCore3x3<T,MatOp::TRANSPOSE>(u0xn_bar, XdinvTn, tmp);
-            A2D::MatMatMultCore3x3<T,MatOp::TRANSPOSE>(Tmat,tmp, u0xn_bar);
+            // u0xn_bar = T * u0x_bar * XdinvT^t
+            // transpose version for convenience of cols avail in rows
+            // u0xn_bar^t = XdinvT * u0x_bar^t * T^t (u0xn_bar now holds transpose u0xn_bar^t)
+            A2D::MatMatMultCore3x3<T,NORM,TRANS>(XdinvT, u0xn_bar, tmp);
+            A2D::MatMatMultCore3x3<T,NORM,TRANS>(tmp, Tmat, u0xn_bar);
+
+            // reverse the interpolations u0xn_bar to res
+            // because we have u0xn_bar^T stored, each row is u0xi_bar, u0eta_bar
+            Basis::template interpFieldsGradTranspose<vars_per_node,3>(pt, &u0xn_bar[0], &u0xn_bar[3], res);
         }
-
-        // reverse C(vars) to C_bar => res
-        Director::template computeRotationMatSens<vars_per_node, 1>(C_bar, &res[vars_per_node*inode]);
-
-        // reverse the interpolations u0xn_bar to res
-        // because we have u0xn_bar^T stored, each row is u0xi_bar, u0eta_bar
-        Basis::template interpFieldsGradTranspose<vars_per_node,3>(pt, &u0xn_bar[0], &u0xn_bar[3], res);
 
     } // end of node for loop
 } // end of method ShellComputeDrillStrain

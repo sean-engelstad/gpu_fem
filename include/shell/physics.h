@@ -33,13 +33,13 @@ class IsotropicShell {
         A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(0.5 * scale) * ES_dot, Uelem));
 
     // debug
-    for (int i = 0 ; i < 9 ; i++) {
-      printf("E[%d] = %.8e\n", i, E.value().get_data()[i]);
-    }
-    for (int i = 0 ; i < 9 ; i++) {
-      printf("S[%d] = %.8e\n", i, S.value().get_data()[i]);
-    }
-    printf("Uelem = %.8e\n", Uelem.value());
+    // for (int i = 0 ; i < 9 ; i++) {
+    //   printf("E[%d] = %.8e\n", i, E.value().get_data()[i]);
+    // }
+    // for (int i = 0 ; i < 9 ; i++) {
+    //   printf("S[%d] = %.8e\n", i, S.value().get_data()[i]);
+    // }
+    // printf("Uelem = %.8e\n", Uelem.value());
 
   }  // end of computeStrainEnergy
 
@@ -47,9 +47,9 @@ class IsotropicShell {
   // derivative levels maybe
   template <typename T2>
   __HOST_DEVICE__ static void computeWeakRes(
-      const Data physData, const T scale, A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
-      A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x, A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
-      A2D::ADObj<A2D::Vec<T2, 1>> et) {
+      const Data& physData, const T& scale, A2D::ADObj<A2D::Mat<T2, 3, 3>>& u0x,
+      A2D::ADObj<A2D::Mat<T2, 3, 3>>& u1x, A2D::ADObj<A2D::SymMat<T2, 3>>& e0ty,
+      A2D::ADObj<A2D::Vec<T2, 1>>& et) {
     // using ADVec = A2D::ADObj<A2D::Vec<T2,9>>;
     A2D::ADObj<A2D::Vec<T2, 9>> E, S;
     A2D::ADObj<T2> ES_dot, Uelem;
@@ -61,13 +61,14 @@ class IsotropicShell {
         A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
         A2D::IsotropicShellStress<T, Data>(
             physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
-        // A2D::VecScale(1.0, E, S), // debugging statement
-        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(0.5 * scale) * ES_dot, Uelem));
-    printf("Uelem = %.8e\n", Uelem.value());
+        // no 1/2 here to match TACS formulation (just scales eqns) [is removing the 0.5 correct?]
+        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
+    // printf("Uelem = %.8e\n", Uelem.value());
 
     Uelem.bvalue() = 1.0;
     strain_energy_stack.reverse();
     // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
+
   }  // end of computeWeakRes
 
   template <class Basis>

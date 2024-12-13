@@ -47,9 +47,9 @@ class LinearizedRotation
 
   __HOST_DEVICE__ static void setMatSkewSens(const T a, const T C_bar[], T b_bar[]) {
     
-    b_bar[0] = a * (C_bar[7] - C_bar[5]);
-    b_bar[1] = a * (C_bar[2] - C_bar[6]);
-    b_bar[2] = a * (C_bar[3] - C_bar[1]);
+    b_bar[0] += a * (C_bar[7] - C_bar[5]);
+    b_bar[1] += a * (C_bar[2] - C_bar[6]);
+    b_bar[2] += a * (C_bar[3] - C_bar[1]);
   }
 
   template <int vars_per_node, int num_nodes>
@@ -67,12 +67,12 @@ class LinearizedRotation
 
   template <int vars_per_node, int num_nodes>
   __HOST_DEVICE__ static void computeRotationMatSens(const T C_bar[], T res[]) {
-    T *q_bar = &res[offset];
+    T *r = &res[offset];
     for (int inode = 0; inode < num_nodes; inode++) {
       // C = I - q^x
-      setMatSkewSens(-1.0, C_bar, q_bar);
+      setMatSkewSens(-1.0, C_bar, r);
       C_bar += 9;
-      q_bar += vars_per_node;
+      r += vars_per_node;
     }
   }
 
@@ -84,6 +84,10 @@ class LinearizedRotation
   __HOST_DEVICE__ static void evalDrillStrainSens(const T& scale, T u0x_bar[], T Ct_bar[]) {
     // compute rotation penalty
     // etn = 0.5 * (Ct[3] + u0x[3] - Ct[1] - u0x[1]);
+    for (int i = 0; i < 9; i++) {
+      u0x_bar[i] = 0.0;
+      Ct_bar[i] = 0.0;
+    }
     u0x_bar[1] = -0.5 * scale;
     u0x_bar[3] = 0.5 * scale;
     Ct_bar[1] = -0.5 * scale;

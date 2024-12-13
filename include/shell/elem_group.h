@@ -68,25 +68,9 @@ class ShellElementGroup
       T d[3 * num_nodes];
       Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
 
-      if (iquad == 0) {
-        for (int i = 0; i < 12; i++) {
-          printf("d[%d] = %.8e\n", i, d[i]);
-        }
-      }
-
       // compute tying strain
       T ety[Basis::num_all_tying_points];
       Phys::template computeTyingStrain<Basis>(xpts, fn, vars, d, ety);
-
-      if (iquad == 0) {
-        for (int i = 0; i < 9; i++) {
-          printf("ety[%d] = %.8e\n", i, ety[i]);
-        }
-      }
-
-      if (iquad == 0) {
-        printf("et = %.8e\n", et.value().get_data()[0]);
-      }
 
       // compute all shell displacement gradients
       T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -95,18 +79,6 @@ class ShellElementGroup
       
       // get the scale for disp grad sens of the energy
       T scale = detXd * weight;
-
-      if (iquad == 0) {
-        for (int i = 0; i < 9; i++) {
-          printf("u0x[%d] = %.8e\n", i, u0x.value().get_data()[i]);
-        }
-        for (int i = 0; i < 9; i++) {
-          printf("u1x[%d] = %.8e\n", i, u1x.value().get_data()[i]);
-        }
-        for (int i = 0; i < 6; i++) {
-          printf("e0ty[%d] = %.8e\n", i, e0ty.value().get_data()[i]);
-        }
-      }
 
       // compute energy + energy-dispGrad sensitivites with physics
       Phys::template computeStrainEnergy<T>(physData, scale, u0x, u1x, e0ty, et, _Uelem);
@@ -169,23 +141,43 @@ class ShellElementGroup
     // -----------------------------------------------------
 
     // compute disp grad sens u0x_bar, u1x_bar, e0ty_bar => res, d_bar, ety_bar
-    T d_bar[3*num_nodes], ety_bar[Basis::num_all_tying_points];
+    A2D::Vec<T, 3*num_nodes> d_bar;
+    // T d_bar[3*num_nodes],
+    T ety_bar[Basis::num_all_tying_points];
     ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
           pt, physData.refAxis, xpts, vars, fn, 
           u0x.bvalue().get_data(), u1x.bvalue().get_data(), e0ty.bvalue(), 
-          res, d_bar, ety_bar
+          res, d_bar.get_data(), ety_bar
     );
-
-    // backprop tying strain sens ety_bar to d_bar and res
-    Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar, d_bar,
-                                                   res);
 
     // drill strain sens
     ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
           pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
 
+    // if (iquad == 0) {
+    //   for (int i = 0; i < 24; i++) {
+    //     printf("res[%d] = %.8e\n", i, res[i]);
+    //   }
+    //   for (int i = 0; i < 12; i++) {
+    //     printf("d_bar[%d] = %.8e\n", i, d_bar[i]);
+    //   }
+    // }
+
+    // backprop tying strain sens ety_bar to d_bar and res
+    Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar, d_bar.get_data(),
+                                                   res);
+
+    if (iquad == 0) {
+      for (int i = 0; i < 24; i++) {
+        printf("res[%d] = %.8e\n", i, res[i]);
+      }
+      for (int i = 0; i < 12; i++) {
+        printf("d_bar[%d] = %.8e\n", i, d_bar[i]);
+      }
+    }
+
     // directors back to residuals
-    Director::template computeDirectorSens<vars_per_node, num_nodes>(d_bar, fn,
+    Director::template computeDirectorSens<vars_per_node, num_nodes>(d_bar.get_data(), fn,
                                                                      res);
 
     // TODO : rotation constraint sens for some director classes (zero for linear rotation)

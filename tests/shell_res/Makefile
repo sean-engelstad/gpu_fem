@@ -24,6 +24,38 @@ energy-tacs: energy-tacs.o
 	@echo "Building with TACS CPU"
 	${CXX} -o tacs-energy.x energy-tacs.o ${TACS_LD_FLAGS}
 
+check-res:
+# check residual against TACS
+	make clean
+	make res
+	./res.out >> out1.txt
+	make res-tacs
+	./tacs-res.x >> out2.txt
+	diff out1.txt out2.txt >> diff.txt
+
+check-res-cs:
+# check residual complex-step
+	make clean
+	make res
+	./res.out >> out-anl.txt
+	make res-cs
+	./res-cs.out >> out-cs.txt
+	diff out-anl.txt out-cs.txt >> diff.txt
+
+res:
+    # builds analytic residual
+	@echo "Building with CPU support"
+	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res.cu -o res.out
+
+res-cs:
+    # complex-step residual
+	@echo "Building with CPU support"
+	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res_cs.cu -o res-cs.out
+
+res-tacs: res-tacs.o
+	@echo "Building with TACS CPU"
+	${CXX} -o tacs-res.x res-tacs.o ${TACS_LD_FLAGS}
+
 clean:
 	rm *.out || echo "no .out files"
 	rm *.txt || echo "no .txt files"
