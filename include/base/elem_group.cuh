@@ -8,6 +8,11 @@
 // -----------------------
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1>
+__GLOBAL__ void add_energy_gpu(int32_t num_elements, int32_t *geo_conn,
+                                 int32_t *vars_conn, T *xpts, T *vars,
+                                 Data *physData, T *Uenergy) {}
+
+template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1>
 __GLOBAL__ void add_residual_gpu(int32_t num_elements, int32_t *geo_conn,
                                  int32_t *vars_conn, T *xpts, T *vars,
                                  Data *physData, T *residual) {
@@ -68,7 +73,7 @@ __GLOBAL__ void add_residual_gpu(int32_t num_elements, int32_t *geo_conn,
 
   __syncthreads();
 
-  printf("<<<res GPU kernel>>>\n");
+  // printf("<<<res GPU kernel>>>\n");
 
   int iquad = threadIdx.y;
 

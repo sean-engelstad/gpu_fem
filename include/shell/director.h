@@ -113,7 +113,7 @@ class LinearizedRotation
     for (int inode = 0; inode < num_nodes; inode++) {
       // easy to show backprop of cross product is also cross product operation
       // if y = x cross n with n constant then x = n cross y
-      A2D::VecCrossCore<T>(t, d_bar, q_bar);
+      A2D::VecCrossCoreAdd<T>(t, d_bar, q_bar);
       t += 3;
       d_bar += 3;
       q_bar += vars_per_node;

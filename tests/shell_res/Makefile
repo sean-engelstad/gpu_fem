@@ -41,11 +41,25 @@ check-res-cs:
 	make res-cs
 	./res-cs.out >> out-cs.txt
 	diff out-anl.txt out-cs.txt >> diff.txt
+	
+check-gpu:
+# check CPU and GPU give same answer
+	make clean
+	make res
+	./res.out >> out-cpu.txt
+	make res-gpu
+	./res-gpu.out >> out-gpu.txt
+	diff out-cpu.txt out-gpu.txt >> diff.txt
 
 res:
-    # builds analytic residual
+    # builds analytic residual on CPU
 	@echo "Building with CPU support"
 	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res.cu -o res.out
+
+res-gpu:
+    # builds analytic residual on GPU
+	@echo "Building with GPU support"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 res.cu -o res-gpu.out
 
 res-cs:
     # complex-step residual

@@ -78,6 +78,8 @@ int main() {
     double time = 0.0;
     // printf("TACS Ue 1 = %.8e\n", *Ue);
     elem->addResidual(elemIndex, time, xpts, vars, dvars, ddvars, res);
+    printf("Analytic residual\n");
+    printf("res TD = ?\n");
 
     for (int i = 0; i < 24; i++) {
       printf("res[%d] = %.8e\n", i, res[i]);

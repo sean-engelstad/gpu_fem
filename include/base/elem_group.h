@@ -45,7 +45,7 @@ class BaseElementGroup {
     for (int ielem = 0; ielem < num_elements; ielem++) {
       T elem_xpts[nxpts_per_elem];
       T elem_vars[vars_per_elem];
-      T elem_res[vars_per_elem];
+      A2D::Vec<T,vars_per_elem> elem_res; // so zeroes it
       Data elem_physData = physData[ielem];
 
       // get values for this element
@@ -69,7 +69,6 @@ class BaseElementGroup {
         for (int idof = 0; idof < Phys::vars_per_node; idof++) {
           elem_vars[inode * Phys::vars_per_node + idof] =
               vars[global_inode * Phys::vars_per_node + idof];
-          elem_res[inode * Phys::vars_per_node + idof] = 0.0;
         }
       }
 
@@ -78,13 +77,13 @@ class BaseElementGroup {
       // compute element residual
       for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
         Derived::template add_element_quadpt_residual<Data>(iquad, elem_xpts, elem_vars,
-                                          elem_physData, elem_res);
+                                          elem_physData, elem_res.get_data());
       }
 
       // add back into global res on CPU
       for (int idof = 0; idof < vars_per_elem; idof++) {
-        int local_inode = idof % Basis::num_nodes;
-        int local_idim = idof / Basis::num_nodes;
+        int local_inode = idof / Phys::vars_per_node;
+        int local_idim = idof % Phys::vars_per_node;
         int iglobal =
             vars_nodes[local_inode] * Phys::vars_per_node + local_idim;
         residual[iglobal] += elem_res[idof];

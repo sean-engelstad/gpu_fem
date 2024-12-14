@@ -10,8 +10,11 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [x] add residual : concept for optimal memory storage in main method
     - [x] add residual : update code with optimal memory storage in the main method
     - [ ] add residual : make a chart showing the amount of temp memory stored at each point in the scripts
-    - [x] add residual : verify strain energy against TACS
-    - [ ] add residual : verify energy derivs with complex step
+    - [x] add residual : verify element strain energy against TACS
+    - [x] add residual : verify element energy derivs with complex step on CPU
+    - [x] add residual : verify global residual against TACS on CPU
+    - [ ] add residual : verify CPU and GPU give same global residual
+    - [ ] add residual : check global residual on larger mesh..
     - [ ] add residual : NVIDIA profiling
     - [ ] add residual : optimize interp tying strain method
     - [ ] add residual : optimize compute tying strain method
@@ -19,9 +22,9 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [ ] add residual : add these to a new ppt
 - [ ] fully verify and optimize add jacobian on GPU
     - [ ] add jacobian : XDSM diagram of each method
-    - [ ] add jacobian : concept for optimal 
-    - [ ] add jacobian : verify strain energy against TACS
-    - [ ] add jacobian : verify energy derivs with complex step
+    - [ ] add jacobian : concept for optimal memory storage
+    - [ ] add jacobian : verify element res derivs with complex step
+    - [ ] add jacobian : verify global jacobian against TACS
     - [ ] add jacobian : NVIDIA profiling
     - [ ] add jacobian : add each of these results to overleaf
 - [ ] linear solve on the GPU
@@ -41,6 +44,7 @@ for example, compute transpose of matrix in some cases so columns available as r
 
 ### <span style="color:#9bc53d">Tasks for Scitech</span>
 - [ ] add thermal strains into the formulation as well
+- [ ] generalize some methods for nonlinear tying strain, director, etc.
 - [ ] get G matrix with third order directional derivative for stability
 - [ ] get fourth-order stability matrix for post-buckling
 - [ ] get adjoint-jacobian vector products for optimization

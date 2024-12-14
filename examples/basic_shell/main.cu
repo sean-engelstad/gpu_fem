@@ -12,24 +12,24 @@ int main(void) {
 
     constexpr bool has_ref_axis = false;
     using Data = ShellIsotropicData<T,has_ref_axis>;
-    using Physics = LinearShell<T, Data>;
+    using Physics = IsotropicShell<T, Data>;
     
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>; 
     using Assembler = ElementAssembler<T, ElemGroup>;
 
     printf("running!\n");
 
-    int num_elements = 1;
-    int num_geo_nodes = 4;
-    int num_vars_nodes = 4;
+    // int num_elements = 1;
+    // int num_geo_nodes = 4;
+    // int num_vars_nodes = 4;
 
-    // int num_geo_nodes = 500e2;
-    // int num_vars_nodes = 800e2;
+    // int num_geo_nodes = 5e2;
+    // int num_vars_nodes = 8e2;
     // int num_elements = 1e5;
 
-    // int num_geo_nodes = 500;
-    // int num_vars_nodes = 800;
-    // int num_elements = 1000;
+    int num_geo_nodes = 300e2;
+    int num_vars_nodes = 300e2;
+    int num_elements = 1e5;
 
     // a single element
     // int num_geo_nodes = 4;

@@ -24,9 +24,9 @@ class PlaneStressElementGroup : public BaseElementGroup<PlaneStressElementGroup<
 // TODO : way to make this more general if num_quad_pts is not a multiple of 3?
 // some if constexpr stuff on type of Basis?
 #ifdef USE_GPU
-  static constexpr dim3 energy_block(32, num_quad_pts, 1);
-  static constexpr dim3 res_block(32, num_quad_pts, 1);
-  static constexpr dim3 jac_block(8, dof_per_elem, num_quad_pts);
+  static constexpr dim3 energy_block = dim3(32, num_quad_pts, 1);
+  static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
+  static constexpr dim3 jac_block = dim3(8, dof_per_elem, num_quad_pts);
 #endif // USE_GPU
 
 
