@@ -180,6 +180,14 @@ A2D_FUNCTION auto IsotropicShellStress(
   return IsotropicShellStressExpr<Data, A2D::ADObj<A2D::Vec<T,9>>, A2D::ADObj<A2D::Vec<T,9>>>(E, nu, thick, tOffset, strain, stress);
 }
 
+template <typename T, class Data>
+A2D_FUNCTION auto IsotropicShellStress(
+  const T& E, const T& nu, const T& thick, const T& tOffset,
+  A2D::A2DObj<A2D::Vec<T,9>>& strain, A2D::A2DObj<A2D::Vec<T,9>>& stress) {
+
+  return IsotropicShellStressExpr<Data, A2D::A2DObj<A2D::Vec<T,9>>, A2D::A2DObj<A2D::Vec<T,9>>>(E, nu, thick, tOffset, strain, stress);
+}
+
 // template <typename T, class Data, class strainType, class stressType>
 // A2D_FUNCTION auto IsotropicShellStress(
 //   T& E, T& nu, T& thick, T& tOffset,

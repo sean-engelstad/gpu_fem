@@ -106,8 +106,9 @@ class ElementAssembler {
     dim3 block = ElemGroup::energy_block;
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
 
-    add_energy_gpu<T, ElemGroup, Data, block.x> <<<grid,
+    add_energy_gpu<T, ElemGroup, Data, elems_per_block> <<<grid,
     block>>>(num_elements, d_geo_conn, d_vars_conn, d_xpts, d_physData, Uenergy);
 
     gpuErrchk(cudaDeviceSynchronize());
@@ -144,10 +145,11 @@ class ElementAssembler {
     dim3 block = ElemGroup::jac_block;
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
 
-    // add_jacobian_gpu<T, ElemGroup, Data, block.x> <<<grid,
-    // block>>>(num_vars_nodes, num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData,
-    //     res, mat);
+    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block> <<<grid,
+    block>>>(num_vars_nodes, num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData,
+        res, mat);
 
     gpuErrchk(cudaDeviceSynchronize());
 

@@ -23,9 +23,12 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 - [ ] fully verify and optimize add jacobian on GPU
     - [ ] add jacobian : XDSM diagram of each method
     - [ ] add jacobian : concept for optimal memory storage
+    - [ ] add jacobian : fix nans in jacobian
+    - [ ] add jacobian : make methods more general for nonlinear strain, director for pvalue, hvalue, etc.
     - [ ] add jacobian : verify element res derivs with complex step
     - [ ] add jacobian : verify global jacobian against TACS
     - [ ] add jacobian : NVIDIA profiling
+    - [ ] add jacobian : look into shared memory compile issue with profiling?
     - [ ] add jacobian : add each of these results to overleaf
 - [ ] linear solve on the GPU
     - [ ] get sparse element storage fill pattern from Aaron => need to 

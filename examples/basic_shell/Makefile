@@ -15,6 +15,14 @@ cpu:
 	@echo "Building with CPU support"
 	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 main.cu
 
+jac-cpu:
+	@echo "Building with CPU support"
+	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu
+
+jac-gpu:
+	@echo "Building with GPU support"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu
+
 clean:
 	rm *.out || echo "no .out files"
 	rm *.txt || echo "no .txt files"

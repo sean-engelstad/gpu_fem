@@ -27,9 +27,9 @@ int main(void) {
     // int num_vars_nodes = 8e2;
     // int num_elements = 1e5;
 
-    int num_geo_nodes = 300e2;
-    int num_vars_nodes = ;
-    int num_elements = 1e5;
+    int num_geo_nodes = 1e2;
+    int num_vars_nodes = num_geo_nodes;
+    int num_elements = 1e4;
 
     // a single element
     // int num_geo_nodes = 4;
@@ -99,26 +99,36 @@ int main(void) {
     cudaMemset(d_residual, 0.0, num_vars * sizeof(T));     
     #endif
 
+    int num_vars2 = num_vars*num_vars;
+    T *h_mat = new T[num_vars2];
+    memset(h_mat, 0.0, num_vars2 * sizeof(T));
+    #ifdef USE_GPU
+    T *d_mat;
+    cudaMalloc((void**)&d_mat, num_vars2 * sizeof(T));
+    cudaMemset(d_mat, 0.0, num_vars2 * sizeof(T));     
+    #endif
+
     // time add residual method
     auto start = std::chrono::high_resolution_clock::now();
 
+    // call add jacobian
     #ifdef USE_GPU
-    assembler.add_residual(d_residual);
+    assembler.add_jacobian(d_residual, d_mat);
     cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_mat, d_mat, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
     #else
-    assembler.add_residual(h_residual);
+    assembler.add_jacobian(h_residual, h_mat);
     #endif
 
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
 
-    // print data of host residual
-    int M = 24;
-    for (int i = 0; i < M; i++) {
-      printf("res[%d] = %.8e\n", i, h_residual[i]);
+    // print data of host mat
+    for (int i = 0; i < 24*24; i++) {
+      printf("K[%d] = %.8e\n", i, h_mat[i]);
     }
 
-    printf("took %d microseconds to run add residual\n", (int)duration.count());
+    printf("took %d microseconds to run add jacobian\n", (int)duration.count());
 
     return 0;
 };

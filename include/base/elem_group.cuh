@@ -219,7 +219,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
   //   }
   // }
 
-  printf("<<<jacobian GPU kernel>>>\n");
+  // printf("<<<jacobian GPU kernel>>>\n");
   // return;
 
   // atomic add into global res and matrix

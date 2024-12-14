@@ -6,13 +6,17 @@ int main(void) {
 
     const A2D::GreenStrainType strain = A2D::GreenStrainType::LINEAR;
 
-    using Quad = TriangleQuadrature<T>;
-    using Geo = LinearTriangleGeo<T,Quad>;
-    using Basis = QuadraticTriangleBasis<T,Quad>;
-    using Physics = PlaneStressPhysics<T,Quad,strain>;
-    using Group = PlaneStressElementGroup<T, Geo, Basis, Physics>;
-    using Data = typename Physics::IsotropicData;
-    using Assembler = ElementAssembler<T, Group>;
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    using Basis = ShellQuadBasis<T, Quad, 2>;
+    using Geo = Basis::Geo;
+
+    constexpr bool has_ref_axis = false;
+    using Data = ShellIsotropicData<T,has_ref_axis>;
+    using Physics = IsotropicShell<T, Data>;
+    
+    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>; 
+    using Assembler = ElementAssembler<T, ElemGroup>;
 
     int num_geo_nodes = 500;
     int num_vars_nodes = 800;
