@@ -182,6 +182,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
   int ideriv = threadIdx.y;
   int iquad = threadIdx.z;
 
+  // TODO : should I remove this memory? going over registers with this?
   T local_res[vars_per_elem];
   memset(local_res, 0.0, sizeof(T) * vars_per_elem);
   T local_mat_col[vars_per_elem];

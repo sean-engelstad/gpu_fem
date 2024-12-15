@@ -28,7 +28,7 @@ int main(void) {
     // int num_elements = 1e5;
 
     int num_geo_nodes = 300e2;
-    int num_vars_nodes = ;
+    int num_vars_nodes = 300e2;
     int num_elements = 1e5;
 
     // a single element

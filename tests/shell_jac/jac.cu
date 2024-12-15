@@ -6,8 +6,8 @@
 // get residual directional derivative analytically
 
 int main(void) {
-    // using T = double;
-    using T = float;
+    using T = double;
+    // using T = float;
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;

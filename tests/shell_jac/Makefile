@@ -40,10 +40,10 @@ jac:
 	@echo "Building with CPU support"
 	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac.out
 
-# res-gpu:
-#     # builds analytic residual on GPU
-# 	@echo "Building with GPU support"
-# 	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 res.cu -o res-gpu.out
+jac-gpu:
+    # builds analytic residual on GPU
+	@echo "Building with GPU support"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac-gpu.out
 
 # res-cs:
 #     # complex-step residual
