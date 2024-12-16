@@ -6,8 +6,7 @@
 // get residual directional derivative analytically
 
 int main(void) {
-    using T = double;
-    // using T = float;
+    using T = A2D_complex_t<double>;
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -65,6 +64,19 @@ int main(void) {
       }
     }
 
+    // perturbation vector for directional derivative
+    double *p_vars = new double[num_vars];
+    memset(p_vars, 0.0, num_vars * sizeof(double));
+    for (int ivar = 0; ivar < num_vars; ivar++) {
+      p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
+    }
+
+    // complex step perturbations of vars by p_vars * h
+    double h = 1e-30;
+    for (int ivar = 0; ivar < num_vars; ivar++) {
+      h_vars[ivar] += T(0.0, p_vars[ivar] * h);
+    }
+
     // set variables into the assembler
     #ifdef USE_GPU
     T *d_vars;
@@ -75,16 +87,8 @@ int main(void) {
     assembler.set_variables(h_vars);
     #endif
 
-    // perturbation vector for directional derivative
-    T *p_vars = new T[num_vars];
-    memset(p_vars, 0.0, num_vars * sizeof(T));
-    for (int ivar = 0; ivar < num_vars; ivar++) {
-      p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
-    }
-
     // second test vec for jacobian total deriv
-    double *p_vars2 = new double[num_vars];
-    memset(p_vars2, 0.0, num_vars * sizeof(double));
+    T *p_vars2 = new T[num_vars];
     for (int ivar = 0; ivar < num_vars; ivar++) {
       p_vars2[ivar] = (-1.4543 * 1.024343 + 2.812 * -9.4323 * ivar);
     }
@@ -122,20 +126,12 @@ int main(void) {
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
 
-    // compute total direc deriv of analytic jacobian
-    T jac_TD = 0.0;
-    for (int i = 0; i < 24; i++) {
-      for (int j = 0; j < 24; j++) {
-        jac_TD += p_vars[i] * p_vars2[j] * h_mat[24*i+j];
-      }
-    }
-    printf("Analytic Jacobian\n");
+    // compute total direc derivative of the residual => jac
+    T temp = A2D::VecDotCore<T,24>(p_vars2, h_residual);
+    double jac_TD = A2D::ImagPart(temp) / h;
+    
+    printf("Complex Step Jacobian\n");
     printf("jac TD = %.8e\n", jac_TD);
-
-    // print data of host residual
-    for (int i = 0; i < 24*24; i++) {
-      printf("K[%d] = %.8e\n", i, h_mat[i]);
-    }
 
     printf("took %d microseconds to run add jacobian\n", (int)duration.count());
 

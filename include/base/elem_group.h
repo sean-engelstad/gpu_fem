@@ -205,17 +205,17 @@ class BaseElementGroup {
 
       // assembly into global matrix
       for (int idof = 0; idof < vars_per_elem; idof++) {
-        int local_inode = idof % Basis::num_nodes;
-        int local_idim = idof / Basis::num_nodes;
+        int local_inode = idof / Phys::vars_per_node;
+        int local_idim = idof % Phys::vars_per_node;
         int iglobal =
             vars_nodes[local_inode] * Phys::vars_per_node + local_idim;
         residual[iglobal] +=
             elem_res[idof] /
-            vars_per_elem;  // divide because we added into it 12 times
+            T(vars_per_elem);  // divide because we added into it 12 times
 
         for (int jdof = 0; jdof < vars_per_elem; jdof++) {
-          int local_jnode = jdof % Basis::num_nodes;
-          int local_jdim = jdof / Basis::num_nodes;
+          int local_jnode = jdof / Phys::vars_per_node;
+          int local_jdim = jdof % Phys::vars_per_node;
           int jglobal =
               vars_nodes[local_jnode] * Phys::vars_per_node + local_jdim;
           mat[num_vars * iglobal + jglobal] +=
