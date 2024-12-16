@@ -107,6 +107,13 @@ class LinearizedRotation
   }
 
   template <int vars_per_node, int num_nodes>
+  __HOST_DEVICE__ static void computeDirectorHfwd(const T p_vars[], const T t[],
+                                              T p_d[]) {
+    // since linear, just call reg forward analysis
+    computeDirector<vars_per_node, num_nodes>(p_vars, t, p_d);
+  }
+
+  template <int vars_per_node, int num_nodes>
   __HOST_DEVICE__ static void computeDirectorSens(const T t[], const T d_bar[],
                                                   T res[]) {
     T *q_bar = &res[offset];
@@ -118,6 +125,13 @@ class LinearizedRotation
       d_bar += 3;
       q_bar += vars_per_node;
     }
+  }
+
+  template <int vars_per_node, int num_nodes>
+  __HOST_DEVICE__ static void computeDirectorHrev(const T t[], const T h_d[],
+                                                  T matCol[]) {
+    // since linear, just call reg 1st order reverse
+    computeDirectorSens<vars_per_node, num_nodes>(t, h_d, matCol);
   }
 
 };  // end of class LinearizedRotation

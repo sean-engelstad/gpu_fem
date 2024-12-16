@@ -133,6 +133,11 @@ int main(void) {
     printf("Complex Step Jacobian\n");
     printf("jac TD = %.8e\n", jac_TD);
 
+    // compare real part of residual to 2 * vars
+    // for (int i = 0; i < 24; i++) {
+    //   printf("Re(resid[%d]) = %.8e; 2*vars[i] = %.8e\n", i, A2D::RealPart(h_residual[i]), A2D::RealPart(h_vars[i]));
+    // }
+
     printf("took %d microseconds to run add jacobian\n", (int)duration.count());
 
     return 0;

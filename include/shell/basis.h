@@ -502,6 +502,16 @@ __HOST_DEVICE__ T ShellComputeDispGrad(const T pt[], const T refAxis[], const T 
 }
 
 template <typename T, int vars_per_node, class Basis, class Data>
+__HOST_DEVICE__ void ShellComputeDispGradHfwd(const T pt[], const T refAxis[], const T xpts[],
+                                       const T p_vars[], const T fn[],
+                                       const T p_d[], const T p_ety[],
+                                       T p_u0x[], T p_u1x[], A2D::SymMat<T,3>& p_e0ty) {
+  
+  // this is purely linear function, so hforward equiv to forward analysis
+  ShellComputeDispGrad<T,vars_per_node,Basis,Data>(pt, refAxis, xpts, p_vars, fn, p_d, p_ety, p_u0x, p_u1x, p_e0ty);
+}
+
+template <typename T, int vars_per_node, class Basis, class Data>
 __HOST_DEVICE__ void ShellComputeDispGradSens(
     const T pt[], const T refAxis[], const T xpts[], const T vars[], const T fn[],
     const T u0x_bar[], const T u1x_bar[], A2D::SymMat<T,3>& e0ty_bar, 
@@ -582,4 +592,13 @@ __HOST_DEVICE__ void ShellComputeDispGradSens(
     A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty_bar.get_data(), gty_bar.get_data());
     interpTyingStrainTranspose<T, Basis>(pt, gty_bar.get_data(), ety_bar);
   } // end of interp tying strain sens scope
+} // ShellComputeDispGradSens
+
+template <typename T, int vars_per_node, class Basis, class Data>
+__HOST_DEVICE__ void ShellComputeDispGradHrev(const T pt[], const T refAxis[], const T xpts[], const T vars[], const T fn[],
+    const T h_u0x[], const T h_u1x[], A2D::SymMat<T,3>& h_e0ty, 
+    T matCol[], T h_d[], T h_ety[]) {
+  
+  // this is purely linear function, so hreverse equivalent to 1st order reverse (aka Sens function)
+  ShellComputeDispGradSens<T,vars_per_node,Basis,Data>(pt, refAxis, xpts, vars, fn, h_u0x, h_u1x, h_e0ty, matCol, h_d, h_ety);
 }

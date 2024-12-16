@@ -105,13 +105,13 @@ __HOST_DEVICE__ void ShellComputeDrillStrain(
 } // end of method ShellComputeDrillStrain
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
-__HOST_DEVICE__ void ShellComputeDrillStrainFwd(
+__HOST_DEVICE__ void ShellComputeDrillStrainHfwd(
     const T quad_pt[], const T refAxis[], const T xpts[], const T pvars[], const T fn[], T et_dot[])
 {
     // since it's linear just equiv to forward analysis with pvars input
     ShellComputeDrillStrain<T,vars_per_node,Data,Basis,Director>(quad_pt, refAxis, xpts, pvars, fn, et_dot);
 
-} // end of method ShellComputeDrillStrainFwd
+} // end of method ShellComputeDrillStrainHfwd
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainSens(
@@ -179,7 +179,7 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSens(
 } // end of method ShellComputeDrillStrainSens
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
-__HOST_DEVICE__ void ShellComputeDrillStrainHprod(
+__HOST_DEVICE__ void ShellComputeDrillStrainHrev(
     const T quad_pt[], const T refAxis[], const T xpts[], const T vars[],
     const T fn[], const T et_hat[], T matCol[])
 {
@@ -187,4 +187,4 @@ __HOST_DEVICE__ void ShellComputeDrillStrainHprod(
     // since this is a purely linear function, same backprop rule as 1st derivs
     ShellComputeDrillStrainSens<T,vars_per_node,Data,Basis,Director>(quad_pt, refAxis, xpts, vars, fn, et_hat, matCol);
 
-} // end of method ShellComputeDrillStrainHprod
+} // end of method ShellComputeDrillStrainHrev

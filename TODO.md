@@ -38,7 +38,9 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [ ] get sparse element storage fill pattern from Aaron => need to 
     - [ ] get linear solver to work with cuSparse 
 
-### Structural Optimizations in GPU_FEM
+### More additions
+- [ ] extend to nonlinear strain (add tying strain hfwd, hrev and test jacobian vs res with CS)
+- [ ] extend to nonlinear directors (and test jacobian vs res with CS)
 - [ ] add blade stiffened constitutive physics? and associated ksfailure there..
 
 ### Performance Improvements

@@ -166,11 +166,6 @@ class BaseElementGroup {
         }
       }
 
-      // for (int i = 0; i < nxpts_per_elem; i++) {
-      //   printf("elem_xpts[%d] = %.8e\n", i, elem_xpts[i]);
-      // }
-      // return;
-
       const int32_t *vars_nodes = &vars_conn[ielem * Basis::num_nodes];
       for (int inode = 0; inode < Basis::num_nodes; inode++) {
         int global_inode = vars_nodes[inode];
@@ -186,22 +181,9 @@ class BaseElementGroup {
       for (int ideriv = 0; ideriv < vars_per_elem; ideriv++) {
         A2D::Vec<T, vars_per_elem> matCol;  // initialized to zero
         for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
-          // Derived::template add_element_quadpt_jacobian_col<Data>(iquad, ideriv, elem_xpts,
-          //                                       elem_vars, elem_physData,
-          //                                       elem_res, matCol.get_data());
-
-          Derived::template add_element_quadpt_jacobian_col_debug<Data>(iquad, ideriv, elem_xpts,
+          Derived::template add_element_quadpt_jacobian_col<Data>(iquad, ideriv, elem_xpts,
                                                 elem_vars, elem_physData,
-                                                elem_res, matCol.get_data());
-
-          // add into elem_mat first
-          for (int jdof = 0; jdof < vars_per_elem; jdof++) {
-            elem_mat[vars_per_elem * jdof + ideriv] += matCol[jdof];
-          }
-
-          // for (int idof = 0; idof < vars_per_elem; idof++) {
-          //   printf("matCol[%d] = %.8e\n", idof, matCol[idof]);
-          // }
+                                                elem_res, &elem_mat[dof_per_elem*ideriv]);
         }
       }
       // we've computed element stiffness matrix
@@ -215,7 +197,7 @@ class BaseElementGroup {
             vars_nodes[local_inode] * Phys::vars_per_node + local_idim;
         residual[iglobal] +=
             elem_res[idof] /
-            T(vars_per_elem);  // divide because we added into it 12 times
+            T(vars_per_elem);
 
         for (int jdof = 0; jdof < vars_per_elem; jdof++) {
           int local_jnode = jdof / Phys::vars_per_node;
@@ -223,7 +205,7 @@ class BaseElementGroup {
           int jglobal =
               vars_nodes[local_jnode] * Phys::vars_per_node + local_jdim;
           mat[num_vars * iglobal + jglobal] +=
-              elem_mat[vars_per_elem * idof + jdof];
+              elem_mat[vars_per_elem * idof + jdof]; // transpose elem_mat in place
         }
       }  // end of matrix assembly double for loops
 

@@ -174,6 +174,10 @@ public:
   {
     // keep in mind max of ~256 floats on single thread
 
+    if (iquad != 0) {
+      return;
+    }
+
     A2D::A2DObj<A2D::Vec<T, dof_per_elem>> a2d_vars;
     for (int i = 0; i < 24; i++) {
       a2d_vars.value()[i] = vars[i];
@@ -188,8 +192,8 @@ public:
     stack.hproduct();
 
     for (int i = 0; i < 24; i++) {
-      res[i] = a2d_vars.bvalue()[i];
-      matCol[i] = a2d_vars.hvalue()[i];
+      res[i] += a2d_vars.bvalue()[i];
+      matCol[i] += a2d_vars.hvalue()[i];
     }
 
   } // add_element_quadpt_jacobian_col
@@ -214,53 +218,87 @@ public:
     A2D::A2DObj<A2D::SymMat<T, 3>> e0ty;
     A2D::A2DObj<A2D::Vec<T, 1>> et;
 
-    // forward scope block for strain energy
-    // ------------------------------------------------
+    // forward section
     {
-      // compute node normals fn
       ShellComputeNodeNormals<T, Basis>(xpts, fn);
 
-      // compute the interpolated drill strain
       ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
           pt, physData.refAxis, xpts, vars, fn, et.value().get_data());
 
-    } // end of forward scope block for strain energy
-    // ------------------------------------------------
+      T d[3 * num_nodes];
+      Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
 
-    // pvalue section (hforward)
+      T ety[Basis::num_all_tying_points];
+      Phys::template computeTyingStrain<Basis>(xpts, fn, vars, d, ety);
+
+      T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+          pt, physData.refAxis, xpts, vars, fn, d, ety,
+          u0x.value().get_data(), u1x.value().get_data(), e0ty.value());
+
+      // get the scale for disp grad sens of the energy
+      scale = detXd * weight;
+
+    } // end of forward scope
+
+    // hforward section (pvalue's)
     A2D::Vec<T, dof_per_elem> p_vars;
     p_vars[ivar] = 1.0; // p_vars is unit vector for current column to compute
     {
-      // compute the interpolated drill strain
-      ShellComputeDrillStrainFwd<T, vars_per_node, Data, Basis, Director>(
+      ShellComputeDrillStrainHfwd<T, vars_per_node, Data, Basis, Director>(
           pt, physData.refAxis, xpts, p_vars.get_data(), fn, et.pvalue().get_data());
 
-    } // end of forward scope block for strain energy
-    // ------------------------------------------------
+      T p_d[3 * num_nodes];
+      Director::template computeDirectorHfwd<vars_per_node, num_nodes>(p_vars.get_data(), fn, p_d);
 
-    A2D::A2DObj<T> f;
-    auto stack = A2D::MakeStack(
-      A2D::VecDot(et, et, f)
-    );
-    f.bvalue() = 1.0;
-    stack.hproduct();
+      T p_ety[Basis::num_all_tying_points];
+      Phys::template computeTyingStrainHfwd<Basis>(xpts, fn, p_vars.get_data(), p_d, p_ety);
 
-    // residual backprop section (1st order derivs)
-    {
-      // drill strain sens
+      ShellComputeDispGradHfwd<T, vars_per_node, Basis, Data>(
+          pt, physData.refAxis, xpts, p_vars.get_data(), fn, p_d, p_ety,
+          u0x.pvalue().get_data(), u1x.pvalue().get_data(), e0ty.pvalue());
+
+    } // end of hforward scope
+
+    // derivatives over disp grad to strain energy portion
+    // ---------------------
+    Phys::template computeWeakJacobianCol<T>(physData, scale, u0x, u1x, e0ty, et);
+    // ---------------------
+    // begin reverse blocks from strain energy => physical disp grad sens
+
+    // breverse (1st order derivs)
+    {    
+      A2D::Vec<T,Basis::num_all_tying_points> ety_bar; // zeroes out on init
+      A2D::Vec<T,3*num_nodes> d_bar; // zeroes out on init
+      ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
+          pt, physData.refAxis, xpts, vars, fn,
+          u0x.bvalue().get_data(), u1x.bvalue().get_data(), e0ty.bvalue(),
+          res, d_bar.get_data(), ety_bar.get_data());
+      
+      Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar.get_data(), res, d_bar.get_data());
+      
+      Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(), res);
+
       ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
         pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
 
-    } // end of 1st order deriv section
+    } // end of breverse scope (1st order derivs)
 
-    // proj hessian backprop section (2nd order derivs)
-    // -----------------------------------------------------
+    // hreverse (2nd order derivs)
     {
+      A2D::Vec<T,Basis::num_all_tying_points> ety_hat; // zeroes out on init
+      A2D::Vec<T,3*num_nodes> d_hat; // zeroes out on init
+      ShellComputeDispGradHrev<T, vars_per_node, Basis, Data>(
+          pt, physData.refAxis, xpts, vars, fn,
+          u0x.hvalue().get_data(), u1x.hvalue().get_data(), e0ty.hvalue(),
+          res, d_hat.get_data(), ety_hat.get_data());
 
-      // drill strain hessian
-      ShellComputeDrillStrainHprod<T, vars_per_node, Data, Basis, Director>(
+      Phys::template computeTyingStrainHrev<Basis>(xpts, fn, ety_hat.get_data(), matCol, d_hat.get_data());
+
+      Director::template computeDirectorHrev<vars_per_node, num_nodes>(fn, d_hat.get_data(), matCol);
+
+      ShellComputeDrillStrainHrev<T, vars_per_node, Data, Basis, Director>(
         pt, physData.refAxis, xpts, vars, fn, et.hvalue().get_data(), matCol);
-    } // end of 2nd order deriv section
+    } // end of hreverse scope (2nd order derivs)
 
   } // add_element_quadpt_jacobian_col
 

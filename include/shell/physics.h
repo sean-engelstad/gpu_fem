@@ -208,6 +208,15 @@ public:
   } // end of computeTyingStrain
 
   template <class Basis>
+  __HOST_DEVICE__ static void computeTyingStrainHfwd(const T Xpts[], const T fn[],
+                                                 const T p_vars[], const T p_d[],
+                                                 T p_ety[]) {
+    
+    // since linear for now (add NL later) => just call forward analysis
+    computeTyingStrain<Basis>(Xpts, fn, p_vars, p_d, p_ety);
+  }
+
+  template <class Basis>
   __HOST_DEVICE__ static void computeTyingStrainSens(const T Xpts[],
                                                      const T fn[],
                                                      const T ety_bar[], T res[],
@@ -327,4 +336,14 @@ public:
     } // end of itying for loop for g13
 
   } // end of computeTyingStrainSens
+
+  template <class Basis>
+  __HOST_DEVICE__ static void computeTyingStrainHrev(const T Xpts[],
+                                                     const T fn[],
+                                                     const T h_ety[], T matCol[],
+                                                     T h_d[]) {
+    
+    // since linear, call sens for now
+    computeTyingStrainSens<Basis>(Xpts, fn, h_ety, matCol, h_d);
+  }
 };
