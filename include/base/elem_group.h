@@ -186,7 +186,11 @@ class BaseElementGroup {
       for (int ideriv = 0; ideriv < vars_per_elem; ideriv++) {
         A2D::Vec<T, vars_per_elem> matCol;  // initialized to zero
         for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
-          Derived::template add_element_quadpt_jacobian_col<Data>(iquad, ideriv, elem_xpts,
+          // Derived::template add_element_quadpt_jacobian_col<Data>(iquad, ideriv, elem_xpts,
+          //                                       elem_vars, elem_physData,
+          //                                       elem_res, matCol.get_data());
+
+          Derived::template add_element_quadpt_jacobian_col_debug<Data>(iquad, ideriv, elem_xpts,
                                                 elem_vars, elem_physData,
                                                 elem_res, matCol.get_data());
 
