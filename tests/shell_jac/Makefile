@@ -8,32 +8,14 @@ include ../../Makefile.in
 include ${TACS_DIR}/Makefile.in
 include ${TACS_DIR}/TACS_Common.mk
 
-# check-res:
-# # check residual against TACS
-# 	make clean
-# 	make res
-# 	./res.out >> out1.txt
-# 	make res-tacs
-# 	./tacs-res.x >> out2.txt
-# 	diff out1.txt out2.txt >> diff.txt
-
-# check-res-cs:
-# # check residual complex-step
-# 	make clean
-# 	make res
-# 	./res.out >> out-anl.txt
-# 	make res-cs
-# 	./res-cs.out >> out-cs.txt
-# 	diff out-anl.txt out-cs.txt >> diff.txt
-	
-# check-gpu:
-# # check CPU and GPU give same answer
-# 	make clean
-# 	make res
-# 	./res.out >> out-cpu.txt
-# 	make res-gpu
-# 	./res-gpu.out >> out-gpu.txt
-# 	diff out-cpu.txt out-gpu.txt >> diff.txt
+check-jac:
+# check jac against TACS
+	make clean
+	make jac
+	./jac.out >> out1.txt
+	make jac-tacs
+	./tacs-jac.x >> out2.txt
+	diff out1.txt out2.txt >> diff.txt
 
 jac:
     # builds analytic residual on CPU
@@ -45,14 +27,9 @@ jac-gpu:
 	@echo "Building with GPU support"
 	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac-gpu.out
 
-# res-cs:
-#     # complex-step residual
-# 	@echo "Building with CPU support"
-# 	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res_cs.cu -o res-cs.out
-
-# res-tacs: res-tacs.o
-# 	@echo "Building with TACS CPU"
-# 	${CXX} -o tacs-res.x res-tacs.o ${TACS_LD_FLAGS}
+jac-tacs: jac-tacs.o
+	@echo "Building with TACS CPU"
+	mpicxx -o tacs-jac.x jac-tacs.o ${TACS_LD_FLAGS}
 
 clean:
 	rm *.out || echo "no .out files"

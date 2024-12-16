@@ -23,31 +23,26 @@ int main(void) {
     // int num_geo_nodes = 4;
     // int num_vars_nodes = 4;
 
-    // int num_geo_nodes = 5e2;
-    // int num_vars_nodes = 8e2;
+    int num_geo_nodes = 1e2;
+    int num_vars_nodes = 1e2;
+    int num_elements = 1e3;
+
+    // int num_geo_nodes = 3e3;
+    // int num_vars_nodes = num_geo_nodes;
     // int num_elements = 1e5;
-
-    int num_geo_nodes = 3e3;
-    int num_vars_nodes = num_geo_nodes;
-    int num_elements = 1e5;
-
-    // a single element
-    // int num_geo_nodes = 4;
-    // int num_vars_nodes = 4;
-    // int num_elements = 1;
 
     // make fake element connectivity for testing
     int N = Geo::num_nodes * num_elements;
     int32_t *geo_conn = new int32_t[N];
     for (int i = 0; i < N; i++) {
-      geo_conn[i] = rand() % num_geo_nodes;
+      geo_conn[i] = i % num_geo_nodes; 
     }
 
     // randomly generate the connectivity for the variables / basis
     int N2 = Basis::num_nodes * num_elements;
     int32_t *vars_conn = new int32_t[N2];
     for (int i = 0; i < N2; i++) {
-      vars_conn[i] = rand() % num_vars_nodes;
+      vars_conn[i] = i % num_vars_nodes;
     }
 
     // set the xpts randomly for this example

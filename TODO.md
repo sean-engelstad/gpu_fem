@@ -12,7 +12,8 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [ ] add residual : make a chart showing the amount of temp memory stored at each point in the scripts
     - [x] add residual : verify element strain energy against TACS
     - [x] add residual : verify element energy derivs with complex step on CPU
-    - [x] add residual : verify global residual against TACS on CPU
+    - [x] add residual : verify global residual for one element against TACS on CPU
+    - [x] add residual : fix nan issue in global residual assembly
     - [ ] add residual : verify CPU and GPU give same global residual
     - [ ] add residual : significantly reduce register pressure by reusing more of the same arrays. Use references to the same array in memory.
     - [ ] add residual : check global residual on larger mesh..
@@ -25,7 +26,7 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [ ] add jacobian : demo of running jacobian
     - [ ] add jacobian : XDSM diagram of each method
     - [ ] add jacobian : concept for optimal memory storage
-    - [ ] add jacobian : fix nans in jacobian
+    - [x] add jacobian : fix nans in jacobian
     - [ ] add jacobian : make methods more general for nonlinear strain, director for pvalue, hvalue, etc.
     - [ ] add jacobian : verify element res derivs with complex step
     - [ ] add jacobian : verify element jacobian against TACS (one col at a time?)

@@ -82,7 +82,7 @@ public:
         A2D::IsotropicShellStress<T, Data>(
             physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
         // no 1/2 here to match TACS formulation (just scales eqns) [is removing the 0.5 correct?]
-        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
+        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(0.5 * scale) * ES_dot, Uelem));
     // printf("Uelem = %.8e\n", Uelem.value());
 
     Uelem.bvalue() = 1.0;
