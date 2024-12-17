@@ -1,10 +1,12 @@
 #include "assembler.h"
-#include "plane_stress/plane_stress.h"
+#include "shell/shell.h"
+#include "chrono"
+#include "a2dcore.h"
+
+// get residual directional derivative analytically
 
 int main(void) {
     using T = double;
-
-    const A2D::GreenStrainType strain = A2D::GreenStrainType::LINEAR;
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -13,34 +15,32 @@ int main(void) {
 
     constexpr bool has_ref_axis = false;
     using Data = ShellIsotropicData<T,has_ref_axis>;
-    using Physics = IsotropicShell<T, Data>;
+
+    constexpr bool isNonlinear = false;
+    using Physics = IsotropicShell<T, Data, isNonlinear>;
     
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>; 
     using Assembler = ElementAssembler<T, ElemGroup>;
 
-    int num_geo_nodes = 500;
-    int num_vars_nodes = 800;
-    int num_elements = 1000;
+    // printf("running!\n");
+
+    int num_elements = 1;
+    int num_geo_nodes = 4;
+    int num_vars_nodes = 4;
 
     // make fake element connectivity for testing
     int N = Geo::num_nodes * num_elements;
-    int32_t *geo_conn = new int32_t[N];
-    for (int i = 0; i < N; i++) {
-      geo_conn[i] = rand() % num_geo_nodes;
-    }
+    int32_t geo_conn[] = { 0, 1, 2, 3 };
 
     // randomly generate the connectivity for the variables / basis
     int N2 = Basis::num_nodes * num_elements;
-    int32_t *vars_conn = new int32_t[N2];
-    for (int i = 0; i < N2; i++) {
-      vars_conn[i] = rand() % num_vars_nodes;
-    }
+    int32_t vars_conn[] = { 0, 1, 2, 3 };
 
     // set the xpts randomly for this example
     int32_t num_xpts = Geo::spatial_dim * num_geo_nodes;
     T *xpts = new T[num_xpts];
     for (int ixpt = 0; ixpt < num_xpts; ixpt++) {
-      xpts[ixpt] = static_cast<double>(rand()) / RAND_MAX;
+      xpts[ixpt] = 1.0345452 + 2.23123432 * ixpt + 0.323 * ixpt * ixpt;
     }
 
     // initialize ElemData
@@ -62,10 +62,11 @@ int main(void) {
     bool nz_vars = true;
     if (nz_vars) {
       for (int ivar = 0; ivar < num_vars; ivar++) {
-        h_vars[ivar] = static_cast<double>(rand()) / RAND_MAX;
+        h_vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
       }
     }
 
+    // set variables into the assembler
     #ifdef USE_GPU
     T *d_vars;
     cudaMalloc((void**)&d_vars, num_vars * sizeof(T));
@@ -74,7 +75,13 @@ int main(void) {
     #else // USE_GPU
     assembler.set_variables(h_vars);
     #endif
-    
+
+    // perturbation vector for directional derivative
+    T *p_vars = new T[num_vars];
+    memset(p_vars, 0.0, num_vars * sizeof(T));
+    for (int ivar = 0; ivar < num_vars; ivar++) {
+      p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
+    }
 
     // define the residual vector (host or device)
     T *h_residual = new T[num_vars];
@@ -82,10 +89,11 @@ int main(void) {
     #ifdef USE_GPU
     T *d_residual;
     cudaMalloc((void**)&d_residual, num_vars * sizeof(T));
-    cudaMemset(d_residual, 0.0, num_vars * sizeof(T));
+    cudaMemset(d_residual, 0.0, num_vars * sizeof(T));     
     #endif
 
-    int num_vars2 = num_vars*num_vars;
+    // define mat temp
+    int num_vars2 = num_vars * num_vars;
     T *h_mat = new T[num_vars2];
     memset(h_mat, 0.0, num_vars2 * sizeof(T));
     #ifdef USE_GPU
@@ -94,31 +102,31 @@ int main(void) {
     cudaMemset(d_mat, 0.0, num_vars2 * sizeof(T));     
     #endif
 
-    // call add residual
-    // #ifdef USE_GPU
-    // assembler.add_residual(d_residual);
-    // cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
-    // #else
-    // assembler.add_residual(h_residual);
-    // #endif
+    // time add residual method
+    auto start = std::chrono::high_resolution_clock::now();
 
-    // call add jacobian
+    // get the residual from the add jacobian method
     #ifdef USE_GPU
     assembler.add_jacobian(d_residual, d_mat);
     cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_mat, d_mat, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
     #else
     assembler.add_jacobian(h_residual, h_mat);
     #endif
 
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+
+    // compute total direc derivative of analytic residual
+    T res_TD = A2D::VecDotCore<T,24>(p_vars, h_residual);
+    printf("Analytic residual\n");
+    printf("res TD = %.8e\n", res_TD);
+
     // print data of host residual
-    // int M = 10;
-    // for (int i = 0; i < M; i++) {
-    //   printf("res[%d] = %.8e\n", i, h_residual[i]);
-    // }
-    // for (int i = 0; i < M; i++) {
-    //   printf("mat[%d] = %.8e\n", i, h_mat[i]);
-    // }
+    for (int i = 0; i < 24; i++) {
+      printf("res[%d] = %.8e\n", i, h_residual[i]);
+    }
+
+    printf("took %d microseconds to run add residual\n", (int)duration.count());
 
     return 0;
-}
+};

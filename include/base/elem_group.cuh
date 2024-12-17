@@ -1,13 +1,22 @@
 
 #include "cuda_utils.h"
 
+// base class methods to launch kernel depending on how many elements per block
+// may override these in some base classes
+
 // add_residual kernel
 // -----------------------
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1>
+__GLOBAL__ void add_energy_gpu(int32_t num_elements, int32_t *geo_conn,
+                               int32_t *vars_conn, T *xpts, T *vars,
+                               Data *physData, T *Uenergy) {}
+
+template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1>
 __GLOBAL__ void add_residual_gpu(int32_t num_elements, int32_t *geo_conn,
                                  int32_t *vars_conn, T *xpts, T *vars,
-                                 Data *physData, T *residual) {
+                                 Data *physData, T *residual)
+{
   using Geo = typename ElemGroup::Geo;
   using Basis = typename ElemGroup::Basis;
   using Phys = typename ElemGroup::Phys;
@@ -33,11 +42,13 @@ __GLOBAL__ void add_residual_gpu(int32_t num_elements, int32_t *geo_conn,
   // load data into block shared mem using some subset of threads
   // if (active_thread && threadIdx.y == 0) {
 
-  if (active_thread) {  // this version copies same data 3 times (improve
-                        // this..)
+  if (active_thread)
+  { // this version copies same data 3 times (improve
+    // this..)
 
     // would be better if memory access is more in adjacent in memory
-    for (int ixpt = threadIdx.y; ixpt < nxpts_per_elem; ixpt += blockDim.y) {
+    for (int ixpt = threadIdx.y; ixpt < nxpts_per_elem; ixpt += blockDim.y)
+    {
       int local_inode = ixpt / Geo::spatial_dim;
       int local_idim = ixpt % Geo::spatial_dim;
       const int global_node_ind =
@@ -46,7 +57,8 @@ __GLOBAL__ void add_residual_gpu(int32_t num_elements, int32_t *geo_conn,
       block_xpts[local_elem][ixpt] = xpts[global_ixpt];
     }
 
-    for (int idof = threadIdx.y; idof < vars_per_elem; idof += blockDim.y) {
+    for (int idof = threadIdx.y; idof < vars_per_elem; idof += blockDim.y)
+    {
       int local_inode = idof / Phys::vars_per_node;
       int local_idof = idof % Phys::vars_per_node;
       const int global_node_ind =
@@ -57,7 +69,8 @@ __GLOBAL__ void add_residual_gpu(int32_t num_elements, int32_t *geo_conn,
       block_res[local_elem][idof] = 0.0;
     }
 
-    if (local_thread < elems_per_block) {
+    if (local_thread < elems_per_block)
+    {
       int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
       block_data[local_thread] = physData[global_elem_thread];
     }
@@ -65,36 +78,44 @@ __GLOBAL__ void add_residual_gpu(int32_t num_elements, int32_t *geo_conn,
 
   __syncthreads();
 
-  printf("<<<res GPU kernel>>>\n");
+  // printf("<<<res GPU kernel>>>\n");
 
   int iquad = threadIdx.y;
 
   T local_res[vars_per_elem];
   memset(local_res, 0.0, sizeof(T) * vars_per_elem);
 
-  ElemGroup::template add_element_quadpt_residual<Data>(
-      iquad, block_xpts[local_elem], block_vars[local_elem],
-      block_data[local_elem], local_res);
-
+  if (active_thread)
+  {
+    ElemGroup::template add_element_quadpt_residual<Data>(
+        iquad, block_xpts[local_elem], block_vars[local_elem],
+        block_data[local_elem], local_res);
+  }
   __syncthreads();
 
-  // sum into shared memory block_res
-  for (int idof = 0; idof < vars_per_elem; idof++) {
-    atomicAdd(&block_res[local_elem][idof], local_res[idof]);
+  if (active_thread)
+  {
+    // sum into shared memory block_res
+    for (int idof = 0; idof < vars_per_elem; idof++)
+    {
+      atomicAdd(&block_res[local_elem][idof], local_res[idof]);
+    }
   }
   __syncthreads();
 
   // atomic add into global res
-  for (int idof = threadIdx.y; idof < vars_per_elem; idof += blockDim.y) {
-    int local_inode = idof / Phys::vars_per_node;
-    int local_idof = idof % Phys::vars_per_node;
-    const int global_node_ind =
-        vars_conn[global_elem * Geo::num_nodes + local_inode];
-    int global_idof = Phys::vars_per_node * global_node_ind + local_idof;
-    atomicAdd(&residual[global_idof], block_res[local_elem][idof]);
+  if (active_thread)
+  {
+    for (int idof = threadIdx.y; idof < vars_per_elem; idof += blockDim.y)
+    {
+      int local_inode = idof / Phys::vars_per_node;
+      int local_idof = idof % Phys::vars_per_node;
+      const int global_node_ind =
+          vars_conn[global_elem * Geo::num_nodes + local_inode];
+      int global_idof = Phys::vars_per_node * global_node_ind + local_idof;
+      atomicAdd(&residual[global_idof], block_res[local_elem][idof]);
+    }
   }
-
-  __syncthreads();
 }
 
 // add jacobian kernel
@@ -104,7 +125,8 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1>
 __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
                                         int32_t num_elements, int32_t *geo_conn,
                                         int32_t *vars_conn, T *xpts, T *vars,
-                                        Data *physData, T *residual, T *mat) {
+                                        Data *physData, T *residual, T *mat)
+{
   using Geo = typename ElemGroup::Geo;
   using Basis = typename ElemGroup::Basis;
   using Phys = typename ElemGroup::Phys;
@@ -135,11 +157,13 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
   int nthread_yz = blockDim.y * blockDim.z;
   int thread_yz = threadIdx.y * blockDim.z + threadIdx.z;
 
-  if (active_thread) {  // this version copies same data 3 times (improve
-                        // this..)
+  if (active_thread)
+  { // this version copies same data 3 times (improve
+    // this..)
 
     // would be better if memory access is more in adjacent in memory
-    for (int ixpt = thread_yz; ixpt < nxpts_per_elem; ixpt += nthread_yz) {
+    for (int ixpt = thread_yz; ixpt < nxpts_per_elem; ixpt += nthread_yz)
+    {
       int local_inode = ixpt / Geo::spatial_dim;
       int local_idim = ixpt % Geo::spatial_dim;
       const int global_node_ind =
@@ -148,7 +172,8 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
       block_xpts[local_elem][ixpt] = xpts[global_ixpt];
     }
 
-    for (int idof = thread_yz; idof < vars_per_elem; idof += nthread_yz) {
+    for (int idof = thread_yz; idof < vars_per_elem; idof += nthread_yz)
+    {
       int local_inode = idof / Phys::vars_per_node;
       int local_idof = idof % Phys::vars_per_node;
       const int global_node_ind =
@@ -159,11 +184,13 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
       block_res[local_elem][idof] = 0.0;
     }
 
-    for (int idof2 = thread_yz; idof2 < vars_per_elem2; idof2 += nthread_yz) {
+    for (int idof2 = thread_yz; idof2 < vars_per_elem2; idof2 += nthread_yz)
+    {
       block_mat[local_elem][idof2] = 0.0;
     }
 
-    if (local_thread < elems_per_block) {
+    if (local_thread < elems_per_block)
+    {
       int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
       block_data[local_thread] = physData[global_elem_thread];
     }
@@ -174,6 +201,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
   int ideriv = threadIdx.y;
   int iquad = threadIdx.z;
 
+  // TODO : should I remove this memory? going over registers with this?
   T local_res[vars_per_elem];
   memset(local_res, 0.0, sizeof(T) * vars_per_elem);
   T local_mat_col[vars_per_elem];
@@ -181,15 +209,19 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
 
   // call the device function to get one column of the element stiffness matrix
   // at one quadrature point
-  if (active_thread) {
+  if (active_thread)
+  {
     ElemGroup::template add_element_quadpt_jacobian_col<Data>(
         iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], local_res, local_mat_col);
   }
+  __syncthreads();
 
-  // add local res and local mat into shared memory
-  if (active_thread) {
-    for (int idof = 0; idof < vars_per_elem; idof++) {
+  if (active_thread)
+  {
+
+    for (int idof = 0; idof < vars_per_elem; idof++)
+    {
       // add the local residual into shared memory
       //  computes same local_res blockDim.y or nderivs times (so divide out)
       atomicAdd(&block_res[local_elem][idof], local_res[idof] / blockDim.y);
@@ -197,27 +229,18 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
       // add this matrix column into shared memory
       atomicAdd(&block_mat[local_elem][vars_per_elem * idof + ideriv],
                 local_mat_col[idof]);
+
     }
   }
   __syncthreads();
 
-  // check block mat
-  // if (local_thread == 0) {
-  //   for (int idof2 = 0; idof2 < vars_per_elem2; idof2++) {
-  //     int idof = idof2 / vars_per_elem;
-  //     int jdof = idof % vars_per_elem;
-  //     printf("block_mat[%d, %d] = %.8e\n", idof, jdof,
-  //            block_mat[local_elem][idof2]);
-  //   }
-  // }
-
-  printf("<<<jacobian GPU kernel>>>\n");
-  // return;
 
   // atomic add into global res and matrix
   // NOTE : currently adding into dense global matrix (TODO sparse vs)
-  if (active_thread) {
-    for (int idof = thread_yz; idof < vars_per_elem; idof += nthread_yz) {
+  if (active_thread)
+  {
+    for (int idof = thread_yz; idof < vars_per_elem; idof += nthread_yz)
+    {
       int local_inode = idof / Phys::vars_per_node;
       int local_idof = idof % Phys::vars_per_node;
       const int global_node_ind_row =
@@ -227,7 +250,8 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
       // add shared memory block_res into global memory
       atomicAdd(&residual[global_idof], block_res[local_elem][idof]);
 
-      for (int jdof = 0; jdof < vars_per_elem; jdof++) {
+      for (int jdof = 0; jdof < vars_per_elem; jdof++)
+      {
         int local_jnode = jdof / Phys::vars_per_node;
         int local_jdof = jdof % Phys::vars_per_node;
         const int global_node_ind_col =
@@ -237,8 +261,8 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
 
         atomicAdd(&mat[num_vars * global_idof + global_jdof],
                   block_mat[local_elem][vars_per_elem * idof + jdof]);
-      }  // end of jdof loop
-    }  // end of idof loop
-  }  // end of active thread check if thread's element is past num_elements
+      } // end of jdof loop
+    } // end of idof loop
+  } // end of active thread check if thread's element is past num_elements
 
-}  // end of add_jacobian_gpu
+} // end of add_jacobian_gpu

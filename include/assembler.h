@@ -2,7 +2,8 @@
 
 #include <cstring>
 
-#include "elem_group.h"
+#include "cuda_utils.h"
+#include "base/elem_group.h"
 
 template <typename T, typename ElemGroup>
 class ElementAssembler {
@@ -57,7 +58,7 @@ class ElementAssembler {
 
 #ifdef USE_GPU
 
-    printf("starting constructor...\n");
+    // printf("starting constructor...\n");
 
     cudaMalloc((void **)&d_geo_conn, N * sizeof(int32_t));
     cudaMemcpy(d_geo_conn, h_geo_conn, N * sizeof(int32_t),
@@ -80,7 +81,7 @@ class ElementAssembler {
     cudaMemcpy(d_physData, h_physData, num_elements * sizeof(Data),
                cudaMemcpyHostToDevice);
 
-    printf("finished constructor\n");
+    // printf("finished constructor\n");
 #endif  // USE_GPU
   };
 
@@ -99,14 +100,45 @@ class ElementAssembler {
   }
 
   //  template <class ExecParameters>
+  void add_energy(T& Uenergy) {
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+    dim3 block = ElemGroup::energy_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+
+    add_energy_gpu<T, ElemGroup, Data, elems_per_block> <<<grid,
+    block>>>(num_elements, d_geo_conn, d_vars_conn, d_xpts, d_physData, Uenergy);
+
+    gpuErrchk(cudaDeviceSynchronize());
+#else   // USE_GPU
+    ElemGroup::template add_energy_cpu<Data>(num_elements, h_geo_conn, h_vars_conn,
+                                          h_xpts, h_vars, h_physData, Uenergy);
+#endif  // USE_GPU
+  };
+
+  //  template <class ExecParameters>
   void add_residual(T *res) {
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
-    ElemGroup::template add_residual<Data>(
-        num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData, res);
+    dim3 block = ElemGroup::res_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+
+    // debugging 
+    // dim3 block(1,4,1);
+    // dim3 grid(1);
+    // constexpr int32_t elems_per_block = 1;
+
+    add_residual_gpu<T, ElemGroup, Data, elems_per_block> <<<grid,
+    block>>>(num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData, res);
+
+    gpuErrchk(cudaDeviceSynchronize());
 #else   // USE_GPU
-    ElemGroup::template add_residual<Data>(
-        num_elements, h_geo_conn, h_vars_conn, h_xpts, h_vars, h_physData, res);
+    ElemGroup::template add_residual_cpu<Data>(num_elements, h_geo_conn, h_vars_conn,
+                                          h_xpts, h_vars, h_physData, res);
 #endif  // USE_GPU
   };
 
@@ -114,14 +146,24 @@ class ElementAssembler {
   void add_jacobian(T *res, T *mat) {
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
-    ElemGroup::template add_jacobian<Data>(num_vars_nodes, num_elements,
-                                           d_geo_conn, d_vars_conn, d_xpts,
-                                           d_vars, d_physData, res, mat);
-#else   // USE_GPU
-    ElemGroup::template add_jacobian<Data>(num_vars_nodes, num_elements,
-                                           h_geo_conn, h_vars_conn, h_xpts,
-                                           h_vars, h_physData, res, mat);
-#endif  // USE_GPU
+
+    dim3 block = ElemGroup::jac_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
+
+    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block> <<<grid,
+    block>>>(num_vars_nodes, num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData,
+        res, mat);
+
+    gpuErrchk(cudaDeviceSynchronize());
+
+#else  // CPU data
+    // maybe a way to call add_residual_kernel as same method on CPU
+    // with elems_per_block = 1
+    ElemGroup::template add_jacobian_cpu<Data>(num_vars_nodes, num_elements, h_geo_conn, h_vars_conn,
+                           h_xpts, h_vars, h_physData, res, mat);
+#endif
   };
 
  private:

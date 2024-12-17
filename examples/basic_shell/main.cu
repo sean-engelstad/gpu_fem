@@ -1,10 +1,9 @@
 #include "assembler.h"
-#include "plane_stress/plane_stress.h"
+#include "shell/shell.h"
+#include "chrono"
 
 int main(void) {
     using T = double;
-
-    const A2D::GreenStrainType strain = A2D::GreenStrainType::LINEAR;
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -18,22 +17,32 @@ int main(void) {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>; 
     using Assembler = ElementAssembler<T, ElemGroup>;
 
-    int num_geo_nodes = 500;
-    int num_vars_nodes = 800;
-    int num_elements = 1000;
+    printf("running!\n");
+
+    // int num_elements = 1;
+    // int num_geo_nodes = 4;
+    // int num_vars_nodes = 4;
+
+    int num_geo_nodes = 1e2;
+    int num_vars_nodes = 1e2;
+    int num_elements = 1e3;
+
+    // int num_geo_nodes = 300e2;
+    // int num_vars_nodes = 300e2;
+    // int num_elements = 1e5;
 
     // make fake element connectivity for testing
     int N = Geo::num_nodes * num_elements;
     int32_t *geo_conn = new int32_t[N];
     for (int i = 0; i < N; i++) {
-      geo_conn[i] = rand() % num_geo_nodes;
+      geo_conn[i] = i % num_geo_nodes; 
     }
 
     // randomly generate the connectivity for the variables / basis
     int N2 = Basis::num_nodes * num_elements;
     int32_t *vars_conn = new int32_t[N2];
     for (int i = 0; i < N2; i++) {
-      vars_conn[i] = rand() % num_vars_nodes;
+      vars_conn[i] = i % num_vars_nodes;
     }
 
     // set the xpts randomly for this example
@@ -82,43 +91,29 @@ int main(void) {
     #ifdef USE_GPU
     T *d_residual;
     cudaMalloc((void**)&d_residual, num_vars * sizeof(T));
-    cudaMemset(d_residual, 0.0, num_vars * sizeof(T));
+    cudaMemset(d_residual, 0.0, num_vars * sizeof(T));     
     #endif
 
-    int num_vars2 = num_vars*num_vars;
-    T *h_mat = new T[num_vars2];
-    memset(h_mat, 0.0, num_vars2 * sizeof(T));
-    #ifdef USE_GPU
-    T *d_mat;
-    cudaMalloc((void**)&d_mat, num_vars2 * sizeof(T));
-    cudaMemset(d_mat, 0.0, num_vars2 * sizeof(T));     
-    #endif
+    // time add residual method
+    auto start = std::chrono::high_resolution_clock::now();
 
-    // call add residual
-    // #ifdef USE_GPU
-    // assembler.add_residual(d_residual);
-    // cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
-    // #else
-    // assembler.add_residual(h_residual);
-    // #endif
-
-    // call add jacobian
     #ifdef USE_GPU
-    assembler.add_jacobian(d_residual, d_mat);
+    assembler.add_residual(d_residual);
     cudaMemcpy(h_residual, d_residual, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_mat, d_mat, num_vars * sizeof(T), cudaMemcpyDeviceToHost);
     #else
-    assembler.add_jacobian(h_residual, h_mat);
+    assembler.add_residual(h_residual);
     #endif
+
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
 
     // print data of host residual
-    // int M = 10;
-    // for (int i = 0; i < M; i++) {
-    //   printf("res[%d] = %.8e\n", i, h_residual[i]);
-    // }
-    // for (int i = 0; i < M; i++) {
-    //   printf("mat[%d] = %.8e\n", i, h_mat[i]);
-    // }
+    int M = 24;
+    for (int i = 0; i < M; i++) {
+      printf("res[%d] = %.8e\n", i, h_residual[i]);
+    }
+
+    printf("took %d microseconds to run add residual\n", (int)duration.count());
 
     return 0;
-}
+};
