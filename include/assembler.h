@@ -58,7 +58,7 @@ class ElementAssembler {
 
 #ifdef USE_GPU
 
-    printf("starting constructor...\n");
+    // printf("starting constructor...\n");
 
     cudaMalloc((void **)&d_geo_conn, N * sizeof(int32_t));
     cudaMemcpy(d_geo_conn, h_geo_conn, N * sizeof(int32_t),
@@ -81,7 +81,7 @@ class ElementAssembler {
     cudaMemcpy(d_physData, h_physData, num_elements * sizeof(Data),
                cudaMemcpyHostToDevice);
 
-    printf("finished constructor\n");
+    // printf("finished constructor\n");
 #endif  // USE_GPU
   };
 
@@ -126,6 +126,11 @@ class ElementAssembler {
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+
+    // debugging 
+    // dim3 block(1,4,1);
+    // dim3 grid(1);
+    // constexpr int32_t elems_per_block = 1;
 
     add_residual_gpu<T, ElemGroup, Data, elems_per_block> <<<grid,
     block>>>(num_elements, d_geo_conn, d_vars_conn, d_xpts, d_vars, d_physData, res);

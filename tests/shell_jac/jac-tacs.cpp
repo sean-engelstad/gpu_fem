@@ -76,6 +76,12 @@ int main() {
     // printf("Analytic jac\n");
     // printf("jac TD = ?\n");
 
+    // print residual
+    for (int i = 0; i < 24; i++) {
+      printf("res[%d] = %.8e\n", i, res[i]);
+    }
+    printf("------------------------\n");
+
     for (int i = 0; i < 24*24; i++) {
       printf("K[%d] = %.8e\n", i, Kmat[i]);
     }

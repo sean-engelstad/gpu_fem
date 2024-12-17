@@ -5,41 +5,45 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 
 ### <span style="color:#fde74c">Basic Linear Solve with Shell Element on GPU</span>
 - [ ] fully verify and optimize add residual on GPU
-    - [x] add_residual : demo add residual for shell element
-    - [x] add residual : XDSM diagram of each method
-    - [x] add residual : concept for optimal memory storage in main method
-    - [x] add residual : update code with optimal memory storage in the main method
-    - [ ] add residual : make a chart showing the amount of temp memory stored at each point in the scripts
-    - [x] add residual : verify element strain energy against TACS
-    - [x] add residual : verify element energy derivs with complex step on CPU
-    - [x] add residual : verify global residual for one element against TACS on CPU
-    - [x] add residual : fix nan issue in global residual assembly
-    - [ ] add residual : verify CPU and GPU give same global residual
-    - [ ] add residual : significantly reduce register pressure by reusing more of the same arrays. Use references to the same array in memory.
-    - [ ] add residual : check global residual on larger mesh..
-    - [ ] add residual : NVIDIA profiling
-    - [ ] add residual : optimize interp tying strain method
-    - [ ] add residual : optimize compute tying strain method
-    - [ ] add residual : add each of these results to overleaf
-    - [ ] add residual : add these to a new ppt
+    - [x] demo add residual for shell element
+    - [x] XDSM diagram of each method
+    - [x] concept for optimal memory storage in main method
+    - [x] update code with optimal memory storage in the main method
+    - [x] verify element strain energy against TACS
+    - [x] verify element energy derivs with complex step on CPU
+    - [x] verify global residual for one element against TACS on CPU
+    - [x] fix nan issue in global residual assembly
+    - [x] verify CPU and GPU give same global residual
+    ---- big checkpoint : working residual runs on GPU! matches TACS
+    - [ ] use Ali's methods for kernel global to shared mem transfer..
+    - [ ] significantly reduce register pressure by reusing more of the same arrays. Use references to the same array in memory.
+    - [ ] check global residual on larger mesh..
+    - [ ] make a chart showing the amount of temp memory stored at each point in the scripts
+    - [ ] NVIDIA profiling
+    - [ ] optimize interp tying strain method
+    - [ ] optimize compute tying strain method
+    - [ ] add each of these results to overleaf
+    - [ ] add these to a new ppt
 - [ ] fully verify and optimize add jacobian on GPU
-    - [ ] add jacobian : demo of running jacobian
-    - [ ] add jacobian : XDSM diagram of each method
-    - [ ] add jacobian : concept for optimal memory storage
-    - [x] add jacobian : fix nans in jacobian
-    - [ ] add jacobian : make methods more general for nonlinear strain, director for pvalue, hvalue, etc.
-    - [ ] add jacobian : verify element res derivs with complex step
-    - [ ] add jacobian : verify element jacobian against TACS (one col at a time?)
-    - [ ] add jacobian : verify global jacobian against TACS
-    - [ ] add jacobian : NVIDIA profiling
-    - [ ] add jacobian : look into shared memory compile issue with profiling?
-    - [ ] add jacobian : add each of these results to overleaf
+    - [x] demo of running jacobian
+    - [ ] XDSM diagram of each method
+    - [ ] concept for optimal memory storage
+    - [x] fix nans in jacobian
+    - [x] verify element jac derivs with complex step
+    - [x] verify element jacobian against TACS (why does it not match but res matches jac?)
+    - [x] verify CPU vs GPU jacobian are equivalent
+    ---- big checkpoint : working jacobian runs on GPU! matches TACS
+    - [ ] NVIDIA profiling
+    - [ ] add each of these results to overleaf
 - [ ] linear solve on the GPU
     - [ ] get sparse element storage fill pattern from Aaron => need to 
     - [ ] get linear solver to work with cuSparse 
 
 ### More additions
-- [ ] extend to nonlinear strain (add tying strain hfwd, hrev and test jacobian vs res with CS)
+- [ ] geometric nonlinear verification
+    - [ ] add nonlinear tying strain hfwd, hrev code
+    - [ ] verify nonlinear residual against TACS
+    - [ ] verify nonlinear jacobian against TACS
 - [ ] extend to nonlinear directors (and test jacobian vs res with CS)
 - [ ] add blade stiffened constitutive physics? and associated ksfailure there..
 
@@ -53,7 +57,6 @@ for example, compute transpose of matrix in some cases so columns available as r
 
 ### <span style="color:#9bc53d">Tasks for Scitech</span>
 - [ ] add thermal strains into the formulation as well
-- [ ] generalize some methods for nonlinear tying strain, director, etc.
 - [ ] get G matrix with third order directional derivative for stability
 - [ ] get fourth-order stability matrix for post-buckling
 - [ ] get adjoint-jacobian vector products for optimization

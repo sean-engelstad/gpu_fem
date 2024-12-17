@@ -26,6 +26,14 @@ check-jac-cs:
 	./jac-cs.out >> out-cs.txt
 	diff out-anl.txt out-cs.txt >> diff.txt
 
+check-jac-gpu:
+# check jac CPU vs GPU
+	make clean
+	make jac
+	./jac.out >> out-cpu.txt
+	make jac-gpu
+	./jac-gpu.out >> out-gpu.txt
+
 jac:
     # builds analytic residual on CPU
 	@echo "Building with CPU support"

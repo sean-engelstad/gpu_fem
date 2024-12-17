@@ -146,18 +146,19 @@ public:
 
     // compute disp grad sens u0x_bar, u1x_bar, e0ty_bar => res, d_bar, ety_bar
     A2D::Vec<T, 3 * num_nodes> d_bar;
-    T ety_bar[Basis::num_all_tying_points];
+    A2D::Vec<T, Basis::num_all_tying_points> ety_bar;
+    // T ety_bar[Basis::num_all_tying_points];
     ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
         pt, physData.refAxis, xpts, vars, fn,
         u0x.bvalue().get_data(), u1x.bvalue().get_data(), e0ty.bvalue(),
-        res, d_bar.get_data(), ety_bar);
+        res, d_bar.get_data(), ety_bar.get_data());
 
     // drill strain sens
     ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
         pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
 
     // backprop tying strain sens ety_bar to d_bar and res
-    Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar, res, d_bar.get_data());
+    Phys::template computeTyingStrainSens<Basis>(xpts, fn, ety_bar.get_data(), res, d_bar.get_data());
 
     // directors back to residuals
     Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(), res);

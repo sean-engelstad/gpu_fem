@@ -33,6 +33,17 @@ check-res:
 	./tacs-res.x >> out2.txt
 	diff out1.txt out2.txt >> diff.txt
 
+check-res3:
+# check residual against TACS (all three methods)
+	make clean
+	make res
+	./res.out >> out1.txt
+	make res-jac
+	./res-jac.out >> out2.txt
+	make res-tacs
+	./tacs-res.x >> out3.txt
+# diff out1.txt out2.txt >> diff.txt
+
 check-res-cs:
 # check residual complex-step
 	make clean
@@ -55,6 +66,11 @@ res:
     # builds analytic residual on CPU
 	@echo "Building with CPU support"
 	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res.cu -o res.out
+
+res-jac:
+    # builds analytic residual on CPU
+	@echo "Building with CPU support"
+	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res-jac.cu -o res-jac.out
 
 res-gpu:
     # builds analytic residual on GPU
