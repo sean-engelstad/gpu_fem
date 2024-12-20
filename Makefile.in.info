@@ -10,5 +10,6 @@ INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE}
 USE_GPU := 0
 GPU_CXX = nvcc
 CXX = g++
-CC_FLAGS = #-g
-GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_70 #-w -sm_86 (for my linux desktop)
+CC_FLAGS =
+CUSPARSE_GPU_LIBS = -lcublas -lcusparse -lcudart -lcusolver
+GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_86 #-w

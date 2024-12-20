@@ -39,11 +39,11 @@ class BsrData {
         new_bsr.nnodes = this->nnodes;
 
         // make host vec copies of these pointers
-        HostVec<int32_t> h_rowPtr(this->nnodes + 1, this->rowPtr);
-        HostVec<int32_t> h_colPtr(nnzb, this->colPtr);
+        HostVec<int> h_rowPtr(this->nnodes + 1, this->rowPtr);
+        HostVec<int> h_colPtr(nnzb, this->colPtr);
         int nodes_per_elem2 = this->nodes_per_elem * this->nodes_per_elem;
         int n_elemIndMap = this->nelems * nodes_per_elem2;
-        HostVec<int32_t> h_elemIndMap(n_elemIndMap, this->elemIndMap);
+        HostVec<int> h_elemIndMap(n_elemIndMap, this->elemIndMap);
 
         // now use the Vec utils to create device pointers of them
         auto d_rowPtr = h_rowPtr.createDeviceVec();
@@ -69,7 +69,7 @@ class BsrData {
     int32_t nelems, nnodes;
     int32_t nodes_per_elem; // kelem : nodes_per_elem^2 dense matrix
     int32_t block_dim;      // equiv to vars_per_node (each block is 6x6)
-    int32_t *rowPtr, *colPtr, *elemIndMap;
+    int *rowPtr, *colPtr, *elemIndMap;
 };
 
 // main utils

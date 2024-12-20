@@ -34,9 +34,9 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [ ] NVIDIA profiling
     - [ ] add each of these results to overleaf
 - [ ] linear solve on the GPU
-    - [ ] use Ali's methods for kernel global to shared mem transfer..
-    - [ ] get sparse element storage fill pattern from Aaron => need to 
-    - [ ] get linear solver to work with cuSparse 
+    - [x] get linear solve to work with cuSparse
+    - [ ] add BCs to the system (res and mat) so nonsingular
+    - [ ] Seiyon to help get ILU(k) fill pattern to work for more accurate cusparse solve 
     - [ ] verify small mesh linear solve against TACS
 
 ### More additions
