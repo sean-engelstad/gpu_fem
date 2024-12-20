@@ -28,7 +28,7 @@ class ElementAssembler {
     ElementAssembler(int32_t num_geo_nodes_, int32_t num_vars_nodes_,
                      int32_t num_elements_, HostVec<int32_t> &geo_conn,
                      HostVec<int32_t> &vars_conn, HostVec<T> &xpts,
-                     HostVec<Data> &physData)
+                     HostVec<int> &bcs, HostVec<Data> &physData)
         : num_geo_nodes(num_geo_nodes_), num_vars_nodes(num_vars_nodes_),
           num_elements(num_elements_) {
 
@@ -52,6 +52,7 @@ class ElementAssembler {
         this->geo_conn = geo_conn.createDeviceVec();
         this->vars_conn = vars_conn.createDeviceVec();
         this->xpts = xpts.createDeviceVec();
+        this->bcs = bcs.createDeviceVec();
         this->physData = physData.createDeviceVec(false);
         this->bsr_data = bsr_data.createDeviceBsrData();
 
@@ -61,6 +62,7 @@ class ElementAssembler {
         this->geo_conn = geo_conn;
         this->vars_conn = vars_conn;
         this->xpts = xpts;
+        this->bcs = bcs;
         this->physData = physData;
 
 #endif // end of USE_GPU or not USE_GPU check
@@ -70,6 +72,11 @@ class ElementAssembler {
 
     int get_num_xpts() { return num_geo_nodes * spatial_dim; }
     int get_num_vars() { return num_vars_nodes * vars_per_node; }
+    __HOST__ void apply_bcs(Vec<T> &vec) {
+        printf("here");
+        vec.apply_bcs(bcs);
+    }
+    // void apply_bcs(Mat &mat) { mat.apply_bcs(bcs); }
 
     void set_variables(Vec<T> &vars) {
         // vars is either device array on GPU or a host array if not USE_GPU
@@ -113,7 +120,7 @@ class ElementAssembler {
 
         add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars,
-                              physData, res);
+                              bcs, physData, res);
 
         gpuErrchk(cudaDeviceSynchronize());
 #else  // USE_GPU
@@ -153,6 +160,7 @@ class ElementAssembler {
     int32_t num_elements; // Number of elements of this type
 
     Vec<int32_t> geo_conn, vars_conn;
+    Vec<int> bcs;
     Vec<T> xpts, vars;
     Vec<Data> physData;
     BsrData bsr_data;

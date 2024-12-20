@@ -35,6 +35,10 @@ int main(void) {
     int num_vars_nodes = 1e2;
     int num_elements = 1e3;
 
+    // make fake bcs
+    HostVec<int> bcs(10);
+    bcs.randomize(num_vars_nodes);
+
     // make fake element connectivity for testing
     int N = Geo::num_nodes * num_elements;
     HostVec<int32_t> geo_conn(N);
@@ -63,7 +67,7 @@ int main(void) {
     // NOTE : even for GPU case, HostVec inputs to Assembler in order to get BSR
     // structure
     Assembler assembler(num_geo_nodes, num_vars_nodes, num_elements, geo_conn,
-                        vars_conn, xpts, physData);
+                        vars_conn, xpts, bcs, physData);
 
     // init variables u
     int32_t num_vars = assembler.get_num_vars();
@@ -75,11 +79,6 @@ int main(void) {
     DeviceVec<T> res(num_vars);
     auto kmat = createBsrMat<Assembler, DeviceVec<T>>(assembler);
 
-    // compute fake rhs
-    HostVec<T> h_rhs(num_vars);
-    h_rhs.randomize();
-    auto d_rhs = h_rhs.createDeviceVec();
-
     // init soln vec
     DeviceVec<T> d_soln(num_vars);
 
@@ -88,7 +87,11 @@ int main(void) {
 
     // add or assemble the jacobian on the GPU
     assembler.set_variables(d_vars);
-    assembler.add_jacobian(res, kmat);
+    assembler.add_jacobian(res, kmat); // TODO : need to scale res by -1?
+
+    // this will launch kernels inside the res, mat classes if on device
+    assembler.apply_bcs(res);
+    // assembler.apply_bcs(kmat);
 
     // copy soln back to host
     auto kmat_dvals = kmat.getVec();
@@ -100,7 +103,7 @@ int main(void) {
     printf("\n");
 
     // do the cusparse solve
-    cusparse_solve<T>(kmat, d_rhs, d_soln);
+    cusparse_solve<T>(kmat, res, d_soln);
 
     // stop timing
     auto stop = std::chrono::high_resolution_clock::now();
@@ -110,6 +113,7 @@ int main(void) {
     // copy soln back to host
     kmat_dvals = kmat.getVec();
     kmat_hvals = kmat_dvals.createHostVec();
+    auto h_res = res.createHostVec();
     auto h_soln = d_soln.createHostVec();
 
     // print cusparse results
@@ -125,7 +129,7 @@ int main(void) {
     printf("\n");
 
     printf("rhs: ");
-    printVec<double>(24, h_rhs.getPtr());
+    printVec<double>(24, h_res.getPtr());
     printf("\n");
 
     printf("took %d microseconds to solve linear system\n", (int)duration.count());

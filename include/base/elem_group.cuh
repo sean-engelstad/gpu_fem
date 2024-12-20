@@ -17,7 +17,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ void
 add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
                  const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                 const Vec<T> vars, Vec<Data> physData, Vec<T> res) {
+                 const Vec<T> vars, Vec<int> bcs, Vec<Data> physData, Vec<T> res) {
 
     // note in the above : CPU code passes Vec<> objects by reference
     // GPU kernel code cannot do so for complex objects otherwise weird behavior

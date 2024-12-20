@@ -2,6 +2,10 @@
 #include "../cuda_utils.h"
 #include "stdlib.h"
 
+#ifdef USE_GPU
+#include "vec.cuh"
+#endif
+
 // forward referencing
 template <typename T> class DeviceVec;
 template <typename T> class HostVec;
@@ -20,7 +24,7 @@ template <typename T> class BaseVec {
     __HOST_DEVICE__ void getData(T *myData) { myData = data; }
     __HOST_DEVICE__ T *getPtr() { return data; }
     __HOST_DEVICE__ const T *getPtr() const { return data; }
-    __HOST_DEVICE__ int getSize() { return N; }
+    __HOST_DEVICE__ int getSize() const { return N; }
     // __HOST__ virtual DeviceVec<T> createDeviceVec() const = 0;
     // __HOST__ virtual HostVec<T> createHostVec() const = 0;
 
@@ -34,6 +38,14 @@ template <typename T> class BaseVec {
                 elem_data[inode * dof_per_node + idof] =
                     data[global_inode * dof_per_node + idof];
             }
+        }
+    }
+
+    __HOST_DEVICE__ void apply_bcs(const BaseVec<int> bcs) {
+        int nbcs = bcs.getSize();
+        for (int ibc = 0; ibc < nbcs; ibc++) {
+            int idof = bcs[ibc];
+            data[idof] = 0.0; // if non-dirichlet bcs handle later.. in TODO
         }
     }
 
@@ -64,6 +76,10 @@ template <typename T> class BaseVec {
 
 template <typename T> class DeviceVec : public BaseVec<T> {
   public:
+#ifdef USE_GPU
+    static constexpr dim3 bcs_block = dim3(32);
+#endif // USE_GPU
+
     DeviceVec() = default; // default constructor
     __HOST__ DeviceVec(int N, bool memset = true) : BaseVec<T>(N, nullptr) {
 #ifdef USE_GPU
@@ -75,6 +91,19 @@ template <typename T> class DeviceVec : public BaseVec<T> {
     }
     __HOST_DEVICE__ void zeroValues() {
         cudaMemset(this->data, 0.0, this->N * sizeof(T));
+    }
+    __HOST__ void apply_bcs(DeviceVec<int> bcs) {
+#ifdef USE_GPU
+        dim3 block = bcs_block;
+        int nbcs = bcs.getSize();
+        int nblocks = (nbcs + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+        printf("in deviceVec apply_bcs\n");
+
+        apply_bcs_kernel<T, DeviceVec><<<grid, block>>>(bcs, this->data);
+#else // NOT USE_GPU
+        BaseVec<T>::apply_bcs(bcs);
+#endif
     }
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
     __HOST__ HostVec<T> createHostVec() {
