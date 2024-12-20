@@ -14,11 +14,11 @@ template <class Vec> class DenseMat {
     __HOST_DEVICE__ Vec getVec() { return data; }
     __HOST_DEVICE__ T *getPtr() { return data.getPtr(); }
 
-    __HOST_DEVICE__ addElementMatrixValues(const T scale, const int ielem,
-                                           const int dof_per_node,
-                                           const int nodes_per_elem,
-                                           const int32_t *elem_conn,
-                                           const T *elem_mat) {
+    __HOST_DEVICE__ void addElementMatrixValues(const T scale, const int ielem,
+                                                const int dof_per_node,
+                                                const int nodes_per_elem,
+                                                const int32_t *elem_conn,
+                                                const T *elem_mat) {
         // similar method to vec.h or Vec.addElementValues but here for matrix
         int dof_per_elem = dof_per_node * nodes_per_elem;
         for (int idof = 0; idof < dof_per_elem; idof++) {
@@ -35,6 +35,32 @@ template <class Vec> class DenseMat {
             }
         }
     }
+
+#ifdef USE_GPU
+    __DEVICE__ void addElementMatrixValuesFromShared(
+        const bool active_thread, const int start, const int stride,
+        const T scale, const int ielem, const int dof_per_node,
+        const int nodes_per_elem, const int32_t *elem_conn,
+        const T *shared_elem_mat) {
+        // copies values to the shared element array on GPU (shared memory)
+        if (!active_thread)
+            return;
+        int dof_per_elem = dof_per_node * nodes_per_elem;
+        for (int idof = start; idof < dof_per_elem; idof += stride) {
+            int local_inode = idof / dof_per_node;
+            int iglobal =
+                elem_conn[local_inode] * dof_per_node + (idof % dof_per_node);
+
+            for (int jdof = 0; jdof < vars_per_elem; jdof++) {
+                int local_jnode = jdof / dof_per_node;
+                int jglobal = elem_conn[local_jnode] * dof_per_node +
+                              (jdof % dof_per_node);
+                atomicAdd(&data[N * iglobal + jglobal],
+                          shared_elem_mat[dof_per_elem * idof + jdof]);
+            }
+        }
+    }
+#endif // USE_GPU
 
     template <typename I> __HOST_DEVICE__ T &operator[](const I i) {
         return data[i];

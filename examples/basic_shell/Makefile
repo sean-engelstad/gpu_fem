@@ -22,7 +22,7 @@ jac-cpu:
 
 jac-gpu:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac-gpu.cu
 
 test-gpu:
 	@echo "Building with GPU support"

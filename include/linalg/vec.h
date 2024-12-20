@@ -110,20 +110,19 @@ template <typename T> class DeviceVec : public BaseVec<T> {
     }
 
     __DEVICE__ static void copyLocalToShared(const bool active_thread,
-                                             const int N, const T *local,
-                                             T *shared) {
+                                             const T scale, const int N,
+                                             const T *local, T *shared) {
         for (int i = 0; i < N; i++) {
-            atomicAdd(&shared[i], local[i]);
+            atomicAdd(&shared[i], scale * local[i]);
         }
         __syncthreads();
     }
 
-    __DEVICE__ void addValuesFromShared(const bool active_thread,
-                                        const int start, const int stride,
-                                        const int dof_per_node,
-                                        const int nodes_per_elem,
-                                        const int32_t *elem_conn,
-                                        const T *shared_data) {
+    __DEVICE__ void
+    addElementValuesFromShared(const bool active_thread, const int start,
+                               const int stride, const int dof_per_node,
+                               const int nodes_per_elem,
+                               const int32_t *elem_conn, const T *shared_data) {
         // copies values to the shared element array on GPU (shared memory)
         if (!active_thread)
             return;
