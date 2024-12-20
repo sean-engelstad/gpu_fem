@@ -17,9 +17,6 @@ higher-order fill patterns.
 int main(void) {
     using T = double;
 
-    printf("Cusparse solve kmat * soln = res\n");
-    printf("--------------------------------\n");
-
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
     using Basis = ShellQuadBasis<T, Quad, 2>;
@@ -93,6 +90,15 @@ int main(void) {
     assembler.set_variables(d_vars);
     assembler.add_jacobian(res, kmat);
 
+    // copy soln back to host
+    auto kmat_dvals = kmat.getVec();
+    auto kmat_hvals = kmat_dvals.createHostVec();
+
+    // print kmat before solve because it changes kmat values in place
+    printf("kmat pre-solve: ");
+    printVec<double>(24, kmat_hvals.getPtr());
+    printf("\n");
+
     // do the cusparse solve
     cusparse_solve<T>(kmat, d_rhs, d_soln);
 
@@ -102,11 +108,14 @@ int main(void) {
         std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
 
     // copy soln back to host
-    auto kmat_dvals = kmat.getVec();
-    auto kmat_hvals = kmat_dvals.createHostVec();
+    kmat_dvals = kmat.getVec();
+    kmat_hvals = kmat_dvals.createHostVec();
     auto h_soln = d_soln.createHostVec();
 
     // print cusparse results
+    printf("Cusparse solve kmat * soln = rhs\n");
+    printf("--------------------------------\n");
+
     printf("kmat: ");
     printVec<double>(24, kmat_hvals.getPtr());
     printf("\n");
