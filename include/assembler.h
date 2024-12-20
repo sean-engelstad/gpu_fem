@@ -52,7 +52,7 @@ class ElementAssembler {
         this->geo_conn = geo_conn.createDeviceVec();
         this->vars_conn = vars_conn.createDeviceVec();
         this->xpts = xpts.createDeviceVec();
-        this->physData = physData.createDeviceVec();
+        this->physData = physData.createDeviceVec(false);
         this->bsr_data = bsr_data.createDeviceBsrData();
 
 #else // not USE_GPU
@@ -106,15 +106,10 @@ class ElementAssembler {
     void add_residual(Vec<T> &res) {
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
-        // dim3 block = ElemGroup::res_block;
-        // int nblocks = (num_elements + block.x - 1) / block.x;
-        // dim3 grid(nblocks);
-        // constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
-        // debugging
-        dim3 block(1, 4, 1);
-        dim3 grid(1);
-        constexpr int32_t elems_per_block = 1;
+        dim3 block = ElemGroup::res_block;
+        int nblocks = (num_elements + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+        constexpr int32_t elems_per_block = ElemGroup::res_block.x;
 
         add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars,

@@ -24,6 +24,10 @@ jac-gpu:
 	@echo "Building with GPU support"
 	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu
 
+test-gpu:
+	@echo "Building with GPU support"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 test_gpu.cu
+
 clean:
 	rm *.out || echo "no .out files"
 	rm *.txt || echo "no .txt files"

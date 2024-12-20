@@ -69,7 +69,7 @@ class BaseElementGroup {
             // compute element residual
             for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
                 Derived::template add_element_quadpt_residual<Data>(
-                    iquad, elem_xpts, elem_vars, elem_physData, elem_res);
+                    true, iquad, elem_xpts, elem_vars, elem_physData, elem_res);
             }
 
             res.addElementValues(1.0, Phys::vars_per_node, Basis::num_nodes,
@@ -110,7 +110,7 @@ class BaseElementGroup {
 
             for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
                 Derived::template add_element_quadpt_energy<Data>(
-                    iquad, elem_xpts, elem_vars, elem_physData, Uenergy);
+                    true, iquad, elem_xpts, elem_vars, elem_physData, Uenergy);
             }
 
         } // num_elements for loop
@@ -156,8 +156,9 @@ class BaseElementGroup {
                 A2D::Vec<T, vars_per_elem> matCol; // initialized to zero
                 for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
                     Derived::template add_element_quadpt_jacobian_col<Data>(
-                        iquad, ideriv, elem_xpts, elem_vars, elem_physData,
-                        elem_res, &elem_mat[dof_per_elem * ideriv]);
+                        true, iquad, ideriv, elem_xpts, elem_vars,
+                        elem_physData, elem_res,
+                        &elem_mat[dof_per_elem * ideriv]);
                 }
             }
 

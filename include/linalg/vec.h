@@ -21,8 +21,8 @@ template <typename T> class BaseVec {
     __HOST_DEVICE__ T *getPtr() { return data; }
     __HOST_DEVICE__ const T *getPtr() const { return data; }
     __HOST_DEVICE__ int getSize() { return N; }
-    __HOST__ virtual DeviceVec<T> createDeviceVec() const = 0;
-    __HOST__ virtual HostVec<T> createHostVec() const = 0;
+    // __HOST__ virtual DeviceVec<T> createDeviceVec() const = 0;
+    // __HOST__ virtual HostVec<T> createHostVec() const = 0;
 
     __HOST_DEVICE__ void getElementValues(const int dof_per_node,
                                           const int nodes_per_elem,
@@ -65,17 +65,19 @@ template <typename T> class BaseVec {
 template <typename T> class DeviceVec : public BaseVec<T> {
   public:
     DeviceVec() = default; // default constructor
-    __HOST__ DeviceVec(int N) : BaseVec<T>(N, nullptr) {
+    __HOST__ DeviceVec(int N, bool memset = true) : BaseVec<T>(N, nullptr) {
 #ifdef USE_GPU
         cudaMalloc((void **)&this->data, N * sizeof(T));
-        cudaMemset(this->data, 0.0, N * sizeof(T));
+        if (memset) {
+            cudaMemset(this->data, 0.0, N * sizeof(T));
+        }
 #endif
     }
     __HOST_DEVICE__ void zeroValues() {
         cudaMemset(this->data, 0.0, this->N * sizeof(T));
     }
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
-    __HOST__ virtual HostVec<T> createHostVec() const override {
+    __HOST__ HostVec<T> createHostVec() {
         HostVec<T> vec(this->N);
 #ifdef USE_GPU
         cudaMemcpy(vec.getPtr(), this->data, this->N * sizeof(T),
@@ -83,9 +85,7 @@ template <typename T> class DeviceVec : public BaseVec<T> {
 #endif
         return vec;
     }
-    __HOST__ virtual DeviceVec<T> createDeviceVec() const override {
-        return *this;
-    }
+    __HOST__ DeviceVec<T> createDeviceVec() { return *this; }
 
 #ifdef USE_GPU
     __DEVICE__ void copyValuesToShared(const bool active_thread,
@@ -95,25 +95,18 @@ template <typename T> class DeviceVec : public BaseVec<T> {
                                        const int32_t *elem_conn,
                                        T *shared_data) const {
         // copies values to the shared element array on GPU (shared memory)
-        if (!active_thread)
+        if (!active_thread) {
             return;
-
-        // shared_data[0] = 0.0;
-        // printf("shared_data[0] = %.8e\n", shared_data[0]);
+        }
 
         int dof_per_elem = dof_per_node * nodes_per_elem;
-        for (int idof = 0; idof < dof_per_elem; idof++) {
+        for (int idof = start; idof < dof_per_elem; idof += stride) {
             int local_inode = idof / dof_per_node;
             int iglobal =
                 elem_conn[local_inode] * dof_per_node + (idof % dof_per_node);
-            iglobal = 0; // debug check
-            // shared_data[idof] = this->data[iglobal];
-            shared_data[idof] = 0.0;
-            printf("shared[%d] = %.8e\n", idof, shared_data[idof]);
-            // printf("shared[%d] = %.8e, global[%d] = %.8e\n", idof,
-            //        shared_data[idof], iglobal, this->data[iglobal]);
+            shared_data[idof] = this->data[iglobal];
         }
-        // __syncthreads();
+        // make sure you call __syncthreads() at some point after this
     }
 
     __DEVICE__ static void copyLocalToShared(const bool active_thread,
@@ -122,6 +115,7 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         for (int i = 0; i < N; i++) {
             atomicAdd(&shared[i], local[i]);
         }
+        __syncthreads();
     }
 
     __DEVICE__ void addValuesFromShared(const bool active_thread,
@@ -134,7 +128,7 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         if (!active_thread)
             return;
         int dof_per_elem = dof_per_node * nodes_per_elem;
-        for (int idof = 0; idof < dof_per_elem; idof++) {
+        for (int idof = start; idof < dof_per_elem; idof += stride) {
             int local_inode = idof / dof_per_node;
             int iglobal =
                 elem_conn[local_inode] * dof_per_node + (idof % dof_per_node);
@@ -177,9 +171,9 @@ template <typename T> class HostVec : public BaseVec<T> {
         }
     }
 
-    __HOST__ virtual DeviceVec<T> createDeviceVec() const override {
+    __HOST__ DeviceVec<T> createDeviceVec(bool memset = true) {
         // creates a device vector and copies this host data to the device
-        DeviceVec<T> vec(this->N);
+        DeviceVec<T> vec(this->N, memset);
 #ifdef USE_GPU
         cudaMemcpy(vec.getPtr(), this->data, this->N * sizeof(T),
                    cudaMemcpyHostToDevice);
@@ -187,5 +181,5 @@ template <typename T> class HostVec : public BaseVec<T> {
         return vec;
     }
 
-    __HOST__ virtual HostVec<T> createHostVec() const override { return *this; }
+    __HOST__ HostVec<T> createHostVec() { return *this; }
 };

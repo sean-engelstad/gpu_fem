@@ -15,9 +15,13 @@ __GLOBAL__ void add_energy_gpu(int32_t num_elements, int32_t *geo_conn,
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void
-add_residual_gpu(const int32_t num_elements, const Vec<int32_t> &geo_conn,
-                 const Vec<int32_t> &vars_conn, const Vec<T> &xpts,
-                 const Vec<T> &vars, Vec<Data> &physData, Vec<T> &res) {
+add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
+                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
+                 const Vec<T> vars, Vec<Data> physData, Vec<T> res) {
+    
+    // note in the above : CPU code passes Vec<> objects by reference
+    // GPU kernel code cannot do so for complex objects otherwise weird behavior occurs
+
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
@@ -37,34 +41,30 @@ add_residual_gpu(const int32_t num_elements, const Vec<int32_t> &geo_conn,
 
     const int32_t *_geo_conn = geo_conn.getPtr();
     const int32_t *_vars_conn = vars_conn.getPtr();
+    const Data *_phys_data = physData.getPtr();
 
     __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
     __SHARED__ T block_vars[elems_per_block][vars_per_elem];
     __SHARED__ T block_res[elems_per_block][vars_per_elem];
     __SHARED__ Data block_data[elems_per_block];
 
-    // debug: try printing values out of xpts
-    printf("xpts[0] = %.8e\n", xpts.getPtr()[0]);
-
-
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
-    // memset(&block_xpts[local_elem][0], 0.0, nxpts_per_elem * sizeof(T));
     xpts.copyValuesToShared(active_thread, threadIdx.y, blockDim.y,
                             Geo::spatial_dim, Geo::num_nodes, geo_elem_conn,
                             &block_xpts[local_elem][0]);
 
-    // const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
-    // vars.copyValuesToShared(active_thread, threadIdx.y, blockDim.y,
-    //                         Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
-    //                         &block_vars[local_elem][0]);
+    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
+    vars.copyValuesToShared(active_thread, threadIdx.y, blockDim.y,
+                            Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
+                            &block_vars[local_elem][0]);
 
     if (active_thread) {
         memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
 
         if (local_thread < elems_per_block) {
             int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
-            block_data[local_thread] = physData[global_elem_thread];
+            block_data[local_thread] = _phys_data[global_elem_thread];
         }
     }
     __syncthreads();
@@ -80,22 +80,20 @@ add_residual_gpu(const int32_t num_elements, const Vec<int32_t> &geo_conn,
     // printf("block_xpts:");
     // printVec<T>(12,&block_xpts[local_elem][0]);
 
-    // ElemGroup::template add_element_quadpt_residual<Data>(
-    //     active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-    //     block_data[local_elem], local_res);
+    ElemGroup::template add_element_quadpt_residual<Data>(
+        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
+        block_data[local_elem], local_res);
 
-    // Vec<T>::copyLocalToShared(active_thread, vars_per_elem, &local_res[0],
-    //                           &block_res[local_elem][0]);
-    // __syncthreads();
+    Vec<T>::copyLocalToShared(active_thread, vars_per_elem, &local_res[0],
+                              &block_res[local_elem][0]);
 
-    // res.addValuesFromShared(active_thread, threadIdx.y, blockDim.y,
-    //                         Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
-    //                         &block_res[local_elem][0]);
-}
+    res.addValuesFromShared(active_thread, threadIdx.y, blockDim.y,
+                            Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
+                            &block_res[local_elem][0]);
+} // end of add_residual_gpu kernel
 
 // add jacobian kernel
 // -------------------
-
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1>
 __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes,
                                         int32_t num_elements, int32_t *geo_conn,
