@@ -5,11 +5,13 @@
 #ifdef USE_GPU
 #define __SHARED__ __shared__
 #define __HOST_DEVICE__ __host__ __device__
+#define __HOST__ __host__
 #define __DEVICE__ __device__
 #define __GLOBAL__ __global__
 #else
 #define __SHARED__
 #define __HOST_DEVICE__
+#define __HOST__
 #define __DEVICE__
 #define __GLOBAL__
 #endif

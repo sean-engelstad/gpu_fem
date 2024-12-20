@@ -15,9 +15,7 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [x] fix nan issue in global residual assembly
     - [x] verify CPU and GPU give same global residual
     ---- big checkpoint : working residual runs on GPU! matches TACS
-    - [ ] use Ali's methods for kernel global to shared mem transfer..
     - [ ] significantly reduce register pressure by reusing more of the same arrays. Use references to the same array in memory.
-    - [ ] check global residual on larger mesh..
     - [ ] make a chart showing the amount of temp memory stored at each point in the scripts
     - [ ] NVIDIA profiling
     - [ ] optimize interp tying strain method
@@ -36,8 +34,10 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [ ] NVIDIA profiling
     - [ ] add each of these results to overleaf
 - [ ] linear solve on the GPU
+    - [ ] use Ali's methods for kernel global to shared mem transfer..
     - [ ] get sparse element storage fill pattern from Aaron => need to 
     - [ ] get linear solver to work with cuSparse 
+    - [ ] verify small mesh linear solve against TACS
 
 ### More additions
 - [ ] geometric nonlinear verification

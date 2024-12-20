@@ -7,17 +7,18 @@ default:
 	    $(MAKE) cpu; \
 	fi
 
-gpu:
-	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 main.cu
-
-cpu:
+res-cpu:
 	@echo "Building with CPU support"
-	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 main.cu
+	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res-cpu.cpp
+
+res-gpu:
+	@echo "Building with GPU support"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 res-gpu.cu
+
 
 jac-cpu:
 	@echo "Building with CPU support"
-	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu
+	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac-cpu.cpp
 
 jac-gpu:
 	@echo "Building with GPU support"
