@@ -95,7 +95,7 @@ int main(void) {
 
     // this will launch kernels inside the res, mat classes if on device
     assembler.apply_bcs(res);
-    // assembler.apply_bcs(kmat);
+    assembler.apply_bcs(kmat);
 
     // copy soln back to host
     auto kmat_dvals = kmat.getVec();

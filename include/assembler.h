@@ -72,11 +72,8 @@ class ElementAssembler {
 
     int get_num_xpts() { return num_geo_nodes * spatial_dim; }
     int get_num_vars() { return num_vars_nodes * vars_per_node; }
-    __HOST__ void apply_bcs(Vec<T> &vec) {
-        printf("here");
-        vec.apply_bcs(bcs);
-    }
-    // void apply_bcs(Mat &mat) { mat.apply_bcs(bcs); }
+    __HOST__ void apply_bcs(Vec<T> &vec) { vec.apply_bcs(bcs); }
+    void apply_bcs(Mat &mat) { mat.apply_bcs(bcs); }
 
     void set_variables(Vec<T> &vars) {
         // vars is either device array on GPU or a host array if not USE_GPU

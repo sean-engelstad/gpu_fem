@@ -1,9 +1,17 @@
 #pragma once
 #include "bsr_utils.h"
+#include "vec.h"
+#ifdef USE_GPU
+#include "bsr_mat.cuh"
+#endif // USE_GPU
 
 template <class Vec> class BsrMat {
   public:
     using T = typename Vec::type;
+#ifdef USE_GPU
+    static constexpr dim3 bcs_block = dim3(32);
+#endif // USE_GPU
+
     __HOST_DEVICE__ BsrMat(const BsrData &bsr_data, Vec &values)
         : bsr_data(bsr_data), values(values) {}
     __HOST__ BsrMat(const BsrData &bsr_data) : bsr_data(bsr_data) {
@@ -18,72 +26,59 @@ template <class Vec> class BsrMat {
     __HOST_DEVICE__ T *getPtr() { return values.getPtr(); }
     __HOST_DEVICE__ const T *getPtr() const { return values.getPtr(); }
 
-    //     __HOST_DEVICE__ void apply_bcs(const Vec<int> bcs) {
-    // #ifdef USE_GPU
-    //         // launch kernel to apply BCs to the full matrix
+    __HOST__ void apply_bcs(DeviceVec<int> bcs) {
 
-    // #else  // not USE_GPU
-    //         int nbcs = bcs.getSize();
-    //         const int *rowPtr = bsr_data.rowPtr;
-    //         const int *colPtr = bsr_data.colPtr;
-    //         int nnodes = bsr_data.nblockRows;
-    //         T *valPtr = values.getPtr();
+        // some prelim values needed for both cases
+        int nbcs = bcs.getSize();
+        const int *rowPtr = bsr_data.rowPtr;
+        const int *colPtr = bsr_data.colPtr;
+        int nnodes = bsr_data.nnodes;
+        T *valPtr = values.getPtr();
 
-    //         int blocks_per_elem = bsr_data.nodes_per_elem *
-    //         bsr_data.nodes_per_elem; int nnz_per_block = bsr_data.block_dim *
-    //         bsr_data.block_dim; int block_dim = bsr_data.block_dim; T *val;
+        int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
+        int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
+        int block_dim = bsr_data.block_dim;
 
-    //         // loop over each bc
-    //         for (int ibc = 0; ibc < nbcs; ibc++) {
-    //             int node = bcs[ibc];
-    //             int inner_row = node % block_dim;
-    //             int block_row = node / block_dim;
-    //             int istart = rowPtr[block_row];
-    //             int iend = rowPtr[block_row + 1];
-    //             val = &valPtr[nnz_per_block * istart];
+#ifdef USE_GPU
+        dim3 block = bcs_block;
+        int nblocks = (nbcs + block.x - 1) / block.x;
+        dim3 grid(nblocks);
 
-    //             // set bc row to zero
-    //             for (int col_ptr_ind = istart; col_ptr_ind < iend;
-    //             col_ptr_ind++) {
-    //                 int block_col = colPtr[col_ptr_ind];
-    //                 for (int inner_col = 0; inner_col < block_dim;
-    //                 inner_col++) {
-    //                     int inz = block_dim * inner_row + inner_col;
-    //                     int glob_col = block_col * block_dim + inner_col;
-    //                     if (glob_col == node) {
-    //                         val[inz] = 1.0; // (bc,bc) location
-    //                     } else {
-    //                         val[inz] = 0.0;
-    //                     } // this is CPU code here so doesn't matter for if
-    //                       // statement here
-    //                 }
-    //                 val += nnz_per_block;
-    //             }
-    //             // set bc col to zero
-    //             for (int inode = 0; inode < nnodes; inode++) {
-    //                 block_row = inode / block_dim;
-    //                 inner_row = inode % block_dim;
-    //                 istart = rowPtr[block_row];
-    //                 iend = rowPtr[block_col];
-    //                 val = &values[nnz_per_block * istart];
-    //                 int dest_block_col = node / block_dim;
+        // launch kernel to apply BCs to the full matrix
+        apply_mat_bcs_kernel<T, DeviceVec>
+            <<<grid, block>>>(bcs, rowPtr, colPtr, nnodes, valPtr,
+                              blocks_per_elem, nnz_per_block, block_dim);
 
-    //                 for (int *block_col = &colPtr[istart];
-    //                      block_col < &colPtr[iend]; block_col++) {
-    //                     if (dest_block_col == block_col[0]) {
-    //                         // now iterate over inner cols
-    //                         for (int inner_col = 0; inner_col < block_dim;
-    //                              inner_col++) {
-    //                             int inz = block_dim * inner_row + inner_col;
-    //                             val[inz] = 0.0;
-    //                         }
-    //                     }
-    //                 }
-    //                 val += nnz_per_block;
-    //             }
-    //         }
-    // #endif // USE_GPU
-    //     }
+#else  // not USE_GPU
+
+        // loop over each bc
+        for (int ibc = 0; ibc < nbcs; ibc++) {
+            int node = bcs[ibc];
+            int inner_row = node % block_dim;
+            int block_row = node / block_dim;
+            int istart = rowPtr[block_row];
+            int iend = rowPtr[block_row + 1];
+            T *val = &valPtr[nnz_per_block * istart];
+
+            // set bc row to zero
+            for (int col_ptr_ind = istart; col_ptr_ind < iend; col_ptr_ind++) {
+                int block_col = colPtr[col_ptr_ind];
+                for (int inner_col = 0; inner_col < block_dim; inner_col++) {
+                    int inz = block_dim * inner_row + inner_col;
+                    int glob_col = block_col * block_dim + inner_col;
+                    // ternary operation will be more friendly on the GPU (even
+                    // though this is CPU here)
+                    val[inz] = (glob_col == node) ? 1.0 : 0.0;
+                }
+                val += nnz_per_block;
+            }
+            // TODO : for bc column want K^T rowPtr, colPtr map probably
+            // to do it without if statements (compute map on CPU assembler
+            // init) NOTE : zero out columns only needed for nonzero BCs
+        }
+    }
+#endif // USE_GPU
+    }
 
     __HOST_DEVICE__
     void addElementMatrixValues(const T scale, const int ielem,

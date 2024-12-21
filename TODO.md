@@ -36,9 +36,8 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 - [ ] linear solve on the GPU
     - [x] get linear solve to work with cuSparse
     - [x] add_bcs for vec.h
-    - [ ] add_bcs for bsrMat.h
-    - [ ] test add bcs to system
-    - [ ] fix 0 soln in examples/basic_shell/solve_cusparse_gpu.cu
+    - [x] add_bcs for bsrMat.h
+    - [x] fix 0 soln in examples/basic_shell/solve_cusparse_gpu.cu
     - [ ] Seiyon to help get ILU(k) fill pattern to work for more accurate cusparse solve 
     - [ ] verify small mesh linear solve against TACS
 

@@ -99,9 +99,9 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         int nbcs = bcs.getSize();
         int nblocks = (nbcs + block.x - 1) / block.x;
         dim3 grid(nblocks);
-        printf("in deviceVec apply_bcs\n");
+        // printf("in deviceVec apply_bcs\n");
 
-        apply_bcs_kernel<T, DeviceVec><<<grid, block>>>(bcs, this->data);
+        apply_vec_bcs_kernel<T, DeviceVec><<<grid, block>>>(bcs, this->data);
 #else // NOT USE_GPU
         BaseVec<T>::apply_bcs(bcs);
 #endif
