@@ -31,8 +31,12 @@ int main(void) {
 
     // printf("running!\n");
 
-    int num_geo_nodes = 1e2;
-    int num_vars_nodes = 1e2;
+    // int num_geo_nodes = 10;
+    // int num_vars_nodes = 10;
+    // int num_elements = 20;
+
+    int num_geo_nodes = 100;
+    int num_vars_nodes = num_geo_nodes;
     int num_elements = 1e3;
 
     // make fake bcs

@@ -32,7 +32,7 @@ void cusparse_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     // TODO : was trying to make some of these const but didn't accept it in
     // final solve
     BsrData bsr_data = mat.getBsrData();
-    int mb = bsr_data.nblockRows;
+    int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
     int blockDim = bsr_data.block_dim;
     T *d_bsrVal = mat.getPtr();
@@ -40,7 +40,7 @@ void cusparse_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     int *d_bsrColInd = bsr_data.colPtr;
     T *d_x = rhs.getPtr();
     T *d_y = soln.getPtr();
-    DeviceVec<T> temp(soln.getSize());
+    DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
     T *d_z = temp.getPtr();
 
     // Initialize the cuda cusparse handle
@@ -160,6 +160,9 @@ void cusparse_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     cusparseDbsrsv2_solve(handle, dir, trans_U, mb, nnzb, &alpha, descr_U,
                           d_bsrVal, d_bsrRowPtr, d_bsrColInd, blockDim, info_U,
                           d_z, d_y, policy_U, pBuffer);
+
+    // print out d_y
+    // cudaMemcpy
 
     // step 6: free resources
     cudaFree(pBuffer);

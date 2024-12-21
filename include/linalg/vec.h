@@ -25,8 +25,9 @@ template <typename T> class BaseVec {
     __HOST_DEVICE__ T *getPtr() { return data; }
     __HOST_DEVICE__ const T *getPtr() const { return data; }
     __HOST_DEVICE__ int getSize() const { return N; }
-    // __HOST__ virtual DeviceVec<T> createDeviceVec() const = 0;
-    // __HOST__ virtual HostVec<T> createHostVec() const = 0;
+    // __HOST__ void zeroValues() {
+    //     memset(this->data, 0.0, this->N * sizeof(T));
+    // }
 
     __HOST_DEVICE__ void getElementValues(const int dof_per_node,
                                           const int nodes_per_elem,
@@ -89,7 +90,7 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         }
 #endif
     }
-    __HOST_DEVICE__ void zeroValues() {
+    __HOST__ void zeroValues() {
         cudaMemset(this->data, 0.0, this->N * sizeof(T));
     }
     __HOST__ void apply_bcs(DeviceVec<int> bcs) {
@@ -201,7 +202,7 @@ template <typename T> class HostVec : public BaseVec<T> {
 
     __HOST__ DeviceVec<T> createDeviceVec(bool memset = true) {
         // creates a device vector and copies this host data to the device
-        DeviceVec<T> vec(this->N, memset);
+        DeviceVec<T> vec = DeviceVec<T>(this->N, memset);
 #ifdef USE_GPU
         cudaMemcpy(vec.getPtr(), this->data, this->N * sizeof(T),
                    cudaMemcpyHostToDevice);

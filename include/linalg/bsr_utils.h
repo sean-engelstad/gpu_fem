@@ -32,7 +32,6 @@ class BsrData {
     __HOST__ BsrData createDeviceBsrData() { // deep copy each array onto the
         BsrData new_bsr;
         new_bsr.nnzb = this->nnzb;
-        new_bsr.nblockRows = this->nblockRows;
         new_bsr.nodes_per_elem = this->nodes_per_elem;
         new_bsr.block_dim = this->block_dim;
         new_bsr.nelems = this->nelems;
@@ -64,8 +63,7 @@ class BsrData {
     }
 
     // private: (keep public for now?)
-    int32_t nnzb;       // num nonzero blocks (in full matrix)
-    int32_t nblockRows; // = nblockCols since square (equiv to vars_per_node ?)
+    int32_t nnzb; // num nonzero blocks (in full matrix)
     int32_t nelems, nnodes;
     int32_t nodes_per_elem; // kelem : nodes_per_elem^2 dense matrix
     int32_t block_dim;      // equiv to vars_per_node (each block is 6x6)

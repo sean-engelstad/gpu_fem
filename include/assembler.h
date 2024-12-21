@@ -139,7 +139,7 @@ class ElementAssembler {
         dim3 grid(nblocks);
         constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
 
-        add_jacobian_gpu<T, ElemGroup, Data, elems_per_block>
+        add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat>
             <<<grid, block>>>(num_vars_nodes, num_elements, geo_conn, vars_conn,
                               xpts, vars, physData, res, mat);
 
