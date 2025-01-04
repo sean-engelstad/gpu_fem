@@ -9,20 +9,20 @@ default:
 
 res-cpu:
 	@echo "Building with CPU support"
-	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res-cpu.cpp
+	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 res.cu
 
 res-gpu:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 res-gpu.cu
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 res.cu
 
 
 jac-cpu:
 	@echo "Building with CPU support"
-	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac-cpu.cpp
+	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu
 
 jac-gpu:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac-gpu.cu
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu
 
 test-gpu:
 	@echo "Building with GPU support"

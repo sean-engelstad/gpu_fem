@@ -85,12 +85,14 @@ class ElementAssembler {
     }
 
 #ifdef USE_GPU
-    DeviceVec<T> createVarsVec() {
-        auto h_vec = createVarsHostVec(false);
+    DeviceVec<T> createVarsVec(bool randomize = false) {
+        auto h_vec = createVarsHostVec(randomize);
         return h_vec.createDeviceVec();
     }
 #else
-    HostVec<T> createVarsVec() { return createVarsHostVec(false); }
+    HostVec<T> createVarsVec(bool randomize = false) {
+        return createVarsHostVec(randomize);
+    }
 #endif
 
     void set_variables(Vec<T> &vars) {

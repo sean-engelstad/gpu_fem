@@ -23,6 +23,7 @@ template <class Vec> class BsrMat {
     __HOST_DEVICE__ BsrData getBsrData() const { return bsr_data; }
     __HOST_DEVICE__ int get_nnz() { return bsr_data.getNumValues(); }
     __HOST__ Vec getVec() { return values; }
+    __HOST__ HostVec<T> createHostVec() { return values.createHostVec(); }
     __HOST_DEVICE__ T *getPtr() { return values.getPtr(); }
     __HOST_DEVICE__ const T *getPtr() const { return values.getPtr(); }
 
