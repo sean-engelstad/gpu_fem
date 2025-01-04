@@ -24,7 +24,7 @@ template <>
 __HOST_DEVICE__ void
 printVec<std::complex<double>>(const int N, const std::complex<double> *vec) {
     for (int i = 0; i < N; i++) {
-        printf("%.5e,", vec[i].real());
+        printf("%.5e,", A2D::RealPart(vec[i]));
     }
     printf("\n");
 }

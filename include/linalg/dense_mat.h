@@ -7,7 +7,7 @@ template <class Vec> class DenseMat {
   public:
     using T = typename Vec::type;
 
-    __HOST_DEVICE__ DenseMat(int N) : N(N) {
+    __HOST__ DenseMat(int N) : N(N) {
         N2 = N * N;
         data = Vec(N2);
     }
@@ -15,7 +15,7 @@ template <class Vec> class DenseMat {
     __HOST_DEVICE__ int getSize() { return N2; }
     __HOST_DEVICE__ void zeroValues() { data.zeroValues(); }
     __HOST_DEVICE__ Vec getVec() { return data; }
-    __HOST_DEVICE__ HostVec<T> createHostVec() { return data.createHostVec(); }
+    __HOST__ HostVec<T> createHostVec() { return data.createHostVec(); }
     __HOST_DEVICE__ T *getPtr() { return data.getPtr(); }
 
     __HOST_DEVICE__ void applyBCs(const DeviceVec<int> &bcs) {
