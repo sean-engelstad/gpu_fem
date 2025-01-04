@@ -9,10 +9,11 @@
 #include "linalg/bsr_utils.h"
 #include "linalg/vec.h"
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename T_, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat_>
 class ElementAssembler {
   public:
+    using T = T_;
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
@@ -74,6 +75,23 @@ class ElementAssembler {
     int get_num_vars() { return num_vars_nodes * vars_per_node; }
     __HOST__ void apply_bcs(Vec<T> &vec) { vec.apply_bcs(bcs); }
     void apply_bcs(Mat &mat) { mat.apply_bcs(bcs); }
+
+    HostVec<T> createVarsHostVec(bool randomize = false) {
+        HostVec<T> h_vec(get_num_vars());
+        if (randomize) {
+            h_vec.randomize();
+        }
+        return h_vec;
+    }
+
+#ifdef USE_GPU
+    DeviceVec<T> createVarsVec() {
+        auto h_vec = createVarsHostVec(false);
+        return h_vec.createDeviceVec();
+    }
+#else
+    HostVec<T> createVarsVec() { return createVarsHostVec(false); }
+#endif
 
     void set_variables(Vec<T> &vars) {
         // vars is either device array on GPU or a host array if not USE_GPU

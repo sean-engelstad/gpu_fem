@@ -12,7 +12,7 @@ check-jac:
 # check jac against TACS
 	make clean
 	make jac
-	./jac.out >> out1.txt
+	./jac-cpu.out >> out1.txt
 	make jac-tacs
 	./tacs-jac.x >> out2.txt
 	diff out1.txt out2.txt >> diff.txt
@@ -21,7 +21,7 @@ check-jac-cs:
 # check jacobian complex-step
 	make clean
 	make jac
-	./jac.out >> out-anl.txt
+	./jac-cpu.out >> out-anl.txt
 	make jac-cs
 	./jac-cs.out >> out-cs.txt
 	diff out-anl.txt out-cs.txt >> diff.txt
@@ -30,14 +30,14 @@ check-jac-gpu:
 # check jac CPU vs GPU
 	make clean
 	make jac
-	./jac.out >> out-cpu.txt
+	./jac-cpu.out >> out-cpu.txt
 	make jac-gpu
 	./jac-gpu.out >> out-gpu.txt
 
 jac:
     # builds analytic residual on CPU
 	@echo "Building with CPU support"
-	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac.out
+	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac-cpu.out
 
 jac-gpu:
     # builds analytic residual on GPU

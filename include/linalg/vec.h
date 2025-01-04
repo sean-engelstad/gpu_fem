@@ -1,6 +1,8 @@
 #pragma once
 #include "../cuda_utils.h"
 #include "stdlib.h"
+#include <complex>
+#include <cstring>
 
 #ifdef USE_GPU
 #include "vec.cuh"
@@ -36,6 +38,8 @@ template <typename T> class BaseVec {
         for (int inode = 0; inode < nodes_per_elem; inode++) {
             int32_t global_inode = elem_conn[inode];
             for (int idof = 0; idof < dof_per_node; idof++) {
+                int local_ind = inode * dof_per_node + idof;
+                int global_ind = global_inode * dof_per_node + idof;
                 elem_data[inode * dof_per_node + idof] =
                     data[global_inode * dof_per_node + idof];
             }
@@ -193,6 +197,12 @@ template <typename T> class HostVec : public BaseVec<T> {
             for (int i = 0; i < this->N; i++) {
                 this->data[i] = maxVal * static_cast<double>(rand()) / RAND_MAX;
             }
+        } else if constexpr (std::is_same<T, std::complex<double>>::value) {
+            for (int i = 0; i < this->N; i++) {
+                double my_double =
+                    maxVal.real() * static_cast<double>(rand()) / RAND_MAX;
+                this->data[i] = T(my_double, 0.0);
+            }
         } else { // int's
             for (int i = 0; i < this->N; i++) {
                 this->data[i] = rand() % maxVal;
@@ -212,3 +222,21 @@ template <typename T> class HostVec : public BaseVec<T> {
 
     __HOST__ HostVec<T> createHostVec() { return *this; }
 };
+
+/*
+convertVec : converts vec to host or device vec depending on whether
+CUDA compiles are being used (maybe could have better name)
+*/
+#ifdef USE_GPU
+template <typename T> DeviceVec<T> convertVecType(HostVec<T> &vec) {
+    return vec.createDeviceVec();
+}
+#else
+template <typename T> HostVec<T> convertVecType(HostVec<T> &vec) { return vec; }
+#endif
+
+#ifdef USE_GPU
+template <typename T> using VecType = DeviceVec<T>;
+#else
+template <typename T> using VecType = HostVec<T>;
+#endif

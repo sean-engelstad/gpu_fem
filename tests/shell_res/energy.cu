@@ -1,6 +1,9 @@
-#include "assembler.h"
-#include "shell/shell.h"
 #include "chrono"
+#include "linalg/linalg.h"
+#include "local_utils.h"
+#include "shell/shell.h"
+
+// get residual directional derivative analytically on the CPU
 
 int main(void) {
     using T = double;
@@ -11,90 +14,46 @@ int main(void) {
     using Geo = Basis::Geo;
 
     constexpr bool has_ref_axis = false;
-    using Data = ShellIsotropicData<T,has_ref_axis>;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data>;
 
-    constexpr bool isNonlinear = false;
-    using Physics = IsotropicShell<T, Data, isNonlinear>;
-    
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>; 
-    using Assembler = ElementAssembler<T, ElemGroup>;
+    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+    using Assembler = ElementAssembler<T, ElemGroup, VecType, DenseMat>;
 
     // printf("running!\n");
+    int num_bcs = 2;
+    auto assembler = createOneElementAssembler<Assembler>(num_bcs);
 
-    int num_elements = 1;
-    int num_geo_nodes = 4;
-    int num_vars_nodes = 4;
+    // init variables u
+    auto h_vars = assembler.createVarsHostVec();
+    auto p_vars = assembler.createVarsHostVec();
 
-    // make fake element connectivity for testing
-    int N = Geo::num_nodes * num_elements;
-    int32_t geo_conn[] = { 0, 1, 2, 3 };
-
-    // randomly generate the connectivity for the variables / basis
-    int N2 = Basis::num_nodes * num_elements;
-    int32_t vars_conn[] = { 0, 1, 2, 3 };
-
-    // set the xpts randomly for this example
-    int32_t num_xpts = Geo::spatial_dim * num_geo_nodes;
-    T *xpts = new T[num_xpts];
-    for (int ixpt = 0; ixpt < num_xpts; ixpt++) {
-      xpts[ixpt] = 1.0345452 + 2.23123432 * ixpt + 0.323 * ixpt * ixpt;
-    }
-
-    // initialize ElemData
-    double E = 70e9, nu = 0.3, t = 0.005; // aluminum plate
-    Data elemData[num_elements];
-    for (int ielem = 0; ielem < num_elements; ielem++) {
-        elemData[ielem] = Data(E, nu, t);
-    }
-
-    // make the assembler
-    Assembler assembler(num_geo_nodes, num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, elemData);
-
-    // define variables here for testing different vars inputs
-    // set some host data to zero
-    int32_t num_vars = assembler.get_num_vars();
-    T *h_vars = new T[num_vars];
-    memset(h_vars, 0.0, num_vars * sizeof(T));
-
-    bool nz_vars = true;
-    if (nz_vars) {
-      for (int ivar = 0; ivar < num_vars; ivar++) {
+    // fixed perturbations of the host and pert vars
+    double h = 1e-30;
+    for (int ivar = 0; ivar < 24; ivar++) {
+        p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
         h_vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
-      }
     }
-
-    // for (int i = 0; i < 12; i++) {
-    //   printf("xpts[%d] = %.8e\n", i, xpts[i]);
-    // }
-    // for (int i = 0; i < 24; i++) {
-    //   printf("vars[%d] = %.8e\n", i, h_vars[i]);
-    // }
-
-    #ifdef USE_GPU
-    T *d_vars;
-    cudaMalloc((void**)&d_vars, num_vars * sizeof(T));
-    cudaMemcpy(d_vars, h_vars, num_vars * sizeof(T), cudaMemcpyHostToDevice);   
-    assembler.set_variables(d_vars);
-    #else // USE_GPU
-    assembler.set_variables(h_vars);
-    #endif
     
+    auto vars = convertVecType<T>(h_vars);
+    assembler.set_variables(vars);
 
-    // define the residual vector (host or device)
-    T Uenergy = 0.0;
-
-    // time add residual method
+    // time add energy method
     auto start = std::chrono::high_resolution_clock::now();
 
+    T Uenergy = 0.0;
     assembler.add_energy(Uenergy);
 
     auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+
+    // compute total direc derivative of analytic residual
+
+    printf("took %d microseconds to run add residual\n", (int)duration.count());
 
     // print data of strain energy
     printf("Uenergy = %.8e\n", Uenergy);
-
-    printf("took %d microseconds to run add residual\n", (int)duration.count());
 
     return 0;
 };

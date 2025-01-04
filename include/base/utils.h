@@ -20,6 +20,15 @@ __HOST_DEVICE__ void printVec<double>(const int N, const double *vec) {
     printf("\n");
 }
 
+template <>
+__HOST_DEVICE__ void
+printVec<std::complex<double>>(const int N, const std::complex<double> *vec) {
+    for (int i = 0; i < N; i++) {
+        printf("%.5e,", vec[i].real());
+    }
+    printf("\n");
+}
+
 __HOST_DEVICE__ bool is_unique(int N, int32_t *local_conn) {
     // check whether all values are different or not
     for (int i = 0; i < N; i++) {

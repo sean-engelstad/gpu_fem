@@ -76,7 +76,6 @@ template <class Vec> class BsrMat {
             // to do it without if statements (compute map on CPU assembler
             // init) NOTE : zero out columns only needed for nonzero BCs
         }
-    }
 #endif // USE_GPU
     }
 

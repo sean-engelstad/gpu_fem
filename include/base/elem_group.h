@@ -79,35 +79,37 @@ class BaseElementGroup {
     }
 
     template <class Data, template <typename> class Vec>
-    static void add_energy_cpu(int32_t num_elements, Vec<int32_t> *geo_conn,
-                               Vec<int32_t> *vars_conn, Vec<T> *xpts,
-                               Vec<T> *vars, Data *physData, T &Uenergy) {
+    static void
+    add_energy_cpu(const int32_t num_elements, const Vec<int32_t> &geo_conn,
+                   const Vec<int32_t> &vars_conn, const Vec<T> &xpts,
+                   const Vec<T> &vars, Vec<Data> &physData, T &Uenergy) {
 
         const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
         const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
 
-        const int32_t *_geo_conn = geo_conn->getPtr();
-        const int32_t *_vars_conn = vars_conn->getPtr();
+        const int32_t *_geo_conn = geo_conn.getPtr();
+        const int32_t *_vars_conn = vars_conn.getPtr();
 
-        Uenergy = 0.0; // set energy initially to zero
+        Uenergy = 0.0;
 
         for (int ielem = 0; ielem < num_elements; ielem++) {
 
             Data elem_physData = physData[ielem];
-            A2D::Vec<T, vars_per_elem> elem_res; // so zeroes it
+            A2D::Vec<T, vars_per_elem> a2d_elem_res; // so zeroes it
+            T *elem_res = a2d_elem_res.get_data();
 
             T elem_xpts[nxpts_per_elem];
             const int32_t *geo_elem_conn = &_geo_conn[ielem * Geo::num_nodes];
-            xpts->getElementValues(Geo::spatial_dim, Geo::num_nodes,
-                                   geo_elem_conn, elem_xpts);
+            xpts.getElementValues(Geo::spatial_dim, Geo::num_nodes,
+                                  geo_elem_conn, &elem_xpts[0]);
 
             T elem_vars[vars_per_elem];
             const int32_t *vars_elem_conn =
                 &_vars_conn[ielem * Basis::num_nodes];
-            vars->getElementValues(Phys::vars_per_node, Basis::num_nodes,
-                                   vars_elem_conn, elem_vars);
-            // done getting all elem variables
+            vars.getElementValues(Phys::vars_per_node, Basis::num_nodes,
+                                  vars_elem_conn, &elem_vars[0]);
 
+            // compute element residual
             for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
                 Derived::template add_element_quadpt_energy<Data>(
                     true, iquad, elem_xpts, elem_vars, elem_physData, Uenergy);
@@ -161,6 +163,10 @@ class BaseElementGroup {
                         &elem_mat[dof_per_elem * ideriv]);
                 }
             }
+
+            // for (int i = 0; i < 576; i++) {
+            //     printf("elemmat %d : %.8e\n", i, elem_mat[i]);
+            // }
 
             // assemble elem_mat values into global residual and matrix
             res.addElementValues(1.0 / vars_per_elem, Phys::vars_per_node,
