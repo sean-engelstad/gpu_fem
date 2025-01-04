@@ -18,7 +18,7 @@ template <class Vec> class DenseMat {
     __HOST__ HostVec<T> createHostVec() { return data.createHostVec(); }
     __HOST_DEVICE__ T *getPtr() { return data.getPtr(); }
 
-    __HOST_DEVICE__ void applyBCs(const DeviceVec<int> &bcs) {
+    __HOST__ void applyBCs(HostVec<int> bcs) {
         int nbcs = bcs.getSize();
         for (int ibc = 0; ibc < nbcs; ibc++) {
             int idof = bcs[ibc];
@@ -29,6 +29,13 @@ template <class Vec> class DenseMat {
             data[N * ibc + ibc] = 1.0; // set (ibc,ibc) entry to 1.0
             // if non-dirichlet bcs handle later.. in TODO
         }
+    }
+
+    __HOST__ void applyBCs(DeviceVec<int> bcs) {
+        // TODO : make a kernel for this (see BsrMat)
+        // not huge priority though since I don't plan on computing large dense
+        // matrices on device anyways DenseMat just for debugging small matrices
+        // on host.
     }
 
     __HOST_DEVICE__ void addElementMatrixValues(const T scale, const int ielem,
@@ -54,22 +61,6 @@ template <class Vec> class DenseMat {
     }
 
 #ifdef USE_GPU
-    __DEVICE__ void applyBCsOnDevice(const bool active_thread, const int start,
-                                     const int stride, const BaseVec<int> bcs) {
-        if (!active_thread) {
-            return;
-        }
-        int nbcs = bcs.getSize();
-        for (int ibc = start; ibc < nbcs; ibc += stride) {
-            int idof = bcs[ibc];
-            for (int i = 0; i < N; i++) {
-                data[N * ibc + i] = 0.0; // sets row to zero
-                data[N * i + ibc] = 0.0; // sets col to zero
-            }
-            data[N * ibc + ibc] = 1.0; // set (ibc,ibc) entry to 1.0
-            // if non-dirichlet bcs handle later.. in TODO
-        }
-    }
 
     __DEVICE__ void addElementMatrixValuesFromShared(
         const bool active_thread, const int start, const int stride,

@@ -27,7 +27,7 @@ template <class Vec> class BsrMat {
     __HOST_DEVICE__ T *getPtr() { return values.getPtr(); }
     __HOST_DEVICE__ const T *getPtr() const { return values.getPtr(); }
 
-    __HOST__ void apply_bcs(DeviceVec<int> bcs) {
+    __HOST__ void apply_bcs(HostVec<int> bcs) {
 
         // some prelim values needed for both cases
         int nbcs = bcs.getSize();
@@ -39,18 +39,6 @@ template <class Vec> class BsrMat {
         int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         int block_dim = bsr_data.block_dim;
-
-#ifdef USE_GPU
-        dim3 block = bcs_block;
-        int nblocks = (nbcs + block.x - 1) / block.x;
-        dim3 grid(nblocks);
-
-        // launch kernel to apply BCs to the full matrix
-        apply_mat_bcs_kernel<T, DeviceVec>
-            <<<grid, block>>>(bcs, rowPtr, colPtr, nnodes, valPtr,
-                              blocks_per_elem, nnz_per_block, block_dim);
-
-#else  // not USE_GPU
 
         // loop over each bc
         for (int ibc = 0; ibc < nbcs; ibc++) {
@@ -77,6 +65,30 @@ template <class Vec> class BsrMat {
             // to do it without if statements (compute map on CPU assembler
             // init) NOTE : zero out columns only needed for nonzero BCs
         }
+    }
+
+    __HOST__ void apply_bcs(DeviceVec<int> bcs) {
+
+        // some prelim values needed for both cases
+        int nbcs = bcs.getSize();
+        const int *rowPtr = bsr_data.rowPtr;
+        const int *colPtr = bsr_data.colPtr;
+        int nnodes = bsr_data.nnodes;
+        T *valPtr = values.getPtr();
+
+        int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
+        int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
+        int block_dim = bsr_data.block_dim;
+
+#ifdef USE_GPU
+        dim3 block = bcs_block;
+        int nblocks = (nbcs + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+
+        // launch kernel to apply BCs to the full matrix
+        apply_mat_bcs_kernel<T, DeviceVec>
+            <<<grid, block>>>(bcs, rowPtr, colPtr, nnodes, valPtr,
+                              blocks_per_elem, nnz_per_block, block_dim);
 #endif // USE_GPU
     }
 
