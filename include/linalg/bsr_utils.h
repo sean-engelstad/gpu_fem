@@ -5,10 +5,15 @@
 #include <algorithm>
 #include <vector>
 
+// SUITE SPARSE
+#include <cholmod.h>
+
 // pre declaration for readability and use in the BsrData class below
 __HOST__ void get_row_col_ptrs(const int &nelems, const int &nnodes,
                                const int *conn, const int &nodes_per_elem,
                                int &nnzb, int *&rowPtr, int *&colPtr);
+
+__HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr, int *&colPtr);
 
 __HOST__ void get_elem_ind_map(const int &nelems, const int &nnodes,
                                const int *conn, const int &nodes_per_elem,
@@ -25,6 +30,9 @@ class BsrData {
           block_dim(block_dim) {
         get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr);
+#ifdef SUITE_SPARSE
+        get_fill_in_ssparse(nnodes, nnzb, rowPtr, colPtr);
+#endif
         get_elem_ind_map(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr, elemIndMap);
     }
@@ -129,6 +137,53 @@ __HOST__ void get_row_col_ptrs(
     std::copy(_rowPtr.begin(), _rowPtr.end(), rowPtr);
     colPtr = new int[nnzb];
     std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
+}
+
+__HOST__ get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr, int *&colPtr) {
+    // define input matrix in CSC format for cholmod
+    cholmod_common c;
+    cholmod_start(&c);
+    int n = nnodes;
+    int nzmax = nnzb;
+    double *Ax = new double[nnzb];
+    cholmod_sparse *A = cholmod_allocate_sparse(n, n, nzmax, 1, 1, 1, CHOLMOD_REAL, &c);
+    A->p = rowPtr;
+    A->i = colPtr;
+    A->x = Ax;
+    A->stype = -1; // lower triangular? 1 for upper triangular
+
+    cholmod_factor *L = cholmod_analyze(A); // symbolic factorization
+    cholmod_factorize(A, L, &c); // numerical factorization (need it to actually get fill-in rowPtr, colPtr)
+    int *Lp = (int *)L->p;
+    int *Li = (int *)L->i;
+
+    // TODO : debug here and print out L->p, L->i? to see if fill-in worked?
+    // is this code efficient?
+
+    // now update rowPtr, colPtr for each row with fill-in values
+    nnzb = 0; // reset nnzb
+    std::vector<int> _rowPtr(nnodes + 1, 0);
+    std::vector<int> _colPtr;
+
+    for (int inode = 0; inode < nnodes; inode++) {
+        std::vector<int> temp; // put all colPtr vals from orig and fill-in into this
+        for (int col = colPtr[inode]; col < colPtr[inode+1]; ++col) {
+            temp.push_back(col);
+        }
+        for (int col2 = Lp[inode]; col2 < Lp[inode+1]; ++col2) {
+            temp.push_back(col2);
+        }
+
+        // now make unique list of columns for this row / node
+        std::sort(temp.begin(), temp.end());
+        auto last = std::unique(temp.begin(), temp.end());
+        temp.erase(last, temp.end());
+
+        // add into new colPtr, rowPtr, nnzb
+        nnzb += temp.size();
+        _colPtr.insert(_colPtr.end(), temp.begin(), temp.end());
+        _rowPtr[inode+1] = nnzb;
+    }
 }
 
 __HOST__ void get_elem_ind_map(

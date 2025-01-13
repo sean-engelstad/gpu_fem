@@ -173,6 +173,9 @@ add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
         block_vars[local_elem], block_data[local_elem], local_res,
         local_mat_col);
 
+    // TODO : warp shuffle add among threads before into shared
+    // this reduces number of atomic calls
+
     Vec<T>::copyLocalToShared(active_thread, 1.0 / blockDim.y, vars_per_elem,
                               &local_res[0], &block_res[local_elem][0]);
 

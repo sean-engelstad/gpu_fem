@@ -50,6 +50,11 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 - [ ] add blade stiffened constitutive physics? and associated ksfailure there..
 
 ### Performance Improvements
+From Kevin:
+- [ ] somtimes want to specify unusual launch parameters like 34 threads per block is optimal after checking on your device (not always multiple of 32)
+- [ ] Do warp shuffle before adding into shared (adds among threads first with reduction) => this reduces number of atomic adds
+- [ ] CUDA asynchronous shared memory load (look it up in performance guide)
+Other:
 - [ ] go through add residual, add jacobian of shell element => compute as many things on the fly as possible store minimum amount of data.
 for example, compute transpose of matrix in some cases so columns available as rows now in consecutive memory. etc.
 - [ ] show this approach of computing on the fly is X amount faster than doing it without that.. or show in ppt very well
