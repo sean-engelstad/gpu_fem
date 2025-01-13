@@ -153,6 +153,7 @@ __HOST__ get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr, int *&c
     A->stype = -1; // lower triangular? 1 for upper triangular
 
     cholmod_factor *L = cholmod_analyze(A); // symbolic factorization
+    // TODO : is this slow on CPU?
     cholmod_factorize(A, L, &c); // numerical factorization (need it to actually get fill-in rowPtr, colPtr)
     int *Lp = (int *)L->p;
     int *Li = (int *)L->i;
