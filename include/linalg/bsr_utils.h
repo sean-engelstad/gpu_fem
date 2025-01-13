@@ -6,7 +6,9 @@
 #include <vector>
 
 // SUITE SPARSE
+#ifdef SUITE_SPARSE
 #include <cholmod.h>
+#endif
 
 // pre declaration for readability and use in the BsrData class below
 __HOST__ void get_row_col_ptrs(const int &nelems, const int &nnodes,
@@ -139,8 +141,10 @@ __HOST__ void get_row_col_ptrs(
     std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
 }
 
-__HOST__ get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr, int *&colPtr) {
+#ifdef SUITE_SPARSE
+__HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr, int *&colPtr) {
     // define input matrix in CSC format for cholmod
+    printf("do fillin\n");
     cholmod_common c;
     cholmod_start(&c);
     int n = nnodes;
@@ -152,11 +156,16 @@ __HOST__ get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr, int *&c
     A->x = Ax;
     A->stype = -1; // lower triangular? 1 for upper triangular
 
-    cholmod_factor *L = cholmod_analyze(A); // symbolic factorization
+    cholmod_factor *L = cholmod_analyze(A, &c); // symbolic factorization
     // TODO : is this slow on CPU?
     cholmod_factorize(A, L, &c); // numerical factorization (need it to actually get fill-in rowPtr, colPtr)
     int *Lp = (int *)L->p;
     int *Li = (int *)L->i;
+
+    printf("fillin rowPtr\n");
+    printVec<int32_t>(nnodes, Lp);
+    printf("fillin colPtr\n");
+    printVec<int32_t>(L->nzmax, Li);
 
     // TODO : debug here and print out L->p, L->i? to see if fill-in worked?
     // is this code efficient?
@@ -186,6 +195,7 @@ __HOST__ get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr, int *&c
         _rowPtr[inode+1] = nnzb;
     }
 }
+#endif
 
 __HOST__ void get_elem_ind_map(
     const int &nelems, const int &nnodes, const int *conn,

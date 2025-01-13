@@ -20,6 +20,10 @@ jac-cpu:
 	@echo "Building with CPU support"
 	${CXX} -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu
 
+fillin:
+	@echo "Building with CPU support"
+	${CXX} -x c++ ${CC_FLAGS} ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 test_fill_in.cu ${SSPARSE_LINK}
+
 jac-gpu:
 	@echo "Building with GPU support"
 	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu

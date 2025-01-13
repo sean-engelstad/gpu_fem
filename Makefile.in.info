@@ -4,7 +4,14 @@ A2D_INCLUDE := -I${A2D_DIR}/include
 GPU_FEM_DIR = ${HOME}/git/gpu_fem
 GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
 
-INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE}
+# whether to use suitesparse
+# SSPARSE_INCLUDE =
+# SSPARSE_LINK = 
+
+SUITE_SPARSE := 1
+SSPARSE_INCLUDE = -I/usr/include/suitesparse
+SSPARSE_LIB = /usr/lib
+SSPARSE_LINK = -L${SSPARSE_LIB} -lsuitesparseconfig -lsuitesparse_mongoose -lcholmod -Wl,-rpath=/usr/local/lib
 
 # USE_GPU := 1
 USE_GPU := 0
@@ -13,3 +20,6 @@ CXX = g++
 CC_FLAGS =
 CUSPARSE_GPU_LIBS = -lcublas -lcusparse -lcudart -lcusolver
 GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_86 #-w
+
+INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE}
+LINK = ${SSPARSE_LINK}
