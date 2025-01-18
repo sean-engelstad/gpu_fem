@@ -76,8 +76,8 @@ class ElementAssembler {
     __HOST__ void apply_bcs(Vec<T> &vec) { vec.apply_bcs(bcs); }
     void apply_bcs(Mat &mat) { mat.apply_bcs(bcs); }
 
-    HostVec<T> createVarsHostVec(bool randomize = false) {
-        HostVec<T> h_vec(get_num_vars());
+    HostVec<T> createVarsHostVec(T *data = nullptr, bool randomize = false) {
+        HostVec<T> h_vec(get_num_vars(), data);
         if (randomize) {
             h_vec.randomize();
         }
@@ -85,12 +85,12 @@ class ElementAssembler {
     }
 
 #ifdef USE_GPU
-    DeviceVec<T> createVarsVec(bool randomize = false) {
-        auto h_vec = createVarsHostVec(randomize);
+    DeviceVec<T> createVarsVec(T *data = nullptr, bool randomize = false) {
+        auto h_vec = createVarsHostVec(data, randomize);
         return h_vec.createDeviceVec();
     }
 #else
-    HostVec<T> createVarsVec(bool randomize = false) {
+    HostVec<T> createVarsVec(T *data = nullptr, bool randomize = false) {
         return createVarsHostVec(randomize);
     }
 #endif

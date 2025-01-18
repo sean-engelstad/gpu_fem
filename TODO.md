@@ -3,6 +3,17 @@
 ## <span style="color:#5bc0eb">Current Tasks</span>
 Note, writeup what you're doing as you complete each major step in the overleaf.
 
+### Current
+- [ ] verify linear solve of plate with sin-sin loads on 5 x 5 rect mesh
+    - [ ] it solves now, but gives wrong answer, check resid = A * x - b
+- [ ] for large 40,000 #elems, cholmod on serial says (fix this so no seg fault?)
+    - [ ] may need to put CHOLMOD stuff on GPU or solve just on ssparse (but ssparse doesn't have BSR solves?)
+    * use 200 x 200 elem mesh = 40,000 elems to debug this one
+    * ah so apparently CHOLMOD doesn't support BSR matrices natively, only CSC since that is better for direct solvers.. (BSR bad for this)
+    CHOLMOD error: argument missing. file: ../Core/cholmod_sparse.c line: 442
+    CHOLMOD error: problem too large. file: ../Core/cholmod_sparse.c line: 89
+    Segmentation fault (core dumped)
+
 ### <span style="color:#fde74c">Basic Linear Solve with Shell Element on GPU</span>
 - [ ] fully verify and optimize add residual on GPU
     - [x] demo add residual for shell element
@@ -38,7 +49,7 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [x] add_bcs for vec.h
     - [x] add_bcs for bsrMat.h
     - [x] fix 0 soln in examples/basic_shell/solve_cusparse_gpu.cu
-    - [ ] Seiyon to help get ILU(k) fill pattern to work for more accurate cusparse solve 
+    - [x] Seiyon to help get ILU(k) fill pattern to work for more accurate cusparse solve 
     - [ ] verify small mesh linear solve against TACS
 
 ### More additions

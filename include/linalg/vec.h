@@ -94,6 +94,7 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         }
 #endif
     }
+    __HOST__ DeviceVec(int N, T *data) : BaseVec<T>(N, data) {}
     __HOST__ void zeroValues() {
         cudaMemset(this->data, 0.0, this->N * sizeof(T));
     }

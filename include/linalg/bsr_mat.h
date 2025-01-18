@@ -19,13 +19,55 @@ template <class Vec> class BsrMat {
         values = Vec(nvalues);
     }
 
-    __HOST_DEVICE__ void zeroValues() { values.zeroValues(); }
+    __HOST__ void zeroValues() { values.zeroValues(); }
     __HOST_DEVICE__ BsrData getBsrData() const { return bsr_data; }
     __HOST_DEVICE__ int get_nnz() { return bsr_data.getNumValues(); }
     __HOST__ Vec getVec() { return values; }
     __HOST__ HostVec<T> createHostVec() { return values.createHostVec(); }
     __HOST_DEVICE__ T *getPtr() { return values.getPtr(); }
     __HOST_DEVICE__ const T *getPtr() const { return values.getPtr(); }
+
+    __HOST__ void add_nugget_matrix(double eps) {
+
+        // some prelim values needed for both cases
+        const int *rowPtr = bsr_data.rowPtr;
+        const int *colPtr = bsr_data.colPtr;
+        T *valPtr = values.getPtr();
+
+        int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
+        int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
+        int block_dim = bsr_data.block_dim;
+
+        // TBD
+
+        // // loop over each bc
+        // for (int ibc = 0; ibc < nbcs; ibc++) {
+        //     int node = bcs[ibc];
+        //     int inner_row = node % block_dim;
+        //     int block_row = node / block_dim;
+        //     int istart = rowPtr[block_row];
+        //     int iend = rowPtr[block_row + 1];
+        //     T *val = &valPtr[nnz_per_block * istart];
+
+        //     // set bc row to zero
+        //     for (int col_ptr_ind = istart; col_ptr_ind < iend; col_ptr_ind++)
+        //     {
+        //         int block_col = colPtr[col_ptr_ind];
+        //         for (int inner_col = 0; inner_col < block_dim; inner_col++) {
+        //             int inz = block_dim * inner_row + inner_col;
+        //             int glob_col = block_col * block_dim + inner_col;
+        //             // ternary operation will be more friendly on the GPU
+        //             (even
+        //             // though this is CPU here)
+        //             val[inz] = (glob_col == node) ? 1.0 : 0.0;
+        //         }
+        //         val += nnz_per_block;
+        //     }
+        //     // TODO : for bc column want K^T rowPtr, colPtr map probably
+        //     // to do it without if statements (compute map on CPU assembler
+        //     // init) NOTE : zero out columns only needed for nonzero BCs
+        // }
+    }
 
     __HOST__ void apply_bcs(HostVec<int> bcs) {
 
@@ -143,6 +185,9 @@ template <class Vec> class BsrMat {
         int block_dim = bsr_data.block_dim;
         const int32_t *elem_ind_map = bsr_data.elemIndMap;
         T *valPtr = values.getPtr();
+
+        // printf("shared_elem_mat: ");
+        // printVec<double>(24, shared_elem_mat);
 
         // loop over each of the blocks in the kelem
         for (int elem_block = start; elem_block < blocks_per_elem;

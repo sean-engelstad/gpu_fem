@@ -11,7 +11,8 @@ GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
 SUITE_SPARSE := 1
 SSPARSE_INCLUDE = -I/usr/include/suitesparse
 SSPARSE_LIB = /usr/lib
-SSPARSE_LINK = -L${SSPARSE_LIB} -lsuitesparseconfig -lsuitesparse_mongoose -lcholmod -Wl,-rpath=/usr/local/lib
+SSPARSE_LINK = -L${SSPARSE_LIB} -lsuitesparseconfig -lsuitesparse_mongoose -lcholmod 
+# -Wl,-rpath=/usr/local/lib
 
 # USE_GPU := 1
 USE_GPU := 0
