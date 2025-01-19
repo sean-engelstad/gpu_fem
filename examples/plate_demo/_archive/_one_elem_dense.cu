@@ -23,7 +23,7 @@ int main(void) {
     int nxe = 1;
     int nye = nxe;
     // reduced Lx, Ly dimensions so that Kelem should be the same
-    double Lx = 2.0/3.0, Ly = 1.0/3.0, E = 70e9, nu = 0.3, thick = 0.005;
+    double Lx = 2.0/2.0, Ly = 1.0/2.0, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
 
     // init variables u
@@ -46,6 +46,6 @@ int main(void) {
     auto h_kmat = kmat.createHostVec();
     
     // write the solution to binary file so I can read it in in python
-    write_to_csv<double>(h_kmat.getPtr(), h_kmat.getSize(), "kelem-dense.csv");
+    write_to_csv<double>(h_kmat.getPtr(), h_kmat.getSize(), "csv/kelem-dense.csv");
     return 0;
 };

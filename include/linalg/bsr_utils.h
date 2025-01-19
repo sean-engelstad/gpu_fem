@@ -162,9 +162,11 @@ __HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr,
     // printVec<int32_t>(nnzb, colPtr);
 
     // define input matrix in CSC format for cholmod
-    printf("do fillin\n");
+    // printf("do fillin\n");
     cholmod_common c;
     cholmod_start(&c);
+    c.print = 0; // no print from cholmod
+
     int n = nnodes;
     int nzmax = nnzb;
     double Ax[nnzb];
@@ -286,16 +288,27 @@ __HOST__ void get_elem_ind_map(
     // shows how to add each block matrix into global
     for (int ielem = 0; ielem < nelems; ielem++) {
 
+        const int32_t *local_conn = &conn[nodes_per_elem * ielem];
+
+        // TODO : might be error here due to sorting the local conn..
+        // std::vector<int32_t> sorted_conn;
+        // for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //     sorted_conn.push_back(local_conn[lnode]);
+        // }
+        // std::sort(sorted_conn.begin(), sorted_conn.end());
+
         // loop over each block row
         for (int n = 0; n < nodes_per_elem; n++) {
-            int global_node_row = conn[nodes_per_elem * ielem + n];
+            // int global_node_row = sorted_conn[n];
+            int global_node_row = local_conn[n];
             // get the block col range of colPtr for this block row
             int col_istart = rowPtr[global_node_row];
             int col_iend = rowPtr[global_node_row + 1];
 
             // loop over each block col
             for (int m = 0; m < nodes_per_elem; m++) {
-                int global_node_col = conn[nodes_per_elem * ielem + m];
+                // int global_node_col = sorted_conn[m];
+                int global_node_col = local_conn[m];
 
                 // find the matching indices in colPtr for the global_node_col
                 // of this elem_conn

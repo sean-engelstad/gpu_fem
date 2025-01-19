@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import LogNorm, SymLogNorm
 import os
+import pandas as pd
 
 def read_from_csv(filename):
     return np.loadtxt(filename, delimiter=",")
@@ -85,7 +86,41 @@ kmat_mat[np.abs(kmat_mat) < 1e-8] = 1e-8
 plt.figure()
 ax = sns.heatmap(kmat_mat, cmap="inferno", norm=LogNorm()) #, annot=kmat_mat, annot_kws={'fontsize': 6}, fmt='.1e') # , fmt='s')
 plt.savefig(f"elems{num_elements}/kmat_heatmap_c++.png", dpi=400)
+
+# also plot kmat with bcs
+kmat_vec_bcs = read_from_csv("csv/plate_kmat.csv")
+rowPtr = read_from_csv("csv/plate_rowPtr.csv").astype(np.int32)
+colPtr = read_from_csv("csv/plate_colPtr.csv").astype(np.int32)
+kmat_mat_bcs = np.zeros((nnodes*6,nnodes*6))
+
+for block_row in range(nnodes):
+    istart = rowPtr[block_row]
+    iend = rowPtr[block_row+1]
+    for block_ind in range(istart, iend):
+        block_col = colPtr[block_ind]
+        val_ind = 36 * block_ind
+        for inz in range(36):
+            _irow = inz // 6
+            _icol = inz % 6
+            irow = 6 * block_row + _irow
+            icol = 6 * block_col + _icol
+            bsr_ind = 36 * block_ind + inz
+            # if block_row < 2 and block_col < 2:
+                # print(f"{irow=},{icol=} from {bsr_ind=}")
+            kmat_mat_bcs[irow,icol] = kmat_vec_bcs[36 * block_ind + inz]
+
+kmat_mat_bcs[np.abs(kmat_mat_bcs) < 1e-8] = 1e-8
+
+# plt.imshow(kmat_mat)
 plt.figure()
+ax = sns.heatmap(kmat_mat_bcs, cmap="inferno", norm=LogNorm()) #, annot=kmat_mat, annot_kws={'fontsize': 6}, fmt='.1e') # , fmt='s')
+plt.savefig(f"elems{num_elements}/kmat_heatmap_c++_bcs.png", dpi=400)
+
+plt.figure()
+
+assembly_csv_df_dict = {
+    mystr:[] for mystr in ['ielem', 'grow', 'gcol', 'erow', 'ecol', 'value']
+}
 
 # now compare to assembling it myself
 kmat_mat2 = kmat_mat * 0.0
@@ -98,12 +133,26 @@ for ielem in range(num_elements):
     local_dof_conn = [[6*inode + idof for idof in range(6)] for inode in local_node_conn]
     local_dof_conn = np.array(local_dof_conn).flatten()
 
+    for erow,grow in enumerate(local_dof_conn):
+        for ecol,gcol in enumerate(local_dof_conn):
+            assembly_csv_df_dict['ielem'] += [ielem]
+            assembly_csv_df_dict['grow'] += [grow]
+            assembly_csv_df_dict['gcol'] += [gcol]
+            assembly_csv_df_dict['erow'] += [erow]
+            assembly_csv_df_dict['ecol'] += [ecol]
+            assembly_csv_df_dict['value'] += [kelem_mat[erow,ecol]]
+
+    # write out to csv what entries I'm adding in
+
     # now add kelem into this as dense matrix
     global_ind = np.ix_(local_dof_conn, local_dof_conn)
     kmat_mat2[global_ind] += kelem_mat
     
 kmat_mat2[kmat_mat2 == 0] = 1e-8
 
+# write assembly csv to csv file
+assembly_csv_df = pd.DataFrame(assembly_csv_df_dict)
+assembly_csv_df.to_csv(f"elems{num_elements}/python-kmat-assembly.csv", float_format='%.4e', index=False)
 
 ax = sns.heatmap(kmat_mat2, cmap='inferno', norm=LogNorm())
 plt.savefig(f"elems{num_elements}/kmat_heatmap_python.png", dpi=400)
@@ -203,11 +252,15 @@ plt.savefig(f"elems{num_elements}/my_python_soln.png", dpi=400)
 # plt.show()
 
 # make a csv file to compare the dense kmat
-import pandas as pd
 
 df_dicts = {
     mystr:[] for mystr in ['row', 'col', 'cpp', 'python', 'relerr']
 }
+
+# change small <1e-8 values back to zero
+kmat_mat[np.abs(kmat_mat) <= 1e-8] = 0.0
+kmat_mat2_nobc[np.abs(kmat_mat2_nobc) <= 1e-8] = 0.0
+kmat_rel_err[np.abs(kmat_rel_err) <= 1e-8] = 0.0
 
 for row in range(num_rows):
     for col in range(num_rows):

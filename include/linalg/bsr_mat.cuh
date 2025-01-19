@@ -6,26 +6,31 @@ __GLOBAL__ void apply_mat_bcs_kernel(Vec<int> bcs, const int *rowPtr, const int 
 
     // loop over each bc
     for (int ibc = blockIdx.x * blockDim.x + threadIdx.x; ibc < bcs.getSize(); ibc += blockDim.x) {
-        int node = bcs[ibc];
-        int inner_row = node % block_dim;
-        int block_row = node / block_dim;
-        int istart = rowPtr[block_row];
-        int iend = rowPtr[block_row + 1];
-        T *val = &values[nnz_per_block * istart];
+        int glob_row = bcs[ibc]; // the bc dof
+        int inner_row =
+            glob_row % block_dim; // the local dof constrained in this node
+        int block_row = glob_row / block_dim; // equiv to bc node
 
-        // set bc row to zero and diag to 1
-        for (int col_ptr_ind = istart; col_ptr_ind < iend; col_ptr_ind++) {
+        // set bc row to zero
+        for (int col_ptr_ind = rowPtr[block_row];
+                col_ptr_ind < rowPtr[block_row + 1]; col_ptr_ind++) {
+
+            T *val = &values[nnz_per_block * col_ptr_ind];
+
             int block_col = colPtr[col_ptr_ind];
             for (int inner_col = 0; inner_col < block_dim; inner_col++) {
-                int inz = block_dim * inner_row + inner_col;
+                int inz =
+                    block_dim * inner_row + inner_col; // nz entry in block
                 int glob_col = block_col * block_dim + inner_col;
-                // ternary operation is more friendly on the GPU (even
+
+                // printf("Kmat[%d,%d] bc\n", glob_row, glob_col);
+
+                // ternary operation will be more friendly on the GPU (even
                 // though this is CPU here)
-                val[inz] = (glob_col == node) ? 1.0 : 0.0;
+                val[inz] = (glob_row == glob_col) ? 1.0 : 0.0;
             }
             val += nnz_per_block;
         }
-
         // TODO : zero bc columns for nonzero disp bcs
     } // end of BC loop
 }

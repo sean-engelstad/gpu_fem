@@ -27,7 +27,8 @@ template <class Vec> class BsrMat {
     __HOST_DEVICE__ T *getPtr() { return values.getPtr(); }
     __HOST_DEVICE__ const T *getPtr() const { return values.getPtr(); }
 
-    __HOST__ void add_nugget_matrix(double eps) {
+    __HOST__ void add_nugget_matrix(int ielem, const int nodes_per_elem,
+                                    double eps) {
 
         // some prelim values needed for both cases
         const int *rowPtr = bsr_data.rowPtr;
@@ -37,36 +38,23 @@ template <class Vec> class BsrMat {
         int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         int block_dim = bsr_data.block_dim;
+        const int32_t *elem_ind_map = bsr_data.elemIndMap;
 
-        // TBD
+        // loop over each of the blocks in the kelem
+        for (int elem_block = 0; elem_block < blocks_per_elem; elem_block++) {
+            int istart = nnz_per_block *
+                         elem_ind_map[blocks_per_elem * ielem + elem_block];
+            T *val = &valPtr[istart];
+            int block_row = elem_block / nodes_per_elem;
+            int block_col = elem_block % nodes_per_elem;
 
-        // // loop over each bc
-        // for (int ibc = 0; ibc < nbcs; ibc++) {
-        //     int node = bcs[ibc];
-        //     int inner_row = node % block_dim;
-        //     int block_row = node / block_dim;
-        //     int istart = rowPtr[block_row];
-        //     int iend = rowPtr[block_row + 1];
-        //     T *val = &valPtr[nnz_per_block * istart];
-
-        //     // set bc row to zero
-        //     for (int col_ptr_ind = istart; col_ptr_ind < iend; col_ptr_ind++)
-        //     {
-        //         int block_col = colPtr[col_ptr_ind];
-        //         for (int inner_col = 0; inner_col < block_dim; inner_col++) {
-        //             int inz = block_dim * inner_row + inner_col;
-        //             int glob_col = block_col * block_dim + inner_col;
-        //             // ternary operation will be more friendly on the GPU
-        //             (even
-        //             // though this is CPU here)
-        //             val[inz] = (glob_col == node) ? 1.0 : 0.0;
-        //         }
-        //         val += nnz_per_block;
-        //     }
-        //     // TODO : for bc column want K^T rowPtr, colPtr map probably
-        //     // to do it without if statements (compute map on CPU assembler
-        //     // init) NOTE : zero out columns only needed for nonzero BCs
-        // }
+            if (block_row == block_col) {
+                for (int iinner = 0; iinner < block_dim; iinner++) {
+                    int inz = block_dim * iinner + iinner;
+                    val[inz] += eps;
+                }
+            }
+        }
     }
 
     __HOST__ void apply_bcs(HostVec<int> bcs) {
@@ -84,22 +72,25 @@ template <class Vec> class BsrMat {
 
         // loop over each bc
         for (int ibc = 0; ibc < nbcs; ibc++) {
-            int node = bcs[ibc];
-            int inner_row = node % block_dim;
-            int block_row = node / block_dim;
-            int istart = rowPtr[block_row];
-            int iend = rowPtr[block_row + 1];
-            T *val = &valPtr[nnz_per_block * istart];
+            int glob_row = bcs[ibc]; // the bc dof
+            int inner_row =
+                glob_row % block_dim; // the local dof constrained in this node
+            int block_row = glob_row / block_dim; // equiv to bc node
 
             // set bc row to zero
-            for (int col_ptr_ind = istart; col_ptr_ind < iend; col_ptr_ind++) {
+            for (int col_ptr_ind = rowPtr[block_row];
+                 col_ptr_ind < rowPtr[block_row + 1]; col_ptr_ind++) {
+
+                T *val = &valPtr[nnz_per_block * col_ptr_ind];
+
                 int block_col = colPtr[col_ptr_ind];
                 for (int inner_col = 0; inner_col < block_dim; inner_col++) {
-                    int inz = block_dim * inner_row + inner_col;
+                    int inz =
+                        block_dim * inner_row + inner_col; // nz entry in block
                     int glob_col = block_col * block_dim + inner_col;
                     // ternary operation will be more friendly on the GPU (even
                     // though this is CPU here)
-                    val[inz] = (glob_col == node) ? 1.0 : 0.0;
+                    val[inz] = (glob_row == glob_col) ? 1.0 : 0.0;
                 }
                 val += nnz_per_block;
             }
@@ -183,32 +174,90 @@ template <class Vec> class BsrMat {
         int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         int block_dim = bsr_data.block_dim;
-        const int32_t *elem_ind_map = bsr_data.elemIndMap;
         T *valPtr = values.getPtr();
 
-        // printf("shared_elem_mat: ");
-        // printVec<double>(24, shared_elem_mat);
-
-        // loop over each of the blocks in the kelem
+        // V1 - use elem_ind_map to do assembly
+        const int32_t *elem_ind_map = bsr_data.elemIndMap;
         for (int elem_block = start; elem_block < blocks_per_elem;
              elem_block += stride) {
             int istart = nnz_per_block *
                          elem_ind_map[blocks_per_elem * ielem + elem_block];
             T *val = &valPtr[istart];
-            int block_row = elem_block / nodes_per_elem;
-            int block_col = elem_block % nodes_per_elem;
+            int elem_block_row = elem_block / nodes_per_elem;
+            int elem_block_col = elem_block % nodes_per_elem;
+
+            int gblock = istart / nnz_per_block;
 
             // loop over each nz in each block of kelem
             for (int inz = 0; inz < nnz_per_block; inz++) {
-                int inner_row = inz / block_dim;
-                int inner_col = inz % block_dim;
-                int row = block_dim * block_row + inner_row;
-                int col = block_dim * block_col + inner_col;
+                int local_row = inz / block_dim;
+                int local_col = inz % block_dim;
+                int erow = block_dim * elem_block_row + local_row;
+                int ecol = block_dim * elem_block_col + local_col;
+
+                // printf("%d,%d,%d,%d,%d,%.4e\n", ielem, gblock, elem_block,
+                // erow,
+                //        ecol,
+                //        scale * shared_elem_mat[dof_per_elem * erow + ecol]);
 
                 atomicAdd(&val[inz],
-                          scale * shared_elem_mat[dof_per_elem * row + col]);
+                          scale * shared_elem_mat[dof_per_elem * erow + ecol]);
             }
         }
+
+        // V2 with elem_conn directly (might be slower without elem_ind_map)
+        // const int32_t *rowPtr = bsr_data.rowPtr;
+        // const int32_t *colPtr = bsr_data.colPtr;
+        // for (int elem_block = start; elem_block < blocks_per_elem;
+        //      elem_block += stride) {
+
+        //     // use elem_conn to figure out where this is in the global matrix
+        //     // first block row and columns (outer block/nodal level)
+        //     int elem_block_row = elem_block / nodes_per_elem;
+        //     int elem_block_col = elem_block % nodes_per_elem;
+
+        //     // now global block row, col (global nodes)
+        //     int glob_block_row = elem_conn[elem_block_row];
+        //     int glob_block_col = elem_conn[elem_block_col];
+
+        //     // TODO : change this back to using elem_ind_map? so faster..
+
+        //     // use colPtr to find the global locations
+        //     for (int col_ptr_ind = rowPtr[glob_block_row];
+        //          col_ptr_ind < rowPtr[glob_block_row + 1]; col_ptr_ind++) {
+
+        //         T *val = &valPtr[nnz_per_block * col_ptr_ind];
+
+        //         int check_block_col = colPtr[col_ptr_ind];
+        //         if (check_block_col == glob_block_col) {
+        //             // add values in now
+        //             T *val = &valPtr[nnz_per_block * col_ptr_ind];
+
+        //             // loop over each nz in each block of kelem
+        //             for (int inz = 0; inz < nnz_per_block; inz++) {
+        //                 int inner_row = inz / block_dim;
+        //                 int inner_col = inz % block_dim;
+        //                 int erow = block_dim * elem_block_row + inner_row;
+        //                 int ecol = block_dim * elem_block_col + inner_col;
+
+        //                 int gblock = col_ptr_ind;
+
+        //                 printf("%d,%d,%d,%d,%d,%.4e\n", ielem, gblock,
+        //                        elem_block, erow, ecol,
+        //                        scale *
+        //                            shared_elem_mat[dof_per_elem * erow +
+        //                            ecol]);
+
+        //                 atomicAdd(
+        //                     &val[inz],
+        //                     scale *
+        //                         shared_elem_mat[dof_per_elem * erow + ecol]);
+        //             }
+
+        //             break;
+        //         }
+        //     }
+        // }
     }
 
 #endif // USE_GPU

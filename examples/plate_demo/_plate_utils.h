@@ -85,9 +85,11 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     // now initialize the element connectivity
     int N = Basis::num_nodes * num_elements;
     int32_t elem_conn[N];
-    for (int ixe = 0; ixe < nxe; ixe++) {
-        for (int iye = 0; iye < nye; iye++) {
+    for (int iye = 0; iye < nye; iye++) {
+        for (int ixe = 0; ixe < nxe; ixe++) {
             int ielem = nxe * iye + ixe;
+            // TODO : issue with defining conn out of order like this, needs to
+            // be sorted now?""
             int nodes[] = {nnx * iye + ixe, nnx * iye + ixe + 1,
                            nnx * (iye + 1) + ixe + 1, nnx * (iye + 1) + ixe};
             for (int inode = 0; inode < Basis::num_nodes; inode++) {
@@ -104,8 +106,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     HostVec<T> xpts(num_xpts);
     T dx = Lx / nxe;
     T dy = Ly / nye;
-    for (int ix = 0; ix < nnx; ix++) {
-        for (int iy = 0; iy < nny; iy++) {
+    for (int iy = 0; iy < nny; iy++) {
+        for (int ix = 0; ix < nnx; ix++) {
             int inode = nnx * iy + ix;
             T *xpt_node = &xpts[Geo::spatial_dim * inode];
             xpt_node[0] = dx * ix;
@@ -152,14 +154,42 @@ T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
     // among the elements somehow..
     // the actual rhs is integral q(x,y) * phi_i(x,y) dxdy, fix later if want
     // better error conv.
-    for (int ix = 0; ix < nnx; ix++) {
-        for (int iy = 0; iy < nny; iy++) {
+    for (int iy = 0; iy < nny; iy++) {
+        for (int ix = 0; ix < nnx; ix++) {
             int inode = nnx * iy + ix;
             T x = ix * dx, y = iy * dy;
             T nodal_load = load_mag * sin(PI * x / Lx) * sin(PI * y / Ly);
             my_loads[Phys::vars_per_node * inode + 2] = nodal_load;
         }
     }
+    return my_loads;
+}
+
+template <typename T, class Phys>
+T *getPlatePointLoad(int nxe, int nye, double Lx, double Ly, double load_mag) {
+
+    /*
+    make a rectangular plate mesh of shell elements
+    simply supported with transverse constrant distributed load
+
+    make the load set for this mesh
+    q(x,y) = Q * sin(pi * x / a) * sin(pi * y / b)
+    */
+
+    // number of nodes per direction
+    int nnx = nxe + 1;
+    int nny = nye + 1;
+    int num_nodes = nnx * nny;
+
+    int ix = nnx / 2;
+    int iy = nny / 2;
+    int inode = nnx * iy + ix;
+
+    int num_dof = Phys::vars_per_node * num_nodes;
+    T *my_loads = new T[num_dof];
+    memset(my_loads, 0.0, num_dof * sizeof(T));
+
+    my_loads[Phys::vars_per_node * inode + 2] = load_mag;
     return my_loads;
 }
 

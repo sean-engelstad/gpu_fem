@@ -5,7 +5,10 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 
 ### Current
 - [ ] verify linear solve of plate with sin-sin loads on 5 x 5 rect mesh
-    - [ ] it solves now, but gives wrong answer, check resid = A * x - b
+    - [x] it runs the solve now, but gives wrong answer
+    - [x] verify same kmat (fixes with sorting elem_conn => better way to do this?)
+    - [ ] check linear solve by comparing with python? (maybe we need to add nugget term) 
+    
 - [ ] for large 40,000 #elems, cholmod on serial says (fix this so no seg fault?)
     - [ ] may need to put CHOLMOD stuff on GPU or solve just on ssparse (but ssparse doesn't have BSR solves?)
     * use 200 x 200 elem mesh = 40,000 elems to debug this one
