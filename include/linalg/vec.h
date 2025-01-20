@@ -1,4 +1,5 @@
 #pragma once
+#include "../base/utils.h"
 #include "../cuda_utils.h"
 #include "stdlib.h"
 #include <complex>
@@ -69,6 +70,9 @@ template <typename T> class BaseVec {
             int local_inode = idof / dof_per_node;
             int iglobal =
                 elem_conn[local_inode] * dof_per_node + (idof % dof_per_node);
+
+            // printf("add value %.8e into location %d with idof %d\n",
+            //        scale * elem_data[idof], iglobal, idof);
             data[iglobal] += scale * elem_data[idof];
         }
     }

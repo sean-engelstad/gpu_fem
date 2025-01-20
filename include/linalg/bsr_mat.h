@@ -94,6 +94,35 @@ template <class Vec> class BsrMat {
                 }
                 val += nnz_per_block;
             }
+
+            // TODO : try adding bc to column how too, but will want to speed
+            // this up eventually or just use CPU for debug for now set bc row
+            // to zero
+            for (int block_row2 = 0; block_row2 < nnodes; block_row2++) {
+                for (int col_ptr_ind = rowPtr[block_row2];
+                     col_ptr_ind < rowPtr[block_row2 + 1]; col_ptr_ind++) {
+                    T *val = &valPtr[nnz_per_block * col_ptr_ind];
+
+                    int block_col = colPtr[col_ptr_ind];
+                    for (int inz = 0; inz < block_dim * block_dim; inz++) {
+                        int inner_row2 = inz / block_dim;
+                        int inner_col = inz % block_dim;
+                        int glob_row2 = block_row2 * block_dim + inner_row2;
+
+                        int glob_col = block_col * block_dim + inner_col;
+
+                        if (glob_col != bcs[ibc])
+                            continue; // only apply bcs to column here so need
+                                      // matching column
+
+                        // ternary operation will be more friendly on the
+                        // GPU (even though this is CPU here)
+                        val[inz] = (glob_row2 == glob_col) ? 1.0 : 0.0;
+                    }
+                    // val += nnz_per_block;
+                }
+            }
+
             // TODO : for bc column want K^T rowPtr, colPtr map probably
             // to do it without if statements (compute map on CPU assembler
             // init) NOTE : zero out columns only needed for nonzero BCs

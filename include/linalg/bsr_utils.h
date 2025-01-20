@@ -34,9 +34,13 @@ class BsrData {
           block_dim(block_dim) {
         get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr);
+// TODO : put this somewhere else (cleanup) => should go in solvers utils or
+// something
 #ifdef SUITE_SPARSE
         get_fill_in_ssparse(nnodes, nnzb, rowPtr, colPtr, print);
 #endif
+        get_elem_ind_map(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
+                         colPtr, elemIndMap);
         get_elem_ind_map(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr, elemIndMap);
     }

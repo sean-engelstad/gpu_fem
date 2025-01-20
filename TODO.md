@@ -9,13 +9,15 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [x] verify same kmat (fixes with sorting elem_conn => better way to do this?)
     - [ ] explore other linear solvers, see below (also change fillin strategy)
         * discuss more with Kevin & Kennedy on Monday/Tuesday if possible, have slides prepared
-- [ ] explore cusparse and linear solve options
+- [ ] make a CPU linear solver for BSR first, and that way I can have additional debugging level in C++
+- [ ] explore cusparse and linear solve options using this website, https://github.com/NVIDIA/cuda-samples/tree/master
     - [ ] add option to do fillin with suitesparse (but this is probably not going to work long-term since becomes expensive)
         - [ ] move the cholmod stuff into factorization for suitesparse.h section..
     * CPU & CSR better with direct solvers (and better when linear problem & solve many rhs like in aeroelastic opt)
     * GPU & BSR better with iterative solvers (but need good preconditioning and could be slower if many rhs solves for linear)
         * that being said, nonlinear solver may be better with iterative
         * also matVec products (compute on fly), could be better with this.. but that's for later, not yet
+        * also could use incomplete ILU factorization as preconditioner? however doesn't that need CSR format?
 
 
 ### <span style="color:#fde74c">Basic Linear Solve with Shell Element on GPU</span>

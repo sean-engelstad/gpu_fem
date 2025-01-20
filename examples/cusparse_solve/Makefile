@@ -4,7 +4,7 @@ default: solve-gpu
 
 example1:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 1_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 1_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 run1: 	
 	$(MAKE) clean
@@ -13,7 +13,7 @@ run1:
 
 example2:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 2_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 2_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 run2: 	
 	$(MAKE) clean
@@ -22,7 +22,7 @@ run2:
 
 example3:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 3_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 3_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 run3: 	
 	$(MAKE) clean
@@ -31,7 +31,7 @@ run3:
 
 plate:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 4_plate.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 4_plate.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 run-plate: 	
 	$(MAKE) clean

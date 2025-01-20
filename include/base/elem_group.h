@@ -138,10 +138,12 @@ class BaseElementGroup {
             A2D::Vec<T, vars_per_elem> a2d_elem_res; // so zeroes it
             A2D::Mat<T, vars_per_elem, vars_per_elem>
                 a2d_elem_mat; // so zeroes it
+
             T *elem_res = a2d_elem_res.get_data();
             T *elem_mat = a2d_elem_mat.get_data();
 
             T elem_xpts[nxpts_per_elem];
+
             const int32_t *geo_elem_conn = &_geo_conn[ielem * Geo::num_nodes];
             xpts.getElementValues(Geo::spatial_dim, Geo::num_nodes,
                                   geo_elem_conn, elem_xpts);

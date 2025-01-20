@@ -77,7 +77,12 @@ class ElementAssembler {
     void apply_bcs(Mat &mat) { mat.apply_bcs(bcs); }
 
     HostVec<T> createVarsHostVec(T *data = nullptr, bool randomize = false) {
-        HostVec<T> h_vec(get_num_vars(), data);
+        HostVec<T> h_vec;
+        if (data == nullptr) {
+            h_vec = HostVec<T>(get_num_vars());
+        } else {
+            h_vec = HostVec<T>(get_num_vars(), data);
+        }
         if (randomize) {
             h_vec.randomize();
         }
@@ -91,7 +96,7 @@ class ElementAssembler {
     }
 #else
     HostVec<T> createVarsVec(T *data = nullptr, bool randomize = false) {
-        return createVarsHostVec(randomize);
+        return createVarsHostVec(data, randomize);
     }
 #endif
 

@@ -87,6 +87,8 @@ def get_python_kmat(kelem_mat, num_elements, num_nodes, nx):
             bcs += [6*inode + idof for idof in local_bcs]
     print(f"{bcs=}")
 
+    # print(f"{num_nodes=}")
+
     kmat_py = np.zeros((6*num_nodes, 6*num_nodes))
     for ielem in range(num_elements):
         ix = ielem // (nx-1)
@@ -151,6 +153,8 @@ def get_cpp_kmat():
     # kmat_vec = read_from_csv("csv/plate_kmat_nobcs.csv")
     rowPtr = read_from_csv("csv/plate_rowPtr.csv").astype(np.int32)
     colPtr = read_from_csv("csv/plate_colPtr.csv").astype(np.int32)
+
+    print(f"{kmat_vec=}")
 
     print(f"{kmat_vec.shape[0]}")
     _nnodes = rowPtr.shape[0] - 1
@@ -338,6 +342,8 @@ if __name__ == "__main__":
     # compare the matrices with heatmaps
     kmat_cpp,_,_,_ = get_cpp_kmat()
     kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
+
+    # print(f"{kmat_cpp=}")
 
     # now solve with c++ mat in python to see if just solver issues
     soln_cpp2 = np.linalg.solve(kmat_cpp, loads)

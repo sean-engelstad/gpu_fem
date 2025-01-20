@@ -77,14 +77,16 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         // printf("new bc = %d\n", 6 * inode + 2);
         my_bcs.push_back(6 * inode + 2); // corresp dof 3 for w
     }
-    // printf("my bcs: ");
-    // printVec<int>(my_bcs.size(), my_bcs.data());
 
-    HostVec<int> bcs(my_bcs.size(), my_bcs.data());
+    HostVec<int> bcs(my_bcs.size());
+    // deep copy here
+    for (int ibc = 0; ibc < my_bcs.size(); ibc++) {
+        bcs[ibc] = my_bcs.at(ibc);
+    }
 
     // now initialize the element connectivity
     int N = Basis::num_nodes * num_elements;
-    int32_t elem_conn[N];
+    int32_t *elem_conn = new int[N];
     for (int iye = 0; iye < nye; iye++) {
         for (int ixe = 0; ixe < nxe; ixe++) {
             int ielem = nxe * iye + ixe;

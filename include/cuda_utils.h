@@ -61,6 +61,16 @@ inline void gpuAssert(cudaError_t code, const char *file, int line,
         }                                                                      \
     }
 
+#define CHECK_CUBLAS(func)                                                     \
+    {                                                                          \
+        cublasStatus_t status = (func);                                        \
+        if (status != CUBLAS_STATUS_SUCCESS) {                                 \
+            printf("CUBLAS API failed at line %d with error: %d\n", __LINE__,  \
+                   status);                                                    \
+            return EXIT_FAILURE;                                               \
+        }                                                                      \
+    }
+
 void cuda_show_kernel_error() {
     auto err = cudaGetLastError();
     std::cout << "error code: " << err << "\n";

@@ -1,18 +1,18 @@
 include ../../Makefile.in
 
-default: solve-gpu
+default: gpu
 
 debug: solve-gpu-debug
 	./a.out
 	${PYTHON} debug.py
 
-solve-gpu:
+gpu:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 linear_static.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 linear_static.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 one-elem:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 _one_elem.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 _one_elem.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 test16: 
 # tests the kmat cpp vs python for 16 elements (smallest size where you can see profile)
@@ -24,6 +24,10 @@ test16:
 	./a.out >> elems16/cpp-kmat-bsr.csv
 	python3 plot_soln.py
 	python3 _conv_kmat_csv.py
+
+cpu:
+	@echo "Building plate example for 10x10 mesh with CPU support"
+	${CXX} -g ${CC_FLAGS} -DUSE_EIGEN ${INCLUDE_FLAGS} -I/usr/include/eigen3 -std=c++17 linear_static.cpp
 
 # can also make test100 or test4 here
 
