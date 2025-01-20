@@ -1,4 +1,5 @@
 #pragma once
+#include "../base/utils.h"
 #include "cuda_utils.h"
 #include "stdlib.h"
 #include "vec.h"
@@ -16,7 +17,7 @@ __HOST__ void get_row_col_ptrs(const int &nelems, const int &nnodes,
                                int &nnzb, int *&rowPtr, int *&colPtr);
 
 __HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr,
-                                  int *&colPtr);
+                                  int *&colPtr, const bool print = false);
 
 __HOST__ void get_elem_ind_map(const int &nelems, const int &nnodes,
                                const int *conn, const int &nodes_per_elem,
@@ -28,16 +29,25 @@ class BsrData {
     BsrData() = default;
     __HOST__ BsrData(const int nelems, const int nnodes,
                      const int &nodes_per_elem, const int &block_dim,
-                     const int32_t *conn)
+                     const int32_t *conn, const bool print = false)
         : nelems(nelems), nnodes(nnodes), nodes_per_elem(nodes_per_elem),
           block_dim(block_dim) {
         get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr);
 #ifdef SUITE_SPARSE
-        get_fill_in_ssparse(nnodes, nnzb, rowPtr, colPtr);
+        get_fill_in_ssparse(nnodes, nnzb, rowPtr, colPtr, print);
 #endif
         get_elem_ind_map(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr, elemIndMap);
+    }
+
+    __HOST__ BsrData(const int nnodes, const int block_dim, const int nnzb,
+                     int *origRowPtr, int *origColPtr, const bool print = false)
+        : nnodes(nnodes), block_dim(block_dim), nnzb(nnzb), rowPtr(origRowPtr),
+          colPtr(origColPtr) {
+#ifdef SUITE_SPARSE
+        get_fill_in_ssparse(nnodes, this->nnzb, rowPtr, colPtr, print);
+#endif
     }
 
     __HOST__ BsrData createDeviceBsrData() { // deep copy each array onto the
@@ -154,23 +164,32 @@ __HOST__ void get_row_col_ptrs(
 
 #ifdef SUITE_SPARSE
 __HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr,
-                                  int *&colPtr) {
-    // printf("nnodes = %d\n", nnodes);
-    // printf("orig rowPtr\n");
-    // printVec<int32_t>(nnodes, rowPtr);
-    // printf("orig colPtr\n");
-    // printVec<int32_t>(nnzb, colPtr);
+                                  int *&colPtr, const bool print) {
+
+    if (print) {
+        printf("nnodes = %d\n", nnodes);
+        printf("orig rowPtr\n");
+        printVec<int32_t>(nnodes + 1, rowPtr);
+        printf("orig colPtr\n");
+        printVec<int32_t>(nnzb, colPtr);
+    }
 
     // define input matrix in CSC format for cholmod
     // printf("do fillin\n");
     cholmod_common c;
     cholmod_start(&c);
-    c.print = 0; // no print from cholmod
+    c.print = print; // no print from cholmod
 
     int n = nnodes;
     int nzmax = nnzb;
-    double Ax[nnzb];
-    memset(Ax, 0.0, nnzb * sizeof(double));
+
+    // double Ax[nnzb];
+    // memset(Ax, 0.0, nnzb * sizeof(double));
+    // temporarily randomize
+    HostVec<double> Ax_vec(nnzb);
+    Ax_vec.randomize();
+    double *Ax = Ax_vec.getPtr();
+
     int sorted = 1, packed = 1,
         stype = 1, // would prefer to not pack values but have to it seems
         xdtype = CHOLMOD_DOUBLE +
@@ -208,15 +227,17 @@ __HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr,
     int *Ui = (int *)U_sparse->i;
 
     // DEBUG: (seems to work now though)
-    // printf("fillin L rowPtr\n");
-    // printVec<int32_t>(nnodes, Lp);
-    // printf("fillin L colPtr\n");
-    // printVec<int32_t>(L->nzmax, Li);
+    if (print) {
+        printf("fillin L rowPtr\n");
+        printVec<int32_t>(nnodes + 1, Lp);
+        printf("fillin L colPtr\n");
+        printVec<int32_t>(L->nzmax, Li);
 
-    // printf("fillin U rowPtr\n");
-    // printVec<int32_t>(nnodes, Up);
-    // printf("fillin U colPtr\n");
-    // printVec<int32_t>(L->nzmax, Ui);
+        printf("fillin U rowPtr\n");
+        printVec<int32_t>(nnodes + 1, Up);
+        printf("fillin U colPtr\n");
+        printVec<int32_t>(L->nzmax, Ui);
+    }
 
     // TODO : debug here and print out L->p, L->i? to see if fill-in worked?
     // is this code efficient?
@@ -265,10 +286,12 @@ __HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr,
     colPtr = new int[nnzb];
     std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
 
-    // printf("final rowPtr\n");
-    // printVec<int32_t>(nnodes, rowPtr);
-    // printf("final colPtr\n");
-    // printVec<int32_t>(nnzb, colPtr);
+    if (print) {
+        printf("final rowPtr\n");
+        printVec<int32_t>(nnodes + 1, rowPtr);
+        printf("final colPtr\n");
+        printVec<int32_t>(nnzb, colPtr);
+    }
 }
 #endif
 

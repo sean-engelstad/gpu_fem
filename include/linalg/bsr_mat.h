@@ -186,7 +186,7 @@ template <class Vec> class BsrMat {
             int elem_block_row = elem_block / nodes_per_elem;
             int elem_block_col = elem_block % nodes_per_elem;
 
-            int gblock = istart / nnz_per_block;
+            // int gblock = istart / nnz_per_block;
 
             // loop over each nz in each block of kelem
             for (int inz = 0; inz < nnz_per_block; inz++) {

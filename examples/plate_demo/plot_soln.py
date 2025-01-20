@@ -4,6 +4,7 @@ import os
 from matplotlib.colors import LogNorm
 import seaborn as sns
 import pandas as pd
+import scipy as sp
 
 def read_from_csv(filename):
     return np.loadtxt(filename, delimiter=",")
@@ -84,6 +85,7 @@ def get_python_kmat(kelem_mat, num_elements, num_nodes, nx):
             else:
                 local_bcs = []
             bcs += [6*inode + idof for idof in local_bcs]
+    print(f"{bcs=}")
 
     kmat_py = np.zeros((6*num_nodes, 6*num_nodes))
     for ielem in range(num_elements):
@@ -233,6 +235,46 @@ def write_matrices_to_file(kmat_cpp, kmat_py, kmat_rel_err, filename):
     df = pd.DataFrame(df_dict)
     df.to_csv(filename, index=False, float_format='%.4e')
 
+def compare_fillin(kmat_py, kmat_cpp):
+    rowPtr = read_from_csv("csv/plate_rowPtr.csv").astype(np.int32)
+    colPtr = read_from_csv("csv/plate_colPtr.csv").astype(np.int32)
+    values = np.ones((colPtr.shape[0],), np.double)
+
+    _nnodes = rowPtr.shape[0] - 1
+    nx = int(_nnodes**0.5)
+    nnodes = nx**2
+
+    # every 6th entry to get sparsity pattern at block level from python
+    kmat_block_py = kmat_py[0::6, 0::6]
+    kmat_block_py_csr = sp.sparse.csr_matrix(kmat_block_py)
+
+    lu = sp.sparse.linalg.splu(kmat_block_py_csr) # lu factorization
+    # print(f"{lu.L}")
+
+    L = lu.L  # Lower triangular matrix (unit diagonal)
+    U = lu.U  # Upper triangular matrix
+
+    # Combine L and U matrices into a single matrix
+    LU_combined = (L + U - sp.sparse.csr_matrix(np.eye(kmat_block_py.shape[0]))).tocsc()
+
+    # Convert the combined LU matrix to CSR format
+    LU_combined_csr = LU_combined.tocsr()
+
+    # Extract CSR components
+    py_rowPtr = LU_combined_csr.indptr
+    py_colInd = LU_combined_csr.indices
+
+    # print(f"{py_rowPtr=}")
+    # print(f"{py_colInd=}")
+
+    LU_combined_dense = LU_combined_csr.toarray()
+    py_sparsity_mat = LU_combined_dense / (LU_combined_dense + 1e-8)
+    cpp_csr = sp.sparse.csr_matrix((values, colPtr, rowPtr), shape=(nnodes, nnodes))
+    cpp_block_dense = cpp_csr.toarray()
+    cpp_sparsity_mat = cpp_block_dense / (cpp_block_dense + 1e-8)
+
+    return py_sparsity_mat, cpp_sparsity_mat
+
 def write_python_bsr_mat(kmat_py, filename):
     rowPtr = read_from_csv("csv/plate_rowPtr.csv").astype(np.int32)
     colPtr = read_from_csv("csv/plate_colPtr.csv").astype(np.int32)
@@ -282,15 +324,25 @@ if __name__ == "__main__":
     kmat_py = get_python_kmat(kelem_mat, num_elements, num_nodes, nxe + 1)
     loads = get_loads()
 
-    print_cpp_val(576)
+    # print_cpp_val(576)
 
     # optional nugget term
     # theta = 1e-6
     # kmat_mat_py += theta * np.eye(kmat_mat_py.shape[0]) 
 
     soln_py = np.linalg.solve(kmat_py, loads)
+    print(f"{soln_py[:,0]=}")
     plot_vec(soln_py, folder + "python-soln.png", dof=2)
     plot_vec(loads, folder + "cpp-loads.png", dof=2)
+
+    # compare the matrices with heatmaps
+    kmat_cpp,_,_,_ = get_cpp_kmat()
+    kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
+
+    # now solve with c++ mat in python to see if just solver issues
+    soln_cpp2 = np.linalg.solve(kmat_cpp, loads)
+    plot_vec(soln_py, folder + "cpp-soln-from-py.png", dof=2)
+
 
     # compare to analytic magnitude and solved magnitude
     # analytic_mag = get_analytic_mag()
@@ -299,13 +351,17 @@ if __name__ == "__main__":
     # loads_check = kmat_py @ soln_py
     # resid = loads_check - loads
 
-    # compare the matrices with heatmaps
-    kmat_cpp,_,_,_ = get_cpp_kmat()
-    kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
-
     plot_mat(kmat_py, folder + "kmat_py.png")
     plot_mat(kmat_cpp, folder + "kmat_cpp.png")
     plot_mat(kmat_rel_err, folder + "kmat_rel_err.png")
 
     # write out the matrices to a csv file now
     write_matrices_to_file(kmat_cpp, kmat_py, kmat_rel_err, folder + "kmat-compare.csv")
+
+    # -------------------------------------------
+    # since kmat actually matches from cpp to python
+    # check linear solve related things like fillin now
+
+    py_sparsity, cpp_sparsity = compare_fillin(kmat_py, kmat_cpp)
+    plot_mat(py_sparsity, folder + "sparsity_py.png")
+    plot_mat(cpp_sparsity, folder + "sparsity_cpp.png")

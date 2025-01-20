@@ -1,7 +1,9 @@
 #pragma once
 
+#include "a2dcore.h"
 #include "cuda_utils.h"
 #include "stdlib.h"
+#include <complex>
 
 template <typename T> __HOST_DEVICE__ void printVec(const int N, const T *vec);
 

@@ -7,7 +7,8 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 - [ ] verify linear solve of plate with sin-sin loads on 5 x 5 rect mesh
     - [x] it runs the solve now, but gives wrong answer
     - [x] verify same kmat (fixes with sorting elem_conn => better way to do this?)
-    - [ ] check linear solve by comparing with python? (maybe we need to add nugget term) 
+    - [ ] factorization in suitesparse I think is the issue
+    - [ ] get linear solve to work then.. after fix fillin
     
 - [ ] for large 40,000 #elems, cholmod on serial says (fix this so no seg fault?)
     - [ ] may need to put CHOLMOD stuff on GPU or solve just on ssparse (but ssparse doesn't have BSR solves?)

@@ -31,6 +31,12 @@ template <typename T> class BaseVec {
     //     memset(this->data, 0.0, this->N * sizeof(T));
     // }
 
+    __HOST__ void scale(T my_scale) {
+        for (int i = 0; i < N; i++) {
+            this->data[i] *= my_scale;
+        }
+    }
+
     __HOST_DEVICE__ void getElementValues(const int dof_per_node,
                                           const int nodes_per_elem,
                                           const int32_t *elem_conn,
@@ -120,6 +126,17 @@ template <typename T> class DeviceVec : public BaseVec<T> {
 #endif
         return vec;
     }
+
+    __HOST__ DeviceVec<T> copyVec() {
+        // copy the device vec since Kmat gets modified during LU solve
+        DeviceVec<T> vec(this->N);
+#ifdef USE_GPU
+        cudaMemcpy(vec.getPtr(), this->data, this->N * sizeof(T),
+                   cudaMemcpyDeviceToDevice);
+#endif
+        return vec;
+    }
+
     __HOST__ DeviceVec<T> createDeviceVec() { return *this; }
 
 #ifdef USE_GPU
@@ -211,6 +228,12 @@ template <typename T> class HostVec : public BaseVec<T> {
         }
     }
 
+    __HOST__ HostVec<T> copyVec() {
+        HostVec<T> vec(this->N);
+        memcpy(vec.getPtr(), this->data, this->N * sizeof(T));
+        return vec;
+    }
+
     __HOST__ DeviceVec<T> createDeviceVec(bool memset = true) {
         // creates a device vector and copies this host data to the device
         DeviceVec<T> vec = DeviceVec<T>(this->N, memset);
@@ -241,3 +264,23 @@ template <typename T> using VecType = DeviceVec<T>;
 #else
 template <typename T> using VecType = HostVec<T>;
 #endif
+
+template <typename T>
+T getVecRelError(HostVec<T> vec1, HostVec<T> vec2,
+                 const double threshold = 1e-10, const bool print = true) {
+    T rel_err = 0.0;
+    for (int i = 0; i < vec1.getSize(); i++) {
+        T loc_rel_err = abs((vec1[i] - vec2[i]) / (vec2[i] + 1e-14));
+        if (loc_rel_err > rel_err &&
+            abs(vec2[i]) >
+                threshold) { // don't use rel error if vec2 is
+                             // near floating point zero (then it's meaningless)
+            rel_err = loc_rel_err;
+        }
+    }
+
+    if (print) {
+        printf("rel_err = %.8e\n", rel_err);
+    }
+    return rel_err;
+}

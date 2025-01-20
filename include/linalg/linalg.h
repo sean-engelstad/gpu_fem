@@ -3,5 +3,5 @@
 #include "vec.h"
 
 #ifdef USE_GPU
-#include "cusparse_solve.h"
+#include "solvers/cusparse.h"
 #endif
