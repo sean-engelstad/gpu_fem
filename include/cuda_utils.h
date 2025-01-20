@@ -71,6 +71,16 @@ inline void gpuAssert(cudaError_t code, const char *file, int line,
         }                                                                      \
     }
 
+#define CHECK_CUSOLVER(func)                                                   \
+    {                                                                          \
+        cusolverStatus_t status = (func);                                      \
+        if (status != CUSOLVER_STATUS_SUCCESS) {                               \
+            printf("CUSOLVER API failed at line %d with error: %d\n",          \
+                   __LINE__, status);                                          \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
+    }
+
 void cuda_show_kernel_error() {
     auto err = cudaGetLastError();
     std::cout << "error code: " << err << "\n";

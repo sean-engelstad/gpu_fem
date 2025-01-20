@@ -4,7 +4,7 @@
 #include "shell/shell.h"
 
 /**
- solve on CPU with eigen for debugging
+ solve on CPU with cusparse for debugging
  **/
 
 int main(void) {
@@ -25,8 +25,7 @@ int main(void) {
     int nxe = 10;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
-    auto assembler =
-        createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
+    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
 
     // init variables u;
     auto vars = assembler.createVarsVec();
@@ -42,12 +41,8 @@ int main(void) {
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration =
         std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
-
-    // check kmat here
-    printVec<double>(24, kmat.getPtr());
 
     // set the rhs for this problem
     double Q = 1.0; // load magnitude
@@ -58,15 +53,18 @@ int main(void) {
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
 
+    // printout kmat before solve (since cusparse solve changes kmat lower triangular)
+    auto h_kmat = kmat.createHostVec();
     // also printout stiffness matrix
-    auto kmat_vec = kmat.getVec();
-    write_to_csv<double>(kmat_vec.getPtr(), kmat_vec.getSize(),
-                         "csv/plate_kmat.csv");
-
+    write_to_csv<double>(h_kmat.getPtr(), h_kmat.getSize(), "csv/plate_kmat.csv");
+    
     // now do cusparse solve on linear static analysis
-    printf("pre linear solve\n");
     auto start2 = std::chrono::high_resolution_clock::now();
-    EIGEN::iterative_CG_solve<T>(kmat, loads, soln, false);
+
+    int maxIterations = 1000;
+    double tolerance = 1e-12;
+    CUSPARSE::iterative_PCG_solve<T>(kmat, loads, soln, maxIterations, tolerance);
+    
     auto stop2 = std::chrono::high_resolution_clock::now();
     auto duration2 =
         std::chrono::duration_cast<std::chrono::microseconds>(stop2 - start2);
@@ -77,23 +75,26 @@ int main(void) {
     auto h_soln = soln.createHostVec();
     auto h_loads = loads.createHostVec();
 
-    // printf("took %d microseconds to run add jacobian\n",
-    // (int)duration.count()); printf("took %d microseconds to run cusparse
-    // solve\n",
+    // printf("took %d microseconds to run add jacobian\n", (int)duration.count());
+    // printf("took %d microseconds to run cusparse solve\n",
     //        (int)duration2.count());
 
     // write the solution to binary file so I can read it in in python
-    auto bsr_data = kmat.getBsrData();
-    write_to_csv<double>(h_loads.getPtr(), h_loads.getSize(),
-                         "csv/plate_loads.csv");
-    write_to_csv<double>(h_soln.getPtr(), h_soln.getSize(),
-                         "csv/plate_soln.csv");
+    write_to_csv<double>(h_loads.getPtr(), h_loads.getSize(), "csv/plate_loads.csv");
+    write_to_csv<double>(h_soln.getPtr(), h_soln.getSize(), "csv/plate_soln.csv");
 
-    // debug kmat
-    write_to_csv<int>(bsr_data.rowPtr, bsr_data.nnodes + 1,
-                      "csv/plate_rowPtr.csv");
-    write_to_csv<int>(bsr_data.colPtr, bsr_data.nnzb, "csv/plate_colPtr.csv");
+    auto bsrData = kmat.getBsrData();
+    DeviceVec<int> d_rowPtr(bsrData.nnodes + 1, bsrData.rowPtr);
+    auto h_rowPtr = d_rowPtr.createHostVec();
+    // printf("h_rowPtr: ");
+    // printVec<int>(bsrData.nnodes, h_rowPtr.getPtr());
+    // printf("\n");
+    DeviceVec<int> d_colPtr(bsrData.nnzb, bsrData.colPtr);
+    auto h_colPtr = d_colPtr.createHostVec();
 
+    write_to_csv<int>(h_rowPtr.getPtr(), h_rowPtr.getSize(), "csv/plate_rowPtr.csv");
+    write_to_csv<int>(h_colPtr.getPtr(), h_colPtr.getSize(), "csv/plate_colPtr.csv");
+    
     delete[] my_loads;
 
     return 0;

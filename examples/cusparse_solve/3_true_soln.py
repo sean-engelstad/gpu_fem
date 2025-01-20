@@ -26,7 +26,7 @@ for grow in range(16):
             A[grow,gcol] = (grow+1) * (gcol+1) + 64.0 * (grow == gcol)
 
 plt.imshow(A)
-plt.show()
+# plt.show()
 
 rhs = np.array([[_ for _ in range(16)]]).T
 
@@ -35,5 +35,6 @@ print(f"{x[:,0]=}")
 
 L = sp.linalg.cholesky(A).T
 # print(f"{L=}")
+plt.figure()
 plt.imshow(L)
 plt.show()

@@ -72,6 +72,7 @@ template <class Vec> class BsrMat {
 
         // loop over each bc
         for (int ibc = 0; ibc < nbcs; ibc++) {
+            // zero out the bc rows
             int glob_row = bcs[ibc]; // the bc dof
             int inner_row =
                 glob_row % block_dim; // the local dof constrained in this node
@@ -92,7 +93,6 @@ template <class Vec> class BsrMat {
                     // though this is CPU here)
                     val[inz] = (glob_row == glob_col) ? 1.0 : 0.0;
                 }
-                val += nnz_per_block;
             }
 
             // TODO : try adding bc to column how too, but will want to speed
@@ -141,6 +141,7 @@ template <class Vec> class BsrMat {
         int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         int block_dim = bsr_data.block_dim;
+        int num_global_rows = block_dim * nnodes;
 
 #ifdef USE_GPU
         dim3 block = bcs_block;

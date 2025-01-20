@@ -7,8 +7,13 @@ debug: solve-gpu-debug
 	${PYTHON} debug.py
 
 gpu:
-	@echo "Building with GPU support"
+	@echo "Building plate example for 10x10 mesh with GPU support"
 	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 linear_static.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+
+gpu-pcg:
+	@echo "Building plate example for 10x10 mesh with GPU support for PCG solver"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 linear_static_PCG.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+
 
 one-elem:
 	@echo "Building with GPU support"

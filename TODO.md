@@ -4,20 +4,24 @@
 Note, writeup what you're doing as you complete each major step in the overleaf.
 
 ### Current
-- [ ] verify linear solve of plate with sin-sin loads on 5 x 5 rect mesh
+- [ ] linear solver work on GPU
+    * BSR works better with iterative solve, CSR better with direct solve
+    * which linear solver is probably application dependent:
+        * for coupled analysis & optimization : prob want direct CSR solve because of many solves (iterative BSR if possible but maybe not possible)
+        * for regular struct opt with single linear solve : want iterative BSR solve is fastest (iterative solves fastest on single linear system)
+    - [ ] add destructors for each object
+    - [ ] add CSR direct solver (first task)
+        - [ ] make CSR matrix and CSR data classes that inherit from BSR style with block_dim = 1
+        - [ ] also need to convert elem_ind_map probably for CSR maybe
+    - [ ] add BSR iterative solver (do we need preconditioner also)
+        - [ ] how do we preconditioner the BSR on GPU? (ILU preconditioner) Or can we do that on CPU side with multi-procs? cause cusparse doesn't do ILU on GPU for BSR
+    - [ ] finally : can we do BSR direct solver (talk with Kevin)
+
+- [x] make a CPU linear solver for BSR first, and that way I can have additional debugging level in C++
+- [ ] speedup BC kernel if needed?
+- [x] verify linear solve of plate with sin-sin loads on 5 x 5 rect mesh
     - [x] it runs the solve now, but gives wrong answer
     - [x] verify same kmat (fixes with sorting elem_conn => better way to do this?)
-    - [ ] explore other linear solvers, see below (also change fillin strategy)
-        * discuss more with Kevin & Kennedy on Monday/Tuesday if possible, have slides prepared
-- [ ] make a CPU linear solver for BSR first, and that way I can have additional debugging level in C++
-- [ ] explore cusparse and linear solve options using this website, https://github.com/NVIDIA/cuda-samples/tree/master
-    - [ ] add option to do fillin with suitesparse (but this is probably not going to work long-term since becomes expensive)
-        - [ ] move the cholmod stuff into factorization for suitesparse.h section..
-    * CPU & CSR better with direct solvers (and better when linear problem & solve many rhs like in aeroelastic opt)
-    * GPU & BSR better with iterative solvers (but need good preconditioning and could be slower if many rhs solves for linear)
-        * that being said, nonlinear solver may be better with iterative
-        * also matVec products (compute on fly), could be better with this.. but that's for later, not yet
-        * also could use incomplete ILU factorization as preconditioner? however doesn't that need CSR format?
 
 
 ### <span style="color:#fde74c">Basic Linear Solve with Shell Element on GPU</span>

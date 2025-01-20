@@ -165,6 +165,27 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         // make sure you call __syncthreads() at some point after this
     }
 
+    __DEVICE__ void copyValuesToShared_BCs(const bool active_thread,
+                                           const int start, const int stride,
+                                           const int dof_per_node,
+                                           const int nodes_per_elem,
+                                           const int32_t *elem_conn,
+                                           T *shared_data) const {
+        // copies values to the shared element array on GPU (shared memory)
+        if (!active_thread) {
+            return;
+        }
+
+        int dof_per_elem = dof_per_node * nodes_per_elem;
+        for (int idof = start; idof < dof_per_elem; idof += stride) {
+            int local_inode = idof / dof_per_node;
+            int iglobal =
+                elem_conn[local_inode] * dof_per_node + (idof % dof_per_node);
+            shared_data[idof] = this->data[iglobal];
+        }
+        // make sure you call __syncthreads() at some point after this
+    }
+
     __DEVICE__ static void copyLocalToShared(const bool active_thread,
                                              const T scale, const int N,
                                              const T *local, T *shared) {

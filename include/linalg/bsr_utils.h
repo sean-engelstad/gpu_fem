@@ -41,8 +41,6 @@ class BsrData {
 #endif
         get_elem_ind_map(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr, elemIndMap);
-        get_elem_ind_map(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
-                         colPtr, elemIndMap);
     }
 
     __HOST__ BsrData(const int nnodes, const int block_dim, const int nnzb,
