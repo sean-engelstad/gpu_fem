@@ -1,36 +1,176 @@
 #pragma once
 
+#ifdef USE_GPU
+
+#include "../../cuda_utils.h"
 #include "cublas_v2.h"
 #include <assert.h>
 #include <cuda_runtime.h>
 #include <cusparse_v2.h>
 #include <iostream>
 
-/*
-Assumes all variables required for the anlaysis are already memory allocated on
-the gpu.
-
-Parameters:
------------
-handle = cusparse handle object
-status = cusparse status obejct
-mb = number of block rows
-nnzb = number of nonzero blocks
-blockDim = dimension of the block
-d_bsrVal = device bsr value array
-d_bsrRowPtr = device bsr row ptr array
-d_bsrColPtr = device bsr col indices array
-d_rhs = device right hand side array
-d_soln = device solution array
-d_temp = device intermediate solution array
-*/
-#ifdef USE_GPU
-
 namespace CUSPARSE {
 
 template <typename T>
-void linear_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
-                  DeviceVec<T> &soln) {
+void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
+                     DeviceVec<T> &soln) {
+
+    // copy important inputs for Bsr structure out of BsrMat
+    // TODO : was trying to make some of these const but didn't accept it in
+    // final solve
+    BsrData bsr_data = mat.getBsrData();
+    int mb = bsr_data.nnodes;
+    int nnzb = bsr_data.nnzb;
+    int blockDim = bsr_data.block_dim;
+    int *d_rowPtr = bsr_data.rowPtr;
+    int *d_colPtr = bsr_data.colPtr;
+    T *d_rhs = rhs.getPtr();
+    T *d_soln = soln.getPtr();
+    DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
+    T *d_temp = temp.getPtr();
+
+    // https://developer.nvidia.com/blog/accelerated-solution-sparse-linear-systems/
+
+    // copy kmat data vec since gets modified during LU
+    // otherwise we can't compute residual properly K * u - f
+    T *d_values = mat.getVec().copyVec().getPtr();
+
+    /*
+    Cusparse documentation
+    The function cusparseSpSM_bufferSize() returns the size of the workspace
+    needed by cusparseSpSM_analysis() and cusparseSpSM_solve(). The function
+    cusparseSpSM_analysis() performs the analysis phase, while
+    cusparseSpSM_solve() executes the solve phase for a sparse triangular linear
+    system. The opaque data structure spsmDescr is used to share information
+    among all functions. The function cusparseSpSM_updateMatrix() updates
+    spsmDescr with new matrix values.
+    */
+
+    // Initialize cuSPARSE handle
+    cusparseHandle_t handle;
+    CHECK_CUSPARSE(cusparseCreate(&handle));
+
+    // Create a cuSPARSE matrix descriptor
+    cusparseSpMatDescr_t matA;
+    CHECK_CUSPARSE(cusparseCreateBsr(
+        &matA, mb, mb, nnzb, blockDim, blockDim, d_rowPtr, d_colPtr, d_values,
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+        CUDA_R_64F, CUSPARSE_ORDER_ROW));
+
+    // TODO : need to manually convert from BSR to CSR myself before doing
+    // this.. temporarily convert to CSR format
+    cusparseSpMatDescr_t matA_CSR;
+    CHECK_CUSPARSE(cusparseCreateCsr(&matA_CSR, brows, bcols, nnz,
+                                     csrRowOffsets, csrColInd, csrValues,
+                                     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                                     CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);)
+
+    // temporarily convert the matrix to CSR for factorization?
+    // I suppose we could do that here instead of C++ later..
+    cusparseSpMatDescr_t matA_CSR;
+
+    // Create a dense matrix descriptor for the right-hand side vector
+    cusparseDnMatDescr_t matB;
+    CHECK_CUSPARSE(cusparseCreateDnMat(&matB, mb, 1, mb, d_rhs, CUDA_R_64F,
+                                       CUSPARSE_ORDER_ROW));
+
+    // Create a dense matrix descriptor for the result vector
+    cusparseDnMatDescr_t matC;
+    CHECK_CUSPARSE(cusparseCreateDnMat(&matC, mb, 1, mb, d_soln, CUDA_R_64F,
+                                       CUSPARSE_ORDER_ROW));
+
+    // Create sparse matrix solve descriptor
+    cusparseSpSMDescr_t spsmDescr;
+    CHECK_CUSPARSE(cusparseSpSM_createDescr(&spsmDescr));
+
+    // Choose algorithm for sparse matrix solve
+    cusparseSpSMAlg_t alg = CUSPARSE_SPSM_ALG_DEFAULT;
+
+    // create buffer size for LU factorization
+    size_t bufferSize;
+    double alpha = 1.0;
+    const void *alpha_ptr = reinterpret_cast<const void *>(&alpha);
+
+    CHECK_CUSPARSE(cusparseSpSM_bufferSize(
+        handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+        CUSPARSE_OPERATION_NON_TRANSPOSE, alpha_ptr, matA, matB, matC,
+        CUDA_R_64F, alg, spsmDescr, &bufferSize));
+
+    // create buffer for sparse matrix solve
+    void *d_buffer;
+    CHECK_CUDA(cudaMalloc(&d_buffer, bufferSize));
+
+    // do analysis to get in A in LU format
+    cusparseSpSM_analysis(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                          CUSPARSE_OPERATION_NON_TRANSPOSE, alpha_ptr, matA,
+                          matB, matC, CUDA_R_64F, alg, spsmDescr, d_buffer);
+
+    CHECK_CUSPARSE(cusparseSpSM_solve(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                      alpha_ptr, matA, matB, matC, CUDA_R_64F,
+                                      alg, spsmDescr));
+
+    // CHECK_CUSPARSE(cusparseSpSM_analysis(
+    //     handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    //     CUSPARSE_OPERATION_NON_TRANSPOSE, matA, nullptr, CUDA_R_64F,
+    //     CUSPARSE_SPSM_ALG_DEFAULT, spSMDescr,
+    //     &bufferSizeSM)); // spSMDescr, &bufferSizeSM) // nullptr,
+    //     &bufferSizeSM)
+
+    // // Allocate buffer for analysis
+    // void *d_bufferSM;
+    // CHECK_CUDA(cudaMalloc(&d_bufferSM, bufferSizeSM));
+
+    // // LU analysis step
+    // CHECK_CUSPARSE(cusparseSpSM_analysis(
+    //     handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    //     CUSPARSE_OPERATION_NON_TRANSPOSE, matA, nullptr, CUDA_R_64F,
+    //     CUSPARSE_SPSM_ALG_DEFAULT, spSMDescr, d_bufferSM));
+
+    // // Create descriptors for L and U (triangular structure)
+    // cusparseSpMatDescr_t matL, matU;
+
+    // // Lower triangular matrix (L)
+    // CHECK_CUSPARSE(cusparseCreateBlockedSparseMat(
+    //     &matL, mb, mb, nnzb, d_rowPtr, d_colPtr, d_values, blockDim,
+    //     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F));
+    // CHECK_CUSPARSE(cusparseSpMatSetAttribute(matL, CUSPARSE_SPMAT_TRIANGULAR,
+    //                                          CUSPARSE_SPMAT_TRIANGULAR_LOWER));
+
+    // // Upper triangular matrix (U)
+    // CHECK_CUSPARSE(cusparseCreateBlockedSparseMat(
+    //     &matU, mb, mb, nnzb, d_rowPtr, d_colPtr, d_values, blockDim,
+    //     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F));
+    // CHECK_CUSPARSE(cusparseSpMatSetAttribute(matU, CUSPARSE_SPMAT_TRIANGULAR,
+    //                                          CUSPARSE_SPMAT_TRIANGULAR_UPPER));
+
+    // // Solution for L*y = f  (y is d_temp, f is d_rhs)
+    // // Solution for U*x = y  (x is d_soln, y is d_rhs)
+
+    // // Perform LU factorization (in place update of d_values)
+    // CHECK_CUSPARSE(cusparseSpSM_solve(
+    //     handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    //     CUSPARSE_OPERATION_NON_TRANSPOSE, matL, d_rhs, d_temp, CUDA_R_64F,
+    //     CUSPARSE_SPSM_ALG_DEFAULT, spSMDescr, d_bufferSM));
+
+    // CHECK_CUSPARSE(cusparseSpSM_solve(
+    //     handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    //     CUSPARSE_OPERATION_NON_TRANSPOSE, matU, d_temp, d_soln, CUDA_R_64F,
+    //     CUSPARSE_SPSM_ALG_DEFAULT, spSMDescr, d_bufferSM));
+
+    // Cleanup
+    CHECK_CUSPARSE(cusparseSpSM_destroyDescr(spsmDescr));
+    CHECK_CUSPARSE(cusparseDestroyDnMat(matB));
+    CHECK_CUSPARSE(cusparseDestroyDnMat(matC));
+    CHECK_CUSPARSE(cusparseDestroySpMat(matA));
+    CHECK_CUDA(cudaFree(d_buffer));
+
+    // Destroy cuSPARSE handle
+    CHECK_CUSPARSE(cusparseDestroy(handle));
+}
+
+void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
+                         DeviceVec<T> &soln) {
 
     // copy important inputs for Bsr structure out of BsrMat
     // TODO : was trying to make some of these const but didn't accept it in
@@ -201,7 +341,7 @@ T get_resid(BsrMat<DeviceVec<T>> mat, DeviceVec<T> rhs, DeviceVec<T> soln) {
     T *d_bsrVal = mat.getPtr();
 
     // init cublas handle, etc.
-    cudaError_t cudaStat;
+    // cudaError_t cudaStat;
     cublasStatus_t blas_stat;
     cublasHandle_t cublas_handle;
     blas_stat = cublasCreate(&cublas_handle);

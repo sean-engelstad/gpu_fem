@@ -7,16 +7,16 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 - [ ] verify linear solve of plate with sin-sin loads on 5 x 5 rect mesh
     - [x] it runs the solve now, but gives wrong answer
     - [x] verify same kmat (fixes with sorting elem_conn => better way to do this?)
-    - [ ] factorization in suitesparse I think is the issue
-    - [ ] get linear solve to work then.. after fix fillin
-    
-- [ ] for large 40,000 #elems, cholmod on serial says (fix this so no seg fault?)
-    - [ ] may need to put CHOLMOD stuff on GPU or solve just on ssparse (but ssparse doesn't have BSR solves?)
-    * use 200 x 200 elem mesh = 40,000 elems to debug this one
-    * ah so apparently CHOLMOD doesn't support BSR matrices natively, only CSC since that is better for direct solvers.. (BSR bad for this)
-    CHOLMOD error: argument missing. file: ../Core/cholmod_sparse.c line: 442
-    CHOLMOD error: problem too large. file: ../Core/cholmod_sparse.c line: 89
-    Segmentation fault (core dumped)
+    - [ ] explore other linear solvers, see below (also change fillin strategy)
+        * discuss more with Kevin & Kennedy on Monday/Tuesday if possible, have slides prepared
+- [ ] explore cusparse and linear solve options
+    - [ ] add option to do fillin with suitesparse (but this is probably not going to work long-term since becomes expensive)
+        - [ ] move the cholmod stuff into factorization for suitesparse.h section..
+    * CPU & CSR better with direct solvers (and better when linear problem & solve many rhs like in aeroelastic opt)
+    * GPU & BSR better with iterative solvers (but need good preconditioning and could be slower if many rhs solves for linear)
+        * that being said, nonlinear solver may be better with iterative
+        * also matVec products (compute on fly), could be better with this.. but that's for later, not yet
+
 
 ### <span style="color:#fde74c">Basic Linear Solve with Shell Element on GPU</span>
 - [ ] fully verify and optimize add residual on GPU

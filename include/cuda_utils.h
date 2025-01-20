@@ -25,25 +25,45 @@ template <uint32_t xdim = 1, uint32_t ydim = 1, uint32_t zdim = 1,
           uint32_t max_registers_per_thread = 255,
           uint32_t elements_per_block = 1>
 class ExecParameters {
- public:
+  public:
 };
 
 #ifdef USE_GPU
 // Usage: put gpuErrchk(...) around cuda function calls
-#define gpuErrchk(ans) \
-  { gpuAssert((ans), __FILE__, __LINE__); }
+#define gpuErrchk(ans)                                                         \
+    { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line,
                       bool abort = true) {
-  if (code != cudaSuccess) {
-    fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file,
-            line);
-    if (abort) exit(code);
-  }
+    if (code != cudaSuccess) {
+        fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file,
+                line);
+        if (abort)
+            exit(code);
+    }
 }
 
+#define CHECK_CUDA(call)                                                       \
+    {                                                                          \
+        cudaError_t err = call;                                                \
+        if (err != cudaSuccess) {                                              \
+            std::cerr << "CUDA error: " << cudaGetErrorString(err)             \
+                      << std::endl;                                            \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
+    }
+
+#define CHECK_CUSPARSE(call)                                                   \
+    {                                                                          \
+        cusparseStatus_t err = call;                                           \
+        if (err != CUSPARSE_STATUS_SUCCESS) {                                  \
+            std::cerr << "CUSPARSE error: " << err << std::endl;               \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
+    }
+
 void cuda_show_kernel_error() {
-  auto err = cudaGetLastError();
-  std::cout << "error code: " << err << "\n";
-  std::cout << "error string: " << cudaGetErrorString(err) << "\n";
+    auto err = cudaGetLastError();
+    std::cout << "error code: " << err << "\n";
+    std::cout << "error string: " << cudaGetErrorString(err) << "\n";
 }
 #endif
