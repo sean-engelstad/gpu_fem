@@ -14,9 +14,11 @@ int main() {
     int nnodes = 4;
     int nnzb = 10;
     int block_dim = 1;
+    double fillin = 10.0;
 
     bool print = true;
-    BsrData bsr_data = BsrData(nnodes, block_dim, nnzb, orig_rowPtr, orig_colPtr, print);
+    BsrData bsr_data = BsrData(nnodes, block_dim, nnzb, orig_rowPtr, orig_colPtr);
+    bsr_data.symbolic_factorization(fillin, print);
     BsrData d_bsr_data = bsr_data.createDeviceBsrData();
 
     // nz from kernel matrix k(x_i, x_j) = x_i * x_j = (i+1)*(j+1)
@@ -42,7 +44,7 @@ int main() {
     auto d_temp = temp.createDeviceVec();
     auto d_soln = soln.createDeviceVec();
 
-    CUSPARSE::linear_solve<double>(kmat, d_rhs, d_soln);
+    CUSPARSE::direct_LU_solve_old<double>(kmat, d_rhs, d_soln);
     auto max_resid = CUSPARSE::get_resid<double>(kmat, d_rhs, d_soln);
 
     auto h_soln = d_soln.createHostVec();

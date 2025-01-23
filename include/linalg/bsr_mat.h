@@ -31,14 +31,14 @@ template <class Vec> class BsrMat {
                                     double eps) {
 
         // some prelim values needed for both cases
-        const int *rowPtr = bsr_data.rowPtr;
-        const int *colPtr = bsr_data.colPtr;
+        const index_t *rowPtr = bsr_data.rowPtr;
+        const index_t *colPtr = bsr_data.colPtr;
         T *valPtr = values.getPtr();
 
         int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         int block_dim = bsr_data.block_dim;
-        const int32_t *elem_ind_map = bsr_data.elemIndMap;
+        const index_t *elem_ind_map = bsr_data.elemIndMap;
 
         // loop over each of the blocks in the kelem
         for (int elem_block = 0; elem_block < blocks_per_elem; elem_block++) {
@@ -61,8 +61,8 @@ template <class Vec> class BsrMat {
 
         // some prelim values needed for both cases
         int nbcs = bcs.getSize();
-        const int *rowPtr = bsr_data.rowPtr;
-        const int *colPtr = bsr_data.colPtr;
+        const index_t *rowPtr = bsr_data.rowPtr;
+        const index_t *colPtr = bsr_data.colPtr;
         int nnodes = bsr_data.nnodes;
         T *valPtr = values.getPtr();
 
@@ -133,8 +133,8 @@ template <class Vec> class BsrMat {
 
         // some prelim values needed for both cases
         int nbcs = bcs.getSize();
-        const int *rowPtr = bsr_data.rowPtr;
-        const int *colPtr = bsr_data.colPtr;
+        const index_t *rowPtr = bsr_data.rowPtr;
+        const index_t *colPtr = bsr_data.colPtr;
         int nnodes = bsr_data.nnodes;
         T *valPtr = values.getPtr();
 
@@ -166,7 +166,7 @@ template <class Vec> class BsrMat {
         int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         int block_dim = bsr_data.block_dim;
-        const int32_t *elem_ind_map = bsr_data.elemIndMap;
+        const index_t *elem_ind_map = bsr_data.elemIndMap;
         T *valPtr = values.getPtr();
 
         // loop over each of the blocks in the kelem
@@ -207,7 +207,7 @@ template <class Vec> class BsrMat {
         T *valPtr = values.getPtr();
 
         // V1 - use elem_ind_map to do assembly
-        const int32_t *elem_ind_map = bsr_data.elemIndMap;
+        const index_t *elem_ind_map = bsr_data.elemIndMap;
         for (int elem_block = start; elem_block < blocks_per_elem;
              elem_block += stride) {
             int istart = nnz_per_block *

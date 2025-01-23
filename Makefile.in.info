@@ -11,16 +11,20 @@ GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
 SUITE_SPARSE := 1
 SSPARSE_INCLUDE = -I/usr/include/suitesparse
 SSPARSE_LIB = /usr/lib
-SSPARSE_LINK = -L${SSPARSE_LIB} -lsuitesparseconfig -lsuitesparse_mongoose -lcholmod 
-# -Wl,-rpath=/usr/local/lib
+SSPARSE_LINK = -L${SSPARSE_LIB} -lsuitesparseconfig -lcholmod
 
 # USE_GPU := 1
 USE_GPU := 0
 GPU_CXX = nvcc
 CXX = g++
 CC_FLAGS =
-CUSPARSE_GPU_LIBS = -lcublas -lcusparse -lcudart -lcusolver
+CUSPARSE_LINK = -lcublas -lcusparse -lcudart -lcusolver
 GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_86 #-w
 
-INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE}
-LINK = ${SSPARSE_LINK}
+# sparse-utils repo (smdogroup) and lapack, metis, etc.
+METIS_INCLUDE := -I${HOME}/packages/metis/include/
+LAPACK_LINK := -llapacke -llapack -lblas
+
+INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE} ${METIS_INCLUDE}
+# ${SSPARSE_LINK}
+LINK = ${LAPACK_LINK} ${CUSPARSE_LINK}

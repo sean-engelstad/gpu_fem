@@ -1,55 +1,84 @@
 #pragma once
 #include "../base/utils.h"
+#include "chrono"
 #include "cuda_utils.h"
 #include "stdlib.h"
 #include "vec.h"
 #include <algorithm>
 #include <vector>
 
-// SUITE SPARSE
-#ifdef SUITE_SPARSE
-#include <cholmod.h>
-#endif
+// typedef std::size_t index_t;
+
+// in order to work with cusparse index_t has to be int
+typedef int index_t;
+
+// dependency to smdogroup/sparse-utils repo
+#include "sparse_utils/sparse_symbolic.h"
+#include "sparse_utils/sparse_utils.h"
 
 // pre declaration for readability and use in the BsrData class below
 __HOST__ void get_row_col_ptrs(const int &nelems, const int &nnodes,
-                               const int *conn, const int &nodes_per_elem,
-                               int &nnzb, int *&rowPtr, int *&colPtr);
+                               const int32_t *conn, const int &nodes_per_elem,
+                               int &nnzb, index_t *&rowPtr, index_t *&colPtr);
 
-__HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr,
-                                  int *&colPtr, const bool print = false);
+__HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
+                                  index_t *&rowPtr, index_t *&colPtr,
+                                  double fill_factor, const bool print = false);
 
 __HOST__ void get_elem_ind_map(const int &nelems, const int &nnodes,
-                               const int *conn, const int &nodes_per_elem,
-                               const int &nnzb, int *&rowPtr, int *&colPtr,
-                               int *&elemIndMap);
+                               const int32_t *conn, const int &nodes_per_elem,
+                               const int &nnzb, index_t *&rowPtr,
+                               index_t *&colPtr, index_t *&elemIndMap);
 
 class BsrData {
   public:
     BsrData() = default;
     __HOST__ BsrData(const int nelems, const int nnodes,
                      const int &nodes_per_elem, const int &block_dim,
-                     const int32_t *conn, const bool print = false)
+                     const int32_t *conn)
         : nelems(nelems), nnodes(nnodes), nodes_per_elem(nodes_per_elem),
-          block_dim(block_dim) {
+          conn(conn), block_dim(block_dim) {
         get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr);
-// TODO : put this somewhere else (cleanup) => should go in solvers utils or
-// something
-#ifdef SUITE_SPARSE
-        get_fill_in_ssparse(nnodes, nnzb, rowPtr, colPtr, print);
-#endif
-        get_elem_ind_map(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
-                         colPtr, elemIndMap);
+        elemIndMap = nullptr;
     }
 
     __HOST__ BsrData(const int nnodes, const int block_dim, const int nnzb,
-                     int *origRowPtr, int *origColPtr, const bool print = false)
+                     index_t *origRowPtr, index_t *origColPtr,
+                     double fill_factor = 100.0, const bool print = false)
         : nnodes(nnodes), block_dim(block_dim), nnzb(nnzb), rowPtr(origRowPtr),
           colPtr(origColPtr) {
-#ifdef SUITE_SPARSE
-        get_fill_in_ssparse(nnodes, this->nnzb, rowPtr, colPtr, print);
-#endif
+        sparse_utils_fillin(nnodes, this->nnzb, rowPtr, colPtr, fill_factor,
+                            print);
+        elemIndMap = nullptr;
+    }
+
+    __HOST__ void symbolic_factorization(double fill_factor = 10.0,
+                                         const bool print = false) {
+        // do symbolic factorization for fillin
+        auto start = std::chrono::high_resolution_clock::now();
+        if (print) {
+            printf("begin symbolic factorization::\n");
+        }
+        sparse_utils_fillin(nnodes, nnzb, rowPtr, colPtr, fill_factor, print);
+        // if (print) {
+        //     printf("\t1/2 done with sparse utils fillin\n");
+        // }
+
+        get_elem_ind_map(nelems, nnodes, this->conn, nodes_per_elem, nnzb,
+                         rowPtr, colPtr, this->elemIndMap);
+        // if (print) {
+        //     printf("\t2/2 done with elem ind map\n");
+        // }
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        if (print) {
+            printf("\tfinished symbolic factorization in %d microseconds\n",
+                   (int)duration.count());
+        }
     }
 
     __HOST__ BsrData createDeviceBsrData() { // deep copy each array onto the
@@ -61,11 +90,11 @@ class BsrData {
         new_bsr.nnodes = this->nnodes;
 
         // make host vec copies of these pointers
-        HostVec<int> h_rowPtr(this->nnodes + 1, this->rowPtr);
-        HostVec<int> h_colPtr(nnzb, this->colPtr);
+        HostVec<index_t> h_rowPtr(this->nnodes + 1, this->rowPtr);
+        HostVec<index_t> h_colPtr(nnzb, this->colPtr);
         int nodes_per_elem2 = this->nodes_per_elem * this->nodes_per_elem;
         int n_elemIndMap = this->nelems * nodes_per_elem2;
-        HostVec<int> h_elemIndMap(n_elemIndMap, this->elemIndMap);
+        HostVec<index_t> h_elemIndMap(n_elemIndMap, this->elemIndMap);
 
         // now use the Vec utils to create device pointers of them
         auto d_rowPtr = h_rowPtr.createDeviceVec();
@@ -100,7 +129,8 @@ class BsrData {
     int32_t nelems, nnodes;
     int32_t nodes_per_elem; // kelem : nodes_per_elem^2 dense matrix
     int32_t block_dim;      // equiv to vars_per_node (each block is 6x6)
-    int *rowPtr, *colPtr, *elemIndMap;
+    const int32_t *conn;    // element connectivity
+    index_t *rowPtr, *colPtr, *elemIndMap;
 };
 
 // main utils
@@ -119,20 +149,20 @@ __HOST_DEVICE__ bool node_in_elem_conn(const int &nodes_per_elem,
 __HOST__ void get_row_col_ptrs(
     const int &nelems, const int &nnodes, const int *conn,
     const int &nodes_per_elem,
-    int &nnzb,    // num nonzero blocks
-    int *&rowPtr, // array of len nnodes+1 for how many cols in each row
-    int *&colPtr  // array of len nnzb of the column indices for each block
+    int &nnzb,        // num nonzero blocks
+    index_t *&rowPtr, // array of len nnodes+1 for how many cols in each row
+    index_t *&colPtr  // array of len nnzb of the column indices for each block
 ) {
 
     // could launch a kernel to do this somewhat in parallel?
 
     nnzb = 0;
-    std::vector<int> _rowPtr(nnodes + 1, 0);
-    std::vector<int> _colPtr;
+    std::vector<index_t> _rowPtr(nnodes + 1, 0);
+    std::vector<index_t> _colPtr;
 
     // loop over each block row checking nz values
     for (int inode = 0; inode < nnodes; inode++) {
-        std::vector<int> temp;
+        std::vector<index_t> temp;
         for (int ielem = 0; ielem < nelems; ielem++) {
             const int *elem_conn = &conn[ielem * nodes_per_elem];
             if (node_in_elem_conn(nodes_per_elem, inode, elem_conn)) {
@@ -158,157 +188,51 @@ __HOST__ void get_row_col_ptrs(
     }
 
     // copy data to output pointers (deep copy)
-    rowPtr = new int[nnodes + 1];
+    rowPtr = new index_t[nnodes + 1];
     std::copy(_rowPtr.begin(), _rowPtr.end(), rowPtr);
-    colPtr = new int[nnzb];
+    colPtr = new index_t[nnzb];
     std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
 }
 
-#ifdef SUITE_SPARSE
-__HOST__ void get_fill_in_ssparse(const int &nnodes, int &nnzb, int *&rowPtr,
-                                  int *&colPtr, const bool print) {
+__HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
+                                  index_t *&rowPtr, index_t *&colPtr,
+                                  double fill_factor, const bool print) {
+    std::vector<index_t> _rowPtr(nnodes + 1, 0);
+    std::vector<index_t> _colPtr(index_t(fill_factor * nnzb));
+    int nnzb_old = nnzb;
 
+    nnzb = SparseUtils::CSRFactorSymbolic(nnodes, rowPtr, colPtr, _rowPtr,
+                                          _colPtr);
     if (print) {
-        printf("nnodes = %d\n", nnodes);
-        printf("orig rowPtr\n");
-        printVec<int32_t>(nnodes + 1, rowPtr);
-        printf("orig colPtr\n");
-        printVec<int32_t>(nnzb, colPtr);
+        printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
+               "%d NZ\n",
+               fill_factor, nnzb_old, nnzb);
     }
 
-    // define input matrix in CSC format for cholmod
-    // printf("do fillin\n");
-    cholmod_common c;
-    cholmod_start(&c);
-    c.print = print; // no print from cholmod
+    // resize this after running the symbolic factorization
+    // TODO : can use less than this full nnzb in the case of preconditioning or
+    // incomplete ILU?
+    _colPtr.resize(nnzb);
 
-    int n = nnodes;
-    int nzmax = nnzb;
-
-    // double Ax[nnzb];
-    // memset(Ax, 0.0, nnzb * sizeof(double));
-    // temporarily randomize
-    HostVec<double> Ax_vec(nnzb);
-    Ax_vec.randomize();
-    double *Ax = Ax_vec.getPtr();
-
-    int sorted = 1, packed = 1,
-        stype = 1, // would prefer to not pack values but have to it seems
-        xdtype = CHOLMOD_DOUBLE +
-                 CHOLMOD_REAL; // CHOLMOD_PATTERN; // pattern only matrix
-    cholmod_sparse *A =
-        cholmod_allocate_sparse(n, n, nzmax, sorted, packed, stype, xdtype, &c);
-    A->p = rowPtr;
-    A->i = colPtr;
-    A->x = Ax;
-    A->stype = -1; // lower triangular? 1 for upper triangular
-
-    cholmod_factor *L = cholmod_analyze(A, &c); // symbolic factorization
-    // TODO : is this slow on CPU?
-    // ! TODO : could run this part on the GPU.. at some point and copy it off
-    // GPU
-    cholmod_factorize(A, L, &c); // numerical factorization
-
-    // now also transpose the L matrix so we can fillin with U sparsity pattern
-    // cholmod_sparse *L_sparse = F->L; // L factor (sparse form)
-    int *Lp = (int *)L->p;
-    int *Li = (int *)L->i;
-
-    cholmod_sparse *L_sparse = cholmod_allocate_sparse(
-        n, n, L->nzmax, sorted, packed, stype, xdtype, &c);
-    L_sparse->p = Lp;
-    L_sparse->i = Li;
-    L_sparse->x = L->x;
-    L_sparse->stype = -1;
-
-    // Transpose the sparsity pattern of L to get U (upper triangular part)
-    int mode = 0; // 0 for pattern only (what I want), 1 for numerical real, 2
-                  // for numerical complex
-    cholmod_sparse *U_sparse = cholmod_transpose(L_sparse, mode, &c);
-    int *Up = (int *)U_sparse->p;
-    int *Ui = (int *)U_sparse->i;
-
-    // DEBUG: (seems to work now though)
-    if (print) {
-        printf("fillin L rowPtr\n");
-        printVec<int32_t>(nnodes + 1, Lp);
-        printf("fillin L colPtr\n");
-        printVec<int32_t>(L->nzmax, Li);
-
-        printf("fillin U rowPtr\n");
-        printVec<int32_t>(nnodes + 1, Up);
-        printf("fillin U colPtr\n");
-        printVec<int32_t>(L->nzmax, Ui);
-    }
-
-    // TODO : debug here and print out L->p, L->i? to see if fill-in worked?
-    // is this code efficient?
-
-    // now update rowPtr, colPtr for each row with fill-in values
-    nnzb = 0; // reset nnzb
-    std::vector<int> _rowPtr(nnodes + 1, 0);
-    std::vector<int> _colPtr;
-
-    for (int inode = 0; inode < nnodes; inode++) {
-        std::vector<int32_t>
-            temp; // put all colPtr vals from orig and fill-in into this
-
-        // original sparsity
-        for (int icol = rowPtr[inode]; icol < rowPtr[inode + 1]; icol++) {
-            temp.push_back(colPtr[icol]);
-        }
-
-        // lower triangular fillin
-        for (int icol = Lp[inode]; icol < Lp[inode + 1]; icol++) {
-            temp.push_back(Li[icol]);
-        }
-
-        // upper triangular fillin
-        for (int icol = Up[inode]; icol < Up[inode + 1]; icol++) {
-            temp.push_back(Ui[icol]);
-        }
-
-        // now make unique list of columns for this row / node
-        std::sort(temp.begin(), temp.end());
-        auto last = std::unique(temp.begin(), temp.end());
-        temp.erase(last, temp.end());
-
-        // show temp on each row
-        // printf("row %d: ", inode);
-        // printVec<int32_t>(temp.size(), temp.data());
-
-        // add into new colPtr, rowPtr, nnzb
-        nnzb += temp.size();
-        _colPtr.insert(_colPtr.end(), temp.begin(), temp.end());
-        _rowPtr[inode + 1] = nnzb;
-    }
-
-    // copy data to output pointers (deep copy)
     std::copy(_rowPtr.begin(), _rowPtr.end(), rowPtr);
-    colPtr = new int[nnzb];
+    colPtr = new index_t[nnzb];
     std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
-
-    if (print) {
-        printf("final rowPtr\n");
-        printVec<int32_t>(nnodes + 1, rowPtr);
-        printf("final colPtr\n");
-        printVec<int32_t>(nnzb, colPtr);
-    }
 }
-#endif
 
 __HOST__ void get_elem_ind_map(
-    const int &nelems, const int &nnodes, const int *conn,
+    const int &nelems, const int &nnodes, const int32_t *conn,
     const int &nodes_per_elem,
-    const int &nnzb, // num nonzero blocks
-    int *&rowPtr,    // array of len nnodes+1 for how many cols in each row
-    int *&colPtr,    // array of len nnzb of the column indices for each block
-    int *&elemIndMap) {
+    const int &nnzb,  // num nonzero blocks
+    index_t *&rowPtr, // array of len nnodes+1 for how many cols in each row
+    index_t *&colPtr, // array of len nnzb of the column indices for each block
+    index_t *&elemIndMap) {
+
+    int nodes_per_elem2 = nodes_per_elem * nodes_per_elem;
 
     // determine where each global_node node of this elem
     // should be added into the ind of colPtr as map
-    int nodes_per_elem2 = nodes_per_elem * nodes_per_elem;
-    elemIndMap = new int[nelems * nodes_per_elem2];
+
+    elemIndMap = new index_t[nelems * nodes_per_elem2]();
     // elemIndMap is nelems x 4 x 4 array for nodes_per_elem = 4
     // shows how to add each block matrix into global
     for (int ielem = 0; ielem < nelems; ielem++) {
@@ -325,7 +249,7 @@ __HOST__ void get_elem_ind_map(
         // loop over each block row
         for (int n = 0; n < nodes_per_elem; n++) {
             // int global_node_row = sorted_conn[n];
-            int global_node_row = local_conn[n];
+            int32_t global_node_row = local_conn[n];
             // get the block col range of colPtr for this block row
             int col_istart = rowPtr[global_node_row];
             int col_iend = rowPtr[global_node_row + 1];
@@ -333,7 +257,7 @@ __HOST__ void get_elem_ind_map(
             // loop over each block col
             for (int m = 0; m < nodes_per_elem; m++) {
                 // int global_node_col = sorted_conn[m];
-                int global_node_col = local_conn[m];
+                int32_t global_node_col = local_conn[m];
 
                 // find the matching indices in colPtr for the global_node_col
                 // of this elem_conn

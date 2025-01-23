@@ -1,6 +1,7 @@
 #pragma once
 #include "../base/utils.h"
 #include "../cuda_utils.h"
+#include "chrono"
 #include "stdlib.h"
 #include <complex>
 #include <cstring>
@@ -259,12 +260,25 @@ template <typename T> class HostVec : public BaseVec<T> {
         return vec;
     }
 
-    __HOST__ DeviceVec<T> createDeviceVec(bool memset = true) {
+    __HOST__ DeviceVec<T> createDeviceVec(bool memset = true,
+                                          bool can_print = false) {
         // creates a device vector and copies this host data to the device
         DeviceVec<T> vec = DeviceVec<T>(this->N, memset);
+        auto start = std::chrono::high_resolution_clock::now();
 #ifdef USE_GPU
+        if (can_print) {
+            printf("copy host to device vec %d entries\n", this->N);
+        }
         cudaMemcpy(vec.getPtr(), this->data, this->N * sizeof(T),
                    cudaMemcpyHostToDevice);
+
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        if (can_print) {
+            printf("\tcopy host to device vec in %d microseconds\n",
+                   (int)duration.count());
+        }
 #endif
         return vec;
     }

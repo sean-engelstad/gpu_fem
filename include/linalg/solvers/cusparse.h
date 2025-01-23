@@ -3,6 +3,7 @@
 #ifdef USE_GPU
 
 #include "../../cuda_utils.h"
+#include "chrono"
 #include "cublas_v2.h"
 #include <assert.h>
 #include <cuda_runtime.h>
@@ -191,7 +192,12 @@ namespace CUSPARSE {
 
 template <typename T>
 void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
-                         DeviceVec<T> &soln) {
+                         DeviceVec<T> &soln, bool can_print = false) {
+
+    if (can_print) {
+        printf("begin cusparse direct LU solve\n");
+    }
+    auto start = std::chrono::high_resolution_clock::now();
 
     // copy important inputs for Bsr structure out of BsrMat
     // TODO : was trying to make some of these const but didn't accept it in
@@ -200,8 +206,8 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
     int blockDim = bsr_data.block_dim;
-    int *d_bsrRowPtr = bsr_data.rowPtr;
-    int *d_bsrColPtr = bsr_data.colPtr;
+    index_t *d_bsrRowPtr = bsr_data.rowPtr;
+    index_t *d_bsrColPtr = bsr_data.colPtr;
     T *d_rhs = rhs.getPtr();
     T *d_soln = soln.getPtr();
     DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
@@ -261,8 +267,8 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     cusparseCreateBsrsv2Info(&info_L);
     cusparseCreateBsrsv2Info(&info_U);
 
-    // step 3: query how much memory used in bsrilu02 and bsrsv2, and allocate
-    // the buffer
+    // step 3: query how much memory used in bsrilu02 and bsrsv2, and
+    // allocate the buffer
     cusparseDbsrilu02_bufferSize(handle, dir, mb, nnzb, descr_M, d_bsrVal,
                                  d_bsrRowPtr, d_bsrColPtr, blockDim, info_M,
                                  &pBufferSize_M);
@@ -279,8 +285,9 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     // step 4: perform analysis of incomplete LU factorization on M
     //     perform analysis of triangular solve on L
     //     perform analysis of triangular solve on U
-    //     The lower(upper) triangular part of M has the same sparsity pattern
-    //     as L(U), we can do analysis of bsrilu0 and bsrsv2 simultaneously.
+    //     The lower(upper) triangular part of M has the same sparsity
+    //     pattern as L(U), we can do analysis of bsrilu0 and bsrsv2
+    //     simultaneously.
     //
     // Notes:
     // bsrilu02_analysis() ->
@@ -342,6 +349,15 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     cusparseDestroyBsrsv2Info(info_L);
     cusparseDestroyBsrsv2Info(info_U);
     cusparseDestroy(handle);
+
+    // print timing data
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+
+    if (can_print) {
+        printf("\tfinished in %d microseconds\n", (int)duration.count());
+    }
 }
 
 // template <typename T>
@@ -349,7 +365,8 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
 //                      DeviceVec<T> &soln) {
 
 //     // copy important inputs for Bsr structure out of BsrMat
-//     // TODO : was trying to make some of these const but didn't accept it in
+//     // TODO : was trying to make some of these const but didn't accept it
+//     in
 //     // final solve
 //     BsrData bsr_data = mat.getBsrData();
 //     int mb = bsr_data.nnodes;
@@ -364,7 +381,8 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
 
 //     //
 //     // https: //
-//     // developer.nvidia.com/blog/accelerated-solution-sparse-linear-systems/
+//     //
+//     developer.nvidia.com/blog/accelerated-solution-sparse-linear-systems/
 
 //     // copy kmat data vec since gets modified during LU
 //     // otherwise we can't compute residual properly K * u - f
@@ -372,13 +390,13 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
 
 //     /*
 //     Cusparse documentation
-//     The function cusparseSpSM_bufferSize() returns the size of the workspace
-//     needed by cusparseSpSM_analysis() and cusparseSpSM_solve(). The function
-//     cusparseSpSM_analysis() performs the analysis phase, while
-//     cusparseSpSM_solve() executes the solve phase for a sparse triangular
-//     linear system. The opaque data structure spsmDescr is used to share
-//     information among all functions. The function cusparseSpSM_updateMatrix()
-//     updates spsmDescr with new matrix values.
+//     The function cusparseSpSM_bufferSize() returns the size of the
+//     workspace needed by cusparseSpSM_analysis() and cusparseSpSM_solve().
+//     The function cusparseSpSM_analysis() performs the analysis phase,
+//     while cusparseSpSM_solve() executes the solve phase for a sparse
+//     triangular linear system. The opaque data structure spsmDescr is used
+//     to share information among all functions. The function
+//     cusparseSpSM_updateMatrix() updates spsmDescr with new matrix values.
 //     */
 
 //     // Initialize cuSPARSE handle
@@ -392,11 +410,13 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
 //     d_values, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
 //     CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F, CUSPARSE_ORDER_ROW));
 
-//     // TODO : need to manually convert from BSR to CSR myself before doing
+//     // TODO : need to manually convert from BSR to CSR myself before
+//     doing
 //     // this.. temporarily convert to CSR format
 //     // cusparseSpMatDescr_t matA_CSR;
 //     // CHECK_CUSPARSE(cusparseCreateCsr(&matA_CSR, brows, bcols, nnz,
-//     //                                  csrRowOffsets, csrColInd, csrValues,
+//     //                                  csrRowOffsets, csrColInd,
+//     csrValues,
 //     //                                  CUSPARSE_INDEX_32I,
 //     CUSPARSE_INDEX_32I,
 //     //                                  CUSPARSE_INDEX_BASE_ZERO,
@@ -408,12 +428,14 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
 
 //     // Create a dense matrix descriptor for the right-hand side vector
 //     cusparseDnMatDescr_t matB;
-//     CHECK_CUSPARSE(cusparseCreateDnMat(&matB, mb, 1, mb, d_rhs, CUDA_R_64F,
+//     CHECK_CUSPARSE(cusparseCreateDnMat(&matB, mb, 1, mb, d_rhs,
+//     CUDA_R_64F,
 //                                        CUSPARSE_ORDER_ROW));
 
 //     // Create a dense matrix descriptor for the result vector
 //     cusparseDnMatDescr_t matC;
-//     CHECK_CUSPARSE(cusparseCreateDnMat(&matC, mb, 1, mb, d_soln, CUDA_R_64F,
+//     CHECK_CUSPARSE(cusparseCreateDnMat(&matC, mb, 1, mb, d_soln,
+//     CUDA_R_64F,
 //                                        CUSPARSE_ORDER_ROW));
 
 //     // Create sparse matrix solve descriptor
@@ -439,8 +461,9 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
 
 //     // do analysis to get in A in LU format
 //     cusparseSpSM_analysis(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-//                           CUSPARSE_OPERATION_NON_TRANSPOSE, alpha_ptr, matA,
-//                           matB, matC, CUDA_R_64F, alg, spsmDescr, d_buffer);
+//                           CUSPARSE_OPERATION_NON_TRANSPOSE, alpha_ptr,
+//                           matA, matB, matC, CUDA_R_64F, alg, spsmDescr,
+//                           d_buffer);
 
 //     CHECK_CUSPARSE(cusparseSpSM_solve(handle,
 //     CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -478,8 +501,10 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
 
 //         // // Upper triangular matrix (U)
 //         // CHECK_CUSPARSE(cusparseCreateBlockedSparseMat(
-//         //     &matU, mb, mb, nnzb, d_rowPtr, d_colPtr, d_values, blockDim,
-//         //     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F));
+//         //     &matU, mb, mb, nnzb, d_rowPtr, d_colPtr, d_values,
+//         blockDim,
+//         //     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+//         CUDA_R_64F));
 //         // CHECK_CUSPARSE(cusparseSpMatSetAttribute(matU,
 //         CUSPARSE_SPMAT_TRIANGULAR,
 //         // CUSPARSE_SPMAT_TRIANGULAR_UPPER));
@@ -717,8 +742,10 @@ int _gpu_CG(cublasHandle_t cublasHandle, cusparseHandle_t cusparseHandle, int m,
 //     DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
 //     T *d_temp = temp.getPtr();
 
-//     // note this changes the mat data to be LU (but that's the whole point
-//     // of LU solve is for repeated linear solves we now just do triangular
+//     // note this changes the mat data to be LU (but that's the whole
+//     point
+//     // of LU solve is for repeated linear solves we now just do
+//     triangular
 //     // solves)
 //     T *d_values = mat.getPtr();
 
@@ -741,17 +768,18 @@ int _gpu_CG(cublasHandle_t cublasHandle, cusparseHandle_t cusparseHandle, int m,
 //     void *buffer;
 //     size_t bufferSize;
 //     CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(
-//         cusparseHandle, CUSPARSE_DIRECTION_ROW, mb, nnzb, descr, d_values,
-//         d_rowPtr, d_colPtr, blockDim, iluInfo, &bufferSize));
+//         cusparseHandle, CUSPARSE_DIRECTION_ROW, mb, nnzb, descr,
+//         d_values, d_rowPtr, d_colPtr, blockDim, iluInfo, &bufferSize));
 //     CHECK_CUDA(cudaMalloc(&buffer, bufferSize));
 
 //     // Analyze and compute ILU
 //     CHECK_CUSPARSE(cusparseDbsrilu02_analysis(
-//         cusparseHandle, CUSPARSE_DIRECTION_ROW, mb, nnzb, descr, d_values,
-//         d_rowPtr, d_colPtr, blockDim, iluInfo, policy, buffer));
+//         cusparseHandle, CUSPARSE_DIRECTION_ROW, mb, nnzb, descr,
+//         d_values, d_rowPtr, d_colPtr, blockDim, iluInfo, policy,
+//         buffer));
 
-//     CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, CUSPARSE_DIRECTION_ROW,
-//     mb,
+//     CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle,
+//     CUSPARSE_DIRECTION_ROW, mb,
 //                                      nnzb, descr, d_values, d_rowPtr,
 //                                      d_colPtr, blockDim, iluInfo, policy,
 //                                      buffer));
@@ -769,16 +797,19 @@ int _gpu_CG(cublasHandle_t cublasHandle, cusparseHandle_t cusparseHandle, int m,
 //         d_values, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
 //         CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F, CUSPARSE_ORDER_ROW));
 
-//     CHECK_CUSPARSE(cusparseCreateBsr(&matA, m, m, nnz, d_A_rows, d_A_columns,
+//     CHECK_CUSPARSE(cusparseCreateBsr(&matA, m, m, nnz, d_A_rows,
+//     d_A_columns,
 //                                      d_A_values, CUSPARSE_INDEX_32I,
 //                                      CUSPARSE_INDEX_32I, baseIdx,
 //                                      CUDA_R_64F))
 //     // L
-//     CHECK_CUSPARSE(cusparseCreateBsr(&matL, m, m, nnz, d_L_rows, d_L_columns,
+//     CHECK_CUSPARSE(cusparseCreateBsr(&matL, m, m, nnz, d_L_rows,
+//     d_L_columns,
 //                                      d_L_values, CUSPARSE_INDEX_32I,
 //                                      CUSPARSE_INDEX_32I, baseIdx,
 //                                      CUDA_R_64F))
-//     CHECK_CUSPARSE(cusparseSpMatSetAttribute(matL, CUSPARSE_SPMAT_FILL_MODE,
+//     CHECK_CUSPARSE(cusparseSpMatSetAttribute(matL,
+//     CUSPARSE_SPMAT_FILL_MODE,
 //                                              &fill_lower,
 //                                              sizeof(fill_lower)))
 //     CHECK_CUSPARSE(cusparseSpMatSetAttribute(
@@ -790,7 +821,8 @@ int _gpu_CG(cublasHandle_t cublasHandle, cusparseHandle_t cusparseHandle, int m,
 //     //
 //     docs.nvidia.com/cuda/cuda-samples/index.html#cusolversp-linear-solver-%5B/url%5D
 //     // github repo #1 for PCG,
-//     // https://github.com/NVIDIA/CUDALibrarySamples/tree/master/cuSPARSE/cg
+//     //
+//     https://github.com/NVIDIA/CUDALibrarySamples/tree/master/cuSPARSE/cg
 //     // github repo #2 for PCG,
 //     // https://
 //     //
@@ -816,8 +848,8 @@ T get_resid(BsrMat<DeviceVec<T>> mat, DeviceVec<T> rhs, DeviceVec<T> soln) {
     int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
     int blockDim = bsr_data.block_dim;
-    int *d_bsrRowPtr = bsr_data.rowPtr;
-    int *d_bsrColPtr = bsr_data.colPtr;
+    index_t *d_bsrRowPtr = bsr_data.rowPtr;
+    index_t *d_bsrColPtr = bsr_data.colPtr;
     T *d_rhs = rhs.getPtr();
     T *d_soln = soln.getPtr();
     DeviceVec<T> temp = DeviceVec<T>(soln.getSize());

@@ -5,14 +5,16 @@ int main() {
     using Mat = BsrMat<DeviceVec<double>>;
 
     // create my own BsrData and BsrMat object
-    int orig_rowPtr[] = {0, 3, 6, 8, 10};
-    int orig_colPtr[] = {0, 1, 3, 0, 1, 2, 1, 2, 0, 3};
+    index_t orig_rowPtr[] = {0, 3, 6, 8, 10};
+    index_t orig_colPtr[] = {0, 1, 3, 0, 1, 2, 1, 2, 0, 3};
     int nnodes = 4;
     int nnzb = 10;
     int block_dim = 1;
+    double fillin = 100.0;
 
     bool print = true;
-    BsrData bsr_data = BsrData(nnodes, block_dim, nnzb, orig_rowPtr, orig_colPtr, print);
+    BsrData bsr_data = BsrData(nnodes, block_dim, nnzb, orig_rowPtr, orig_colPtr);
+    bsr_data.symbolic_factorization(fillin, print);
     BsrData d_bsr_data = bsr_data.createDeviceBsrData();
 
     // nz from kernel matrix k(x_i, x_j) = x_i * x_j = (i+1)*(j+1)
@@ -36,7 +38,7 @@ int main() {
     auto d_temp = temp.createDeviceVec();
     auto d_soln = soln.createDeviceVec();
 
-    CUSPARSE::linear_solve<double>(kmat, d_rhs, d_soln);
+    CUSPARSE::direct_LU_solve_old<double>(kmat, d_rhs, d_soln);
     auto max_resid = CUSPARSE::get_resid<double>(kmat, d_rhs, d_soln);
 
     auto h_soln = d_soln.createHostVec();

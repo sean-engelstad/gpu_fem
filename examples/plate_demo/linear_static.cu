@@ -2,6 +2,7 @@
 #include "chrono"
 #include "linalg/linalg.h"
 #include "shell/shell.h"
+#include <iostream>
 
 /**
  solve on CPU with cusparse for debugging
@@ -9,6 +10,8 @@
 
 int main(void) {
     using T = double;
+
+    std::ios::sync_with_stdio(false); // always flush print immediately
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -22,10 +25,15 @@ int main(void) {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    int nxe = 10;
+    int nxe = 100;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
+
+    // perform a factorization on the rowPtr, colPtr (before creating matrix)
+    double fillin = 2.0; // 10.0
+    bool print = true;
+    assembler.symbolic_factorization(fillin, print);
 
     // init variables u;
     auto vars = assembler.createVarsVec();
@@ -37,12 +45,14 @@ int main(void) {
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
 
     auto start = std::chrono::high_resolution_clock::now();
-    assembler.add_jacobian(res, kmat);
+    assembler.add_jacobian(res, kmat, print);
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration =
         std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-    assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
+    assembler.apply_bcs(res, print);
+    assembler.apply_bcs(kmat, print);
+
+    printf("checkpoint 1\n");
 
     // set the rhs for this problem
     double Q = 1.0; // load magnitude
@@ -50,17 +60,28 @@ int main(void) {
     T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
     // printf("my_loads: ");
     // printVec<T>(24, my_loads);
-    auto loads = assembler.createVarsVec(my_loads);
-    assembler.apply_bcs(loads);
+
+    printf("checkpoint 2\n");
+
+    // it's currently taking a really long time to make 
+    auto loads = assembler.createVarsVec(my_loads, print);
+
+    printf("checkpoint 3\n");
+
+    assembler.apply_bcs(loads, true);
 
     // printout kmat before solve (since cusparse solve changes kmat lower triangular)
-    auto h_kmat = kmat.createHostVec();
     // also printout stiffness matrix
-    write_to_csv<double>(h_kmat.getPtr(), h_kmat.getSize(), "csv/plate_kmat.csv");
+    if (nxe < 10) {
+        auto h_kmat = kmat.createHostVec();
+        write_to_csv<double>(h_kmat.getPtr(), h_kmat.getSize(), "csv/plate_kmat.csv");
+    }
+
+    printf("checkpoint 4\n");
     
     // now do cusparse solve on linear static analysis
     auto start2 = std::chrono::high_resolution_clock::now();
-    CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln);
+    CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln, true);
     auto stop2 = std::chrono::high_resolution_clock::now();
     auto duration2 =
         std::chrono::duration_cast<std::chrono::microseconds>(stop2 - start2);

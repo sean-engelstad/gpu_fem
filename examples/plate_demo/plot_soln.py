@@ -85,7 +85,7 @@ def get_python_kmat(kelem_mat, num_elements, num_nodes, nx):
             else:
                 local_bcs = []
             bcs += [6*inode + idof for idof in local_bcs]
-    print(f"{bcs=}")
+    # print(f"{bcs=}")
 
     # print(f"{num_nodes=}")
 
@@ -154,9 +154,9 @@ def get_cpp_kmat():
     rowPtr = read_from_csv("csv/plate_rowPtr.csv").astype(np.int32)
     colPtr = read_from_csv("csv/plate_colPtr.csv").astype(np.int32)
 
-    print(f"{kmat_vec=}")
+    # print(f"{kmat_vec=}")
 
-    print(f"{kmat_vec.shape[0]}")
+    # print(f"{kmat_vec.shape[0]}")
     _nnodes = rowPtr.shape[0] - 1
     nx = int(_nnodes**0.5)
     nxe = nx - 1
@@ -334,20 +334,21 @@ if __name__ == "__main__":
     # theta = 1e-6
     # kmat_mat_py += theta * np.eye(kmat_mat_py.shape[0]) 
 
-    soln_py = np.linalg.solve(kmat_py, loads)
-    print(f"{soln_py[:,0]=}")
-    plot_vec(soln_py, folder + "python-soln.png", dof=2)
     plot_vec(loads, folder + "cpp-loads.png", dof=2)
 
     # compare the matrices with heatmaps
-    kmat_cpp,_,_,_ = get_cpp_kmat()
-    kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
+    if kelem_mat.shape[0] < 50:
+        soln_py = np.linalg.solve(kmat_py, loads)
+        # print(f"{soln_py[:,0]=}")
+        plot_vec(soln_py, folder + "python-soln.png", dof=2)
+        kmat_cpp,_,_,_ = get_cpp_kmat()
+        kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
 
-    # print(f"{kmat_cpp=}")
+        # print(f"{kmat_cpp=}")
 
-    # now solve with c++ mat in python to see if just solver issues
-    soln_cpp2 = np.linalg.solve(kmat_cpp, loads)
-    plot_vec(soln_py, folder + "cpp-soln-from-py.png", dof=2)
+        # now solve with c++ mat in python to see if just solver issues
+        soln_cpp2 = np.linalg.solve(kmat_cpp, loads)
+        plot_vec(soln_py, folder + "cpp-soln-from-py.png", dof=2)
 
 
     # compare to analytic magnitude and solved magnitude
@@ -358,16 +359,19 @@ if __name__ == "__main__":
     # resid = loads_check - loads
 
     plot_mat(kmat_py, folder + "kmat_py.png")
-    plot_mat(kmat_cpp, folder + "kmat_cpp.png")
-    plot_mat(kmat_rel_err, folder + "kmat_rel_err.png")
 
-    # write out the matrices to a csv file now
-    write_matrices_to_file(kmat_cpp, kmat_py, kmat_rel_err, folder + "kmat-compare.csv")
+    if kelem_mat.shape[0] < 50:
+        plot_mat(kmat_cpp, folder + "kmat_cpp.png")
+        plot_mat(kmat_rel_err, folder + "kmat_rel_err.png")
+
+        # write out the matrices to a csv file now
+        write_matrices_to_file(kmat_cpp, kmat_py, kmat_rel_err, folder + "kmat-compare.csv")
 
     # -------------------------------------------
     # since kmat actually matches from cpp to python
     # check linear solve related things like fillin now
 
-    py_sparsity, cpp_sparsity = compare_fillin(kmat_py, kmat_cpp)
-    plot_mat(py_sparsity, folder + "sparsity_py.png")
-    plot_mat(cpp_sparsity, folder + "sparsity_cpp.png")
+    if kelem_mat.shape[0] < 50:
+        py_sparsity, cpp_sparsity = compare_fillin(kmat_py, kmat_cpp)
+        plot_mat(py_sparsity, folder + "sparsity_py.png")
+        plot_mat(cpp_sparsity, folder + "sparsity_cpp.png")

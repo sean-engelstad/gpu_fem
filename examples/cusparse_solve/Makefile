@@ -2,9 +2,13 @@ include ../../Makefile.in
 
 default: solve-gpu
 
+test-sparse:
+	@echo "building sparse utils"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -std=c++17 sparse_util_test.cu ${LINK}
+
 example1:
-	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 1_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	@echo "Building example1 with GPU support"
+	${GPU_CXX} ${GPU_CC_FLAGS} -g -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 1_example.cu ${LINK}
 
 run1: 	
 	$(MAKE) clean
@@ -12,8 +16,9 @@ run1:
 	./a.out
 
 example2:
-	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 2_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	@echo "Building example2 with GPU support"
+	${GPU_CXX} ${GPU_CC_FLAGS} -g -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 2_example.cu ${LINK}
+#    ${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 2_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 run2: 	
 	$(MAKE) clean
@@ -22,7 +27,8 @@ run2:
 
 example3:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 3_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -g -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 3_example.cu ${LINK}
+#	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 3_example.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 run3: 	
 	$(MAKE) clean
@@ -31,7 +37,8 @@ run3:
 
 plate:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 4_plate.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -g -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 4_plate.cu ${LINK}
+#	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 4_plate.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 run-plate: 	
 	$(MAKE) clean

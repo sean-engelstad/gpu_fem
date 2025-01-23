@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "base/elem_group.h"
+#include "chrono"
 #include "cuda_utils.h"
 
 // linear algebra formats
@@ -44,6 +45,8 @@ class ElementAssembler {
         this->vars = Vec<T>(num_vars);
 
         // on host (TODO : if need to deep copy entries to device?)
+        // TODO : should probably do factorization explicitly instead of
+        // implicitly upon construction
         bsr_data = BsrData(num_elements, num_vars_nodes, Basis::num_nodes,
                            Phys::vars_per_node, vars_conn.getPtr());
 
@@ -55,7 +58,6 @@ class ElementAssembler {
         this->xpts = xpts.createDeviceVec();
         this->bcs = bcs.createDeviceVec();
         this->physData = physData.createDeviceVec(false);
-        this->bsr_data = bsr_data.createDeviceBsrData();
 
 #else // not USE_GPU
 
@@ -70,11 +72,49 @@ class ElementAssembler {
     };
 
     BsrData getBsrData() { return bsr_data; }
+    void symbolic_factorization(double fillin = 100.0, bool print = false) {
+        bsr_data.symbolic_factorization(fillin, print);
+#ifdef USE_GPU
+        this->bsr_data = bsr_data.createDeviceBsrData();
+#endif
+    }
 
     int get_num_xpts() { return num_geo_nodes * spatial_dim; }
     int get_num_vars() { return num_vars_nodes * vars_per_node; }
-    __HOST__ void apply_bcs(Vec<T> &vec) { vec.apply_bcs(bcs); }
-    void apply_bcs(Mat &mat) { mat.apply_bcs(bcs); }
+    __HOST__ void apply_bcs(Vec<T> &vec, bool can_print = false) {
+        if (can_print) {
+            printf("apply bcs to vector\n");
+        }
+        auto start = std::chrono::high_resolution_clock::now();
+
+        vec.apply_bcs(bcs);
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        if (can_print) {
+            printf("\tfinished apply bcs vec in %d microseconds\n",
+                   (int)duration.count());
+        }
+    }
+    void apply_bcs(Mat &mat, bool can_print = false) {
+        if (can_print) {
+            printf("apply bcs to matrix\n");
+        }
+        auto start = std::chrono::high_resolution_clock::now();
+
+        mat.apply_bcs(bcs);
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        if (can_print) {
+            printf("\tfinished apply bcs matrix in %d microseconds\n",
+                   (int)duration.count());
+        }
+    }
 
     HostVec<T> createVarsHostVec(T *data = nullptr, bool randomize = false) {
         HostVec<T> h_vec;
@@ -90,9 +130,20 @@ class ElementAssembler {
     }
 
 #ifdef USE_GPU
-    DeviceVec<T> createVarsVec(T *data = nullptr, bool randomize = false) {
+    DeviceVec<T> createVarsVec(T *data = nullptr, bool randomize = false,
+                               bool can_print = false) {
+        if (can_print) {
+            printf("begin create vars host vec\n");
+        }
         auto h_vec = createVarsHostVec(data, randomize);
-        return h_vec.createDeviceVec();
+        if (can_print) {
+            printf("inner checkpt 2\n");
+        }
+        auto d_vec = h_vec.createDeviceVec(true, can_print);
+        if (can_print) {
+            printf("inner checkpt 3\n");
+        }
+        return d_vec;
     }
 #else
     HostVec<T> createVarsVec(T *data = nullptr, bool randomize = false) {
@@ -113,7 +164,12 @@ class ElementAssembler {
     }
 
     //  template <class ExecParameters>
-    void add_energy(T &Uenergy) {
+    void add_energy(T &Uenergy, bool can_print = false) {
+        auto start = std::chrono::high_resolution_clock::now();
+        if (can_print) {
+            printf("begin add_energy\n");
+        }
+
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
         dim3 block = ElemGroup::energy_block;
@@ -129,10 +185,24 @@ class ElementAssembler {
         ElemGroup::template add_energy_cpu<Data>(
             num_elements, geo_conn, vars_conn, xpts, vars, physData, Uenergy);
 #endif // USE_GPU
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        if (can_print) {
+            printf("\tfinished assembly in %d microseconds\n",
+                   (int)duration.count());
+        }
     };
 
     //  template <class ExecParameters>
-    void add_residual(Vec<T> &res) {
+    void add_residual(Vec<T> &res, bool can_print = false) {
+        auto start = std::chrono::high_resolution_clock::now();
+        if (can_print) {
+            printf("begin add_residual\n");
+        }
+
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
         dim3 block = ElemGroup::res_block;
@@ -149,10 +219,25 @@ class ElementAssembler {
         ElemGroup::template add_residual_cpu<Data, Vec>(
             num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 #endif // USE_GPU
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        if (can_print) {
+            printf("\tfinished assembly in %d microseconds\n",
+                   (int)duration.count());
+        }
     };
 
     //  template <class ExecParameters>
-    void add_jacobian(Vec<T> &res, Mat &mat) { // TODO : make this Vec here..
+    void add_jacobian(Vec<T> &res, Mat &mat,
+                      bool can_print = false) { // TODO : make this Vec here..
+        auto start = std::chrono::high_resolution_clock::now();
+        if (can_print) {
+            printf("begin add_jacobian\n");
+        }
+
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
 
@@ -174,6 +259,16 @@ class ElementAssembler {
             num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars,
             physData, res, mat);
 #endif
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+
+        if (can_print) {
+            printf("\tfinished assembly in %d microseconds\n",
+                   (int)duration.count());
+        }
     };
 
   private:

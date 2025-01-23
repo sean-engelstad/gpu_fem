@@ -4,21 +4,17 @@
 Note, writeup what you're doing as you complete each major step in the overleaf.
 
 ### Current
-- [ ] linear solver work on GPU
-    * BSR works better with iterative solve, CSR better with direct solve
-    * which linear solver is probably application dependent:
-        * for coupled analysis & optimization : prob want direct CSR solve because of many solves (iterative BSR if possible but maybe not possible)
-        * for regular struct opt with single linear solve : want iterative BSR solve is fastest (iterative solves fastest on single linear system)
-    - [ ] add destructors for each object
-    - [ ] add CSR direct solver (first task)
-        - [ ] make CSR matrix and CSR data classes that inherit from BSR style with block_dim = 1
-        - [ ] also need to convert elem_ind_map probably for CSR maybe
-    - [ ] add BSR iterative solver (do we need preconditioner also)
-        - [ ] how do we preconditioner the BSR on GPU? (ILU preconditioner) Or can we do that on CPU side with multi-procs? cause cusparse doesn't do ILU on GPU for BSR
-    - [ ] finally : can we do BSR direct solver (talk with Kevin)
+- [x] linear solver to work on GPU
+    - [x] try Dr. K sparse_utils library (git) for sparse factorization
+- [ ] figure out where code is getting stuck right now (apply bcs, create device vec) ?
+- [ ] determine what weakest link of code is => factorization, solve, assembly
+- [ ] additional linear solve work to do
+    - [ ] reordering, speedup fillin?
+    - [ ] make CSR matrices for comparison?
+    - [ ] BSR iterative solves with incomplete ILU preconditioner?
 
 - [x] make a CPU linear solver for BSR first, and that way I can have additional debugging level in C++
-- [ ] speedup BC kernel if needed?
+- [x] speedup BC kernel if needed?
 - [x] verify linear solve of plate with sin-sin loads on 5 x 5 rect mesh
     - [x] it runs the solve now, but gives wrong answer
     - [x] verify same kmat (fixes with sorting elem_conn => better way to do this?)

@@ -201,7 +201,9 @@ int main() {
 
     // do fillin with cholmod in suitesparse
     bool print = false;
-    BsrData bsr_data = BsrData(num_nodes, block_dim, nnzb, orig_rowPtr, orig_colPtr, print);
+    double fillin = 10.0;
+    BsrData bsr_data = BsrData(num_nodes, block_dim, nnzb, orig_rowPtr, orig_colPtr);
+    bsr_data.symbolic_factorization(fillin, print);
     BsrData d_bsr_data = bsr_data.createDeviceBsrData();
 
     // rowPtr, colPtr should be unchanged since they were already filled in before by cholmod / suitesparse
@@ -255,7 +257,7 @@ int main() {
     // write_to_csv<double>(h_loads.getPtr(), h_loads.getSize(), "csv/plate_loads.csv");
     // write_to_csv<double>(h_soln.getPtr(), h_soln.getSize(), "csv/plate_soln.csv");
     
-    CUSPARSE::linear_solve<double>(kmat, d_rhs, d_soln);
+    CUSPARSE::direct_LU_solve_old<double>(kmat, d_rhs, d_soln);
     auto max_resid = CUSPARSE::get_resid<double>(kmat, d_rhs, d_soln);
 
     double true_soln[] = {0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  0.00000000e+00,
