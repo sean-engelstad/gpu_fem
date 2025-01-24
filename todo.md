@@ -11,8 +11,9 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
     - [x] need to fix kmat, somehow slightly wrong
 - [ ] additional verification cases and show mesh convergence
     - [ ] transverse plate mesh convergence, seems a bit weird right now.. (disp not convergent)
-        * is this solver issue? or problem with matrix
-        * not enough fillin?
+        * I noticed a slight asymmetry in K Matrix => check assembly again.. (this bug may mess up mesh convergence)
+        * Tim says look at distributed load case for mesh convergence study..
+        * is this solver issue? or problem with matrix (or fillin)
         * got an illegal memory access with 300 x 300 plate in GPUassert error? is this related?
         * why were plate loads a 0 vec in the plot of 100x100 plate? (just plot artifact)
         - [ ] verify matrix, rhs, solution against TACS CPU for this
