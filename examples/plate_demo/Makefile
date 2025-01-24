@@ -13,12 +13,11 @@ gpu:
 
 gpu-pcg:
 	@echo "Building plate example for 10x10 mesh with GPU support for PCG solver"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 linear_static_PCG.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
-
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 linear_static_PCG.cu ${LINK}
 
 one-elem:
 	@echo "Building with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 _one_elem.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 _one_elem.cu ${LINK}
 
 test16: 
 # tests the kmat cpp vs python for 16 elements (smallest size where you can see profile)

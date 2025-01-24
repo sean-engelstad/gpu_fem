@@ -6,8 +6,9 @@ Note, writeup what you're doing as you complete each major step in the overleaf.
 ### Current
 - [x] linear solver to work on GPU
     - [x] try Dr. K sparse_utils library (git) for sparse factorization
-- [ ] figure out where code is getting stuck right now (apply bcs, create device vec) ?
-- [ ] determine what weakest link of code is => factorization, solve, assembly
+- [ ] fix apply_mat_bcs kernel
+    - [x] speed it up from 78 seconds to 200 microseconds
+    - [ ] need to fix kmat, somehow slightly wrong
 - [ ] additional linear solve work to do
     - [ ] reordering, speedup fillin?
     - [ ] make CSR matrices for comparison?

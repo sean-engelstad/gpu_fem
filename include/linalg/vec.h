@@ -7,6 +7,7 @@
 #include <cstring>
 
 #ifdef USE_GPU
+#include "../cuda_utils.h"
 #include "vec.cuh"
 #endif
 
@@ -118,6 +119,8 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         // printf("in deviceVec apply_bcs\n");
 
         apply_vec_bcs_kernel<T, DeviceVec><<<grid, block>>>(bcs, this->data);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
 #else // NOT USE_GPU
         BaseVec<T>::apply_bcs(bcs);
 #endif

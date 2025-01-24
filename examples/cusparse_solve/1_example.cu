@@ -10,11 +10,14 @@ int main() {
     int nnodes = 4;
     int nnzb = 10;
     int block_dim = 1;
-    double fillin = 100.0;
+    double fillin = 10.0;
 
     bool print = true;
     BsrData bsr_data = BsrData(nnodes, block_dim, nnzb, orig_rowPtr, orig_colPtr);
     bsr_data.symbolic_factorization(fillin, print);
+
+    printf("after symbolic factorization\n");
+
     BsrData d_bsr_data = bsr_data.createDeviceBsrData();
 
     // nz from kernel matrix k(x_i, x_j) = x_i * x_j = (i+1)*(j+1)

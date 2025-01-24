@@ -37,21 +37,21 @@ class BsrData {
                      const int &nodes_per_elem, const int &block_dim,
                      const int32_t *conn)
         : nelems(nelems), nnodes(nnodes), nodes_per_elem(nodes_per_elem),
-          conn(conn), block_dim(block_dim) {
+          conn(conn), block_dim(block_dim), elemIndMap(nullptr),
+          transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
+          transpose_block_map(nullptr) {
+
         get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr);
-        elemIndMap = nullptr;
     }
 
     __HOST__ BsrData(const int nnodes, const int block_dim, const int nnzb,
                      index_t *origRowPtr, index_t *origColPtr,
                      double fill_factor = 100.0, const bool print = false)
         : nnodes(nnodes), block_dim(block_dim), nnzb(nnzb), rowPtr(origRowPtr),
-          colPtr(origColPtr) {
-        sparse_utils_fillin(nnodes, this->nnzb, rowPtr, colPtr, fill_factor,
-                            print);
-        elemIndMap = nullptr;
-    }
+          conn(nullptr), colPtr(origColPtr), elemIndMap(nullptr),
+          transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
+          transpose_block_map(nullptr) {}
 
     __HOST__ void symbolic_factorization(double fill_factor = 10.0,
                                          const bool print = false) {
@@ -62,13 +62,24 @@ class BsrData {
         }
         sparse_utils_fillin(nnodes, nnzb, rowPtr, colPtr, fill_factor, print);
         // if (print) {
-        //     printf("\t1/2 done with sparse utils fillin\n");
+        //     printf("\t1/3 done with sparse utils fillin\n");
         // }
 
-        get_elem_ind_map(nelems, nnodes, this->conn, nodes_per_elem, nnzb,
-                         rowPtr, colPtr, this->elemIndMap);
+        if (conn != nullptr) {
+            get_elem_ind_map(nelems, nnodes, this->conn, nodes_per_elem, nnzb,
+                             rowPtr, colPtr, this->elemIndMap);
+            // if (print) {
+            //     printf("\t2/3 done with elem ind map\n");
+            // }
+        } else {
+            if (print) {
+                printf("no elem conn, provided so skipping get_elem_ind_map");
+            }
+        }
+
+        get_transpose_bsr_data();
         // if (print) {
-        //     printf("\t2/2 done with elem ind map\n");
+        //     printf("\t3/3 done getting transpose map\n");
         // }
 
         // print timing data
@@ -79,6 +90,64 @@ class BsrData {
             printf("\tfinished symbolic factorization in %d microseconds\n",
                    (int)duration.count());
         }
+    }
+
+    __HOST__ void get_transpose_bsr_data() {
+        // get symbolic rowPtr, colPtr locations for transpose matrix using
+        // sparse_utils.h
+
+        // printf("starting get transpose bsr data\n");
+
+        // make wrapper object of BSRMat in sparse_utils.h
+        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
+            nnodes, nnodes, nnzb, rowPtr, colPtr, nullptr);
+
+        // perform transpose symbolic operation
+        // for transpose row and col Ptrs
+        auto su_mat_transpose =
+            SparseUtils::BSRMatMakeTransposeSymbolic(su_mat);
+        transpose_rowPtr = su_mat_transpose->rowp;
+        transpose_colPtr = su_mat_transpose->cols;
+
+        // printf("")
+
+        // also compute a transpose block map map
+        // from transpose_block_ind => orig_block_ind (of the values arrays)
+        transpose_block_map = new index_t[nnzb];
+
+        index_t *temp_col_local_block_ind_ctr = new index_t[nnodes];
+        memset(temp_col_local_block_ind_ctr, 0, nnodes * sizeof(index_t));
+        for (int block_row = 0; block_row < nnodes; block_row++) {
+            for (int orig_block_ind = rowPtr[block_row];
+                 orig_block_ind < rowPtr[block_row + 1]; orig_block_ind++) {
+                index_t block_col = colPtr[orig_block_ind];
+
+                // get data for transpose block map
+                index_t orig_val_ind = orig_block_ind;
+                index_t transpose_val_ind =
+                    transpose_rowPtr[block_col] +
+                    temp_col_local_block_ind_ctr[block_col];
+                // increment the number of block col in this col already used
+                temp_col_local_block_ind_ctr[block_col]++;
+                // store the map between transpose block val ind to
+                // original val ind
+                transpose_block_map[transpose_val_ind] = orig_val_ind;
+            }
+        }
+
+        printf("rowPtr: ");
+        printVec<index_t>(nnodes + 1, rowPtr);
+        printf("colPtr: ");
+        printVec<index_t>(nnzb, colPtr);
+
+        printf("tr_rowPtr: ");
+        printVec<index_t>(nnodes + 1, transpose_rowPtr);
+        printf("tr_colPtr: ");
+        printVec<index_t>(nnzb, transpose_colPtr);
+        printf("transpose_block_map: ");
+        printVec<index_t>(nnzb, transpose_block_map);
+
+        delete[] temp_col_local_block_ind_ctr;
     }
 
     __HOST__ BsrData createDeviceBsrData() { // deep copy each array onto the
@@ -116,6 +185,20 @@ class BsrData {
         // printVec<int>(new_bsr.nnodes, h_rowPtr2.getPtr());
         // printf("\n");
 
+        // TODO : also send tranpose data to device
+        HostVec<index_t> h_transpose_rowPtr(this->nnodes + 1,
+                                            this->transpose_rowPtr);
+        auto d_transpose_rowPtr = h_transpose_rowPtr.createDeviceVec();
+        new_bsr.transpose_rowPtr = d_transpose_rowPtr.getPtr();
+
+        HostVec<index_t> h_transpose_colPtr(nnzb, this->transpose_colPtr);
+        auto d_transpose_colPtr = h_transpose_colPtr.createDeviceVec();
+        new_bsr.transpose_colPtr = d_transpose_colPtr.getPtr();
+
+        HostVec<index_t> h_transpose_block_map(nnzb, this->transpose_block_map);
+        auto d_transpose_block_map = h_transpose_block_map.createDeviceVec();
+        new_bsr.transpose_block_map = d_transpose_block_map.getPtr();
+
         return new_bsr;
     }
 
@@ -131,6 +214,7 @@ class BsrData {
     int32_t block_dim;      // equiv to vars_per_node (each block is 6x6)
     const int32_t *conn;    // element connectivity
     index_t *rowPtr, *colPtr, *elemIndMap;
+    index_t *transpose_rowPtr, *transpose_colPtr, *transpose_block_map;
 };
 
 // main utils
@@ -217,6 +301,11 @@ __HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
     std::copy(_rowPtr.begin(), _rowPtr.end(), rowPtr);
     colPtr = new index_t[nnzb];
     std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
+
+    // printf("rowPtr: ");
+    // printVec<index_t>(nnodes + 1, rowPtr);
+    // printf("colPtr: ");
+    // printVec<index_t>(nnzb, colPtr);
 }
 
 __HOST__ void get_elem_ind_map(

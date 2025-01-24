@@ -322,11 +322,15 @@ if __name__ == "__main__":
     X, Y = build_mesh()
     folder = f"elems{num_elements}/"
     plot_vec(soln, folder + "cpp-soln.png", dof=2)
+    loads = get_loads()
 
     # also plot solution from python
-    kelem_mat = get_kelem_mat()
-    kmat_py = get_python_kmat(kelem_mat, num_elements, num_nodes, nxe + 1)
-    loads = get_loads()
+    has_kelem = os.path.exists("csv/one-elem.csv")
+    has_kmat_py = False
+    if has_kelem:
+        kelem_mat = get_kelem_mat()
+        kmat_py = get_python_kmat(kelem_mat, num_elements, num_nodes, nxe + 1)
+        has_kmat_py = True   
 
     # print_cpp_val(576)
 
@@ -336,12 +340,15 @@ if __name__ == "__main__":
 
     plot_vec(loads, folder + "cpp-loads.png", dof=2)
 
+    # get kmat cpp
+    kmat_cpp,_,_,_ = get_cpp_kmat()
+    plot_mat(kmat_cpp, folder + "kmat_cpp.png")
+
     # compare the matrices with heatmaps
-    if kelem_mat.shape[0] < 50:
+    if has_kmat_py and kmat_py.shape[0] < 50:
         soln_py = np.linalg.solve(kmat_py, loads)
         # print(f"{soln_py[:,0]=}")
         plot_vec(soln_py, folder + "python-soln.png", dof=2)
-        kmat_cpp,_,_,_ = get_cpp_kmat()
         kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
 
         # print(f"{kmat_cpp=}")
@@ -358,10 +365,8 @@ if __name__ == "__main__":
     # loads_check = kmat_py @ soln_py
     # resid = loads_check - loads
 
-    plot_mat(kmat_py, folder + "kmat_py.png")
-
-    if kelem_mat.shape[0] < 50:
-        plot_mat(kmat_cpp, folder + "kmat_cpp.png")
+    if has_kmat_py and kmat_py.shape[0] < 50:
+        plot_mat(kmat_py, folder + "kmat_py.png")
         plot_mat(kmat_rel_err, folder + "kmat_rel_err.png")
 
         # write out the matrices to a csv file now
@@ -371,7 +376,7 @@ if __name__ == "__main__":
     # since kmat actually matches from cpp to python
     # check linear solve related things like fillin now
 
-    if kelem_mat.shape[0] < 50:
+    if has_kmat_py and kmat_py.shape[0] < 50:
         py_sparsity, cpp_sparsity = compare_fillin(kmat_py, kmat_cpp)
         plot_mat(py_sparsity, folder + "sparsity_py.png")
         plot_mat(cpp_sparsity, folder + "sparsity_cpp.png")

@@ -10,9 +10,9 @@ def read_from_csv(filename):
     return np.loadtxt(filename, delimiter=",")
 
 def get_cpp_kmat():
-    kmat_vec = read_from_csv("plate_kmat.csv")
-    rowPtr = read_from_csv("plate_rowPtr.csv").astype(np.int32)
-    colPtr = read_from_csv("plate_colPtr.csv").astype(np.int32)
+    kmat_vec = read_from_csv("csv/plate_kmat.csv")
+    rowPtr = read_from_csv("csv/plate_rowPtr.csv").astype(np.int32)
+    colPtr = read_from_csv("csv/plate_colPtr.csv").astype(np.int32)
 
     print(f"{kmat_vec.shape[0]}")
     _nnodes = rowPtr.shape[0] - 1
@@ -55,4 +55,4 @@ def plot_mat(mat, filename):
 
 if __name__=="__main__":
     kmat_cpp,_,_,_ = get_cpp_kmat()
-    plot_mat(kmat_cpp, "kmat_cpp.png")
+    plot_mat(kmat_cpp, "img/kmat_cpp.png")

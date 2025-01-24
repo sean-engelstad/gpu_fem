@@ -2,6 +2,7 @@
 #include "bsr_utils.h"
 #include "vec.h"
 #ifdef USE_GPU
+#include "../cuda_utils.h"
 #include "bsr_mat.cuh"
 #endif // USE_GPU
 
@@ -135,6 +136,9 @@ template <class Vec> class BsrMat {
         int nbcs = bcs.getSize();
         const index_t *rowPtr = bsr_data.rowPtr;
         const index_t *colPtr = bsr_data.colPtr;
+        const index_t *transpose_rowPtr = bsr_data.transpose_rowPtr;
+        const index_t *transpose_colPtr = bsr_data.transpose_colPtr;
+        const index_t *transpose_block_map = bsr_data.transpose_colPtr;
         int nnodes = bsr_data.nnodes;
         T *valPtr = values.getPtr();
 
@@ -149,9 +153,16 @@ template <class Vec> class BsrMat {
         dim3 grid(nblocks);
 
         // launch kernel to apply BCs to the full matrix
-        apply_mat_bcs_kernel<T, DeviceVec>
+        apply_mat_bcs_rows_kernel<T, DeviceVec>
             <<<grid, block>>>(bcs, rowPtr, colPtr, nnodes, valPtr,
                               blocks_per_elem, nnz_per_block, block_dim);
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        apply_mat_bcs_cols_kernel<T, DeviceVec><<<grid, block>>>(
+            bcs, transpose_rowPtr, transpose_colPtr, transpose_block_map,
+            nnodes, valPtr, blocks_per_elem, nnz_per_block, block_dim);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
 #endif // USE_GPU
     }
 
