@@ -315,6 +315,7 @@ def write_python_bsr_mat(kmat_py, filename):
 if __name__ == "__main__":
     soln, num_nodes, nxe = get_soln()
     num_elements = nxe * nxe
+    print(f"{num_elements=}")
     if not os.path.exists(f"elems{num_elements}"):
         os.mkdir(f"elems{num_elements}")
     

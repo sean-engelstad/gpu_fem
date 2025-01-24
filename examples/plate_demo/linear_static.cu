@@ -25,13 +25,13 @@ int main(void) {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    int nxe = 2;
+    int nxe = 100;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
 
     // perform a factorization on the rowPtr, colPtr (before creating matrix)
-    double fillin = 2.0; // 10.0
+    double fillin = 10.0; // 10.0
     bool print = true;
     assembler.symbolic_factorization(fillin, print);
 
@@ -57,11 +57,10 @@ int main(void) {
     // T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
     T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
     // printf("my_loads: ");
-    // printVec<T>(24, my_loads);
+    // printVec<T>(54, my_loads);
 
     // it's currently taking a really long time to make 
-    auto loads = assembler.createVarsVec(my_loads, print);
-
+    auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads, true);
 
     // printout kmat before solve (since cusparse solve changes kmat lower triangular)
@@ -90,10 +89,9 @@ int main(void) {
     //        (int)duration2.count());
 
     // write the solution to binary file so I can read it in in python
-    if (debug_num_elements) {
-        write_to_csv<double>(h_loads.getPtr(), h_loads.getSize(), "csv/plate_loads.csv");
-        write_to_csv<double>(h_soln.getPtr(), h_soln.getSize(), "csv/plate_soln.csv");
-    }
+    // always write this one out regardless of size
+    write_to_csv<double>(h_loads.getPtr(), h_loads.getSize(), "csv/plate_loads.csv");
+    write_to_csv<double>(h_soln.getPtr(), h_soln.getSize(), "csv/plate_soln.csv");
 
     auto bsrData = kmat.getBsrData();
     DeviceVec<int> d_rowPtr(bsrData.nnodes + 1, bsrData.rowPtr);

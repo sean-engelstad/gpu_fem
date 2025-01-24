@@ -138,7 +138,7 @@ template <class Vec> class BsrMat {
         const index_t *colPtr = bsr_data.colPtr;
         const index_t *transpose_rowPtr = bsr_data.transpose_rowPtr;
         const index_t *transpose_colPtr = bsr_data.transpose_colPtr;
-        const index_t *transpose_block_map = bsr_data.transpose_colPtr;
+        const index_t *transpose_block_map = bsr_data.transpose_block_map;
         int nnodes = bsr_data.nnodes;
         T *valPtr = values.getPtr();
 

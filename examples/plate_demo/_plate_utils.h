@@ -1,5 +1,6 @@
 #pragma once
 #include "assembler.h"
+#include "base/utils.h"
 #include "linalg/linalg.h"
 #include "math.h"
 #include <fstream>
@@ -83,6 +84,9 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     for (int ibc = 0; ibc < my_bcs.size(); ibc++) {
         bcs[ibc] = my_bcs.at(ibc);
     }
+
+    // printf("bcs: ");
+    // printVec<int>(my_bcs.size(), bcs.getPtr());
 
     // now initialize the element connectivity
     int N = Basis::num_nodes * num_elements;

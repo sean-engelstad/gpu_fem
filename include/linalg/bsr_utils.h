@@ -135,17 +135,17 @@ class BsrData {
             }
         }
 
-        printf("rowPtr: ");
-        printVec<index_t>(nnodes + 1, rowPtr);
-        printf("colPtr: ");
-        printVec<index_t>(nnzb, colPtr);
+        // printf("rowPtr: ");
+        // printVec<index_t>(nnodes + 1, rowPtr);
+        // printf("colPtr: ");
+        // printVec<index_t>(nnzb, colPtr);
 
-        printf("tr_rowPtr: ");
-        printVec<index_t>(nnodes + 1, transpose_rowPtr);
-        printf("tr_colPtr: ");
-        printVec<index_t>(nnzb, transpose_colPtr);
-        printf("transpose_block_map: ");
-        printVec<index_t>(nnzb, transpose_block_map);
+        // printf("tr_rowPtr: ");
+        // printVec<index_t>(nnodes + 1, transpose_rowPtr);
+        // printf("tr_colPtr: ");
+        // printVec<index_t>(nnzb, transpose_colPtr);
+        // printf("transpose_block_map: ");
+        // printVec<index_t>(nnzb, transpose_block_map);
 
         delete[] temp_col_local_block_ind_ctr;
     }
