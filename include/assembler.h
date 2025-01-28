@@ -49,9 +49,6 @@ class ElementAssembler {
         // implicitly upon construction
         bsr_data = BsrData(num_elements, num_vars_nodes, Basis::num_nodes,
                            Phys::vars_per_node, vars_conn.getPtr());
-        // get perm, iperm off host
-        h_perm = bsr_data.perm;
-        h_iperm = bsr_data.iperm;
 
 #ifdef USE_GPU
 
@@ -79,8 +76,6 @@ class ElementAssembler {
         bsr_data.symbolic_factorization(fillin, print);
 #ifdef USE_GPU
         this->bsr_data = bsr_data.createDeviceBsrData();
-        d_perm = this->bsr_data.perm;
-        d_iperm = this->bsr_data.iperm;
 #endif
     }
 
@@ -124,11 +119,9 @@ class ElementAssembler {
     HostVec<T> createVarsHostVec(T *data = nullptr, bool randomize = false) {
         HostVec<T> h_vec;
         if (data == nullptr) {
-            h_vec = HostVec<T>(get_num_vars(), nullptr, bsr_data.block_dim,
-                               this->perm, this->iperm);
+            h_vec = HostVec<T>(get_num_vars());
         } else {
-            h_vec = HostVec<T>(get_num_vars(), data, bsr_data.block_dim,
-                               this->perm, this->iperm);
+            h_vec = HostVec<T>(get_num_vars(), data);
         }
         if (randomize) {
             h_vec.randomize();
@@ -161,13 +154,7 @@ class ElementAssembler {
     void set_variables(Vec<T> &vars) {
         // vars is either device array on GPU or a host array if not USE_GPU
         // should we not do deep copy here?
-#ifdef USE_GPU
-        cudaMemcpy(this->vars.getPtr(), vars.getPtr(),
-                   this->vars.getSize() * sizeof(T), cudaMemcpyDeviceToDevice);
-#else
-        memcpy(this->vars.getPtr(), vars.getPtr(),
-               this->vars.getSize() * sizeof(T));
-#endif
+        this->vars.setData(vars);
     }
 
     //  template <class ExecParameters>
@@ -288,6 +275,4 @@ class ElementAssembler {
     Vec<T> xpts, vars;
     Vec<Data> physData;
     BsrData bsr_data;
-    int *h_perm, *h_iperm;
-    int *d_perm, *d_iperm;
 };

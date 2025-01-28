@@ -5,6 +5,7 @@
 #include "../../cuda_utils.h"
 #include "chrono"
 #include "cublas_v2.h"
+#include "solve_utils.h"
 #include <assert.h>
 #include <cuda_runtime.h>
 #include <cusparse_v2.h>
@@ -194,6 +195,8 @@ template <typename T>
 void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
                          DeviceVec<T> &soln, bool can_print = false) {
 
+    DeviceVec<T> rhs_perm = bsr_pre_solve<DeviceVec<T>>(mat, rhs, soln);
+
     if (can_print) {
         printf("begin cusparse direct LU solve\n");
     }
@@ -208,7 +211,7 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     int blockDim = bsr_data.block_dim;
     index_t *d_bsrRowPtr = bsr_data.rowPtr;
     index_t *d_bsrColPtr = bsr_data.colPtr;
-    T *d_rhs = rhs.getPtr();
+    T *d_rhs = rhs_perm.getPtr();
     T *d_soln = soln.getPtr();
     DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
     T *d_temp = temp.getPtr();
@@ -349,6 +352,9 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     cusparseDestroyBsrsv2Info(info_L);
     cusparseDestroyBsrsv2Info(info_U);
     cusparseDestroy(handle);
+
+    // now also inverse permute the soln data
+    bsr_post_solve<DeviceVec<T>>(mat, rhs, soln);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();

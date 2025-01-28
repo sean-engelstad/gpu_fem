@@ -27,6 +27,9 @@ template <class Vec> class BsrMat {
     __HOST__ HostVec<T> createHostVec() { return values.createHostVec(); }
     __HOST_DEVICE__ T *getPtr() { return values.getPtr(); }
     __HOST_DEVICE__ const T *getPtr() const { return values.getPtr(); }
+    __HOST_DEVICE__ int *getPerm() { return bsr_data.perm; }
+    __HOST_DEVICE__ int *getIPerm() { return bsr_data.iperm; }
+    __HOST_DEVICE__ int *getBlockDim() { return bsr_data.block_dim; }
 
     __HOST__ void apply_bcs(HostVec<int> bcs) {
 
