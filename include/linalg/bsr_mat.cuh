@@ -1,5 +1,5 @@
 template <typename T, template <typename> class Vec>
-__GLOBAL__ void apply_mat_bcs_rows_kernel(Vec<int> bcs, const int *rowPtr, const int *colPtr,
+__GLOBAL__ void apply_mat_bcs_rows_kernel(Vec<int> bcs, const int *rowPtr, const int *colPtr, const int *perm,
                                  int32_t nnodes, T *values,
                                  int32_t blocks_per_elem, int32_t nnz_per_block,
                                  int32_t block_dim) {
@@ -14,9 +14,11 @@ __GLOBAL__ void apply_mat_bcs_rows_kernel(Vec<int> bcs, const int *rowPtr, const
     if (this_thread_bc < num_bcs) {
         // get data associated with the row of this BC in the BSR matrix
         int bc_dof = bcs[this_thread_bc];
-        int global_row = bc_dof;
-        int block_row =  bc_dof / block_dim;
+        int _global_row = bc_dof;
+        int _block_row =  bc_dof / block_dim;
+        int block_row = perm[_block_row];
         int inner_row = bc_dof % block_dim;
+        int global_row = block_dim * block_row + inner_row;
         int istart = rowPtr[block_row];
         int iend = rowPtr[block_row + 1];
         T *val = &values[nnz_per_block * istart];
@@ -42,7 +44,7 @@ __GLOBAL__ void apply_mat_bcs_rows_kernel(Vec<int> bcs, const int *rowPtr, const
 template <typename T, template <typename> class Vec>
 __GLOBAL__ void apply_mat_bcs_cols_kernel(Vec<int> bcs, 
                                  const int *transpose_rowPtr, const int *transpose_colPtr,
-                                 const int *transpose_block_map,
+                                 const int *transpose_block_map, const int *perm,
                                  int32_t nnodes, T *values,
                                  int32_t blocks_per_elem, int32_t nnz_per_block,
                                  int32_t block_dim) {
@@ -62,9 +64,12 @@ __GLOBAL__ void apply_mat_bcs_cols_kernel(Vec<int> bcs,
     if (this_thread_bc < num_bcs) {
         // get data associated with the row of this BC in the BSR matrix
         int bc_dof = bcs[this_thread_bc];
-        int global_col = bc_dof;
-        int block_col =  bc_dof / block_dim;
+        int _global_col = bc_dof;
+        int _block_col =  bc_dof / block_dim;
+        int block_col = perm[_block_col];
         int inner_col = bc_dof % block_dim;
+        int global_col = block_dim * block_col + inner_col;
+
         // the convention here is that the transpose_rowPtr
         // takes in a block_col and the transpose_colPtr
         // indicates location of sparse rows in the original matrix

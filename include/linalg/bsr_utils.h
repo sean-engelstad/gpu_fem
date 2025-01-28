@@ -25,10 +25,17 @@ __HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
                                   index_t *&rowPtr, index_t *&colPtr,
                                   double fill_factor, const bool print = false);
 
-__HOST__ void get_elem_ind_map(const int &nelems, const int &nnodes,
-                               const int32_t *conn, const int &nodes_per_elem,
-                               const int &nnzb, index_t *&rowPtr,
-                               index_t *&colPtr, index_t *&elemIndMap);
+__HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
+                                            index_t *&rowPtr, index_t *&colPtr,
+                                            index_t *&perm, index_t *&iperm,
+                                            double fill_factor,
+                                            const bool print = false);
+
+__HOST__
+void get_elem_ind_map(const int &nelems, const int &nnodes, const int32_t *conn,
+                      const int &nodes_per_elem, const int &nnzb,
+                      index_t *&rowPtr, index_t *&colPtr, index_t *&perm,
+                      index_t *&elemIndMap);
 
 class BsrData {
   public:
@@ -41,6 +48,7 @@ class BsrData {
           transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
           transpose_block_map(nullptr) {
 
+        make_nominal_ordering(perm, iperm);
         get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr);
     }
@@ -51,7 +59,10 @@ class BsrData {
         : nnodes(nnodes), block_dim(block_dim), nnzb(nnzb), rowPtr(origRowPtr),
           conn(nullptr), colPtr(origColPtr), elemIndMap(nullptr),
           transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
-          transpose_block_map(nullptr) {}
+          transpose_block_map(nullptr) {
+
+        make_nominal_ordering(perm, iperm);
+    }
 
     __HOST__ void symbolic_factorization(double fill_factor = 10.0,
                                          const bool print = false) {
@@ -60,14 +71,18 @@ class BsrData {
         if (print) {
             printf("begin symbolic factorization::\n");
         }
-        sparse_utils_fillin(nnodes, nnzb, rowPtr, colPtr, fill_factor, print);
+        // sparse_utils_fillin(nnodes, nnzb, rowPtr, colPtr, fill_factor,
+        // print);
+        sparse_utils_reordered_fillin(nnodes, nnzb, rowPtr, colPtr, perm, iperm,
+                                      fill_factor, print);
+
         // if (print) {
         //     printf("\t1/3 done with sparse utils fillin\n");
         // }
 
         if (conn != nullptr) {
             get_elem_ind_map(nelems, nnodes, this->conn, nodes_per_elem, nnzb,
-                             rowPtr, colPtr, this->elemIndMap);
+                             rowPtr, colPtr, perm, this->elemIndMap);
             // if (print) {
             //     printf("\t2/3 done with elem ind map\n");
             // }
@@ -89,6 +104,16 @@ class BsrData {
         if (print) {
             printf("\tfinished symbolic factorization in %d microseconds\n",
                    (int)duration.count());
+        }
+    }
+
+    __HOST__ void make_nominal_ordering() {
+        // original ordering (no permutation yet just 0 to nnodes-1)
+        perm = new int32_t[nnodes];
+        iperm = new int32_t[nnodes];
+        for (int inode = 0; inode < nnodes; inode++) {
+            perm[inode] = inode;
+            iperm[inode] = inode;
         }
     }
 
@@ -199,6 +224,15 @@ class BsrData {
         auto d_transpose_block_map = h_transpose_block_map.createDeviceVec();
         new_bsr.transpose_block_map = d_transpose_block_map.getPtr();
 
+        // also send permutations to device
+        HostVec<index_t> h_perm(this->nnodes, this->perm);
+        auto d_perm = h_perm.createDeviceVec();
+        new_bsr.perm = d_perm.getPtr();
+
+        HostVec<index_t> h_iperm(this->nnodes, this->iperm);
+        auto d_iperm = h_iperm.createDeviceVec();
+        new_bsr.iperm = d_iperm.getPtr();
+
         return new_bsr;
     }
 
@@ -214,6 +248,7 @@ class BsrData {
     int32_t block_dim;      // equiv to vars_per_node (each block is 6x6)
     const int32_t *conn;    // element connectivity
     index_t *rowPtr, *colPtr, *elemIndMap;
+    index_t *perm, iperm; // reorderings of nodes for lower fillin
     index_t *transpose_rowPtr, *transpose_colPtr, *transpose_block_map;
 };
 
@@ -281,6 +316,9 @@ __HOST__ void get_row_col_ptrs(
 __HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
                                   index_t *&rowPtr, index_t *&colPtr,
                                   double fill_factor, const bool print) {
+
+    // fillin without reordering (results in more nonzeros, no permutations)
+
     std::vector<index_t> _rowPtr(nnodes + 1, 0);
     std::vector<index_t> _colPtr(index_t(fill_factor * nnzb));
     int nnzb_old = nnzb;
@@ -308,13 +346,49 @@ __HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
     // printVec<index_t>(nnzb, colPtr);
 }
 
+__HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
+                                            index_t *&rowPtr, index_t *&colPtr,
+                                            index_t *&perm, index_t *&iperm,
+                                            double fill_factor,
+                                            const bool print) {
+
+    auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb,
+                                                    rowPtr, colPtr, nullptr);
+
+    // does fillin on CSR matrix after computing AMD reordering that reduces num
+    // nonzeros for fillin during factorization
+    auto su_mat2 = BSRMatAMDFactorSymbolic(su_mat, fill_factor);
+
+    // delete previous pointers here
+    if (rowPtr) {
+        delete[] rowPtr;
+    }
+    if (colPtr) {
+        delete[] colPtr;
+    }
+    if (perm) {
+        delete[] perm;
+    }
+    if (iperm) {
+        delete[] iperm;
+    }
+
+    // double check that the pointers we are copying are in long-term memory
+    // (not some vector arrays hopefully)
+    nnzb = su_mat2.nnzb;
+    rowPtr = su_mat2.rowp;
+    colPtr = su_mat2.cols;
+    perm = su_mat2.perm;
+    iperm = su_mat2.iperm;
+}
+
 __HOST__ void get_elem_ind_map(
     const int &nelems, const int &nnodes, const int32_t *conn,
     const int &nodes_per_elem,
     const int &nnzb,  // num nonzero blocks
     index_t *&rowPtr, // array of len nnodes+1 for how many cols in each row
     index_t *&colPtr, // array of len nnzb of the column indices for each block
-    index_t *&elemIndMap) {
+    index_t *&perm, index_t *&elemIndMap) {
 
     int nodes_per_elem2 = nodes_per_elem * nodes_per_elem;
 
@@ -338,7 +412,8 @@ __HOST__ void get_elem_ind_map(
         // loop over each block row
         for (int n = 0; n < nodes_per_elem; n++) {
             // int global_node_row = sorted_conn[n];
-            int32_t global_node_row = local_conn[n];
+            int32_t _global_node_row = local_conn[n];
+            int32_t global_node_row = perm[_global_node_row];
             // get the block col range of colPtr for this block row
             int col_istart = rowPtr[global_node_row];
             int col_iend = rowPtr[global_node_row + 1];
@@ -346,7 +421,8 @@ __HOST__ void get_elem_ind_map(
             // loop over each block col
             for (int m = 0; m < nodes_per_elem; m++) {
                 // int global_node_col = sorted_conn[m];
-                int32_t global_node_col = local_conn[m];
+                int32_t _global_node_col = local_conn[m];
+                int32_t global_node_col = perm[_global_node_col];
 
                 // find the matching indices in colPtr for the global_node_col
                 // of this elem_conn
