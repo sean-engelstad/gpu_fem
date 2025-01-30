@@ -189,6 +189,33 @@ template <typename T> class TACSMeshLoader {
     void getBCs(int *_num_bcs, const int **_bc_nodes, const int **_bc_vars,
                 const int **_bc_ptr, const T **_bc_vals);
 
+    // for element assembler only (all args except arg1 are basically in-out
+    // that we set from here to the outer script))
+    void getAssemblerCreatorData(const int vars_per_node, int &my_num_nodes,
+                                 int &my_num_elements, int &my_num_bcs,
+                                 int *&my_elem_conn, int *&my_bcs,
+                                 T *&my_xpts) {
+        my_num_nodes = num_nodes;
+        my_num_elements = num_elements;
+
+        my_elem_conn = elem_node_conn;
+
+        int num_total_bcs = bc_ptr[num_bcs];
+        my_num_bcs = num_total_bcs;
+        my_bcs = new int[num_total_bcs];
+
+        for (int i = 0; i < num_bcs; i++) {
+            int node = bc_nodes[i];
+            for (int j = bc_ptr[i]; j < bc_ptr[i + 1]; j++) {
+                int idof = bc_vars[j];
+                int global_dof = vars_per_node * node + idof;
+                my_bcs[j] = global_dof;
+            }
+        }
+
+        my_xpts = Xpts;
+    }
+
   private:
     // Communicator for all processors
     // MPI_Comm comm;

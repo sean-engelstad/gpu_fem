@@ -4,6 +4,7 @@
 #include "cuda_utils.h"
 #include "stdlib.h"
 #include <complex>
+#include <fstream>
 
 template <typename T> __HOST_DEVICE__ void printVec(const int N, const T *vec);
 
@@ -53,4 +54,20 @@ __HOST__ void make_unique_conn(int nstrides, int stride, int maxVal,
             }
         }
     }
+}
+
+template <typename T>
+void write_to_csv(const T *array, size_t size, const std::string &filename) {
+    std::ofstream out(filename);
+    if (!out) {
+        throw std::ios_base::failure("Failed to open file for writing");
+    }
+    for (size_t i = 0; i < size; ++i) {
+        out << array[i];
+        if (i != size - 1) {
+            out << ",";
+        }
+    }
+    out << "\n";
+    out.close();
 }

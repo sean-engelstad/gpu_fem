@@ -1,4 +1,4 @@
-#include "../../include/mesh/TACSMeshLoader.h"
+#include "mesh/TACSMeshLoader.h"
 
 int main() {
     TACSMeshLoader<double> loader{};
