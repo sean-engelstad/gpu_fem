@@ -94,11 +94,12 @@ template <typename T> class BaseVec {
         // launch kernel to permute vec
         // create temp still? or just use shared memory to do it?
         dim3 block(128, 1, 1);
-        int nblocks = (N + block.x - 1) / block.x;
+        int num_nodes = N / block_dim;
+        int nblocks = (num_nodes + block.x - 1) / block.x;
         dim3 grid(nblocks);
 
         permute_vec_kernel<T, DeviceVec<T>>
-            <<<grid, block>>>(this->N, this->data, temp, block_dim, perm);
+            <<<grid, block>>>(num_nodes, this->data, temp, block_dim, perm);
 
         // then use cudaMemcpy back from temp to data
         cudaMemcpy(this->data, temp, this->N * sizeof(T),
