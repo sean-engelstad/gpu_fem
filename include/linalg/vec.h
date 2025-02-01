@@ -67,7 +67,7 @@ template <typename T> class BaseVec {
                                           int myBlockDim) {
         int _inode = _idof / myBlockDim;
         int inner_dof = _idof % myBlockDim;
-        int inode = perm[_inode];
+        int inode = myPerm[_inode];
         int idof = inode * myBlockDim + inner_dof;
         return idof;
     }
@@ -88,6 +88,7 @@ template <typename T> class BaseVec {
         }
         // copy data back from temp to myData
         memcpy(this->data, temp, this->N * sizeof(T));
+        delete[] temp;
 #endif
 #ifdef USE_GPU
         cudaMalloc((void **)&temp, N * sizeof(T));
@@ -98,14 +99,16 @@ template <typename T> class BaseVec {
         int nblocks = (num_nodes + block.x - 1) / block.x;
         dim3 grid(nblocks);
 
-        permute_vec_kernel<T, DeviceVec<T>>
+        permute_vec_kernel<T, DeviceVec>
             <<<grid, block>>>(num_nodes, this->data, temp, block_dim, perm);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
 
         // then use cudaMemcpy back from temp to data
         cudaMemcpy(this->data, temp, this->N * sizeof(T),
                    cudaMemcpyDeviceToDevice);
+        cudaFree(temp);
 #endif
-        delete[] temp;
     }
 
     __HOST_DEVICE__
@@ -122,6 +125,12 @@ template <typename T> class BaseVec {
             //        scale * elem_data[idof], iglobal, idof);
             data[iglobal] += scale * elem_data[idof];
         }
+    }
+
+    __HOST__ void setData(T *myData, int *perm, int block_dim) {
+        data = myData;
+        // deep copy and permute data at same time
+        permuteData(block_dim, perm);
     }
 
     template <typename I> __HOST_DEVICE__ T &operator[](const I i) {

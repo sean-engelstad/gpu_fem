@@ -3,6 +3,7 @@
 #include "linalg/linalg.h"
 #include "mesh/TACSMeshLoader.h"
 #include "shell/shell.h"
+#include "mesh/vtk_writer.h"
 
 int main() {
     using T = double;
@@ -63,20 +64,26 @@ int main() {
 
     // set the rhs for this problem
     // TODO : what loads to apply to the problem?
-    T *my_loads = nullptr;
     int nvars = assembler.get_num_vars();
-    memset(my_loads, 0.0, nvars * sizeof(double));
+    int nnodes = assembler.get_num_nodes();
+    HostVec<T> h_loads(nvars);
 
     // set fz = 10.0 everywhere
     double load_mag = 10.0;
-    for (int ivar = 0; ivar < nvars; ivar++) {
-        int idof = ivar % 6;
-        if (idof == 2) {
-            my_loads[ivar] = load_mag;
-        }
+    double *h_loads_ptr = h_loads.getPtr();
+    for (int inode = 0; inode < nnodes; inode++) {
+        h_loads_ptr[6*inode+2] = load_mag;
     }
 
-    auto loads = assembler.createVarsVec(my_loads);
+    #ifndef USE_GPU
+    auto loads = h_loads.createHostVec();
+    #else 
+    auto loads = h_loads.createDeviceVec();
+    #endif
+
+    
+
+    // auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
 
     // now do cusparse solve on linear static analysis
@@ -90,5 +97,5 @@ int main() {
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
-    write_to_csv<double>(h_soln.getPtr(), h_soln.getSize(), "csv/plate_soln.csv");
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "uCRM.vtk");
 };

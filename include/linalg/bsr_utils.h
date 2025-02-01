@@ -48,7 +48,7 @@ class BsrData {
           transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
           transpose_block_map(nullptr) {
 
-        make_nominal_ordering(perm, iperm);
+        make_nominal_ordering();
         get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
                          colPtr);
     }
@@ -61,7 +61,7 @@ class BsrData {
           transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
           transpose_block_map(nullptr) {
 
-        make_nominal_ordering(perm, iperm);
+        make_nominal_ordering();
     }
 
     __HOST__ void symbolic_factorization(double fill_factor = 10.0,
@@ -249,7 +249,7 @@ class BsrData {
     int32_t block_dim;      // equiv to vars_per_node (each block is 6x6)
     const int32_t *conn;    // element connectivity
     index_t *rowPtr, *colPtr, *elemIndMap;
-    index_t *perm, iperm; // reorderings of nodes for lower fillin
+    index_t *perm, *iperm; // reorderings of nodes for lower fillin
     index_t *transpose_rowPtr, *transpose_colPtr, *transpose_block_map;
 };
 
@@ -356,9 +356,12 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
     auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb,
                                                     rowPtr, colPtr, nullptr);
 
+    int nnzb_old = nnzb;
+
     // does fillin on CSR matrix after computing AMD reordering that reduces num
     // nonzeros for fillin during factorization
-    auto su_mat2 = BSRMatAMDFactorSymbolic(su_mat, fill_factor);
+    // auto su_mat2 = BSRMatAMDFactorSymbolic(su_mat, fill_factor);
+    auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
 
     // delete previous pointers here
     if (rowPtr) {
@@ -376,11 +379,20 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
 
     // double check that the pointers we are copying are in long-term memory
     // (not some vector arrays hopefully)
-    nnzb = su_mat2.nnzb;
-    rowPtr = su_mat2.rowp;
-    colPtr = su_mat2.cols;
-    perm = su_mat2.perm;
-    iperm = su_mat2.iperm;
+    nnzb = su_mat2->nnz;
+    rowPtr = su_mat2->rowp;
+    colPtr = su_mat2->cols;
+    perm = su_mat2->perm;
+    iperm = su_mat2->iperm;
+
+    // printf("perm: ");
+    // printVec<int32_t>(nnodes, perm);
+
+    if (print) {
+        printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
+               "%d NZ\n",
+               fill_factor, nnzb_old, nnzb);
+    }
 }
 
 __HOST__ void get_elem_ind_map(

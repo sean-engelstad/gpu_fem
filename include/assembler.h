@@ -180,10 +180,10 @@ class ElementAssembler {
     }
 #endif
 
-    void set_variables(Vec<T> &vars) {
+    void set_variables(Vec<T> &newVars) {
         // vars is either device array on GPU or a host array if not USE_GPU
         // should we not do deep copy here?
-        this->vars.setData(vars);
+        this->vars.setData(newVars.getPtr(), bsr_data.perm, bsr_data.block_dim);
     }
 
     //  template <class ExecParameters>
