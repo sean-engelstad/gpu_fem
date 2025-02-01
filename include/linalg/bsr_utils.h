@@ -59,18 +59,19 @@ class BsrData {
         auto start = std::chrono::high_resolution_clock::now();
         if (print) {
             printf("begin symbolic factorization::\n");
+            printf("\tnnzb = %d\n", nnzb);
         }
         sparse_utils_fillin(nnodes, nnzb, rowPtr, colPtr, fill_factor, print);
-        // if (print) {
-        //     printf("\t1/3 done with sparse utils fillin\n");
-        // }
+        if (print) {
+            printf("\t1/3 done with sparse utils fillin\n");
+        }
 
         if (conn != nullptr) {
             get_elem_ind_map(nelems, nnodes, this->conn, nodes_per_elem, nnzb,
                              rowPtr, colPtr, this->elemIndMap);
-            // if (print) {
-            //     printf("\t2/3 done with elem ind map\n");
-            // }
+            if (print) {
+                printf("\t2/3 done with elem ind map\n");
+            }
         } else {
             if (print) {
                 printf("no elem conn, provided so skipping get_elem_ind_map");
@@ -78,9 +79,9 @@ class BsrData {
         }
 
         get_transpose_bsr_data();
-        // if (print) {
-        //     printf("\t3/3 done getting transpose map\n");
-        // }
+        if (print) {
+            printf("\t3/3 done getting transpose map\n");
+        }
 
         // print timing data
         auto stop = std::chrono::high_resolution_clock::now();

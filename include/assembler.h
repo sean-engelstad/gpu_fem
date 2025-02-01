@@ -300,6 +300,11 @@ class ElementAssembler {
         }
     };
 
+    Vec<T> getXpts() { return xpts; }
+    Vec<int> getConn() { return vars_conn; }
+    int get_num_nodes() { return num_vars_nodes; }
+    int get_num_elements() { return num_elements; }
+
   private:
     int32_t num_geo_nodes;
     int32_t num_vars_nodes;

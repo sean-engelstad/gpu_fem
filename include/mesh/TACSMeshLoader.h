@@ -198,7 +198,11 @@ template <typename T> class TACSMeshLoader {
         my_num_nodes = num_nodes;
         my_num_elements = num_elements;
 
-        my_elem_conn = elem_node_conn;
+        my_elem_conn = new int[elem_conn_size];
+        // deep copy it
+        for (int i = 0; i < elem_conn_size; i++) {
+            my_elem_conn[i] = elem_node_conn[i];
+        }
 
         int num_total_bcs = bc_ptr[num_bcs];
         my_num_bcs = num_total_bcs;
@@ -213,7 +217,11 @@ template <typename T> class TACSMeshLoader {
             }
         }
 
-        my_xpts = Xpts;
+        // deep copy
+        my_xpts = new T[3 * num_nodes];
+        for (int j = 0; j < 3 * num_nodes; j++) {
+            my_xpts[j] = Xpts[j];
+        }
     }
 
   private:
@@ -243,6 +251,7 @@ template <typename T> class TACSMeshLoader {
     int num_nodes, num_elements;
     int *elem_node_conn, *elem_node_ptr;
     int *elem_component;
+    int elem_conn_size;
 
     // Store information about the components
     int num_components;
@@ -775,7 +784,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         num_bcs = 0;
 
         // The size of the connectivity arrays
-        int elem_conn_size = 0;
+        elem_conn_size = 0;
         int bc_vars_size = 0;
 
         // Each line can only be 80 characters long
@@ -1234,6 +1243,8 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         delete[] file_Xpts;
 
         // Read in the connectivity array and store the information
+        printf("elem_conn_size = %d, num_elements = %d\n", elem_conn_size,
+               num_elements);
         elem_node_conn = new int[elem_conn_size];
         elem_node_ptr = new int[num_elements + 1];
         elem_component = new int[num_elements];

@@ -26,6 +26,14 @@ int main() {
 
     // make the assembler from the uCRM mesh
     auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
+    
+    // BSR factorization
+    double fillin = 10.0; // 10.0
+    bool print = true;
+    assembler.symbolic_factorization(fillin, print);
+
+    // // temp debug
+    // return 1;
 
     // init variables u;
     auto vars = assembler.createVarsVec();
@@ -37,13 +45,18 @@ int main() {
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
 
     auto start = std::chrono::high_resolution_clock::now();
-    assembler.add_jacobian(res, kmat);
+    assembler.add_jacobian(res, kmat, print);
+    
+    // -----------------------------
+    // return 1; // temp debug stop (to fix this method on uCRM)
+
+
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration =
         std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
 
-    assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
+    assembler.apply_bcs(res, print);
+    assembler.apply_bcs(kmat, print);
 
     // check kmat here
     // printVec<double>(24, kmat.getPtr());
@@ -51,14 +64,24 @@ int main() {
     // set the rhs for this problem
     // TODO : what loads to apply to the problem?
     T *my_loads = nullptr;
-    memset(my_loads, 0.0, assembler.get_num_vars() * sizeof(double));
+    int nvars = assembler.get_num_vars();
+    memset(my_loads, 0.0, nvars * sizeof(double));
+
+    // set fz = 10.0 everywhere
+    double load_mag = 10.0;
+    for (int ivar = 0; ivar < nvars; ivar++) {
+        int idof = ivar % 6;
+        if (idof == 2) {
+            my_loads[ivar] = load_mag;
+        }
+    }
 
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
 
     // now do cusparse solve on linear static analysis
     auto start2 = std::chrono::high_resolution_clock::now();
-    CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln, true);
+    CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln, print);
     auto stop2 = std::chrono::high_resolution_clock::now();
     auto duration2 =
         std::chrono::duration_cast<std::chrono::microseconds>(stop2 - start2);
