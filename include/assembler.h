@@ -5,6 +5,7 @@
 #include "base/elem_group.h"
 #include "chrono"
 #include "cuda_utils.h"
+#include "mesh/TACSMeshLoader.h"
 
 // linear algebra formats
 #include "linalg/bsr_utils.h"
@@ -77,6 +78,34 @@ class ElementAssembler {
 #ifdef USE_GPU
         this->bsr_data = bsr_data.createDeviceBsrData();
 #endif
+    }
+
+    // main way to construct an ElementAssembler from a BDF file
+    // as long as that BDF file has only one element type (TODO on multiple
+    // element types later)
+    static ElementAssembler createFromBDF(TACSMeshLoader<T> &mesh_loader,
+                                          Data single_data) {
+        int vars_per_node = Phys::vars_per_node; // input
+
+        int num_nodes, num_elements, num_bcs;
+        int *elem_conn, *bcs;
+        double *xpts;
+
+        mesh_loader.getAssemblerCreatorData(vars_per_node, num_nodes,
+                                            num_elements, num_bcs, elem_conn,
+                                            bcs, xpts);
+
+        // make HostVec objects here for Assembler
+        HostVec<int> elem_conn_vec(vars_nodes_per_elem * num_elements,
+                                   elem_conn);
+        HostVec<int> bcs_vec(num_bcs, bcs);
+        HostVec<T> xpts_vec(spatial_dim * num_nodes, xpts);
+        HostVec<Data> physData_vec(num_elements, single_data);
+
+        // call base constructor
+        return ElementAssembler(num_nodes, num_nodes, num_elements,
+                                elem_conn_vec, elem_conn_vec, xpts_vec, bcs_vec,
+                                physData_vec);
     }
 
     int get_num_xpts() { return num_geo_nodes * spatial_dim; }
@@ -264,6 +293,11 @@ class ElementAssembler {
                    (int)duration.count());
         }
     };
+
+    Vec<T> getXpts() { return xpts; }
+    Vec<int> getConn() { return vars_conn; }
+    int get_num_nodes() { return num_vars_nodes; }
+    int get_num_elements() { return num_elements; }
 
   private:
     int32_t num_geo_nodes;

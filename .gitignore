@@ -6,3 +6,4 @@ Makefile.in
 .clang-format
 *.dSYM
 .vscode/
+*.vtk
