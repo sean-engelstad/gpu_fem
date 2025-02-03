@@ -28,7 +28,8 @@ int main(int argc, char **argv) {
 
     // Write name of BDF file to be load to char array
     // const char *filename = "../CRM_box_2nd.bdf";
-    const char *filename = "../uCRM-135_wingbox_medium.bdf";
+    // const char *filename = "../uCRM-135_wingbox_medium.bdf";
+    const char *filename = "../uCRM-135_wingbox_fine.bdf";
 
     // Create the mesh loader object and load file
     TACSMeshLoader *mesh = new TACSMeshLoader(comm);

@@ -2,18 +2,19 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import niceplots
 
 # num nodes
 # L1 - 23738, L2 - , L3 - 
 meshes = [23738, 54439, 88341]
 
 # gpu_fem GPU runtimes data, on H100 GPU's
-# gpu_dict = {
-#     # factorization is on the host anyways
-#     'factorization' : [n, 4.182, ],
-#     'assembly' : [n, 0.0172, ],
-#     'LU_solve' : [n, 1.983, ]
-# }
+gpu_dict = {
+    # factorization is on the host anyways
+    'factorization' : [0.646, 4.214, 11.6],
+    'assembly' : [0.01316, 0.018733, 0.0374],
+    'LU_solve' : [0.98271, 1.9803, 3.765]
+}
 
 # 1 process
 cpu_1_dict = {
@@ -29,25 +30,19 @@ cpu_4_dict = {
     'LU_solve' : [3.0511, 9.1801, 21.29]
 }
 
-# plot script
-# --------------
-df_bar = pd.DataFrame({
-    'Mesh Size': np.repeat(meshes, 2),
-    'Factorization': cpu_1_dict['factorization'] + cpu_4_dict['factorization'],
-    'Assembly': cpu_1_dict['assembly'] + cpu_4_dict['assembly'],
-    'LU Solve': cpu_1_dict['LU_solve'] + cpu_4_dict['LU_solve'],
-    'Process': ['1 CPU']*3 + ['4 CPU']*3
-})
+colors = ["#264653", "#2a9d8f", "#8ab17d", "#e9c46a", "#f4a261", "#e76f51"]
+for i,component in enumerate(['factorization', 'assembly', 'LU_solve']):
+    plt.style.use(niceplots.get_style())
+    plt.figure()
+    plt.title(component.capitalize())
+    plt.plot(meshes, cpu_1_dict[component], 'o-', markersize=12, color=colors[0], label="CPU-1proc")
+    plt.plot(meshes, cpu_4_dict[component], 'o-', markersize=12, color=colors[2], label="CPU-4proc")
+    plt.plot(meshes, gpu_dict[component], 'o-', markersize=12, color=colors[4], label="GPU")
 
-df_melted = df_bar.melt(id_vars=['Mesh Size', 'Process'], var_name='Operation', value_name='Runtime (s)')
-
-# Plot
-plt.figure(figsize=(10, 6))
-sns.barplot(data=df_melted, x="Mesh Size", y="Runtime (s)", hue="Operation", ci=None, palette="Set2", dodge=True)
-plt.yscale('log')
-plt.title("Runtime Comparison for Different FEM Components")
-plt.xlabel("Mesh Size")
-plt.ylabel("Runtime (s) (log scale)")
-plt.legend(title="Operation")
-plt.grid(axis="y", linestyle="--", linewidth=0.5)
-plt.show()
+    plt.margins(x=0.05, y=0.05)
+    plt.xlabel("Mesh size")
+    plt.ylabel("Runtime (sec)")
+    plt.legend()
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.savefig(component + ".png", dpi=400)
