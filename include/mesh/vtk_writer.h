@@ -44,11 +44,12 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     auto h_vars_conn = d_vars_conn.createHostVec();
     int *conn_ptr = h_vars_conn.getPtr();
 
+    const int32_t local_perm[4] = {0, 1, 3, 2};
     for (int ielem = 0; ielem < num_elems; ielem++) {
         const int *elem_conn = &conn_ptr[nodes_per_elem * ielem];
         myfile << nodes_per_elem;
         for (int inode = 0; inode < nodes_per_elem; inode++) {
-            myfile << sp << elem_conn[inode];
+            myfile << sp << elem_conn[local_perm[inode]];
         }
         myfile << "\n";
     }

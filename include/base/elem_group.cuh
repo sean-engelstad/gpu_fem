@@ -17,7 +17,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ void
 add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
                  const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                 const Vec<T> vars, Vec<int> bcs, Vec<Data> physData, Vec<T> res) {
+                 const Vec<T> vars, Vec<int> bcs, Vec<Data> physData, const int32_t *perm, Vec<T> res) {
 
     // note in the above : CPU code passes Vec<> objects by reference
     // GPU kernel code cannot do so for complex objects otherwise weird behavior
@@ -52,13 +52,13 @@ add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
     xpts.copyValuesToShared(active_thread, threadIdx.y, blockDim.y,
-                            Geo::spatial_dim, Geo::num_nodes, geo_elem_conn,
+                            Geo::spatial_dim, Geo::num_nodes, perm, geo_elem_conn,
                             &block_xpts[local_elem][0]);
 
     const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
     vars.copyValuesToShared(active_thread, threadIdx.y, blockDim.y,
                             Phys::vars_per_node, Basis::num_nodes,
-                            vars_elem_conn, &block_vars[local_elem][0]);
+                            perm, vars_elem_conn, &block_vars[local_elem][0]);
 
     if (active_thread) {
         memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
@@ -90,7 +90,7 @@ add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
 
     res.addElementValuesFromShared(active_thread, threadIdx.y, blockDim.y,
                                    Phys::vars_per_node, Basis::num_nodes,
-                                   vars_elem_conn, &block_res[local_elem][0]);
+                                   perm, vars_elem_conn, &block_res[local_elem][0]);
 } // end of add_residual_gpu kernel
 
 // add_jacobian_gpu kernel
@@ -123,6 +123,7 @@ add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
     const int32_t *_geo_conn = geo_conn.getPtr();
     const int32_t *_vars_conn = vars_conn.getPtr();
     const Data *_phys_data = physData.getPtr();
+    const int32_t *perm = mat.getBsrData().perm;
 
     // currently using 1416 T values per block on this element (want to be below
     // 6000 doubles shared mem)
@@ -144,8 +145,8 @@ add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
 
     const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
     vars.copyValuesToShared(active_thread, thread_yz, nthread_yz,
-                            Phys::vars_per_node, Basis::num_nodes,
-                            vars_elem_conn, &block_vars[local_elem][0]);
+                            Phys::vars_per_node, Basis::num_nodes, vars_elem_conn, 
+                            &block_vars[local_elem][0]);
 
     if (active_thread) {
         memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
@@ -185,12 +186,17 @@ add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
                               &block_mat[local_elem][vars_per_elem * ideriv]);
     __syncthreads();
 
+    // if (local_thread == 0) {
+    //     printf("block_mat: ");
+    //     printVec<double>(vars_per_elem2, &block_mat[local_elem][0]);
+    // }
+
     // printf("blockMat:");
     // printVec<double>(576,block_mat[local_elem]);
 
     res.addElementValuesFromShared(active_thread, thread_yz, nthread_yz,
                                    Phys::vars_per_node, Basis::num_nodes,
-                                   vars_elem_conn, &block_res[local_elem][0]);
+                                   perm, vars_elem_conn, &block_res[local_elem][0]);
 
     mat.addElementMatrixValuesFromShared(
         active_thread, thread_yz, nthread_yz, 1.0, global_elem, Phys::vars_per_node,

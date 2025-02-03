@@ -59,12 +59,20 @@ def get_kelem_mat():
             icol = 6 * jnode + _icol
             kelem_mat[irow,icol] = kelem_vec[36 * iblock + inz]
 
+    # get the matrix as a dense matrix
+
     # kelem_dense = read_from_csv("csv/kelem-dense.csv")
     # kelem_dense = np.reshape(kelem_dense, newshape=(24,24))
 
     return kelem_mat #, kelem_dense
 
-def get_python_kmat(kelem_mat, num_elements, num_nodes, nx):
+def get_perm():
+
+    # Example usage
+    perm = read_from_csv("csv/perm.csv").astype(np.int32)
+    return perm
+
+def get_python_kmat(kelem_mat, perm, num_elements, num_nodes, nx):
 
     assembly_csv_df_dict = {
         mystr:[] for mystr in ['ielem', 'grow', 'gcol', 'erow', 'ecol', 'value']
@@ -84,7 +92,8 @@ def get_python_kmat(kelem_mat, num_elements, num_nodes, nx):
                 local_bcs = [2]
             else:
                 local_bcs = []
-            bcs += [6*inode + idof for idof in local_bcs]
+            perm_inode = perm[inode]
+            bcs += [6*perm_inode + idof for idof in local_bcs]
     # print(f"{bcs=}")
 
     # print(f"{num_nodes=}")
@@ -96,7 +105,8 @@ def get_python_kmat(kelem_mat, num_elements, num_nodes, nx):
         inode = nx * ix + iy
         # local_node_conn = [inode, inode + 1, inode + nx + 1, inode + nx]
         # due to issue in elem_conn ?
-        local_node_conn = [inode, inode + 1, inode + nx, inode + nx + 1]
+        _local_node_conn = [inode, inode + 1, inode + nx, inode + nx + 1]
+        local_node_conn = [perm[i] for i in _local_node_conn]
         # print(local_node_conn)
         local_dof_conn = [[6*inode + idof for idof in range(6)] for inode in local_node_conn]
         local_dof_conn = np.array(local_dof_conn).flatten()
@@ -122,6 +132,7 @@ def get_python_kmat(kelem_mat, num_elements, num_nodes, nx):
     for bc in bcs:
         kmat_py[bc,:] = 1e-8
         # kmat_mat2[:,bc] = 1e-8
+        kmat_py[:,bc] = 1e-8 # zero out columns too
         kmat_py[bc,bc] = 1.0
 
     # write assembly csv to csv file
@@ -312,6 +323,24 @@ def write_python_bsr_mat(kmat_py, filename):
     df = pd.DataFrame(df_dict)
     df.to_csv(filename, index=False, float_format='%.4e')
 
+def inversePermutation(arr, size): 
+ 
+    arr2 = np.zeros(arr.shape, dtype=np.int32)
+    for i in range(arr.shape[0]):
+        ip = arr[i]
+        arr2[ip] = i
+
+    return arr2
+
+def permute_vec(vec, perm, block_dim=6):
+    vec2 = np.zeros(vec.shape)
+    for i in range(vec.shape[0]):
+        _inode = i // block_dim
+        _idof = i % block_dim
+        inode = perm[_inode]
+        vec2[block_dim*inode+_idof] = vec[i]
+    return vec2
+
 if __name__ == "__main__":
     soln, num_nodes, nxe = get_soln()
     num_elements = nxe * nxe
@@ -326,12 +355,16 @@ if __name__ == "__main__":
     loads = get_loads()
 
     # also plot solution from python
-    has_kelem = os.path.exists("csv/one-elem.csv")
+    has_kelem = os.path.exists("csv/kelem.csv")
     has_kmat_py = False
     if has_kelem:
         kelem_mat = get_kelem_mat()
-        kmat_py = get_python_kmat(kelem_mat, num_elements, num_nodes, nxe + 1)
+        plot_mat(kelem_mat, f"elems{num_elements}/kelem.png")
+        perm = get_perm()
+        iperm = inversePermutation(perm, perm.shape[0])
+        kmat_py = get_python_kmat(kelem_mat, perm, num_elements, num_nodes, nxe + 1)
         has_kmat_py = True   
+    print(f"{has_kmat_py=}")
 
     # print_cpp_val(576)
 
@@ -341,16 +374,36 @@ if __name__ == "__main__":
 
     plot_vec(loads, folder + "cpp-loads.png", dof=2)
 
+    # permute the loads
+
     # get kmat cpp
     kmat_cpp,_,_,_ = get_cpp_kmat()
     plot_mat(kmat_cpp, folder + "kmat_cpp.png")
 
+    KMAT_MAX_SIZE = int(10**2 * 6)
+    # print(f"{kmat_py.shape[0]=}")
+
+    if has_kmat_py and kmat_py.shape[0] < KMAT_MAX_SIZE:
+        plot_mat(kmat_py, folder + "kmat_py.png")
+        kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
+        plot_mat(kmat_rel_err, folder + "kmat_rel_err.png")
+
+        # write out the matrices to a csv file now
+        write_matrices_to_file(kmat_cpp, kmat_py, kmat_rel_err, folder + "kmat-compare.csv")
+
     # compare the matrices with heatmaps
-    if has_kmat_py and kmat_py.shape[0] < 50:
-        soln_py = np.linalg.solve(kmat_py, loads)
+    if has_kmat_py and kmat_py.shape[0] < KMAT_MAX_SIZE:
+        # permute rhs
+        loads_perm = permute_vec(loads, perm)
+
+        soln_py_perm = np.linalg.solve(kmat_py, loads_perm)
+
+        # un-permute soln
+        soln_py = permute_vec(soln_py_perm, iperm)
+
         # print(f"{soln_py[:,0]=}")
         plot_vec(soln_py, folder + "python-soln.png", dof=2)
-        kmat_rel_err = get_kmat_rel_err(kmat_cpp, kmat_py)
+        
 
         # print(f"{kmat_cpp=}")
 
@@ -366,18 +419,11 @@ if __name__ == "__main__":
     # loads_check = kmat_py @ soln_py
     # resid = loads_check - loads
 
-    if has_kmat_py and kmat_py.shape[0] < 50:
-        plot_mat(kmat_py, folder + "kmat_py.png")
-        plot_mat(kmat_rel_err, folder + "kmat_rel_err.png")
-
-        # write out the matrices to a csv file now
-        write_matrices_to_file(kmat_cpp, kmat_py, kmat_rel_err, folder + "kmat-compare.csv")
-
     # -------------------------------------------
     # since kmat actually matches from cpp to python
     # check linear solve related things like fillin now
 
-    if has_kmat_py and kmat_py.shape[0] < 50:
+    if has_kmat_py and kmat_py.shape[0] < KMAT_MAX_SIZE:
         py_sparsity, cpp_sparsity = compare_fillin(kmat_py, kmat_cpp)
         plot_mat(py_sparsity, folder + "sparsity_py.png")
         plot_mat(cpp_sparsity, folder + "sparsity_cpp.png")

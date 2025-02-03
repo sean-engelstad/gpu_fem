@@ -23,11 +23,12 @@ int main(void) {
     int nxe = 1;
     int nye = nxe;
 
-    int other_nxe = 4;
+    int other_nxe = 3;
 
     // reduced Lx, Ly dimensions so that Kelem should be the same
     double Lx = 2.0/other_nxe, Ly = 1.0/other_nxe, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
+    assembler.symbolic_factorization(1.0, true);
 
     // init variables u
     auto vars = assembler.createVarsVec();

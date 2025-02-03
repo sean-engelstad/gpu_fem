@@ -79,6 +79,12 @@ class ElementAssembler {
         this->bsr_data = bsr_data.createDeviceBsrData();
 #endif
     }
+    void bsrDataToDevice(double fillin = 100.0, bool print = false) {
+        // move bsr data to device for single Kelem (for debugging)
+#ifdef USE_GPU
+        this->bsr_data = bsr_data.createDeviceBsrData();
+#endif
+    }
 
     // main way to construct an ElementAssembler from a BDF file
     // as long as that BDF file has only one element type (TODO on multiple
@@ -235,7 +241,7 @@ class ElementAssembler {
 
         add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars,
-                              bcs, physData, res);
+                              bcs, physData, bsr_data.perm, res);
 
         gpuErrchk(cudaDeviceSynchronize());
 #else  // USE_GPU

@@ -8,8 +8,13 @@
 int main() {
     using T = double;
 
+    auto start0 = std::chrono::high_resolution_clock::now();
+
+    // uCRM mesh files can be found at: https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
     TACSMeshLoader<T> mesh_loader{};
-    mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
+    // mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
+    mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
+    
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -87,15 +92,17 @@ int main() {
     assembler.apply_bcs(loads);
 
     // now do cusparse solve on linear static analysis
-    auto start2 = std::chrono::high_resolution_clock::now();
     CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln, print);
-    auto stop2 = std::chrono::high_resolution_clock::now();
-    auto duration2 =
-        std::chrono::duration_cast<std::chrono::microseconds>(stop2 - start2);
 
     // compute total direc derivative of analytic residual
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "uCRM.vtk");
+
+    auto stop0 = std::chrono::high_resolution_clock::now();
+    auto duration0 =
+        std::chrono::duration_cast<std::chrono::microseconds>(stop0 - start0);
+    double my_sec = duration0.count()/1e6;
+    printf("total time %.4e seconds\n", my_sec);
 };

@@ -353,6 +353,11 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
                                             double fill_factor,
                                             const bool print) {
 
+    // printf("pre-fillin: rowPtr: ");
+    // printVec<int>(nnodes + 1, rowPtr);
+    // printf("pre-fillin: colPtr: ");
+    // printVec<int>(nnzb, colPtr);
+
     auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb,
                                                     rowPtr, colPtr, nullptr);
 
@@ -382,8 +387,17 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
     nnzb = su_mat2->nnz;
     rowPtr = su_mat2->rowp;
     colPtr = su_mat2->cols;
-    perm = su_mat2->perm;
-    iperm = su_mat2->iperm;
+
+    // get reverse perm as iperm, iperm as perm from convention in sparse-utils
+    // is flipped from my definition of reordering matrix.. (realized this after
+    // code was written)
+    perm = su_mat2->iperm;
+    iperm = su_mat2->perm;
+
+    // printf("post-fillin: rowPtr: ");
+    // printVec<int>(nnodes + 1, rowPtr);
+    // printf("post-fillin: colPtr: ");
+    // printVec<int>(nnzb, colPtr);
 
     // printf("perm: ");
     // printVec<int32_t>(nnodes, perm);
@@ -407,6 +421,14 @@ __HOST__ void get_elem_ind_map(
 
     // determine where each global_node node of this elem
     // should be added into the ind of colPtr as map
+
+    // printf("rowPtr: ");
+    // printVec<int>(nnodes + 1, rowPtr);
+    // printf("colPtr: ");
+    // printVec<int>(nnzb, colPtr);
+
+    // printf("in elem_ind_map: perm\n");
+    // printVec<int32_t>(9, perm);
 
     elemIndMap = new index_t[nelems * nodes_per_elem2]();
     // elemIndMap is nelems x 4 x 4 array for nodes_per_elem = 4
@@ -445,6 +467,7 @@ __HOST__ void get_elem_ind_map(
                         // elem_ind_map
                         int nm = nodes_per_elem * n + m;
                         elemIndMap[nodes_per_elem2 * ielem + nm] = i;
+                        break;
                     }
                 }
             }

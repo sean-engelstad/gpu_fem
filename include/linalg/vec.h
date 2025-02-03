@@ -222,8 +222,9 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         int dof_per_elem = dof_per_node * nodes_per_elem;
         for (int idof = start; idof < dof_per_elem; idof += stride) {
             int local_inode = idof / dof_per_node;
-            int iglobal =
-                elem_conn[local_inode] * dof_per_node + (idof % dof_per_node);
+            int global_inode = elem_conn[local_inode]; // no perm here since
+                                                       // xpts isn't permuted
+            int iglobal = global_inode * dof_per_node + (idof % dof_per_node);
             shared_data[idof] = this->data[iglobal];
         }
         // make sure you call __syncthreads() at some point after this
@@ -262,7 +263,7 @@ template <typename T> class DeviceVec : public BaseVec<T> {
     __DEVICE__ void
     addElementValuesFromShared(const bool active_thread, const int start,
                                const int stride, const int dof_per_node,
-                               const int nodes_per_elem,
+                               const int nodes_per_elem, const int32_t *perm,
                                const int32_t *elem_conn, const T *shared_data) {
         // copies values to the shared element array on GPU (shared memory)
         if (!active_thread)
@@ -270,8 +271,9 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         int dof_per_elem = dof_per_node * nodes_per_elem;
         for (int idof = start; idof < dof_per_elem; idof += stride) {
             int local_inode = idof / dof_per_node;
-            int iglobal =
-                elem_conn[local_inode] * dof_per_node + (idof % dof_per_node);
+            int _global_inode = elem_conn[local_inode];
+            int global_inode = perm[_global_inode];
+            int iglobal = global_inode * dof_per_node + (idof % dof_per_node);
 
             atomicAdd(&this->data[iglobal], shared_data[idof]);
         }

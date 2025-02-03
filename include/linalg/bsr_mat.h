@@ -198,11 +198,21 @@ template <class Vec> class BsrMat {
         // V1 - use elem_ind_map to do assembly
         // perm already applied to elem_ind_map (so no need for it here)
         const index_t *elem_ind_map = bsr_data.elemIndMap;
+
+        const index_t *loc_elem_ind_map =
+            &elem_ind_map[blocks_per_elem * ielem];
+        // if (start == 0 && ielem == 1) {
+        //     printf("loc_elem_ind_map: ");
+        //     printVec<int32_t>(16, loc_elem_ind_map);
+        // }
+
         for (int elem_block = start; elem_block < blocks_per_elem;
              elem_block += stride) {
-            int istart = nnz_per_block *
-                         elem_ind_map[blocks_per_elem * ielem + elem_block];
+            int glob_block_ind = loc_elem_ind_map[elem_block];
+            int istart = nnz_per_block * glob_block_ind;
             T *val = &valPtr[istart];
+            // printf("ielem %d, glob_block_ind %d, elem_block %d\n", ielem,
+            //        glob_block_ind, elem_block);
             int elem_block_row = elem_block / nodes_per_elem;
             int elem_block_col = elem_block % nodes_per_elem;
 
@@ -215,9 +225,8 @@ template <class Vec> class BsrMat {
                 int erow = block_dim * elem_block_row + local_row;
                 int ecol = block_dim * elem_block_col + local_col;
 
-                // printf("%d,%d,%d,%d,%d,%.4e\n", ielem, gblock, elem_block,
-                // erow,
-                //        ecol,
+                // printf("%d,%d,%d,%d,%d,%.4e\n", ielem, glob_block_ind,
+                //        elem_block, erow, ecol,
                 //        scale * shared_elem_mat[dof_per_elem * erow + ecol]);
 
                 atomicAdd(&val[inz],
