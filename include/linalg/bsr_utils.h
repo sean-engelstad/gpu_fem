@@ -106,9 +106,10 @@ class BsrData {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration / 1e6;
         if (print) {
-            printf("\tfinished symbolic factorization in %d microseconds\n",
-                   (int)duration.count());
+            printf("\tfinished symbolic factorization in %.4e sec\n",
+                   dt);
         }
     }
 

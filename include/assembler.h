@@ -128,9 +128,10 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration / 1e6; 
         if (can_print) {
-            printf("\tfinished apply bcs vec in %d microseconds\n",
-                   (int)duration.count());
+            printf("\tfinished apply bcs vec in %.4e seconds\n",
+                   dt);
         }
     }
     void apply_bcs(Mat &mat, bool can_print = false) {
@@ -145,9 +146,10 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration / 1e6;
         if (can_print) {
-            printf("\tfinished apply bcs matrix in %d microseconds\n",
-                   (int)duration.count());
+            printf("\tfinished apply bcs matrix in %.4e sec\n",
+                   dt);
         }
     }
 
@@ -219,9 +221,10 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration / 1e6;
         if (can_print) {
-            printf("\tfinished assembly in %d microseconds\n",
-                   (int)duration.count());
+            printf("\tfinished assembly in %.4e sec\n",
+                   dt);
         }
     };
 
@@ -253,9 +256,10 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration / 1e6;
         if (can_print) {
-            printf("\tfinished assembly in %d microseconds\n",
-                   (int)duration.count());
+            printf("\tfinished assembly in %.4e\n",
+                   dt);
         }
     };
 
@@ -293,10 +297,10 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-
+        double dt = duration / 1e6;
         if (can_print) {
-            printf("\tfinished assembly in %d microseconds\n",
-                   (int)duration.count());
+            printf("\tfinished assembly in %.4e sec\n",
+                   dt);
         }
     };
 

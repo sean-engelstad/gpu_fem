@@ -27,8 +27,8 @@ int main(int argc, char **argv) {
     }
 
     // Write name of BDF file to be load to char array
-    const char *filename = "../CRM_box_2nd.bdf";
-    //const char *filename = "../uCRM-135_wingbox_medium.bdf";
+    // const char *filename = "../CRM_box_2nd.bdf";
+    const char *filename = "../uCRM-135_wingbox_medium.bdf";
 
     // Create the mesh loader object and load file
     TACSMeshLoader *mesh = new TACSMeshLoader(comm);
@@ -94,11 +94,15 @@ int main(int argc, char **argv) {
     mat->incref();
 
     // Allocate the factorization
+    double t0 = MPI_Wtime();
     int lev = 10000;
     double fill = 10.0;
     int reorder_schur = 1;
     TACSSchurPc *pc = new TACSSchurPc(mat, lev, fill, reorder_schur);
     pc->incref();
+    double t1 = MPI_Wtime();
+    double dt1 = t1 - t0;
+    printf("Factorization = %.4e sec\n", dt1);
 
     // Set all the entries in load vector to specified value
     TacsScalar *force_vals;
@@ -110,11 +114,20 @@ int main(int argc, char **argv) {
 
     // Assemble and factor the stiffness/Jacobian matrix. Factor the
     // Jacobian and solve the linear system for the displacements
+    double t2 = MPI_Wtime();
     double alpha = 1.0, beta = 0.0, gamma = 0.0;
     assembler->assembleJacobian(alpha, beta, gamma, NULL, mat);
+    double t3 = MPI_Wtime();
+    double dt2 = t3 - t2;
+    printf("Assembly = %.4e sec\n", dt2);
+
     pc->factor(); // LU factorization of stiffness matrix
     pc->applyFactor(f, ans);
     assembler->setVariables(ans);
+
+    double t4 = MPI_Wtime();
+    double dt3 = t4 - t3;
+    printf("Solve time = %.4e\n", dt3);
 
     // Create an TACSToFH5 object for writing output to files
     int write_flag = (TACS_OUTPUT_CONNECTIVITY | TACS_OUTPUT_NODES |

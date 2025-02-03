@@ -360,9 +360,9 @@ void direct_LU_solve_old(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs,
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration =
         std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-
+    double dt = duration / 1e6;
     if (can_print) {
-        printf("\tfinished in %d microseconds\n", (int)duration.count());
+        printf("\tfinished in %.4e sec\n", dt);
     }
 }
 
