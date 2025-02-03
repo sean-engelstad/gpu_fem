@@ -128,7 +128,7 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        double dt = duration / 1e6; 
+        double dt = duration.count() / 1e6; 
         if (can_print) {
             printf("\tfinished apply bcs vec in %.4e seconds\n",
                    dt);
@@ -146,7 +146,7 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        double dt = duration / 1e6;
+        double dt = duration.count() / 1e6;
         if (can_print) {
             printf("\tfinished apply bcs matrix in %.4e sec\n",
                    dt);
@@ -221,7 +221,7 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        double dt = duration / 1e6;
+        double dt = duration.count() / 1e6;
         if (can_print) {
             printf("\tfinished assembly in %.4e sec\n",
                    dt);
@@ -256,7 +256,7 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        double dt = duration / 1e6;
+        double dt = duration.count() / 1e6;
         if (can_print) {
             printf("\tfinished assembly in %.4e\n",
                    dt);
@@ -297,7 +297,7 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        double dt = duration / 1e6;
+        double dt = duration.count() / 1e6;
         if (can_print) {
             printf("\tfinished assembly in %.4e sec\n",
                    dt);
