@@ -77,13 +77,13 @@ template <typename T> class BaseVec {
         T *temp;
 #ifndef USE_GPU
         temp = new T[N];
-        int nnodes = getNumNodes();
+        int nnodes = N / block_dim;
         // store permutation of myData in temp
         for (int inode = 0; inode < nnodes; inode++) {
             int new_inode = perm[inode];
             for (int inner = 0; inner < block_dim; inner++) {
                 temp[new_inode * block_dim + inner] =
-                    data[inode * blockDim + inner];
+                    data[inode * block_dim + inner];
             }
         }
         // copy data back from temp to myData

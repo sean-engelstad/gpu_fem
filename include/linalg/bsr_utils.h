@@ -31,6 +31,9 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
                                             double fill_factor,
                                             const bool print = false);
 
+__HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes, int nodes_per_elem, const int32_t *conn, 
+        int& nnzb, index_t *&rowPtr, index_t *&colPtr);
+
 __HOST__
 void get_elem_ind_map(const int &nelems, const int &nnodes, const int32_t *conn,
                       const int &nodes_per_elem, const int &nnzb,
@@ -49,8 +52,9 @@ class BsrData {
           transpose_block_map(nullptr) {
 
         make_nominal_ordering();
-        get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
-                         colPtr);
+        // get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
+        //                  colPtr);
+        get_row_col_ptrs_sparse(nelems, nnodes, nodes_per_elem, conn, nnzb, rowPtr, colPtr);
     }
 
     __HOST__ BsrData(const int nnodes, const int block_dim, const int nnzb,
@@ -266,6 +270,16 @@ __HOST_DEVICE__ bool node_in_elem_conn(const int &nodes_per_elem,
     return false;
 }
 
+__HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes, int nodes_per_elem, const int32_t *conn, 
+        int& nnzb, index_t *&rowPtr, index_t *&colPtr) {
+
+    auto su_mat = BSRMatFromConnectivityCUDA(nelems, nnodes, nodes_per_elem, conn);
+
+    nnzb = su_mat->nnz;
+    rowPtr = su_mat->rowp;
+    colPtr = su_mat->cols;
+}
+
 __HOST__ void get_row_col_ptrs(
     const int &nelems, const int &nnodes, const int *conn,
     const int &nodes_per_elem,
@@ -275,6 +289,8 @@ __HOST__ void get_row_col_ptrs(
 ) {
 
     // could launch a kernel to do this somewhat in parallel?
+
+    // Need to speed this up here..
 
     nnzb = 0;
     std::vector<index_t> _rowPtr(nnodes + 1, 0);

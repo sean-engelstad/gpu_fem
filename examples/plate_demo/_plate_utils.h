@@ -1,7 +1,7 @@
 #pragma once
 #include "assembler.h"
 #include "base/utils.h"
-#include "linalg/linalg.h"
+#include "linalg/vec.h"
 #include "math.h"
 #include <fstream>
 #include <vector>
@@ -42,6 +42,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     int nny = nye + 1;
     int num_nodes = nnx * nny;
     int num_elements = nxe * nye;
+
+    // printf("checkpoint 1\n");
 
     // make our bcs vec (note I use 1-based terminology from nastran in
     // description above) but since this is in C++ I apply BCs here 0-based as
@@ -85,6 +87,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         bcs[ibc] = my_bcs.at(ibc);
     }
 
+    // printf("checkpoint 2 - post bcs\n");
+
     // printf("bcs: ");
     // printVec<int>(my_bcs.size(), bcs.getPtr());
 
@@ -104,6 +108,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         }
     }
 
+    // printf("checkpoint 3 - post elem_conn\n");
+
     HostVec<int32_t> geo_conn(N, elem_conn);
     HostVec<int32_t> vars_conn(N, elem_conn);
 
@@ -122,11 +128,17 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         }
     }
 
+    // printf("checkpoint 4 - post xpts\n");
+
     HostVec<Data> physData(num_elements, Data(E, nu, thick));
+
+    // printf("checkpoint 5 - create physData\n");
 
     // make the assembler
     Assembler assembler(num_nodes, num_nodes, num_elements, geo_conn, vars_conn,
                         xpts, bcs, physData);
+
+    // printf("checkpoint 6 - create assembler\n");
 
     return assembler;
 }
