@@ -3,6 +3,7 @@
 *Type Ctrl+Shift+V to view in VScode*
 
 ## Current
+- [ ] put all of our code in namespace's
 By next week 2/10/2025
 - [ ] Nested disection (is this cuthill-mcgee) in TACS CPU => use for better baseline symbolic factorization on GPU
 - [ ] Q ordering for incomplete ILU solve (very fast iterative solve)
