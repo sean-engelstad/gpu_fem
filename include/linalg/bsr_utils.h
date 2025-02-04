@@ -274,7 +274,7 @@ __HOST_DEVICE__ bool node_in_elem_conn(const int &nodes_per_elem,
 __HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes, int nodes_per_elem, const int32_t *conn, 
         int& nnzb, index_t *&rowPtr, index_t *&colPtr) {
 
-    auto su_mat = BSRMatFromConnectivityCUDA<double,1>(nelems, nnodes, nodes_per_elem, conn);
+    auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double,1>(nelems, nnodes, nodes_per_elem, conn);
 
     nnzb = su_mat->nnz;
     rowPtr = su_mat->rowp;
