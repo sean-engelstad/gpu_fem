@@ -1,7 +1,9 @@
 // base class for ElemGroup
 #pragma once
 
+#include "../linalg/vec.h"
 #include "a2dcore.h"
+#include "utils.h"
 
 // include the kernels if on the GPU
 #ifdef USE_GPU
@@ -10,206 +12,172 @@
 
 // use CRTP (curiously recurring template pattern here to avoid using
 // virtual functions as these aren't good on GPU)
-//     namely allows defining a method in base class that calls 
+//     namely allows defining a method in base class that calls
 //     derived class methods at compile time)
 template <typename Derived, typename T, class Geo_, class Basis_, class Phys_>
 class BaseElementGroup {
- public:
-  using Geo = Geo_;
-  using Basis = Basis_;
-  using Phys = Phys_;
-  using Quadrature = typename Basis::Quadrature;
-  using FADType = typename A2D::ADScalar<T, 1>;
+  public:
+    using Geo = Geo_;
+    using Basis = Basis_;
+    using Phys = Phys_;
+    using Quadrature = typename Basis::Quadrature;
+    using FADType = typename A2D::ADScalar<T, 1>;
 
-  static constexpr int32_t xpts_per_elem = Geo::spatial_dim * Geo::num_nodes;
-  static constexpr int32_t dof_per_elem =
-      Phys::vars_per_node * Basis::num_nodes;
-  static constexpr int32_t num_quad_pts = Quadrature::num_quad_pts;
+    static constexpr int32_t xpts_per_elem = Geo::spatial_dim * Geo::num_nodes;
+    static constexpr int32_t dof_per_elem =
+        Phys::vars_per_node * Basis::num_nodes;
+    static constexpr int32_t num_quad_pts = Quadrature::num_quad_pts;
 
-  // no virtual methods since not good for GPU
-  // need the following methods in each subclass
-  // -----------------------------------------
+    // no virtual methods since not good for GPU
+    // need the following methods in each subclass
+    // -----------------------------------------
 
-  // add_residual (launches kernels on GPU or calls CPU version)
-  // add_element_quadpt_residual
-  // add_jacobian (launches kernels on GPU or calls CPU version)
-  // add_element_quadpt_jacobian_col
+    // add_residual (launches kernels on GPU or calls CPU version)
+    // add_element_quadpt_residual
+    // add_jacobian (launches kernels on GPU or calls CPU version)
+    // add_element_quadpt_jacobian_col
 
-  template <class Data>
-  static void add_residual_cpu(int32_t num_elements, int32_t *geo_conn,
-                               int32_t *vars_conn, T *xpts, T *vars,
-                               Data *physData, T *residual) {
-    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
-    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+    template <class Data, template <typename> class Vec>
+    static void
+    add_residual_cpu(const int32_t num_elements, const Vec<int32_t> &geo_conn,
+                     const Vec<int32_t> &vars_conn, const Vec<T> &xpts,
+                     const Vec<T> &vars, Vec<Data> &physData, Vec<T> &res) {
 
-    for (int ielem = 0; ielem < num_elements; ielem++) {
-      T elem_xpts[nxpts_per_elem];
-      T elem_vars[vars_per_elem];
-      A2D::Vec<T,vars_per_elem> elem_res; // so zeroes it
-      Data elem_physData = physData[ielem];
+        const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+        const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
 
-      // get values for this element
-      const int32_t *geo_nodes = &geo_conn[ielem * Geo::num_nodes];
-      for (int inode = 0; inode < Geo::num_nodes; inode++) {
-        int32_t global_inode = geo_nodes[inode];
-        for (int idim = 0; idim < Geo::spatial_dim; idim++) {
-          elem_xpts[inode * Geo::spatial_dim + idim] =
-              xpts[global_inode * Geo::spatial_dim + idim];
-        }
-      }
+        const int32_t *_geo_conn = geo_conn.getPtr();
+        const int32_t *_vars_conn = vars_conn.getPtr();
 
-      // for (int i = 0; i < nxpts_per_elem; i++) {
-      //   printf("elem_xpts[%d] = %.8e\n", i, elem_xpts[i]);
-      // }
-      // return;
+        for (int ielem = 0; ielem < num_elements; ielem++) {
 
-      const int32_t *vars_nodes = &vars_conn[ielem * Basis::num_nodes];
-      for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        int global_inode = vars_nodes[inode];
-        for (int idof = 0; idof < Phys::vars_per_node; idof++) {
-          elem_vars[inode * Phys::vars_per_node + idof] =
-              vars[global_inode * Phys::vars_per_node + idof];
-        }
-      }
+            Data elem_physData = physData[ielem];
+            A2D::Vec<T, vars_per_elem> a2d_elem_res; // so zeroes it
+            T *elem_res = a2d_elem_res.get_data();
 
-      // done getting all elem variables
+            T elem_xpts[nxpts_per_elem];
+            const int32_t *geo_elem_conn = &_geo_conn[ielem * Geo::num_nodes];
+            xpts.getElementValues(Geo::spatial_dim, Geo::num_nodes,
+                                  geo_elem_conn, &elem_xpts[0]);
 
-      // compute element residual
-      for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
-        Derived::template add_element_quadpt_residual<Data>(iquad, elem_xpts, elem_vars,
-                                          elem_physData, elem_res.get_data());
-      }
+            T elem_vars[vars_per_elem];
+            const int32_t *vars_elem_conn =
+                &_vars_conn[ielem * Basis::num_nodes];
+            vars.getElementValues(Phys::vars_per_node, Basis::num_nodes,
+                                  vars_elem_conn, &elem_vars[0]);
 
-      // add back into global res on CPU
-      for (int idof = 0; idof < vars_per_elem; idof++) {
-        int local_inode = idof / Phys::vars_per_node;
-        int local_idim = idof % Phys::vars_per_node;
-        int iglobal =
-            vars_nodes[local_inode] * Phys::vars_per_node + local_idim;
-        residual[iglobal] += elem_res[idof];
-      }  // end of residual assembly
+            // compute element residual
+            for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
+                Derived::template add_element_quadpt_residual<Data>(
+                    true, iquad, elem_xpts, elem_vars, elem_physData, elem_res);
+            }
 
-    }  // num_elements for loop
-  }
+            res.addElementValues(1.0, Phys::vars_per_node, Basis::num_nodes,
+                                 vars_elem_conn, elem_res);
 
-  template <class Data>
-  static void add_energy_cpu(int32_t num_elements, int32_t *geo_conn,
-                               int32_t *vars_conn, T *xpts, T *vars,
-                               Data *physData, T& Uenergy) {
-    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
-    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+        } // num_elements for loop
+    }
 
-    Uenergy = 0.0; // set energy initially to zero
+    template <class Data, template <typename> class Vec>
+    static void
+    add_energy_cpu(const int32_t num_elements, const Vec<int32_t> &geo_conn,
+                   const Vec<int32_t> &vars_conn, const Vec<T> &xpts,
+                   const Vec<T> &vars, Vec<Data> &physData, T &Uenergy) {
 
-    for (int ielem = 0; ielem < num_elements; ielem++) {
-      T elem_xpts[nxpts_per_elem];
-      T elem_vars[vars_per_elem];
-      T elem_res[vars_per_elem];
-      Data elem_physData = physData[ielem];
+        const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+        const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
 
-      // get values for this element
-      const int32_t *geo_nodes = &geo_conn[ielem * Geo::num_nodes];
-      for (int inode = 0; inode < Geo::num_nodes; inode++) {
-        int32_t global_inode = geo_nodes[inode];
-        for (int idim = 0; idim < Geo::spatial_dim; idim++) {
-          elem_xpts[inode * Geo::spatial_dim + idim] =
-              xpts[global_inode * Geo::spatial_dim + idim];
-        }
-      }
+        const int32_t *_geo_conn = geo_conn.getPtr();
+        const int32_t *_vars_conn = vars_conn.getPtr();
 
-      const int32_t *vars_nodes = &vars_conn[ielem * Basis::num_nodes];
-      for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        int global_inode = vars_nodes[inode];
-        for (int idof = 0; idof < Phys::vars_per_node; idof++) {
-          elem_vars[inode * Phys::vars_per_node + idof] =
-              vars[global_inode * Phys::vars_per_node + idof];
-          elem_res[inode * Phys::vars_per_node + idof] = 0.0;
-        }
-      }
+        Uenergy = 0.0;
 
-      // done getting all elem variables
+        for (int ielem = 0; ielem < num_elements; ielem++) {
 
-      // compute element residual
-      for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
-        Derived::template add_element_quadpt_energy<Data>(iquad, elem_xpts, elem_vars,
-                                          elem_physData, Uenergy);
-      }
+            Data elem_physData = physData[ielem];
+            A2D::Vec<T, vars_per_elem> a2d_elem_res; // so zeroes it
+            T *elem_res = a2d_elem_res.get_data();
 
-    }  // num_elements for loop
-  }
+            T elem_xpts[nxpts_per_elem];
+            const int32_t *geo_elem_conn = &_geo_conn[ielem * Geo::num_nodes];
+            xpts.getElementValues(Geo::spatial_dim, Geo::num_nodes,
+                                  geo_elem_conn, &elem_xpts[0]);
 
-  template <class Data>
-  static void add_jacobian_cpu(int32_t vars_num_nodes, int32_t num_elements,
-                               int32_t *geo_conn, int32_t *vars_conn, T *xpts,
-                               T *vars, Data *physData, T *residual, T *mat) {
-    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
-    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
-    const int num_vars = vars_num_nodes * Phys::vars_per_node;
+            T elem_vars[vars_per_elem];
+            const int32_t *vars_elem_conn =
+                &_vars_conn[ielem * Basis::num_nodes];
+            vars.getElementValues(Phys::vars_per_node, Basis::num_nodes,
+                                  vars_elem_conn, &elem_vars[0]);
 
-    for (int ielem = 0; ielem < num_elements; ielem++) {
-      T elem_xpts[nxpts_per_elem];
-      T elem_vars[vars_per_elem];
-      T elem_res[vars_per_elem];
-      T elem_mat[vars_per_elem * vars_per_elem];
-      Data elem_physData = physData[ielem];
+            // compute element residual
+            for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
+                Derived::template add_element_quadpt_energy<Data>(
+                    true, iquad, elem_xpts, elem_vars, elem_physData, Uenergy);
+            }
 
-      memset(elem_res, 0.0, vars_per_elem * sizeof(T));
-      memset(elem_mat, 0.0, vars_per_elem * vars_per_elem * sizeof(T));
+        } // num_elements for loop
+    }
 
-      // get values for this element
-      const int32_t *geo_nodes = &geo_conn[ielem * Geo::num_nodes];
-      for (int inode = 0; inode < Geo::num_nodes; inode++) {
-        int32_t global_inode = geo_nodes[inode];
-        for (int idim = 0; idim < Geo::spatial_dim; idim++) {
-          elem_xpts[inode * Geo::spatial_dim + idim] =
-              xpts[global_inode * Geo::spatial_dim + idim];
-        }
-      }
+    template <class Data, template <typename> class Vec, class Mat>
+    static void add_jacobian_cpu(int32_t vars_num_nodes, int32_t num_elements,
+                                 Vec<int32_t> &geo_conn,
+                                 Vec<int32_t> &vars_conn, Vec<T> &xpts,
+                                 Vec<T> &vars, Vec<Data> &physData, Vec<T> &res,
+                                 Mat &mat) {
 
-      const int32_t *vars_nodes = &vars_conn[ielem * Basis::num_nodes];
-      for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        int global_inode = vars_nodes[inode];
-        for (int idof = 0; idof < Phys::vars_per_node; idof++) {
-          elem_vars[inode * Phys::vars_per_node + idof] =
-              vars[global_inode * Phys::vars_per_node + idof];
-        }
-      }
+        const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+        const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+        const int num_vars = vars_num_nodes * Phys::vars_per_node;
 
-      // done getting all elem variables
+        const int32_t *_geo_conn = geo_conn.getPtr();
+        const int32_t *_vars_conn = vars_conn.getPtr();
 
-      // compute element residual
-      for (int ideriv = 0; ideriv < vars_per_elem; ideriv++) {
-        A2D::Vec<T, vars_per_elem> matCol;  // initialized to zero
-        for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
-          Derived::template add_element_quadpt_jacobian_col<Data>(iquad, ideriv, elem_xpts,
-                                                elem_vars, elem_physData,
-                                                elem_res, &elem_mat[dof_per_elem*ideriv]);
-        }
-      }
-      // we've computed element stiffness matrix
-      // now we add into global stiffness matrix
+        for (int ielem = 0; ielem < num_elements; ielem++) {
 
-      // assembly into global matrix
-      for (int idof = 0; idof < vars_per_elem; idof++) {
-        int local_inode = idof / Phys::vars_per_node;
-        int local_idim = idof % Phys::vars_per_node;
-        int iglobal =
-            vars_nodes[local_inode] * Phys::vars_per_node + local_idim;
-        residual[iglobal] +=
-            elem_res[idof] /
-            T(vars_per_elem);
+            Data elem_physData = physData[ielem];
+            A2D::Vec<T, vars_per_elem> a2d_elem_res; // so zeroes it
+            A2D::Mat<T, vars_per_elem, vars_per_elem>
+                a2d_elem_mat; // so zeroes it
 
-        for (int jdof = 0; jdof < vars_per_elem; jdof++) {
-          int local_jnode = jdof / Phys::vars_per_node;
-          int local_jdim = jdof % Phys::vars_per_node;
-          int jglobal =
-              vars_nodes[local_jnode] * Phys::vars_per_node + local_jdim;
-          mat[num_vars * iglobal + jglobal] +=
-              elem_mat[vars_per_elem * idof + jdof]; // transpose elem_mat in place
-        }
-      }  // end of matrix assembly double for loops
+            T *elem_res = a2d_elem_res.get_data();
+            T *elem_mat = a2d_elem_mat.get_data();
 
-    }  // end of num_elements for loop
-  }  // end of addJacobian_cpu method
+            T elem_xpts[nxpts_per_elem];
 
-};  // end of ElementGroup class
+            const int32_t *geo_elem_conn = &_geo_conn[ielem * Geo::num_nodes];
+            xpts.getElementValues(Geo::spatial_dim, Geo::num_nodes,
+                                  geo_elem_conn, elem_xpts);
+
+            T elem_vars[vars_per_elem];
+            const int32_t *vars_elem_conn =
+                &_vars_conn[ielem * Basis::num_nodes];
+            vars.getElementValues(Phys::vars_per_node, Basis::num_nodes,
+                                  vars_elem_conn, elem_vars);
+            // done getting all elem variables
+
+            // compute element residual
+            for (int ideriv = 0; ideriv < vars_per_elem; ideriv++) {
+                A2D::Vec<T, vars_per_elem> matCol; // initialized to zero
+                for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
+                    Derived::template add_element_quadpt_jacobian_col<Data>(
+                        true, iquad, ideriv, elem_xpts, elem_vars,
+                        elem_physData, elem_res,
+                        &elem_mat[dof_per_elem * ideriv]);
+                }
+            }
+
+            // for (int i = 0; i < 576; i++) {
+            //     printf("elemmat %d : %.8e\n", i, elem_mat[i]);
+            // }
+
+            // assemble elem_mat values into global residual and matrix
+            res.addElementValues(1.0 / vars_per_elem, Phys::vars_per_node,
+                                 Basis::num_nodes, vars_elem_conn, elem_res);
+            mat.addElementMatrixValues(1.0, ielem, Phys::vars_per_node,
+                                       Basis::num_nodes, vars_elem_conn,
+                                       elem_mat);
+
+        } // end of num_elements for loop
+    }     // end of addJacobian_cpu method
+
+}; // end of ElementGroup class
