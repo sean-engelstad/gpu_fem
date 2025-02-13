@@ -2,6 +2,7 @@
 #include "../base/utils.h"
 #include "chrono"
 #include "cuda_utils.h"
+#include "reordering_utils.h"
 #include "stdlib.h"
 #include "vec.h"
 #include <algorithm>
@@ -31,8 +32,10 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
                                             double fill_factor,
                                             const bool print = false);
 
-__HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes, int nodes_per_elem, const int32_t *conn, 
-        int& nnzb, index_t *&rowPtr, index_t *&colPtr);
+__HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes,
+                                      int nodes_per_elem, const int32_t *conn,
+                                      int &nnzb, index_t *&rowPtr,
+                                      index_t *&colPtr);
 
 __HOST__
 void get_elem_ind_map(const int &nelems, const int &nnodes, const int32_t *conn,
@@ -54,7 +57,8 @@ class BsrData {
         make_nominal_ordering();
         // get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
         //                  colPtr);
-        get_row_col_ptrs_sparse(nelems, nnodes, nodes_per_elem, conn, nnzb, rowPtr, colPtr);
+        get_row_col_ptrs_sparse(nelems, nnodes, nodes_per_elem, conn, nnzb,
+                                rowPtr, colPtr);
     }
 
     __HOST__ BsrData(const int nnodes, const int block_dim, const int nnzb,
@@ -108,8 +112,7 @@ class BsrData {
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
         if (print) {
-            printf("\tfinished symbolic factorization in %.4e sec\n",
-                   dt);
+            printf("\tfinished symbolic factorization in %.4e sec\n", dt);
         }
     }
 
@@ -271,10 +274,13 @@ __HOST_DEVICE__ bool node_in_elem_conn(const int &nodes_per_elem,
     return false;
 }
 
-__HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes, int nodes_per_elem, const int32_t *conn, 
-        int& nnzb, index_t *&rowPtr, index_t *&colPtr) {
+__HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes,
+                                      int nodes_per_elem, const int32_t *conn,
+                                      int &nnzb, index_t *&rowPtr,
+                                      index_t *&colPtr) {
 
-    auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double,1>(nelems, nnodes, nodes_per_elem, conn);
+    auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double, 1>(
+        nelems, nnodes, nodes_per_elem, conn);
 
     nnzb = su_mat->nnz;
     rowPtr = su_mat->rowp;
@@ -364,6 +370,7 @@ __HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
     // printVec<index_t>(nnzb, colPtr);
 }
 
+// AMD reordered fillin
 __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
                                             index_t *&rowPtr, index_t *&colPtr,
                                             index_t *&perm, index_t *&iperm,
@@ -423,6 +430,45 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
         printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
                "%d NZ\n",
                fill_factor, nnzb_old, nnzb);
+    }
+}
+
+// RCM (reverse cuthill mcgee) reordered fillin
+__HOST__ void RCM_reordered_fillin(const int &nnodes, int &nnzb,
+                                   index_t *&rowPtr, index_t *&colPtr,
+                                   index_t *&perm, index_t *&iperm,
+                                   const bool print) {
+
+    // original fillin
+    int nnzb_old = nnzb;
+
+    // call RCM reordering
+
+    // compute new nnzb (needs to be ILU(k) symbolic though right?)
+    std::vector<index_t> _rowPtr(nnodes + 1, 0);
+    std::vector<index_t> _colPtr(index_t(fill_factor * nnzb));
+
+    nnzb = SparseUtils::CSRFactorSymbolic(nnodes, rowPtr, colPtr, _rowPtr,
+                                          _colPtr);
+    if (print) {
+        printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
+               "%d NZ\n",
+               fill_factor, nnzb_old, nnzb);
+    }
+
+    // resize this after running the symbolic factorization
+    // TODO : can use less than this full nnzb in the case of preconditioning or
+    // incomplete ILU?
+    _colPtr.resize(nnzb);
+
+    std::copy(_rowPtr.begin(), _rowPtr.end(), rowPtr);
+    colPtr = new index_t[nnzb];
+    std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
+
+    if (print) {
+        printf("\tRCM-reordered symbolic factorization from nnzb %d to "
+               "%d nnzb\n",
+               nnzb_old, nnzb);
     }
 }
 
