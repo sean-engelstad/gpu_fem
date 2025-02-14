@@ -7,6 +7,7 @@
 #include "vec.h"
 #include <algorithm>
 #include <vector>
+#include <random>
 
 // typedef std::size_t index_t;
 
@@ -440,36 +441,90 @@ __HOST__ void RCM_reordered_fillin(const int &nnodes, int &nnzb,
                                    const bool print) {
 
     // original fillin
-    int nnzb_old = nnzb;
+    int nnzb_pre_fillin = nnzb;
+    // DEBUG (get nnzb and then bandwidth)
+    double fill_factor = 10.0;
+    sparse_utils_fillin(nnodes, nnzb,
+        rowPtr, colPtr, fill_factor, print);
+    // TODO : need to be careful and not change orig row, colPtr here?
+    int orig_bandwidth = getBandWidth(nnodes, nnzb, rowPtr, colPtr); 
 
     // call RCM reordering
+    int *perm;
+    int root = 0; // why do we need this input?
+    int n_rcm_vars = 10; // what is this?
+    int rvars = TacsComputeRCMOrder(nnodes, rowPtr, colPtr, perm, root, n_rcm_iters);
 
-    // compute new nnzb (needs to be ILU(k) symbolic though right?)
-    std::vector<index_t> _rowPtr(nnodes + 1, 0);
-    std::vector<index_t> _colPtr(index_t(fill_factor * nnzb));
+    // Debugging, compute new bandwidth with permutation
+    // apply new permutation using sparse utils 
+    // (TODO : make separate routine for this, see BSRMatAMDFactorSymbolicCUDA above)
 
-    nnzb = SparseUtils::CSRFactorSymbolic(nnodes, rowPtr, colPtr, _rowPtr,
-                                          _colPtr);
+    // compute new rowPtr, colPtr (TODO : needs to be in temp rowPtr, colPtr probably for debug bandwidth check)
+    sparse_utils_fillin(nnodes, nnzb,
+        rowPtr, colPtr, fill_factor, print);
+    int new_bandwidth = getBandWidth(nnodes, nnzb, rowPtr, colPtr);
     if (print) {
         printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
                "%d NZ\n",
                fill_factor, nnzb_old, nnzb);
     }
 
-    // resize this after running the symbolic factorization
-    // TODO : can use less than this full nnzb in the case of preconditioning or
-    // incomplete ILU?
-    _colPtr.resize(nnzb);
+    // TODO : need to get ILU(k) here instead? not full fillin?
+    // Dr. K says ILU(k) code is in TACS in BSCRMat class
+}
 
-    std::copy(_rowPtr.begin(), _rowPtr.end(), rowPtr);
-    colPtr = new index_t[nnzb];
-    std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
+__HOST__ void qordering(int fill_level, double prune_factor, int const int nnodes, const int nnzb,  
+    int* rowPtr, int *colPtr, bool print) {
+    // first apply RCM reordering
+    int *perm;
+    int root = 0; // why do we need this input?
+    int n_rcm_vars = 10; // what is this?
+    int rvars = TacsComputeRCMOrder(nnodes, rowPtr, colPtr, perm, root, n_rcm_iters);
 
-    if (print) {
-        printf("\tRCM-reordered symbolic factorization from nnzb %d to "
-               "%d nnzb\n",
-               nnzb_old, nnzb);
+    // need to get bandwidth from RCM
+    // TODO Make this method that takes arbitrary perm and then does fillin
+    // and it also returns bandwidth in the temp row, colPtr arrays in there
+    int bandwidth = sparse_utils_perm_fillin(nnodes, nnzb, rowPtr, colPtr, fill_factor, print);
+
+    // now modify the perm with random reorderings of the prune width (see q-ordering paper)
+    int prune_width = (int)(1.0/prune_factor * bandwidth);
+    int num_prunes = (nnodes + prune_width - 1) / prune_width;
+    // random number generator
+    std::random_device rd;
+    std::mt19937 g(rd());
+
+    std::vector<int> perm2; // TODO : define it relative to perm
+    for (int iprune = 0; iprune < num_prunes; iprune++) {
+        // TODO : how to best apply extra permutation on top of current one?
+        int lower = prune_width * iprune;
+        int upper = max(lower + prune_width, nnodes);
+        std::shuffle(perm2.begin() + lower, perm2.begin() + upper, g)
     }
+    // TODO : apply this new perm2 to the old one maybe?
+
+    // TODO : also compute iperm?
+
+    // now compute symbolic ILU(k) factorization.. so that CUDA ILU(0) actually returns ILU(k) later on
+    // use fill_level input here
+    // TODO : should ILU(k) be a separate step? Probably, break it out of this routine
+
+    // TODO : visualize matrices at some of these steps so I check if I'm doing it right..
+}
+
+__HOST__ int getBandWidth(const int &nnodes, const int &nnzb, int* rowPtr, int *colPtr) {
+    // need to compute bandwidth for q-ordering
+    // bandwidth = max_{a_ij neq 0} |i - j|   ( so max off-diagonal distance within sparsity pattern)
+    int bandwidth = 0;
+    for (int i = 0; i < nnodes; i++) {
+        for (int jp = rowPtr[i]; jp < rowPtr[i+1]; jp++) {
+            int j = colPtr[jp];
+            int diff = abs(i-j);
+            if (diff > bandwidth) {
+                bandwidth = diff;
+            }
+        }
+    }
+    return bandwidth;
 }
 
 __HOST__ void get_elem_ind_map(
