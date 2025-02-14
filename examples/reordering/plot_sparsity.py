@@ -19,4 +19,4 @@ if __name__ == "__main__":
     cpp_block_dense = cpp_csr.toarray()
     sns.heatmap(cpp_block_dense)
     # plt.show()
-    plt.savefig("RCM_fillin.png", dpi=400)
+    plt.savefig("q_ordering.png", dpi=400)

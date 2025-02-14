@@ -6,6 +6,7 @@
 #include "stdlib.h"
 #include "vec.h"
 #include <algorithm>
+#include <random>
 #include <vector>
 
 // typedef std::size_t index_t;
@@ -433,44 +434,242 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
     }
 }
 
-// RCM (reverse cuthill mcgee) reordered fillin
-__HOST__ void RCM_reordered_fillin(const int &nnodes, int &nnzb,
-                                   index_t *&rowPtr, index_t *&colPtr,
-                                   index_t *&perm, index_t *&iperm,
-                                   const bool print) {
+// // RCM (reverse cuthill mcgee) reordered fillin
+// __HOST__ void RCM_reordered_fillin(const int &nnodes, int &nnzb,
+//                                    index_t *&rowPtr, index_t *&colPtr,
+//                                    index_t *&perm, index_t *&iperm,
+//                                    const bool print) {
 
-    // original fillin
-    int nnzb_old = nnzb;
+//     // original fillin
+//     int nnzb_pre_fillin = nnzb;
+//     // DEBUG (get nnzb and then bandwidth)
+//     double fill_factor = 10.0;
+//     sparse_utils_fillin(nnodes, nnzb,
+//         rowPtr, colPtr, fill_factor, print);
+//     // TODO : need to be careful and not change orig row, colPtr here?
+//     int orig_bandwidth = getBandWidth(nnodes, nnzb, rowPtr, colPtr);
 
-    // call RCM reordering
+//     // call RCM reordering
+//     int *perm;
+//     int root = 0; // why do we need this input?
+//     int n_rcm_vars = 10; // what is this?
+//     int rvars = TacsComputeRCMOrder(nnodes, rowPtr, colPtr, perm, root,
+//     n_rcm_iters);
 
-    // compute new nnzb (needs to be ILU(k) symbolic though right?)
-    std::vector<index_t> _rowPtr(nnodes + 1, 0);
-    double fill_factor = 10.0;
-    std::vector<index_t> _colPtr(index_t(fill_factor * nnzb));
+//     // Debugging, compute new bandwidth with permutation
+//     // apply new permutation using sparse utils
+//     // (TODO : make separate routine for this, see
+//     BSRMatAMDFactorSymbolicCUDA above)
 
-    nnzb = SparseUtils::CSRFactorSymbolic(nnodes, rowPtr, colPtr, _rowPtr,
-                                          _colPtr);
-    if (print) {
-        printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
-               "%d NZ\n",
-               fill_factor, nnzb_old, nnzb);
+//     // compute new rowPtr, colPtr (TODO : needs to be in temp rowPtr, colPtr
+//     probably for debug bandwidth check) sparse_utils_fillin(nnodes, nnzb,
+//         rowPtr, colPtr, fill_factor, print);
+//     int new_bandwidth = getBandWidth(nnodes, nnzb, rowPtr, colPtr);
+//     if (print) {
+//         printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d
+//         to "
+//                "%d NZ\n",
+//                fill_factor, nnzb_old, nnzb);
+//     }
+
+//     // TODO : need to get ILU(k) here instead? not full fillin?
+//     // Dr. K says ILU(k) code is in TACS in BSCRMat class
+// }
+
+// __HOST__ void qordering(int fill_level, double prune_factor, int const int
+// nnodes, const int nnzb,
+//     int* rowPtr, int *colPtr, bool print) {
+//     // first apply RCM reordering
+//     int *perm;
+//     int root = 0; // why do we need this input?
+//     int n_rcm_vars = 10; // what is this?
+//     int rvars = TacsComputeRCMOrder(nnodes, rowPtr, colPtr, perm, root,
+//     n_rcm_iters);
+
+//     // need to get bandwidth from RCM
+//     // TODO Make this method that takes arbitrary perm and then does fillin
+//     // and it also returns bandwidth in the temp row, colPtr arrays in there
+//     int bandwidth = sparse_utils_perm_fillin(nnodes, nnzb, rowPtr, colPtr,
+//     fill_factor, print);
+
+//     // now modify the perm with random reorderings of the prune width (see
+//     q-ordering paper) int prune_width = (int)(1.0/prune_factor * bandwidth);
+//     int num_prunes = (nnodes + prune_width - 1) / prune_width;
+//     // random number generator
+//     std::random_device rd;
+//     std::mt19937 g(rd());
+
+//     std::vector<int> perm2; // TODO : define it relative to perm
+//     for (int iprune = 0; iprune < num_prunes; iprune++) {
+//         // TODO : how to best apply extra permutation on top of current one?
+//         int lower = prune_width * iprune;
+//         int upper = max(lower + prune_width, nnodes);
+//         std::shuffle(perm2.begin() + lower, perm2.begin() + upper, g)
+//     }
+//     // TODO : apply this new perm2 to the old one maybe?
+
+//     // TODO : also compute iperm?
+
+//     // now compute symbolic ILU(k) factorization.. so that CUDA ILU(0)
+//     actually returns ILU(k) later on
+//     // use fill_level input here
+//     // TODO : should ILU(k) be a separate step? Probably, break it out of
+//     this routine
+
+//     // TODO : visualize matrices at some of these steps so I check if I'm
+//     doing it right..
+// }
+
+__HOST__ int getBandWidth(const int &nnodes, const int &nnzb, int *rowPtr,
+                          int *colPtr) {
+    // need to compute bandwidth for q-ordering
+    // bandwidth = max_{a_ij neq 0} |i - j|   ( so max off-diagonal distance
+    // within sparsity pattern)
+    int bandwidth = 0;
+    for (int i = 0; i < nnodes; i++) {
+        for (int jp = rowPtr[i]; jp < rowPtr[i + 1]; jp++) {
+            int j = colPtr[jp];
+            int diff = abs(i - j);
+            if (diff > bandwidth) {
+                bandwidth = diff;
+            }
+        }
+    }
+    return bandwidth;
+}
+
+// *!
+//   Compute the ILU(levFill) preconditioner
+
+//   fill == The expected degree of fill-in after the computation
+//   levs == The level set of the entry
+// */
+__HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
+                          int levFill, double fill, int **_levs) {
+    int nrows = mat->data->nrows; // Record the number of rows/columns
+    int ncols = mat->data->ncols;
+
+    // Number of non-zeros in the original matrix
+    int mat_size = mat->data->rowp[nrows];
+    int size = 0;
+    int max_size = (int)(fill * mat_size); // The maximum size - for now
+
+    int *cols = new int[max_size];
+    int *levs = new int[max_size]; // The level of fill of an entry
+    int *rowp = new int[nrows + 1];
+    int *diag = new int[nrows];
+
+    // Fill in the first entries
+    rowp[0] = 0;
+
+    // Allocate space for the temporary row info
+    int *rlevs = new int[ncols];
+    int *rcols = new int[ncols];
+
+    for (int i = 0; i < nrows; i++) {
+        int nr = 0; // Number of entries in the current row
+
+        // Add the matrix elements to the current row of the matrix.
+        // These new elements are sorted.
+        int diag_flag = 0;
+        for (int j = mat->data->rowp[i]; j < mat->data->rowp[i + 1]; j++) {
+            if (mat->data->cols[j] == i) {
+                diag_flag = 1;
+            }
+            rcols[nr] = mat->data->cols[j];
+            rlevs[nr] = 0;
+            nr++;
+        }
+
+        // No diagonal element associated with row i, add one!
+        if (!diag_flag) {
+            nr = TacsMergeSortedArrays(nr, rcols, 1, &i);
+        }
+
+        // Now, perform the symbolic factorization -- this generates new entries
+        int j = 0;
+        for (; rcols[j] < i;
+             j++) {              // For entries in this row, before the diagonal
+            int clev = rlevs[j]; // the level of fill for this entry
+
+            int p = j + 1;                  // The index into rcols
+            int k_end = rowp[rcols[j] + 1]; // the end of row number cols[j]
+
+            // Start with the first entry after the diagonal in row, cols[j]
+            // k is the index into cols for row cols[j]
+            for (int k = diag[rcols[j]] + 1; k < k_end; k++) {
+                // Increment p to an entry where we may have cols[k] == rcols[p]
+                while (p < nr && rcols[p] < cols[k]) {
+                    p++;
+                }
+
+                // The element already exists, check if it has a lower level of
+                // fill and update the fill level if necessary
+                if (p < nr && rcols[p] == cols[k]) {
+                    if (rlevs[p] > (clev + levs[k] + 1)) {
+                        rlevs[p] = clev + levs[k] + 1;
+                    }
+                } else if ((clev + levs[k] + 1) <= levFill) {
+                    // The element does not exist but should since the level of
+                    // fill is low enough. Insert the new entry into the list,
+                    // but keep the list sorted
+                    for (int n = nr; n > p; n--) {
+                        rlevs[n] = rlevs[n - 1];
+                        rcols[n] = rcols[n - 1];
+                    }
+
+                    rlevs[p] = clev + levs[k] + 1;
+                    rcols[p] = cols[k];
+                    nr++;
+                }
+            }
+        }
+
+        // Check if the size will be exceeded by adding the new elements
+        if (size + nr > max_size) {
+            int mat_ext = (int)((fill - 1.0) * mat_size);
+            if (nr > mat_ext) {
+                mat_ext = nr;
+            }
+            max_size = max_size + mat_ext;
+            TacsExtendArray(&cols, size, max_size);
+            TacsExtendArray(&levs, size, max_size);
+        }
+
+        // Now, put the new entries into the cols/levs arrays
+        for (int k = 0; k < nr; k++) {
+            cols[size] = rcols[k];
+            levs[size] = rlevs[k];
+            size++;
+        }
+
+        rowp[i + 1] = size;
+        diag[i] = j + rowp[i];
     }
 
-    // resize this after running the symbolic factorization
-    // TODO : can use less than this full nnzb in the case of preconditioning or
-    // incomplete ILU?
-    _colPtr.resize(nnzb);
-
-    std::copy(_rowPtr.begin(), _rowPtr.end(), rowPtr);
-    colPtr = new index_t[nnzb];
-    std::copy(_colPtr.begin(), _colPtr.end(), colPtr);
-
-    if (print) {
-        printf("\tRCM-reordered symbolic factorization from nnzb %d to "
-               "%d nnzb\n",
-               nnzb_old, nnzb);
+    // Clip the cols array to the correct size
+    if (max_size > size) {
+        TacsExtendArray(&cols, size, size);
     }
+
+    if (mat->data->rowp[nrows] > 0) {
+        int rank;
+        MPI_Comm_rank(comm, &rank);
+        printf("[%d] BCSRMat: ILU(%d) Input fill ratio %4.2f, actual "
+               "fill ratio: %4.2f, nnz(ILU) = %d\n",
+               rank, levFill, fill,
+               (1.0 * rowp[nrows]) / mat->data->rowp[nrows], rowp[nrows]);
+    }
+
+    delete[] rcols;
+    delete[] rlevs;
+
+    // Store the rowp/cols and diag arrays
+    data->rowp = rowp;
+    data->cols = cols;
+    data->diag = diag;
+
+    *_levs = levs;
 }
 
 __HOST__ void get_elem_ind_map(
