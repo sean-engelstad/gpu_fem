@@ -446,6 +446,7 @@ __HOST__ void RCM_reordered_fillin(const int &nnodes, int &nnzb,
 
     // compute new nnzb (needs to be ILU(k) symbolic though right?)
     std::vector<index_t> _rowPtr(nnodes + 1, 0);
+    double fill_factor = 10.0;
     std::vector<index_t> _colPtr(index_t(fill_factor * nnzb));
 
     nnzb = SparseUtils::CSRFactorSymbolic(nnodes, rowPtr, colPtr, _rowPtr,
