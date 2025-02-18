@@ -111,6 +111,7 @@ int main(void)
     printVec<int>(nnodes, perm);
 
     bool perform_qordering = true;
+    int *qorder_perm;
     if (perform_qordering)
     {
         // compute bandwidth of RCM reordered sparsity
@@ -157,13 +158,23 @@ int main(void)
         rowPtr = su_mat2->rowp;
         colPtr = su_mat2->cols;
 
-        // now perform random reordering in q-ordering
+        // copy q-ordering permutation into q_perm array
+        qorder_perm = new int[nnodes];
+        std::copy(q_perm.begin(), q_perm.end(), qorder_perm);
     }
 
-    // printf("rowPtr: ");
-    // printVec<int>(nnodes + 1, rowPtr);
-    // printf("colPtr: ");
-    // printVec<int>(nnzb, colPtr);
+    // compute ILU(k)
+    bool perform_ilu = true;
+    if (perform_ilu)
+    {
+        A = new SparseUtils::BSRMat(nnodes, nnodes, rowPtr, colPtr);
+        A.perm = qorder_perm;
+        A.iperm = qorder_iperm;
+        A2 = SparseUtils::BSRMatApplyPerm(A);
+        int levFill = 1;
+        int **levels;
+        computeILUk(nnodes, nnzb, A2.rowPtr, A2.colPtr, levFill, fill, levels);
+        }
 
     // write out matrix sparsity to debug
     write_to_csv<int>(rowPtr, nnodes + 1, "csv/plate_rowPtr.csv");

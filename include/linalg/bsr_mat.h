@@ -6,16 +6,21 @@
 #include "bsr_mat.cuh"
 #endif // USE_GPU
 
-template <class Vec> class BsrMat {
-  public:
+template <class Vec_>
+class BsrMat
+{
+public:
     using T = typename Vec::type;
+    using Vec = typename Vec_;
 #ifdef USE_GPU
     static constexpr dim3 bcs_block = dim3(32);
+    static constexpr dim3 nodes_block = dim3(32);
 #endif // USE_GPU
 
     __HOST_DEVICE__ BsrMat(const BsrData &bsr_data, Vec &values)
         : bsr_data(bsr_data), values(values) {}
-    __HOST__ BsrMat(const BsrData &bsr_data) : bsr_data(bsr_data) {
+    __HOST__ BsrMat(const BsrData &bsr_data) : bsr_data(bsr_data)
+    {
         int nvalues = bsr_data.getNumValues();
         values = Vec(nvalues);
     }
@@ -30,8 +35,11 @@ template <class Vec> class BsrMat {
     __HOST_DEVICE__ int *getPerm() { return bsr_data.perm; }
     __HOST_DEVICE__ int *getIPerm() { return bsr_data.iperm; }
     __HOST_DEVICE__ int getBlockDim() { return bsr_data.block_dim; }
+    __HOST_DEVICE__ int *getRowPtr() { return bsr_data.rowPtr; }
+    __HOST_DEVICE__ int *getColPtr() { return bsr_data.colPtr; }
 
-    __HOST__ void apply_bcs(HostVec<int> bcs) {
+    __HOST__ void apply_bcs(HostVec<int> bcs)
+    {
 
         // some prelim values needed for both cases
         int nbcs = bcs.getSize();
@@ -46,23 +54,26 @@ template <class Vec> class BsrMat {
         int block_dim = bsr_data.block_dim;
 
         // loop over each bc
-        for (int ibc = 0; ibc < nbcs; ibc++) {
+        for (int ibc = 0; ibc < nbcs; ibc++)
+        {
             // zero out the bc rows
             int _glob_row = bcs[ibc];
             int glob_row = perm[_glob_row]; // the bc dof
             int bc_temp = glob_row;
             int inner_row =
-                glob_row % block_dim; // the local dof constrained in this node
+                glob_row % block_dim;             // the local dof constrained in this node
             int block_row = glob_row / block_dim; // equiv to bc node
 
             // set bc row to zero
             for (int col_ptr_ind = rowPtr[block_row];
-                 col_ptr_ind < rowPtr[block_row + 1]; col_ptr_ind++) {
+                 col_ptr_ind < rowPtr[block_row + 1]; col_ptr_ind++)
+            {
 
                 T *val = &valPtr[nnz_per_block * col_ptr_ind];
 
                 int block_col = colPtr[col_ptr_ind];
-                for (int inner_col = 0; inner_col < block_dim; inner_col++) {
+                for (int inner_col = 0; inner_col < block_dim; inner_col++)
+                {
                     int inz =
                         block_dim * inner_row + inner_col; // nz entry in block
                     int glob_col = block_col * block_dim + inner_col;
@@ -75,13 +86,16 @@ template <class Vec> class BsrMat {
             // TODO : try adding bc to column how too, but will want to speed
             // this up eventually or just use CPU for debug for now set bc row
             // to zero
-            for (int block_row2 = 0; block_row2 < nnodes; block_row2++) {
+            for (int block_row2 = 0; block_row2 < nnodes; block_row2++)
+            {
                 for (int col_ptr_ind = rowPtr[block_row2];
-                     col_ptr_ind < rowPtr[block_row2 + 1]; col_ptr_ind++) {
+                     col_ptr_ind < rowPtr[block_row2 + 1]; col_ptr_ind++)
+                {
                     T *val = &valPtr[nnz_per_block * col_ptr_ind];
 
                     int block_col = colPtr[col_ptr_ind];
-                    for (int inz = 0; inz < block_dim * block_dim; inz++) {
+                    for (int inz = 0; inz < block_dim * block_dim; inz++)
+                    {
                         int inner_row2 = inz / block_dim;
                         int inner_col = inz % block_dim;
                         int glob_row2 = block_row2 * block_dim + inner_row2;
@@ -106,7 +120,8 @@ template <class Vec> class BsrMat {
         }
     }
 
-    __HOST__ void apply_bcs(DeviceVec<int> bcs) {
+    __HOST__ void apply_bcs(DeviceVec<int> bcs)
+    {
 
         // some prelim values needed for both cases
         int nbcs = bcs.getSize();
@@ -143,11 +158,64 @@ template <class Vec> class BsrMat {
 #endif // USE_GPU
     }
 
+    void copyValues(BsrMat<Vec> mat)
+    {
+        // copy values from this matrix to another matrix 'mat'
+        // assume the other matrix has same nz locations as this matrix but possibly more for preconditioner
+
+        const index_t *rowp = bsr_data.rowPtr;
+        const index_t *cols = bsr_data.colPtr;
+        T *vals = values.getPtr();
+
+        int *t_rowp = mat.getRowPtr();
+        int *t_cols = mat.getColPtr();
+        T *t_vals = mat.getPtr();
+        int block_dim2 = block_dim * block_dim;
+        int nnodes = bsr_data.nnodes;
+
+#ifndef USE_GPU
+        // CPU version
+        for (int irow = 0; irow < nnodes; irow++)
+        {
+            int t_jp = t_rowp[irow];
+            int t_jp_max = t_rowp[irow + 1];
+            for (int jp = rowp[irow]; jp < rowp[irow + 1]; jp++)
+            {
+                int bcol = cols[jp];
+                // have other mat catch up to the same column
+                for (; t_cols[t_jp] < bcol; t_jp++)
+                {
+                }
+                // want to put a debug check that same column # here?
+                // copy entire block into here
+                for (int inz = 0; inz < block_dim2; inz++)
+                {
+                    t_vals[block_dim2 * t_jp + inz] = vals[block_dim2 * jp + inz];
+                }
+            }
+        }
+#endif
+
+#ifdef USE_GPU
+        // GPU code
+
+        // need to write a GPU version of the copyValues above..
+        dim3 block = nodes_block;
+        int nblocks = (nnodes + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+
+        // launch kernel to apply BCs to the full matrix
+        copy_mat_values_kernel<T>(nnodes, block_dim, rowp, cols, vals, t_rowp, t_cols, t_vals);
+        CHECK_CUDA(cudaDeviceSynchronize());
+#endif
+    }
+
     __HOST_DEVICE__
     void addElementMatrixValues(const T scale, const int ielem,
                                 const int dof_per_node,
                                 const int nodes_per_elem,
-                                const int32_t *elem_conn, const T *elem_mat) {
+                                const int32_t *elem_conn, const T *elem_mat)
+    {
         // similar method to vec.h or Vec.addElementValues but here for matrix
         // and here for Bsr format
         int dof_per_elem = dof_per_node * nodes_per_elem;
@@ -158,7 +226,8 @@ template <class Vec> class BsrMat {
         T *valPtr = values.getPtr();
 
         // loop over each of the blocks in the kelem
-        for (int elem_block = 0; elem_block < blocks_per_elem; elem_block++) {
+        for (int elem_block = 0; elem_block < blocks_per_elem; elem_block++)
+        {
             // perm already applied to elem_ind_map
             int istart = nnz_per_block *
                          elem_ind_map[blocks_per_elem * ielem + elem_block];
@@ -167,7 +236,8 @@ template <class Vec> class BsrMat {
             int block_col = elem_block % nodes_per_elem;
 
             // loop over each nz in each block of kelem
-            for (int inz = 0; inz < nnz_per_block; inz++) {
+            for (int inz = 0; inz < nnz_per_block; inz++)
+            {
                 int inner_row = inz / block_dim;
                 int inner_col = inz % block_dim;
                 int row = block_dim * block_row + inner_row;
@@ -186,7 +256,8 @@ template <class Vec> class BsrMat {
                                           const int dof_per_node,
                                           const int nodes_per_elem,
                                           const int32_t *elem_conn,
-                                          const T *shared_elem_mat) {
+                                          const T *shared_elem_mat)
+    {
         // similar method to vec.h or Vec.addElementValues but here for matrix
         // and here for Bsr format
         int dof_per_elem = dof_per_node * nodes_per_elem;
@@ -207,7 +278,8 @@ template <class Vec> class BsrMat {
         // }
 
         for (int elem_block = start; elem_block < blocks_per_elem;
-             elem_block += stride) {
+             elem_block += stride)
+        {
             int glob_block_ind = loc_elem_ind_map[elem_block];
             int istart = nnz_per_block * glob_block_ind;
             T *val = &valPtr[istart];
@@ -219,7 +291,8 @@ template <class Vec> class BsrMat {
             // int gblock = istart / nnz_per_block;
 
             // loop over each nz in each block of kelem
-            for (int inz = 0; inz < nnz_per_block; inz++) {
+            for (int inz = 0; inz < nnz_per_block; inz++)
+            {
                 int local_row = inz / block_dim;
                 int local_col = inz % block_dim;
                 int erow = block_dim * elem_block_row + local_row;
@@ -291,19 +364,24 @@ template <class Vec> class BsrMat {
 
 #endif // USE_GPU
 
-    template <typename I> __HOST_DEVICE__ T &operator[](const I i) {
+    template <typename I>
+    __HOST_DEVICE__ T &operator[](const I i)
+    {
         return values[i];
     }
-    template <typename I> __HOST_DEVICE__ const T &operator[](const I i) const {
+    template <typename I>
+    __HOST_DEVICE__ const T &operator[](const I i) const
+    {
         return values[i];
     }
 
-  private:
+private:
     const BsrData bsr_data;
     Vec values;
 };
 
 template <class Assembler, class Vec>
-__HOST__ BsrMat<Vec> createBsrMat(Assembler &assembler) {
+__HOST__ BsrMat<Vec> createBsrMat(Assembler &assembler)
+{
     return BsrMat<Vec>(assembler.getBsrData());
 }
