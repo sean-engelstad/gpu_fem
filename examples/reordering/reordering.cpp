@@ -9,8 +9,7 @@
  solve on CPU with cusparse for debugging
  **/
 
-int main(void)
-{
+int main(void) {
     using T = double;
 
     std::ios::sync_with_stdio(false); // always flush print immediately
@@ -47,13 +46,14 @@ int main(void)
     int nnodes = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
 
+    double fill = 10.0;
+
     // RCM reordering // based on 1585 of TACSAssembler.cpp
     bool perform_rcm = true;
     int *rowPtr, *colPtr;
     int *perm = new int[nnodes];
     ;
-    if (perform_rcm)
-    {
+    if (perform_rcm) {
         int *_new_perm = new int[nnodes];
         int root_node = 0;
         int num_rcm_iters = 1;
@@ -61,10 +61,8 @@ int main(void)
                             root_node, num_rcm_iters);
         // also do we need to reverse the order here? (see line 1585 of
         // TACSAssembler.cpp)
-        if (perm)
-        {
-            for (int k = 0; k < nnodes; k++)
-            {
+        if (perm) {
+            for (int k = 0; k < nnodes; k++) {
                 perm[_new_perm[k]] = k;
             }
         }
@@ -83,8 +81,9 @@ int main(void)
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
             nnodes, nnodes, nnzb, orig_rowPtr, orig_colPtr, nullptr);
         // su_mat.perm = _new_perm;
-        auto su_mat2 =
-            SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm);
+        // su_mat.perm = perm;
+        auto su_mat2 = SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(
+            su_mat, perm, fill);
 
         nnzb = su_mat2->nnz;
         rowPtr = su_mat2->rowp;
@@ -105,14 +104,16 @@ int main(void)
         // (realized this after code was written)
         // int *perm = su_mat2->iperm;
         // int *iperm = su_mat2->perm;
+
+        write_to_csv<int>(rowPtr, nnodes + 1, "csv/RCM_rowPtr.csv");
+        write_to_csv<int>(colPtr, nnzb, "csv/RCM_colPtr.csv");
     }
 
     printf("perm1: ");
     printVec<int>(nnodes, perm);
 
     bool perform_qordering = true;
-    if (perform_qordering)
-    {
+    if (perform_qordering) {
         // compute bandwidth of RCM reordered sparsity
         int bandwidth = getBandWidth(nnodes, nnzb, rowPtr, colPtr);
 
@@ -132,8 +133,7 @@ int main(void)
         std::vector<int> q_perm(
             perm, perm + nnodes); // TODO : define it relative to perm
         // perform random reordering on each prune_width size
-        for (int iprune = 0; iprune < num_prunes; iprune++)
-        {
+        for (int iprune = 0; iprune < num_prunes; iprune++) {
             // TODO : how to best apply extra permutation on top of current one?
             int lower = prune_width * iprune;
             int upper = std::min(lower + prune_width, nnodes);
@@ -151,11 +151,14 @@ int main(void)
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
             nnodes, nnodes, nnzb, orig_rowPtr, orig_colPtr, nullptr);
         auto su_mat2 = SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(
-            su_mat, q_perm.data());
+            su_mat, q_perm.data(), fill);
 
         nnzb = su_mat2->nnz;
         rowPtr = su_mat2->rowp;
         colPtr = su_mat2->cols;
+
+        write_to_csv<int>(rowPtr, nnodes + 1, "csv/qorder_rowPtr.csv");
+        write_to_csv<int>(colPtr, nnzb, "csv/qorder_colPtr.csv");
 
         // now perform random reordering in q-ordering
     }
@@ -166,8 +169,8 @@ int main(void)
     // printVec<int>(nnzb, colPtr);
 
     // write out matrix sparsity to debug
-    write_to_csv<int>(rowPtr, nnodes + 1, "csv/plate_rowPtr.csv");
-    write_to_csv<int>(colPtr, nnzb, "csv/plate_colPtr.csv");
+    // write_to_csv<int>(rowPtr, nnodes + 1, "csv/plate_rowPtr.csv");
+    // write_to_csv<int>(colPtr, nnzb, "csv/plate_colPtr.csv");
 
     return 0;
 };

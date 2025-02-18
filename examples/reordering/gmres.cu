@@ -41,17 +41,26 @@ int main(void)
     //     assembler.symbolic_factorization(fillin, print);
     // }
 
-    auto bsr_data = assembler.getBsrData();
+    auto d_bsr_data = assembler.getBsrData();
+    // move it back onto the host for these manipulations
+    // auto bsr_data = d_bsr_data.createHostBsrData(); 
+    // // no longer needed only copies to device after symbolic factorization
+    auto bsr_data = d_bsr_data;
     int *orig_rowPtr = bsr_data.rowPtr;
     int *orig_colPtr = bsr_data.colPtr;
     int nnodes = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
+    int orig_nnzb = nnzb;
+
+    printf("post host bsr data transfer rowPtr: ");
+    printVec<int>(nnodes + 1, orig_rowPtr);
 
     // RCM reordering // based on 1585 of TACSAssembler.cpp
     bool perform_rcm = true;
     int *rowPtr, *colPtr;
     int *perm = new int[nnodes];
-    ;
+    double fill = 10.0;
+    
     if (perform_rcm)
     {
         int *_new_perm = new int[nnodes];
@@ -82,9 +91,12 @@ int main(void)
         // then do the symbolic factorization
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
             nnodes, nnodes, nnzb, orig_rowPtr, orig_colPtr, nullptr);
-        // su_mat.perm = _new_perm;
+        // su_mat.perm = perm;
+        printf("pre-reorder rowPtr: ");
+        printVec<int>(nnodes + 1, orig_rowPtr);
+
         auto su_mat2 =
-            SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm);
+            SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill);
 
         nnzb = su_mat2->nnz;
         rowPtr = su_mat2->rowp;
@@ -105,13 +117,16 @@ int main(void)
         // (realized this after code was written)
         // int *perm = su_mat2->iperm;
         // int *iperm = su_mat2->perm;
+
+        write_to_csv<int>(rowPtr, nnodes + 1, "csv/RCM_rowPtr.csv");
+        write_to_csv<int>(colPtr, nnzb, "csv/RCM_colPtr.csv");
     }
 
     printf("perm1: ");
     printVec<int>(nnodes, perm);
 
     bool perform_qordering = true;
-    int *qorder_perm;
+    int *qorder_perm; //, *qorder_iperm;
     if (perform_qordering)
     {
         // compute bandwidth of RCM reordered sparsity
@@ -151,8 +166,9 @@ int main(void)
         // fillin here) later we'll do ILU with it
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
             nnodes, nnodes, nnzb, orig_rowPtr, orig_colPtr, nullptr);
+        // su_mat.perm = q_perm.data();
         auto su_mat2 = SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(
-            su_mat, q_perm.data());
+            su_mat, q_perm.data(), fill);
 
         nnzb = su_mat2->nnz;
         rowPtr = su_mat2->rowp;
@@ -161,24 +177,90 @@ int main(void)
         // copy q-ordering permutation into q_perm array
         qorder_perm = new int[nnodes];
         std::copy(q_perm.begin(), q_perm.end(), qorder_perm);
+
+        
+
+        write_to_csv<int>(rowPtr, nnodes + 1, "csv/qorder_rowPtr.csv");
+        write_to_csv<int>(colPtr, nnzb, "csv/qorder_colPtr.csv");
+
+    }
+
+    // if (perform_rcm || perform_qordering) {
+    //     // write out matrix sparsity to debug (after reordering)
+    //     // this is full fillin here though
+    //     write_to_csv<int>(rowPtr, nnodes + 1, "csv/plate_rowPtr.csv");
+    //     write_to_csv<int>(colPtr, nnzb, "csv/plate_colPtr.csv");
+    // }
+
+    // compute also the qorder_iperm
+    int *final_perm, *final_iperm;
+    if (perform_qordering) {
+        final_perm = qorder_perm;
+    } else {
+        final_perm = perm; // assumes RCM fillin here
+    }
+    final_iperm = new int[nnodes];
+    for (int inode = 0; inode < nnodes; inode++) {
+        final_iperm[final_perm[inode]] = inode;
     }
 
     // compute ILU(k)
     bool perform_ilu = true;
+    int *kmat_rowPtr, *kmat_colPtr, kmat_nnzb;
     if (perform_ilu)
     {
-        A = new SparseUtils::BSRMat(nnodes, nnodes, rowPtr, colPtr);
-        A.perm = qorder_perm;
-        A.iperm = qorder_iperm;
-        A2 = SparseUtils::BSRMatApplyPerm(A);
-        int levFill = 1;
-        int **levels;
-        computeILUk(nnodes, nnzb, A2.rowPtr, A2.colPtr, levFill, fill, levels);
-        }
+        // use orig rowPtr, colPtr here so that you don't use full fillin
+        auto A = SparseUtils::BSRMat<double,1,1>(nnodes, nnodes, orig_nnzb, orig_rowPtr, orig_colPtr, nullptr);
+        // A.perm = final_perm;
+        // A.iperm = final_iperm; // this may delete perm here, may want to put in ApplyPerm directly
+        auto A2 = SparseUtils::BSRMatApplyPerm<double,1>(A, final_perm, final_iperm);
+        int levFill = 3;
+        int *levels;
 
-    // write out matrix sparsity to debug
-    write_to_csv<int>(rowPtr, nnodes + 1, "csv/plate_rowPtr.csv");
-    write_to_csv<int>(colPtr, nnzb, "csv/plate_colPtr.csv");
+        // get permuted no-fill pattern for Kmat
+        kmat_rowPtr = A2->rowp;
+        kmat_colPtr = A2->cols;
+        kmat_nnzb = A2->rowp[nnodes];
+
+        computeILUk(nnodes, nnzb, A2->rowp, A2->cols, levFill, fill, &levels);
+
+        // copy the new rowptr, colptr out
+        rowPtr = A2->rowp;
+        colPtr = A2->cols;
+        nnzb = rowPtr[nnodes];
+
+        // write out matrix sparsity to debug
+        write_to_csv<int>(rowPtr, nnodes + 1, "csv/ILU_rowPtr.csv");
+        write_to_csv<int>(colPtr, nnzb, "csv/ILU_colPtr.csv");
+
+    }
+
+    // check if perm was destroyed here..
+    printf("check perm: ");
+    printVec<int>(nnodes, final_perm);
+
+    
+    // TODO: clean up all of the above and move into main repos
+
+    // make the bsr data for the preconditioner
+    auto precond_bsr_data = BsrData(nnodes, 6, nnzb, rowPtr, colPtr, final_perm, final_iperm);
+    // update kmat bsr data with reordering
+    bsr_data.post_reordering_update(kmat_nnzb, kmat_rowPtr, kmat_colPtr, final_perm, final_iperm);
+
+    // move bsr data onto the device
+    auto d_precond_bsr_data = precond_bsr_data.createDeviceBsrData();
+    auto d_bsr_data = bsr_data.createDeviceBsrData();
+
+    // now make the kmat and preconditioner
+    auto precond_mat = BsrMat<VecType<T>>(d_precond_bsr_data);
+    auto kmat = BsrMat<VecType<T>>(d_bsr_data);
+
+    // build the preconditioner with ILU(k) and reordered rowPtr, colPtr (qordering)
+    auto precond = Preconditioner<VecType<T>>(precond_mat, kmat);
+
+    // preconditioner ILU(0) factorization in cusparse (equiv to ILU(k) factor because of ILU(k) sparsity)
+    // implement matrix-vec products (K un-filled in), preconditioner solve M^-1 x
+    // write GMRES algorithm (running with data on GPU)
 
     return 0;
 };

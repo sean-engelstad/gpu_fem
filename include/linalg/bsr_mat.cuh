@@ -104,12 +104,13 @@ __GLOBAL__ void apply_mat_bcs_cols_kernel(Vec<int> bcs,
 }
 
 template <typename T>
-__GLOBAL__ copy_mat_values_kernel(int nnodes, int block_dim,
+__GLOBAL__ void copy_mat_values_kernel(int nnodes, int block_dim,
                                   const int *rowp, const int *cols, const T *vals,
                                   int *t_rowp, int *t_cols, T *t_vals)
 {
     int this_thread_block_row = blockIdx.x * blockDim.x + threadIdx.x;
     int irow = this_thread_block_row;
+    int block_dim2 = block_dim * block_dim;
 
     if (this_thread_block_row < nnodes)
     {

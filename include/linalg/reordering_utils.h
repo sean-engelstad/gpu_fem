@@ -1,4 +1,3 @@
-
 // the following are some reordering utils
 
 // q-ordering (writing it myself),
@@ -13,6 +12,82 @@
 
 int TacsIntegerComparator(const void *a, const void *b) {
     return (*(int *)a - *(int *)b);
+}
+
+/*!
+  Merge two sorted arrays into a single sorted array, in place.
+  This relies on both arrays having unique elements independently (ie
+  a cannot contain duplicates and b cannot contain duplicates, but a
+  can contain some of the same elements as b).
+
+  Two part algorithm:
+  1. Find the number of duplicates between a and b
+  2. Run through the list backwards placing elements into a[]
+  when appropriate.
+*/
+int TacsMergeSortedArrays(int na, int *a, int nb, const int *b) {
+    int ndup = 0;
+
+    int j = 0, i = 0;
+    for (; i < na; i++) {
+        while ((j < nb) && b[j] < a[i]) {
+            j++;
+        }
+        if (j >= nb) {
+            break;
+        }
+        if (a[i] == b[j]) {
+            ndup++;
+        }
+    }
+
+    int len = na + nb - ndup; // End of the array
+    int end = len - 1;
+
+    j = nb - 1;
+    i = na - 1;
+    while (i >= 0 && j >= 0) {
+        if (a[i] > b[j]) {
+            a[end] = a[i];
+            end--, i--;
+        } else if (b[j] > a[i]) {
+            a[end] = b[j];
+            end--, j--;
+        } else { // b[j] == a[i]
+            a[end] = a[i];
+            end--, j--, i--;
+        }
+    }
+
+    // Only need to copy over remaining elements from b - if any
+    while (j >= 0) {
+        a[j] = b[j];
+        j--;
+    }
+
+    return len;
+}
+
+/*!
+  Extend the length of an integer array to a new length of array
+*/
+void TacsExtendArray(int **_array, int oldlen, int newlen) {
+    int *oldarray = *_array;
+    int *newarray = new int[newlen];
+    memcpy(newarray, oldarray, oldlen * sizeof(int));
+    delete[] * _array;
+    *_array = newarray;
+}
+
+/*
+  Extend the length of a TacsScalar array to a new length
+*/
+void TacsExtendArray(double **_array, int oldlen, int newlen) {
+    double *oldarray = *_array;
+    double *newarray = new double[newlen];
+    memcpy(newarray, oldarray, oldlen * sizeof(double));
+    delete[] * _array;
+    *_array = newarray;
 }
 
 /*
