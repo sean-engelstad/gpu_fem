@@ -44,8 +44,9 @@ void get_elem_ind_map(const int &nelems, const int &nnodes, const int32_t *conn,
                       index_t *&rowPtr, index_t *&colPtr, index_t *&perm,
                       index_t *&elemIndMap);
 
-class BsrData {
-  public:
+class BsrData
+{
+public:
     BsrData() = default;
     __HOST__ BsrData(const int nelems, const int nnodes,
                      const int &nodes_per_elem, const int &block_dim,
@@ -53,7 +54,8 @@ class BsrData {
         : nelems(nelems), nnodes(nnodes), nodes_per_elem(nodes_per_elem),
           conn(conn), block_dim(block_dim), elemIndMap(nullptr),
           transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
-          transpose_block_map(nullptr) {
+          transpose_block_map(nullptr)
+    {
 
         make_nominal_ordering();
         // get_row_col_ptrs(nelems, nnodes, conn, nodes_per_elem, nnzb, rowPtr,
@@ -68,15 +70,18 @@ class BsrData {
         : nnodes(nnodes), block_dim(block_dim), nnzb(nnzb), rowPtr(origRowPtr),
           conn(nullptr), colPtr(origColPtr), elemIndMap(nullptr),
           transpose_rowPtr(nullptr), transpose_colPtr(nullptr),
-          transpose_block_map(nullptr) {
+          transpose_block_map(nullptr)
+    {
 
-        if (!perm) {
+        if (!perm)
+        {
             make_nominal_ordering();
         }
     }
 
-    __HOST__ void post_reordering_update(nnzb_, rowPtr_, colPtr_, perm_,
-                                         iperm_) {
+    __HOST__ void post_reordering_update(int nnzb_, int *rowPtr_, int *colPtr_, int *perm_,
+                                         int *iperm_, bool print = true)
+    {
         // pass in reordered sparsity
         nnzb = nnzb_;
         rowPtr = rowPtr_;
@@ -85,23 +90,28 @@ class BsrData {
         iperm = iperm_;
 
         // now update assembly information and transpose maps
-        if (conn != nullptr) {
+        if (conn != nullptr)
+        {
             get_elem_ind_map(nelems, nnodes, this->conn, nodes_per_elem, nnzb,
                              rowPtr, colPtr, perm, this->elemIndMap);
-        } else {
-            if (print) {
-                printf("no elem conn, provided so skipping
-                get_elem_ind_map");
+        }
+        else
+        {
+            if (print)
+            {
+                printf("no elem conn, provided so skipping get_elem_ind_map");
             }
         }
         get_transpose_bsr_data();
     }
 
     __HOST__ void symbolic_factorization(double fill_factor = 10.0,
-                                         const bool print = false) {
+                                         const bool print = false)
+    {
         // do symbolic factorization for fillin
         auto start = std::chrono::high_resolution_clock::now();
-        if (print) {
+        if (print)
+        {
             printf("begin symbolic factorization::\n");
             printf("\tnnzb = %d\n", nnzb);
         }
@@ -114,20 +124,25 @@ class BsrData {
         //     printf("\t1/3 done with sparse utils fillin\n");
         // }
 
-        if (conn != nullptr) {
+        if (conn != nullptr)
+        {
             get_elem_ind_map(nelems, nnodes, this->conn, nodes_per_elem, nnzb,
                              rowPtr, colPtr, perm, this->elemIndMap);
             // if (print) {
             //     printf("\t2/3 done with elem ind map\n");
             // }
-        } else {
-            if (print) {
+        }
+        else
+        {
+            if (print)
+            {
                 printf("no elem conn, provided so skipping get_elem_ind_map");
             }
         }
 
         get_transpose_bsr_data();
-        if (print) {
+        if (print)
+        {
             printf("\t3/3 done getting transpose map\n");
         }
 
@@ -136,22 +151,26 @@ class BsrData {
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
-        if (print) {
+        if (print)
+        {
             printf("\tfinished symbolic factorization in %.4e sec\n", dt);
         }
     }
 
-    __HOST__ void make_nominal_ordering() {
+    __HOST__ void make_nominal_ordering()
+    {
         // original ordering (no permutation yet just 0 to nnodes-1)
         perm = new int32_t[nnodes];
         iperm = new int32_t[nnodes];
-        for (int inode = 0; inode < nnodes; inode++) {
+        for (int inode = 0; inode < nnodes; inode++)
+        {
             perm[inode] = inode;
             iperm[inode] = inode;
         }
     }
 
-    __HOST__ void get_transpose_bsr_data() {
+    __HOST__ void get_transpose_bsr_data()
+    {
         // get symbolic rowPtr, colPtr locations for transpose matrix using
         // sparse_utils.h
 
@@ -176,9 +195,11 @@ class BsrData {
 
         index_t *temp_col_local_block_ind_ctr = new index_t[nnodes];
         memset(temp_col_local_block_ind_ctr, 0, nnodes * sizeof(index_t));
-        for (int block_row = 0; block_row < nnodes; block_row++) {
+        for (int block_row = 0; block_row < nnodes; block_row++)
+        {
             for (int orig_block_ind = rowPtr[block_row];
-                 orig_block_ind < rowPtr[block_row + 1]; orig_block_ind++) {
+                 orig_block_ind < rowPtr[block_row + 1]; orig_block_ind++)
+            {
                 index_t block_col = colPtr[orig_block_ind];
 
                 // get data for transpose block map
@@ -209,7 +230,8 @@ class BsrData {
         delete[] temp_col_local_block_ind_ctr;
     }
 
-    __HOST__ BsrData createDeviceBsrData() { // deep copy each array onto the
+    __HOST__ BsrData createDeviceBsrData()
+    { // deep copy each array onto the
         BsrData new_bsr;
         new_bsr.nnzb = this->nnzb;
         new_bsr.nodes_per_elem = this->nodes_per_elem;
@@ -270,7 +292,8 @@ class BsrData {
         return new_bsr;
     }
 
-    __HOST__ BsrData createHostBsrData() { // deep copy each array onto the
+    __HOST__ BsrData createHostBsrData()
+    { // deep copy each array onto the
         BsrData new_bsr;
         new_bsr.nnzb = this->nnzb;
         new_bsr.nodes_per_elem = this->nodes_per_elem;
@@ -311,13 +334,15 @@ class BsrData {
         new_bsr.transpose_block_map = h_transpose_block_map.getPtr();
 
         // also send permutations to device
-        if (this->perm) {
+        if (this->perm)
+        {
             DeviceVec<index_t> d_perm(this->nnodes, this->perm);
             auto h_perm = d_perm.createHostVec();
             new_bsr.perm = h_perm.getPtr();
         }
 
-        if (this->iperm) {
+        if (this->iperm)
+        {
             DeviceVec<index_t> d_iperm(this->nnodes, this->iperm);
             auto h_iperm = d_iperm.createHostVec();
             new_bsr.iperm = h_iperm.getPtr();
@@ -325,7 +350,8 @@ class BsrData {
         return new_bsr;
     }
 
-    __HOST_DEVICE__ int32_t getNumValues() const {
+    __HOST_DEVICE__ int32_t getNumValues() const
+    {
         // length of values array
         return nnzb * block_dim * block_dim;
     }
@@ -345,9 +371,12 @@ class BsrData {
 // ---------------------------------------------------
 
 __HOST_DEVICE__ bool node_in_elem_conn(const int &nodes_per_elem,
-                                       const int inode, const int *elem_conn) {
-    for (int i = 0; i < nodes_per_elem; i++) {
-        if (elem_conn[i] == inode) {
+                                       const int inode, const int *elem_conn)
+{
+    for (int i = 0; i < nodes_per_elem; i++)
+    {
+        if (elem_conn[i] == inode)
+        {
             return true;
         }
     }
@@ -357,7 +386,8 @@ __HOST_DEVICE__ bool node_in_elem_conn(const int &nodes_per_elem,
 __HOST__ void get_row_col_ptrs_sparse(int nelems, int nnodes,
                                       int nodes_per_elem, const int32_t *conn,
                                       int &nnzb, index_t *&rowPtr,
-                                      index_t *&colPtr) {
+                                      index_t *&colPtr)
+{
 
     auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double, 1>(
         nelems, nnodes, nodes_per_elem, conn);
@@ -373,7 +403,8 @@ __HOST__ void get_row_col_ptrs(
     int &nnzb,        // num nonzero blocks
     index_t *&rowPtr, // array of len nnodes+1 for how many cols in each row
     index_t *&colPtr  // array of len nnzb of the column indices for each block
-) {
+)
+{
 
     // could launch a kernel to do this somewhat in parallel?
 
@@ -384,12 +415,16 @@ __HOST__ void get_row_col_ptrs(
     std::vector<index_t> _colPtr;
 
     // loop over each block row checking nz values
-    for (int inode = 0; inode < nnodes; inode++) {
+    for (int inode = 0; inode < nnodes; inode++)
+    {
         std::vector<index_t> temp;
-        for (int ielem = 0; ielem < nelems; ielem++) {
+        for (int ielem = 0; ielem < nelems; ielem++)
+        {
             const int *elem_conn = &conn[ielem * nodes_per_elem];
-            if (node_in_elem_conn(nodes_per_elem, inode, elem_conn)) {
-                for (int in = 0; in < nodes_per_elem; in++) {
+            if (node_in_elem_conn(nodes_per_elem, inode, elem_conn))
+            {
+                for (int in = 0; in < nodes_per_elem; in++)
+                {
                     temp.push_back(elem_conn[in]);
                 }
             }
@@ -419,7 +454,8 @@ __HOST__ void get_row_col_ptrs(
 
 __HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
                                   index_t *&rowPtr, index_t *&colPtr,
-                                  double fill_factor, const bool print) {
+                                  double fill_factor, const bool print)
+{
 
     // fillin without reordering (results in more nonzeros, no permutations)
 
@@ -429,7 +465,8 @@ __HOST__ void sparse_utils_fillin(const int &nnodes, int &nnzb,
 
     nnzb = SparseUtils::CSRFactorSymbolic(nnodes, rowPtr, colPtr, _rowPtr,
                                           _colPtr);
-    if (print) {
+    if (print)
+    {
         printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
                "%d NZ\n",
                fill_factor, nnzb_old, nnzb);
@@ -455,7 +492,8 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
                                             index_t *&rowPtr, index_t *&colPtr,
                                             index_t *&perm, index_t *&iperm,
                                             double fill_factor,
-                                            const bool print) {
+                                            const bool print)
+{
 
     // printf("pre-fillin: rowPtr: ");
     // printVec<int>(nnodes + 1, rowPtr);
@@ -473,16 +511,20 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
     auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
 
     // delete previous pointers here
-    if (rowPtr) {
+    if (rowPtr)
+    {
         delete[] rowPtr;
     }
-    if (colPtr) {
+    if (colPtr)
+    {
         delete[] colPtr;
     }
-    if (perm) {
+    if (perm)
+    {
         delete[] perm;
     }
-    if (iperm) {
+    if (iperm)
+    {
         delete[] iperm;
     }
 
@@ -506,7 +548,8 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
     // printf("perm: ");
     // printVec<int32_t>(nnodes, perm);
 
-    if (print) {
+    if (print)
+    {
         printf("\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
                "%d NZ\n",
                fill_factor, nnzb_old, nnzb);
@@ -600,16 +643,20 @@ __HOST__ void sparse_utils_reordered_fillin(const int &nnodes, int &nnzb,
 // }
 
 __HOST__ int getBandWidth(const int &nnodes, const int &nnzb, int *rowPtr,
-                          int *colPtr) {
+                          int *colPtr)
+{
     // need to compute bandwidth for q-ordering
     // bandwidth = max_{a_ij neq 0} |i - j|   ( so max off-diagonal distance
     // within sparsity pattern)
     int bandwidth = 0;
-    for (int i = 0; i < nnodes; i++) {
-        for (int jp = rowPtr[i]; jp < rowPtr[i + 1]; jp++) {
+    for (int i = 0; i < nnodes; i++)
+    {
+        for (int jp = rowPtr[i]; jp < rowPtr[i + 1]; jp++)
+        {
             int j = colPtr[jp];
             int diff = abs(i - j);
-            if (diff > bandwidth) {
+            if (diff > bandwidth)
+            {
                 bandwidth = diff;
             }
         }
@@ -624,7 +671,8 @@ __HOST__ int getBandWidth(const int &nnodes, const int &nnzb, int *rowPtr,
 //   levs == The level set of the entry
 // */
 __HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
-                          int levFill, double fill, int **_levs) {
+                          int levFill, double fill, int **_levs)
+{
     int nrows = nnodes; // Record the number of rows/columns
     int ncols = nnodes;
 
@@ -645,14 +693,17 @@ __HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
     int *rlevs = new int[ncols];
     int *rcols = new int[ncols];
 
-    for (int i = 0; i < nrows; i++) {
+    for (int i = 0; i < nrows; i++)
+    {
         int nr = 0; // Number of entries in the current row
 
         // Add the matrix elements to the current row of the matrix.
         // These new elements are sorted.
         int diag_flag = 0;
-        for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
-            if (colPtr[j] == i) {
+        for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++)
+        {
+            if (colPtr[j] == i)
+            {
                 diag_flag = 1;
             }
             rcols[nr] = colPtr[j];
@@ -661,14 +712,16 @@ __HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
         }
 
         // No diagonal element associated with row i, add one!
-        if (!diag_flag) {
+        if (!diag_flag)
+        {
             nr = TacsMergeSortedArrays(nr, rcols, 1, &i);
         }
 
         // Now, perform the symbolic factorization -- this generates new entries
         int j = 0;
         for (; rcols[j] < i;
-             j++) {              // For entries in this row, before the diagonal
+             j++)
+        {                        // For entries in this row, before the diagonal
             int clev = rlevs[j]; // the level of fill for this entry
 
             int p = j + 1;                  // The index into rcols
@@ -676,23 +729,30 @@ __HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
 
             // Start with the first entry after the diagonal in row, cols[j]
             // k is the index into cols for row cols[j]
-            for (int k = diag[rcols[j]] + 1; k < k_end; k++) {
+            for (int k = diag[rcols[j]] + 1; k < k_end; k++)
+            {
                 // Increment p to an entry where we may have cols[k] == rcols[p]
-                while (p < nr && rcols[p] < cols[k]) {
+                while (p < nr && rcols[p] < cols[k])
+                {
                     p++;
                 }
 
                 // The element already exists, check if it has a lower level of
                 // fill and update the fill level if necessary
-                if (p < nr && rcols[p] == cols[k]) {
-                    if (rlevs[p] > (clev + levs[k] + 1)) {
+                if (p < nr && rcols[p] == cols[k])
+                {
+                    if (rlevs[p] > (clev + levs[k] + 1))
+                    {
                         rlevs[p] = clev + levs[k] + 1;
                     }
-                } else if ((clev + levs[k] + 1) <= levFill) {
+                }
+                else if ((clev + levs[k] + 1) <= levFill)
+                {
                     // The element does not exist but should since the level of
                     // fill is low enough. Insert the new entry into the list,
                     // but keep the list sorted
-                    for (int n = nr; n > p; n--) {
+                    for (int n = nr; n > p; n--)
+                    {
                         rlevs[n] = rlevs[n - 1];
                         rcols[n] = rcols[n - 1];
                     }
@@ -705,9 +765,11 @@ __HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
         }
 
         // Check if the size will be exceeded by adding the new elements
-        if (size + nr > max_size) {
+        if (size + nr > max_size)
+        {
             int mat_ext = (int)((fill - 1.0) * mat_size);
-            if (nr > mat_ext) {
+            if (nr > mat_ext)
+            {
                 mat_ext = nr;
             }
             max_size = max_size + mat_ext;
@@ -716,7 +778,8 @@ __HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
         }
 
         // Now, put the new entries into the cols/levs arrays
-        for (int k = 0; k < nr; k++) {
+        for (int k = 0; k < nr; k++)
+        {
             cols[size] = rcols[k];
             levs[size] = rlevs[k];
             size++;
@@ -727,11 +790,13 @@ __HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr,
     }
 
     // Clip the cols array to the correct size
-    if (max_size > size) {
+    if (max_size > size)
+    {
         TacsExtendArray(&cols, size, size);
     }
 
-    if (rowPtr[nrows] > 0) {
+    if (rowPtr[nrows] > 0)
+    {
         int rank = 0;
         // MPI_Comm_rank(comm, &rank);
         printf("[%d] BCSRMat: ILU(%d) Input fill ratio %4.2f, actual "
@@ -761,7 +826,8 @@ __HOST__ void get_elem_ind_map(
     const int &nnzb,  // num nonzero blocks
     index_t *&rowPtr, // array of len nnodes+1 for how many cols in each row
     index_t *&colPtr, // array of len nnzb of the column indices for each block
-    index_t *&perm, index_t *&elemIndMap) {
+    index_t *&perm, index_t *&elemIndMap)
+{
 
     int nodes_per_elem2 = nodes_per_elem * nodes_per_elem;
 
@@ -779,7 +845,8 @@ __HOST__ void get_elem_ind_map(
     elemIndMap = new index_t[nelems * nodes_per_elem2]();
     // elemIndMap is nelems x 4 x 4 array for nodes_per_elem = 4
     // shows how to add each block matrix into global
-    for (int ielem = 0; ielem < nelems; ielem++) {
+    for (int ielem = 0; ielem < nelems; ielem++)
+    {
 
         const int32_t *local_conn = &conn[nodes_per_elem * ielem];
 
@@ -791,7 +858,8 @@ __HOST__ void get_elem_ind_map(
         // std::sort(sorted_conn.begin(), sorted_conn.end());
 
         // loop over each block row
-        for (int n = 0; n < nodes_per_elem; n++) {
+        for (int n = 0; n < nodes_per_elem; n++)
+        {
             // int global_node_row = sorted_conn[n];
             int32_t _global_node_row = local_conn[n];
             int32_t global_node_row = perm[_global_node_row];
@@ -800,15 +868,18 @@ __HOST__ void get_elem_ind_map(
             int col_iend = rowPtr[global_node_row + 1];
 
             // loop over each block col
-            for (int m = 0; m < nodes_per_elem; m++) {
+            for (int m = 0; m < nodes_per_elem; m++)
+            {
                 // int global_node_col = sorted_conn[m];
                 int32_t _global_node_col = local_conn[m];
                 int32_t global_node_col = perm[_global_node_col];
 
                 // find the matching indices in colPtr for the global_node_col
                 // of this elem_conn
-                for (int i = col_istart; i < col_iend; i++) {
-                    if (colPtr[i] == global_node_col) {
+                for (int i = col_istart; i < col_iend; i++)
+                {
+                    if (colPtr[i] == global_node_col)
+                    {
                         // add this component of block kelem matrix into
                         // elem_ind_map
                         int nm = nodes_per_elem * n + m;
