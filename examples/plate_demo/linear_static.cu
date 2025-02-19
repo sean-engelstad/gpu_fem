@@ -62,7 +62,7 @@ int main(void) {
     assembler.apply_bcs(loads, true);
     
     // now do cusparse solve on linear static analysis
-    CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln, true);
+    CUSPARSE::direct_LU_solve_old2<T>(kmat, loads, soln, true);
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate.vtk");
     

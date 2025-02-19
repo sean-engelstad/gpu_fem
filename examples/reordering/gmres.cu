@@ -258,7 +258,112 @@ int main(void)
     // build the preconditioner with ILU(k) and reordered rowPtr, colPtr (qordering)
     auto precond = Preconditioner<VecType<T>>(precond_mat, kmat);
 
-    // preconditioner ILU(0) factorization in cusparse (equiv to ILU(k) factor because of ILU(k) sparsity)
+    // cusparse solve section
+    // -------------------------------------------------
+
+    // (1) compute the ILU(0) preconditioner on GPU 
+    // in the ILU(k) fill pattern (so equiv to ILU(k) preconditioner)
+    // -------------------
+
+    precond.copyValues();
+    double *precond_vals = precond_mat.getPtr();
+
+    // Initialize the cuda cusparse handle
+    cusparseHandle_t handle;
+    cusparseCreate(&handle);
+    cusparseStatus_t status;
+
+    cusparseMatDescr_t descr_M = 0;
+    cusparseMatDescr_t descr_L = 0;
+    cusparseMatDescr_t descr_U = 0;
+    bsrilu02Info_t info_M = 0;
+    bsrsv2Info_t info_L = 0;
+    bsrsv2Info_t info_U = 0;
+    int pBufferSize_M;
+    int pBufferSize_L;
+    int pBufferSize_U;
+    int pBufferSize;
+    void *pBuffer = 0;
+    int structural_zero;
+    int numerical_zero;
+    const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
+    const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    const cusparseOperation_t trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
+
+    // step 1: create a descriptor which contains
+    cusparseCreateMatDescr(&descr_M);
+    cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO);
+    cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseCreateMatDescr(&descr_L);
+    cusparseSetMatIndexBase(descr_L, CUSPARSE_INDEX_BASE_ZERO);
+    cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseSetMatFillMode(descr_L, CUSPARSE_FILL_MODE_LOWER);
+    cusparseSetMatDiagType(descr_L, CUSPARSE_DIAG_TYPE_UNIT);
+    cusparseCreateMatDescr(&descr_U);
+    cusparseSetMatIndexBase(descr_U, CUSPARSE_INDEX_BASE_ZERO);
+    cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseSetMatFillMode(descr_U, CUSPARSE_FILL_MODE_UPPER);
+    cusparseSetMatDiagType(descr_U, CUSPARSE_DIAG_TYPE_NON_UNIT);
+
+    // step 2: create a empty info structure
+    // we need one info for bsrilu02 and two info's for bsrsv2
+    cusparseCreateBsrilu02Info(&info_M);
+    cusparseCreateBsrsv2Info(&info_L);
+    cusparseCreateBsrsv2Info(&info_U);
+
+    // step 3: query how much memory used in bsrilu02 and bsrsv2, and
+    // allocate the buffer
+    cusparseDbsrilu02_bufferSize(handle, dir, mb, nnzb, descr_M, precond_vals,
+                                 rowPtr, colPtr, blockDim, info_M,
+                                 &pBufferSize_M);
+    cusparseDbsrsv2_bufferSize(handle, dir, trans_L, mb, nnzb, descr_L,
+                               precond_vals, rowPtr, colPtr, blockDim,
+                               info_L, &pBufferSize_L);
+    cusparseDbsrsv2_bufferSize(handle, dir, trans_U, mb, nnzb, descr_U,
+                               precond_vals, rowPtr, colPtr, blockDim,
+                               info_U, &pBufferSize_U);
+    pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
+    // pBuffer returned by cudaMalloc is automatically aligned to 128 bytes.
+    cudaMalloc((void **)&pBuffer, pBufferSize);
+
+    // Step 4.1: ILU(0) Symbolic Analysis
+    cusparseDbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, precond_vals,
+        rowPtr, colPtr, blockDim, info_M,
+        policy_M, pBuffer);
+
+    // Step 4.2: Check for Structural Zero Pivot
+    status = cusparseXbsrilu02_zeroPivot(handle, info_M, &structural_zero);
+    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+    printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
+    }
+
+    // Step 4.3: Perform ILU(0) Numeric Factorization (M ≈ L * U)
+    cusparseDbsrilu02(handle, dir, mb, nnzb, descr_M, precond_vals, rowPtr,
+    colPtr, blockDim, info_M, policy_M, pBuffer);
+
+    // Step 4.4: Check for Numerical Zero Pivot in U
+    status = cusparseXbsrilu02_zeroPivot(handle, info_M, &numerical_zero);
+    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+    printf("block U(%d,%d) is not invertible\n", numerical_zero,
+    numerical_zero);
+    }
+
+    // Step 4.5: Analyze the Sparsity Pattern of L and U for Triangular Solves
+    cusparseDbsrsv2_analysis(handle, dir, trans_L, mb, nnzb, descr_L, precond_vals,
+        rowPtr, colPtr, blockDim, info_L,
+        policy_L, pBuffer);
+    cusparseDbsrsv2_analysis(handle, dir, trans_U, mb, nnzb, descr_U, precond_vals,
+        rowPtr, colPtr, blockDim, info_U,
+        policy_U, pBuffer);
+
+    // (2) implement GMRES solver
+    // -------------------
+
+    
+    
     // implement matrix-vec products (K un-filled in), preconditioner solve M^-1 x
     // write GMRES algorithm (running with data on GPU)
 

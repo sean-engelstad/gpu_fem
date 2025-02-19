@@ -1,6 +1,6 @@
 #include "bsr_mat.h"
 
-template <class Vec_> class Preconditioner {
+template <class Vec_> class ILUk_Preconditioner {
   public:
     using Vec = typename Vec_;
     using T = typename Vec::type;
@@ -30,12 +30,15 @@ template <class Vec_> class Preconditioner {
     Preconditioner(BsrMat &my_precond_mat, BsrMat &orig_mat, bool print)
         : precond_mat(my_precond_mat), mat(orig_mat), print(print) {}
 
+    void copyValues() { mat.copyValuesTo(precond_mat); }
+
     void factor() {
-        mat.copyValues(precond_mat);
+        mat.copyValuesTo(precond_mat);
 
         // call ILU(0) factorization in cusparse probably..
         // on ILU(k) nz's so that the numeric is ILU(k) factorization
-        precond_mat.numeric_ilu0();
+
+        // CUSPARSE::numeric_ilu0(precond_mat);
     }
 
   private:

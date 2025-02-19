@@ -147,7 +147,7 @@ template <class Vec_> class BsrMat {
 #endif // USE_GPU
     }
 
-    void copyValues(BsrMat<Vec> mat) {
+    void copyValuesTo(BsrMat<Vec> mat) {
         // copy values from this matrix to another matrix 'mat'
         // assume the other matrix has same nz locations as this matrix but
         // possibly more for preconditioner
