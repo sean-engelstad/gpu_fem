@@ -1,5 +1,7 @@
 import numpy as np
 import scipy.sparse.linalg as spla
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 def givens_rotation(a, b):
     """Compute the Givens rotation matrix parameters (c, s) such that:
@@ -8,6 +10,7 @@ def givens_rotation(a, b):
     """
     if b == 0:
         return 1.0, 0.0
+    # this part doesn't make sense to me..
     elif abs(b) > abs(a):
         tau = -a / b
         s = 1 / np.sqrt(1 + tau**2)
@@ -76,35 +79,78 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
         V[:, 0] = r / beta
         g[0] = beta
 
+        print(f"GMRES : outer iter {_} resid {beta=}")
+
         for j in range(restart):
             w = A @ V[:, j]
             w = M_inv(w)  # Apply preconditioner if given
 
-            # Modified Gram-Schmidt Orthogonalization
+            # Gram-Schmidt with reorthogonalization
             for i in range(j + 1):
                 H[i, j] = np.dot(V[:, i], w)
                 w -= H[i, j] * V[:, i]
 
+            # Reorthogonalization step (fixes numerical loss of orthogonality)
+            # optional => can improve numerical stability
+            # for i in range(j + 1):
+            #     correction = np.dot(V[:, i], w)
+            #     w -= correction * V[:, i]
+
             H[j+1, j] = np.linalg.norm(w)
             if H[j+1, j] == 0:
+                print("H break")
                 break
             V[:, j+1] = w / H[j+1, j]
 
-            # Apply previous Givens rotations
-            apply_givens_rotation(H, cs, ss, j)
+            givens_option = 2
 
-            # Compute new Givens rotation
-            cs[j], ss[j] = givens_rotation(H[j, j], H[j+1, j])
-            H[j, j] = cs[j] * H[j, j] + ss[j] * H[j+1, j]
-            H[j+1, j] = 0.0
+            if givens_option == 1:
+                # there is a mistake in the givens rotations from this one
+                # I found the correction in the way we compute givens_rotation(H1, H2)
+                # correction on p. 162 of Saad for Sparse Iterative Methods
 
-            # Apply rotation to g
-            g[j+1] = -ss[j] * g[j]
-            g[j] = cs[j] * g[j]
+                # Apply previous Givens rotations
+                apply_givens_rotation(H, cs, ss, j)
+
+                # Compute new Givens rotation
+                cs[j], ss[j] = givens_rotation(H[j, j], H[j+1, j])
+                H[j, j] = cs[j] * H[j, j] + ss[j] * H[j+1, j]
+                H[j+1, j] = 0.0
+
+                # Apply rotation to g
+                g[j+1] = -ss[j] * g[j]
+                g[j] = cs[j] * g[j]
+
+            else:
+
+                # so far all checks out against my old HW3 iterative methods code
+                # alternative code from above block:
+
+                for i in range(j):
+                    temp = H[i,j]
+                    H[i,j] = cs[i] * H[i,j] + ss[i] * H[i+1,j]
+                    H[i+1,j] = -ss[i] * temp + cs[i] * H[i+1,j]
+
+                cs[j] = H[j,j] / np.sqrt(H[j,j]**2 + H[j+1,j]**2)
+                ss[j] = cs[j] * H[j+1,j] / H[j,j]
+
+                g_temp = g[j]
+                g[j] *= cs[j]
+                g[j+1] = -ss[j] * g_temp
+                # print(f"{cs[j]=}")
+                # print(f"{g[j]=}")
+
+                H[j,j] = cs[j] * H[j,j] + ss[j] * H[j+1,j]
+                H[j+1,j] = 0.0
 
             # Check convergence
             if abs(g[j+1]) < tol:
+                print("g break")
                 break
+
+        # debugging check if hessenberg matrix is zero in correct spots
+        # plt.imshow(H[:n+1,:n])
+        # plt.show()
 
         # Solve the upper triangular system H * y = g
         y = np.linalg.solve(H[:j+1, :j+1], g[:j+1])
@@ -117,5 +163,23 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
         beta = np.linalg.norm(r)
         if beta < tol:
             break
+    
+    print(f"final resid {beta=}")
 
     return x
+
+if __name__=="__main__":
+    n = 100
+    d = 5
+    A = np.random.rand(n,n) + d * np.eye(n)
+    A /= d
+    b = np.random.rand(n)
+
+    x = gmres(A, b, restart=n)
+    xtruth = np.linalg.solve(A, b)
+    err = np.linalg.norm(x - xtruth)
+    print(f"{err=}")
+
+    # compare to scipy's gmres solver
+    x_scipy, info = spla.gmres(A, b, rtol=1e-8, restart=50)
+    print(f"SciPy GMRES Residual: {np.linalg.norm(b - A @ x_scipy)}")

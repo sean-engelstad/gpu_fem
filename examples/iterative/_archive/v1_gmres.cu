@@ -6,6 +6,10 @@
 #include <iostream>
 
 /**
+
+this version of the code doesn't work because all SpSV operations like buffers
+don't work for BSR matrices (they are deprecating it which is dumb)
+
 Important links in cublas and cusparse:
 (you can ctrl+F for the routines and their syntax/args in here)
 
@@ -20,23 +24,14 @@ cusparse: https://docs.nvidia.com/cuda/cusparse/
 int main(void)
 {
 
-    // problem size (computational size)
-    // ---------------------
-    int nxe = 10;
-
     // reordering inputs
     // ---------------------
 
     bool perform_rcm = true;
     bool perform_qordering = true;
-    double qorder_p = 0.5; // lower p value 0.5, 1.0, 2.0
+    double qorder_p = 2.0; // lower p value
     bool perform_ilu = true;
     int levFill = 3; // ILU(k) fill level 0,1,2,3
-
-    // GMRES inputs
-    // ---------------------
-    int m = 2; // number of GMRES iterations
-    double tolerance = 1e-11;
 
     // ----------------------
 
@@ -56,7 +51,7 @@ int main(void)
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    // int nxe = 30; // 100
+    int nxe = 10; // 100
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler =
@@ -267,16 +262,14 @@ int main(void)
     // check if perm was destroyed here..
     // printf("check perm: ");
     // printVec<int>(nnodes, final_perm);
-
-    // NOTE : flips the order of perm, iperm when storing in the kmat (because I use reverse convention in my code)
     
     // TODO: clean up all of the above and move into main repos
-    // update kmat bsr data with reordering (flipped perm, iperm here bc flipped convention)
-    bsr_data.post_reordering_update(kmat_nnzb, kmat_rowPtr, kmat_colPtr, final_iperm, final_perm);
+    // update kmat bsr data with reordering
+    bsr_data.post_reordering_update(kmat_nnzb, kmat_rowPtr, kmat_colPtr, final_perm, final_iperm);
     // printf("checkpt0.5\n");
 
-    // make the bsr data for the preconditioner (flipped perm, iperm here bc flipped convention)
-    auto precond_bsr_data = BsrData(nnodes, 6, nnzb, rowPtr, colPtr, final_iperm, final_perm);
+    // make the bsr data for the preconditioner
+    auto precond_bsr_data = BsrData(nnodes, 6, nnzb, rowPtr, colPtr, final_perm, final_iperm);
 
     // printf("kmat_nnzb = %d\n", kmat_nnzb);
     // printf("kmat rowPtr:");
@@ -301,11 +294,7 @@ int main(void)
     auto res = assembler.createVarsVec();
     auto soln = assembler.createVarsVec();
     double Q = 1.0; // load magnitude
-    // sine distributed loads
-    T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
-
-    // printf("my_loads: ");
-    // printVec<double>(100, my_loads);
+    T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
 
     // add jacobian and apply bcs
     double print = true;
@@ -358,8 +347,8 @@ int main(void)
     int *dk_cols = d_bsr_data.colPtr;
 
     int ct = 0;
-    // ct++;
-    // printf("checkpt%d\n", ct);
+    ct++;
+    printf("checkpt%d\n", ct);
 
     // auto h_precond_vals = precond_mat.getVec().createHostVec();
     // printf("precond vals\n");
@@ -375,8 +364,8 @@ int main(void)
     cublasHandle_t cublasHandle = NULL;
     CHECK_CUBLAS(cublasCreate(&cublasHandle));
 
-    // ct++;
-    // printf("checkpt%d\n", ct);
+    ct++;
+    printf("checkpt%d\n", ct);
 
     // Setup ILU preconditioner
     bsrilu02Info_t iluInfo;
@@ -390,16 +379,16 @@ int main(void)
         dp_rowp, dp_cols, block_dim, iluInfo, &bufferSize));
     CHECK_CUDA(cudaMalloc(&buffer, bufferSize));
 
-    // ct++;
-    // printf("checkpt%d\n", ct);
+    ct++;
+    printf("checkpt%d\n", ct);
 
     // Analyze ILU(0) structure for efficient numeric factorization
     CHECK_CUSPARSE(cusparseDbsrilu02_analysis(
         cusparseHandle, CUSPARSE_DIRECTION_ROW, mb, nnzb, descr, precond_vals,
         dp_rowp, dp_cols, block_dim, iluInfo, policy, buffer));
 
-    // ct++;
-    // printf("checkpt%d\n", ct); // doesn't reach this checkpoint
+    ct++;
+    printf("checkpt%d\n", ct); // doesn't reach this checkpoint
 
     // numeric ILU(0) factorization (in-place on precond_vals)
     CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, CUSPARSE_DIRECTION_ROW, mb,
@@ -413,111 +402,63 @@ int main(void)
         printf("Block U(%d, %d) is not invertible (zero pivot detected)\n", numerical_zero, numerical_zero);
     }
 
-    // ct++;
-    // printf("checkpt%d\n", ct);
+    ct++;
+    printf("checkpt%d\n", ct);
 
     // Define matrix descriptors
-    // cusparseIndexBase_t baseIdx = CUSPARSE_INDEX_BASE_ZERO;
-    // cusparseSpMatDescr_t matL, matU;
+    cusparseIndexBase_t baseIdx = CUSPARSE_INDEX_BASE_ZERO;
+    cusparseSpMatDescr_t matA, matL, matU;
 
     // Create original matrix descriptor A
-    cusparseMatDescr_t descrA;
-    cusparseCreateMatDescr(&descrA);
-    cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
-    // CHECK_CUSPARSE(cusparseCreateBsr(&matA, mb, mb, kmat_nnzb, block_dim, block_dim, 
-    //     dk_rowp, dk_cols, kmat_vals, 
-    //     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, 
-    //     baseIdx, CUDA_R_64F, CUSPARSE_ORDER_ROW));
+    CHECK_CUSPARSE(cusparseCreateBsr(&matA, mb, mb, kmat_nnzb, block_dim, block_dim, 
+        dk_rowp, dk_cols, kmat_vals, 
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, 
+        baseIdx, CUDA_R_64F, CUSPARSE_ORDER_ROW));
+
+    // Extract L
+    int *d_L_rowPtr = dp_rowp;
+    int *d_L_colInd = dp_cols;
+    double *d_L_values = precond_vals; // L is stored in d_values (in-place ILU)
+
+    // Create L matrix descriptor
+    CHECK_CUSPARSE(cusparseCreateBsr(&matL, mb, mb, nnzb, block_dim, block_dim, 
+                                    d_L_rowPtr, d_L_colInd, d_L_values, 
+                                    CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, 
+                                    baseIdx, CUDA_R_64F, CUSPARSE_ORDER_ROW));
+
+    cusparseFillMode_t fill_lower = CUSPARSE_FILL_MODE_LOWER;
+    cusparseDiagType_t diag_non_unit = CUSPARSE_DIAG_TYPE_UNIT;
+    CHECK_CUSPARSE(cusparseSpMatSetAttribute(matL, CUSPARSE_SPMAT_FILL_MODE, 
+                                            &fill_lower, sizeof(fill_lower)));
+    CHECK_CUSPARSE(cusparseSpMatSetAttribute(matL, CUSPARSE_SPMAT_DIAG_TYPE, 
+                                            &diag_non_unit, sizeof(diag_non_unit)));
 
 
-    // Initialize the cuda cusparse handle
-    // Constant scalar coefficienct
-    const double alpha = 1.0;
+    // Extract U (diagonal elements must be stored explicitly)
+    int *d_U_rowPtr = dp_rowp;
+    int *d_U_colInd = dp_cols;
+    double *d_U_values = precond_vals; // U is also stored in d_values
 
-    cusparseMatDescr_t descr_M = 0, descr_L = 0, descr_U = 0;
-    bsrilu02Info_t info_M = 0;
-    bsrsv2Info_t info_L = 0, info_U = 0;
-    int pBufferSize_M, pBufferSize_L, pBufferSize_U, pBufferSize;
-    void *pBuffer = 0;
-    int structural_zero;
-    const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
-    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
-    const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
-    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE;
-    const cusparseOperation_t trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
-    const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
+    // Create U matrix descriptor
+    CHECK_CUSPARSE(cusparseCreateBsr(&matU, mb, mb, nnzb, block_dim, block_dim, 
+                                    d_U_rowPtr, d_U_colInd, d_U_values, 
+                                    CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, 
+                                    baseIdx, CUDA_R_64F, CUSPARSE_ORDER_ROW));
 
-    // step 1: create a descriptor which contains
-    cusparseCreateMatDescr(&descr_M);
-    cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL);
-
-    cusparseCreateMatDescr(&descr_L);
-    cusparseSetMatIndexBase(descr_L, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatFillMode(descr_L, CUSPARSE_FILL_MODE_LOWER);
-    cusparseSetMatDiagType(descr_L, CUSPARSE_DIAG_TYPE_UNIT);
-    
-    cusparseCreateMatDescr(&descr_U);
-    cusparseSetMatIndexBase(descr_U, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatFillMode(descr_U, CUSPARSE_FILL_MODE_UPPER);
-    cusparseSetMatDiagType(descr_U, CUSPARSE_DIAG_TYPE_NON_UNIT);
-
-    // step 2: create a empty info structure
-    // we need one info for bsrilu02 and two info's for bsrsv2
-    cusparseCreateBsrilu02Info(&info_M);
-    cusparseCreateBsrsv2Info(&info_L);
-    cusparseCreateBsrsv2Info(&info_U);
-
-    // step 3: query how much memory used in bsrilu02 and bsrsv2, and
-    // allocate the buffer
-    cusparseDbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
-                                 dp_rowp, dp_cols, block_dim, info_M,
-                                 &pBufferSize_M);
-    cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_L, mb, nnzb, descr_L,
-        precond_vals, dp_rowp, dp_cols, block_dim,
-                               info_L, &pBufferSize_L);
-    cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_U, mb, nnzb, descr_U,
-        precond_vals, dp_rowp, dp_cols, block_dim,
-                               info_U, &pBufferSize_U);
-    pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
-    // pBuffer returned by cudaMalloc is automatically aligned to 128 bytes.
-    cudaMalloc((void **)&pBuffer, pBufferSize);
-
-    // analyze ILU structure of M
-    cusparseDbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
-                               dp_rowp, dp_cols, block_dim, info_M,
-                               policy_M, pBuffer);
-    status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
-    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
-        printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
-    }
-
-    // perform ILU numerical factorization in M
-    cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals, dp_rowp,
-        dp_cols, block_dim, info_M, policy_M, pBuffer);
-    status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
-    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
-        printf("block U(%d,%d) is not invertible\n", numerical_zero,
-                numerical_zero);
-    }
-
-    // analyze sparsity pattern of L and U for later triangular solves
-    cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L, 
-                            precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-                             policy_L, pBuffer);
-    cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U, 
-                            precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-                             policy_U, pBuffer);
-    
+    cusparseFillMode_t fill_upper = CUSPARSE_FILL_MODE_UPPER;
+    cusparseDiagType_t diag_non_unit_U = CUSPARSE_DIAG_TYPE_NON_UNIT;
+    CHECK_CUSPARSE(cusparseSpMatSetAttribute(matU, CUSPARSE_SPMAT_FILL_MODE, 
+                                            &fill_upper, sizeof(fill_upper)));
+    CHECK_CUSPARSE(cusparseSpMatSetAttribute(matU, CUSPARSE_SPMAT_DIAG_TYPE, 
+                                            &diag_non_unit_U, sizeof(diag_non_unit_U)));
 
     // (2) implement GMRES solver
     // -------------------
 
-    // need to permute loads to rhs (so we account for reordering)
-    DeviceVec<T> rhs = bsr_pre_solve<DeviceVec<T>>(kmat, loads, soln);
+    // settings
+    int m = 100; // number of GMRES iterations
+    double tolerance = 1e-11;
+
 
     // create vector descriptor types
     cusparseDnVecDescr_t d_X, d_B, d_tmp1, d_tmp2, d_tmp3, d_R;
@@ -525,56 +466,64 @@ int main(void)
     auto tmp1 = assembler.createVarsVec();
     auto tmp2 = assembler.createVarsVec();
     auto tmp3 = assembler.createVarsVec();
-    auto w = assembler.createVarsVec();
     int nvars = resid.getSize();
 
     double* resid_ptr = resid.getPtr();
     double* tmp1_ptr = tmp1.getPtr();
     double* tmp2_ptr = tmp2.getPtr();
     double* tmp3_ptr = tmp3.getPtr();
-    double* w_ptr = w.getPtr();
     double *soln_ptr = soln.getPtr();
 
     double one = 1.0, zero = 0.0, minus_one = -1.0;
 
     // Create vector descriptors
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_X, mb * block_dim, soln.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_B, mb * block_dim, loads.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp1, mb * block_dim, tmp1.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp2, mb * block_dim, tmp2.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp3, mb * block_dim, tmp3.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_R, mb * block_dim, resid.getPtr(), CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&d_X, mb * block_dim, soln.getPtr(), CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&d_B, mb * block_dim, loads.getPtr(), CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp1, mb * block_dim, tmp1.getPtr(), CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp2, mb * block_dim, tmp2.getPtr(), CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp3, mb * block_dim, tmp3.getPtr(), CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&d_R, mb * block_dim, resid.getPtr(), CUDA_R_64F));
 
     // compute initial resid = b - A * x0
-    rhs.copyValuesTo(resid); // copies b into resid
-
-    // auto h_resid = resid.createHostVec();
-    // printf("h_resid: ");
-    // printVec<double>(100, h_resid.getPtr());
-
-    // auto h_loads = loads.createHostVec();
-    // printf("h_loads: ");
-    // printVec<double>(100, h_loads.getPtr());
-
-    // return 0;
+    loads.copyValuesTo(resid); // copies b into resid
 
     // compute resid = - A * x0 + resid
     double a = -1.0, b = 1.0;
     // computes y = a * A * x + b * y
-    CHECK_CUSPARSE(cusparseDbsrmv(
+    CHECK_CUSPARSE(cusparseBSRMV(
         cusparseHandle, 
         CUSPARSE_DIRECTION_ROW,
         CUSPARSE_OPERATION_NON_TRANSPOSE,
         mb, mb, nnzb,
-        &a, descrA,
+        &a, matA,
         kmat_vals, dk_rowp, dk_cols,
         block_dim,
         soln_ptr,
         &b,
         resid_ptr
-    ));
-    // can't do cusparseSPMV because that only works for CSR matrices
-    // can only do cusparseDbsrmv which they will soon deprecate :(
+    ))
+
+    // size_t bufferSizeA;
+    // void *d_bufferA;
+    // // need to change to using cusparseBSRMV
+    // CHECK_CUSPARSE(cusparseSpMV_bufferSize(
+    //     cusparseHandle,
+    //     CUSPARSE_OPERATION_NON_TRANSPOSE,
+    //     &minus_one,
+    //     matA,
+    //     d_X,
+    //     &one,
+    //     d_R,
+    //     CUDA_R_64F,
+    //     CUSPARSE_SPMV_ALG_DEFAULT,
+    //     &bufferSizeA
+    // ));
+    // CHECK_CUDA(cudaMalloc(&d_bufferA, bufferSizeA))
+
+    // CHECK_CUSPARSE(cusparseSpMV(cusparseHandle,
+    //     CUSPARSE_OPERATION_NON_TRANSPOSE, &minus_one,
+    //     matA, d_X, &one, d_R, CUDA_R_64F,
+    //     CUSPARSE_SPMV_ALG_DEFAULT, d_bufferA))
 
     // then copy resid into tmp1
     resid.copyValuesTo(tmp1);
@@ -588,27 +537,45 @@ int main(void)
     cusparseSpSVDescr_t spsvDescrL, spsvDescrU;
 
     //    (a) L^-1 tmp1 => tmp2    (triangular solver)
-    a = 1.0;
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_M,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-        tmp1_ptr, tmp2_ptr, policy_L, pBuffer);
+    CHECK_CUSPARSE(cusparseSpSV_createDescr(&spsvDescrL))
+    CHECK_CUSPARSE(cusparseSpSV_bufferSize(
+        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matL, d_tmp1,
+        d_tmp2, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL,
+        &bufferSizeL))
+    CHECK_CUDA(cudaMalloc(&d_bufferL, bufferSizeL))
+    CHECK_CUSPARSE(
+        cusparseSpSV_analysis(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              &one, matL, d_tmp1, d_tmp2, CUDA_R_64F,
+                              CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL, d_bufferL))
+    CHECK_CUDA(cudaMemset(d_tmp2, 0x0, m * sizeof(double)))
+    CHECK_CUSPARSE(cusparseSpSV_solve(
+        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matL, d_tmp1,
+        d_tmp2, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL))
 
     //    (b) U^-1 tmp2 => resid    (triangular solver)
-    a = 1.0;
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_M,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-        tmp2_ptr, resid_ptr, policy_U, pBuffer);
+    CHECK_CUSPARSE(cusparseSpSV_createDescr(&spsvDescrU))
+    CHECK_CUSPARSE(cusparseSpSV_bufferSize(
+        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matU, d_tmp2,
+        d_R, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU,
+        &bufferSizeU))
+    CHECK_CUDA(cudaMalloc(&d_bufferU, bufferSizeU))
+    CHECK_CUSPARSE(cusparseSpSV_analysis(
+        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matU, d_tmp2,
+        d_R, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU,
+        d_bufferU))
+    CHECK_CUDA(cudaMemset(d_R, 0x0, m * sizeof(double)))
+    CHECK_CUSPARSE(cusparseSpSV_solve(
+        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matU, d_tmp2,
+        d_R, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU))
     
-    // we have now computed resid = M^-1* (resid - A * x0)
+    // we have now computed resid = - A * x0 + resid
     
     // now compute beta = || r_0 || the initial resid norm
     double nrm_R;
-    CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, resid_ptr, 1, &nrm_R))
+    CHECK_CUBLAS(cublasDnrm2(cublasHandle, m, resid.getPtr(), 1, &nrm_R))
     double threshold = tolerance * nrm_R;
     double beta = nrm_R;
-    printf("  Initial Residual: Norm %e, threshold %e\n", nrm_R, threshold);
-
-    // return 0;
+    printf("  Initial Residual: Norm %e' threshold %e\n", nrm_R, threshold);
 
 
     // setup initial dense matrix data for V the Arnoldi basis
@@ -628,101 +595,61 @@ int main(void)
 
     // set V[:,0] = r / beta
     a = 1.0/beta, b = 0.0; // a * resid + b * tmp1 => into tmp1
-    CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, resid_ptr, 1, V[0].getPtr(), 1));
+    CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, resid_ptr, 1, tmp1_ptr, 1));
     // then copy values from tmp1 into V[:,0] 
     // (avoids needing cusparse matrix descriptors for V)
-    // tmp1.copyValuesTo(V[0]);
+    tmp1.copyValuesTo(V[0]);
 
     // set g[0] = beta (initial givens rotation)
     g[0] = beta; 
-    double nrm_debug;
 
     // loop over GMRES iterations (later can implement restarts too)
     for (int j = 0; j < m; j++) {
-
-        // zero out temporary vecs
-        w.zeroValues();
-
         
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, V[j].getPtr(), 1, &nrm_debug))
-        printf("||v[%d]|| = %.4e\n", j, nrm_debug);
-
         // compute w_j = 0 * w_j + A * v_j (v_j is tmp1 into w_j as tmp2)
-        a = 1.0, b = 0.0;
-        CHECK_CUSPARSE(cusparseDbsrmv(
-            cusparseHandle, 
-            CUSPARSE_DIRECTION_ROW,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            mb, mb, nnzb,
-            &a, descrA,
-            kmat_vals, dk_rowp, dk_cols,
-            block_dim,
-            V[j].getPtr(),
-            &b,
-            w_ptr
-        ));
-
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
-        printf("||A*v[%d]|| = %.4e\n", j, nrm_debug);
-
-        // CHECK_CUSPARSE(cusparseSpMV(cusparseHandle,
-        //     CUSPARSE_OPERATION_NON_TRANSPOSE, &minus_one,
-        //     matA, d_tmp1, &zero, d_tmp2, CUDA_R_64F,
-        //     CUSPARSE_SPMV_ALG_DEFAULT, d_bufferA))
-        // doesn't work because SpMV only works for CSR not BSR
+        CHECK_CUSPARSE(cusparseSpMV(cusparseHandle,
+            CUSPARSE_OPERATION_NON_TRANSPOSE, &minus_one,
+            matA, d_tmp1, &zero, d_tmp2, CUDA_R_64F,
+            CUSPARSE_SPMV_ALG_DEFAULT, d_bufferA))
 
         // compute w_j = U^-1 L^-1 w_j
-        // L^-1 * tmp2 => tmp3
-        a = 1.0;
-        tmp1.zeroValues(); // must always zero out the output vec for triangular solve
-        cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_M,
-            precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-            w_ptr, tmp1_ptr, policy_L, pBuffer);
-
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, tmp1_ptr, 1, &nrm_debug))
-        printf("||L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
-
-        // U^-1 * tmp3 => tmp2 (tmp2 is w)
-        a = 1.0;
-        w.zeroValues(); // must always zero out the output vec for triangular solve
-        cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_M,
-            precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-            tmp1_ptr, w_ptr, policy_U, pBuffer);
-
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
-        printf("||U^-1 * L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
+        // first L^-1 * tmp2 into tmp3
+        CHECK_CUDA(cudaMemset(d_tmp3, 0x0, m * sizeof(double)))
+        CHECK_CUSPARSE(cusparseSpSV_solve(
+            cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matL, d_tmp2,
+            d_tmp3, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL))
+        // then U^-1 * tmp3 into tmp2
+        CHECK_CUDA(cudaMemset(d_tmp2, 0x0, m * sizeof(double)))
+        CHECK_CUSPARSE(cusparseSpSV_solve(
+            cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matU, d_tmp3,
+            d_tmp2, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU))
 
         // now we have found wj = M^-1 * A * vj with wj as tmp2
+
         // recall that v_j is still in temp1 or d_tmp1 from last iteration
         
         // modified Gram-Schmidt orthogonalization
         for (int i = 0; i < j+1; i++) {
 
-            // Hij = dot(wj, vi), wj is tmp2 and vi is V[i]
-            CHECK_CUBLAS(cublasDdot(cublasHandle, m, w_ptr, 1, V[i].getPtr(), 1, &H[i * m + j]));
+            // Hij = dot(wj, vi), wj is tmp2 and vi is tmp1
+            CHECK_CUBLAS(cublasDdot(cublasHandle, m, tmp2_ptr, 1, tmp1_ptr, 1, &H[i * m + j]))
             
-            // compute wj = wj - H[i,j] * vi with vi as V[i] and wj as tmp2
+            // compute wj = wj - H[i,j] * vj with vj as tmp1 and wj as tmp2
             a = -H[i * m + j]; // a * tmp1 + b * tmp2 => into tmp2
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[i].getPtr(), 1, w_ptr, 1));;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, tmp1_ptr, 1, tmp2_ptr, 1));
         }
-
-        // reorthogonalization step
-        // for (int i = 0; i < j+1; i++) {
-        //     // correction = vi dot w
-        //     CHECK_CUBLAS(cublasDdot(cublasHandle, m, tmp2_ptr, 1, tmp1_ptr, 1, &H[i * m + j]));
-        // }
 
         // compute || wj || => into H[j+1,j] (with wj as tmp2)
         double norm_w;
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &norm_w));
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, m, tmp2_ptr, 1, &norm_w))
         H[(j+1) * m + j] = norm_w;
 
         // now compute v_{j+1} still in tmp1 as v_{j+1} = wj / H[j+1,j] with wj as tmp2
         a = 1.0/H[(j+1) * m + j], b = 0.0; // a * tmp2 => tmp2
-        CHECK_CUBLAS(cublasDscal(cublasHandle, nvars, &a, w_ptr, 1));
+        CHECK_CUBLAS(cublasDscal(cublasHandle, nvars, &a, tmp2_ptr, 1));
 
         // then copy tmp1 into V[j+1]
-        w.copyValuesTo(V[j+1]);
+        tmp2.copyValuesTo(V[j+1]);
 
         // apply given's rotations
         int k = j;
@@ -734,23 +661,18 @@ int main(void)
 
         // compute new givens rotatios on H[j,j] and H[j+1,j] into cs[j], ss[j]
         double _a = H[j * m + j], _b = H[(j+1) * m + j];
-        // if (_b == 0.0) {
-        //     cs[j] = 1.0;
-        //     ss[j] = 0.0;
-        // } else if (abs(_b) > abs(_a)) {
-        //     double tau = -_a / _b;
-        //     ss[j] = 1.0 / sqrt(1.0 + tau * tau);
-        //     cs[j] = ss[j] * tau;
-        // } else {
-        //     double tau = -_b / _a;
-        //     cs[j] = 1.0 / sqrt(1.0 + tau * tau);
-        //     ss[j] = cs[j] * tau;
-        // }
-
-        // from p. 162 of Saad
-        double hyp = sqrt(_a * _a + _b * _b);
-        cs[j] = _a / hyp;
-        ss[j] = _b / hyp;
+        if (_b == 0.0) {
+            cs[j] = 1.0;
+            ss[j] = 0.0;
+        } else if (abs(_b) > abs(_a)) {
+            double tau = -_a / _b;
+            ss[j] = 1.0 / sqrt(1.0 + tau * tau);
+            cs[j] = ss[j] * tau;
+        } else {
+            double tau = -_b / _a;
+            cs[j] = 1.0 / sqrt(1.0 + tau * tau);
+            ss[j] = cs[j] * tau;
+        }
 
         // update Hessenberg matrix with given's rotations
         H[j * m + j] = cs[j] * H[j * m + j] + ss[j] * H[(j+1) * m + j];
@@ -758,14 +680,6 @@ int main(void)
 
         g[j+1] = -ss[j] * g[j];
         g[j] = cs[j] * g[j];
-
-        printf("j = %d, g[%d] = %.4e\n", j, j+1, g[j+1]);
-        printf("\tpre zero H[%d,%d] = %.4e\n", j+1, j, _b);
-
-        if (abs(g[j+1]) < tolerance) {
-            printf("g[%d+1] = %.4e so break\n", j, tolerance);
-            break;
-        }
     }
 
     // extract the m x m triangular part of H out of it on the host
@@ -780,6 +694,7 @@ int main(void)
     double *d_y = y.getPtr();
 
     // solve the upper triangular system H * y = g
+    const double alpha = 1.0;
     // d_H was stored row-major use CUBLAS_OP_T to transpose it to column-major (the assumed storage)
     cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, 
                 CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, 
@@ -792,56 +707,36 @@ int main(void)
     
     for (int j = 0; j < m; j++) {
         // copy vj into tmp1
-        // V[j].copyValuesTo(tmp1);
+        V[j].copyValuesTo(tmp1);
 
         a = h_y[j]; // y[j] * tmp1 + d_soln => into d_soln
-        CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[j].getPtr(), 1, soln_ptr, 1));
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, tmp1_ptr, 1, soln.getPtr(), 1));
     }
 
     // compute residual again
     loads.copyValuesTo(resid); // copies b into resid
 
     // compute resid = - A * x0 + resid
-    a = -1.0, b = 1.0;
-    CHECK_CUSPARSE(cusparseDbsrmv(
-        cusparseHandle, 
-        CUSPARSE_DIRECTION_ROW,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        mb, mb, nnzb,
-        &a, descrA,
-        kmat_vals, dk_rowp, dk_cols,
-        block_dim,
-        soln_ptr,
-        &b,
-        resid_ptr
-    ));
+    CHECK_CUSPARSE(cusparseSpMV(cusparseHandle,
+        CUSPARSE_OPERATION_NON_TRANSPOSE, &minus_one,
+        matA, d_X, &one, d_R, CUDA_R_64F,
+        CUSPARSE_SPMV_ALG_DEFAULT, d_bufferA))
 
-    // CHECK_CUSPARSE(cusparseSpMV(cusparseHandle,
-    //     CUSPARSE_OPERATION_NON_TRANSPOSE, &minus_one,
-    //     matA, d_X, &one, d_R, CUDA_R_64F,
-    //     CUSPARSE_SPMV_ALG_DEFAULT, d_bufferA))
-
+    // then also pre-multiply by the preconditioner? U^-1 L^-1
     // L^-1 * resid => tmp2
-    a = 1.0;
-    tmp2.zeroValues(); // must always zero out the output vec for triangular solve
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_M,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-        resid_ptr, tmp2_ptr, policy_L, pBuffer);
-
-    // U^-1 * tmp2 => resid
-    a = 1.0;
-    resid.zeroValues(); // must always zero out the output vec for triangular solve
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_M,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-        tmp2_ptr, resid_ptr, policy_U, pBuffer);
+    CHECK_CUDA(cudaMemset(d_tmp2, 0x0, m * sizeof(double)))
+        CHECK_CUSPARSE(cusparseSpSV_solve(
+            cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matL, d_R,
+            d_tmp2, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL))
+    // then U^-1 * tmp2 into resid
+    CHECK_CUDA(cudaMemset(d_R, 0x0, m * sizeof(double)))
+    CHECK_CUSPARSE(cusparseSpSV_solve(
+        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, matU, d_tmp2,
+        d_R, CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU))
 
     // compute new resid norm
     double final_nrm_R;
-    CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, resid_ptr, 1, &final_nrm_R));
-    printf("  Final Residual: Norm %e' threshold %e\n", final_nrm_R, threshold);
-
-    // now we can permute the solution back to get correct answer (so now soln is inv permuted again)
-    bsr_post_solve<DeviceVec<T>>(kmat, rhs, soln);
+    CHECK_CUBLAS(cublasDnrm2(cublasHandle, m, resid_ptr, 1, &final_nrm_R))
 
     return 0;
 };
