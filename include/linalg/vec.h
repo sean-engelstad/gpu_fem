@@ -205,6 +205,11 @@ template <typename T> class DeviceVec : public BaseVec<T> {
         return new_vec;
     }
 
+    __HOST__ void copyValuesTo(DeviceVec<T> dest) {
+        cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T),
+                   cudaMemcpyDeviceToDevice);
+    }
+
     __HOST__ DeviceVec<T> createDeviceVec() { return *this; }
 
 #ifdef USE_GPU

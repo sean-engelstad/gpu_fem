@@ -192,8 +192,8 @@ template <class Vec_> class BsrMat {
         dim3 grid(nblocks);
 
         // launch kernel to apply BCs to the full matrix
-        copy_mat_values_kernel<T>(nnodes, block_dim, rowp, cols, vals, t_rowp,
-                                  t_cols, t_vals);
+        copy_mat_values_kernel<T><<<grid, block>>>(
+            nnodes, block_dim, rowp, cols, vals, t_rowp, t_cols, t_vals);
         CHECK_CUDA(cudaDeviceSynchronize());
 #endif
     }

@@ -112,15 +112,22 @@ __GLOBAL__ void copy_mat_values_kernel(int nnodes, int block_dim,
     int irow = this_thread_block_row;
     int block_dim2 = block_dim * block_dim;
 
+    // t as in t_rowp, t_cols, t_vals stands for target
+
     if (this_thread_block_row < nnodes)
     {
+        // target matrix column bounds
+        // we assume target has at least the sparsity of original matrix (like in preconditioners as target)
         int t_jp = t_rowp[irow];
         int t_jp_max = t_rowp[irow + 1];
+
         for (int jp = rowp[irow]; jp < rowp[irow + 1]; jp++)
         {
-            int bcol = cols[jp];
+            // baseline column
+            int b_col = cols[jp];
+
             // have other mat catch up to the same column
-            for (; t_cols[t_jp] < bcol; t_jp++)
+            for (; t_cols[t_jp] < b_col; t_jp++)
             {
             }
             // want to put a debug check that same column # here?

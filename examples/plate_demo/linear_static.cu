@@ -26,7 +26,7 @@ int main(void) {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    int nxe = 100; // 100
+    int nxe = 300; // 100
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
@@ -62,7 +62,7 @@ int main(void) {
     assembler.apply_bcs(loads, true);
     
     // now do cusparse solve on linear static analysis
-    CUSPARSE::direct_LU_solve_old2<T>(kmat, loads, soln, true);
+    CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln, true);
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate.vtk");
     

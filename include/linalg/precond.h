@@ -1,8 +1,9 @@
+#pragma once
 #include "bsr_mat.h"
 
 template <class Vec_> class ILUk_Preconditioner {
   public:
-    using Vec = typename Vec_;
+    using Vec = Vec_;
     using T = typename Vec::type;
 
     //     Preconditioner(BSRMat &mat, int lev_fill, double fill, bool print)
@@ -27,7 +28,8 @@ template <class Vec_> class ILUk_Preconditioner {
     //         precond_mat = new BSRMat(bsr_data);
     //     }
 
-    Preconditioner(BsrMat &my_precond_mat, BsrMat &orig_mat, bool print)
+    ILUk_Preconditioner(BsrMat<Vec> &my_precond_mat, BsrMat<Vec> &orig_mat,
+                        bool print = false)
         : precond_mat(my_precond_mat), mat(orig_mat), print(print) {}
 
     void copyValues() { mat.copyValuesTo(precond_mat); }
@@ -42,7 +44,7 @@ template <class Vec_> class ILUk_Preconditioner {
     }
 
   private:
-    Mat &mat, &precond_mat;
+    BsrMat<Vec> &mat, &precond_mat;
     int lev_fill;
     double fill;
     bool print;

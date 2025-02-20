@@ -4,7 +4,7 @@ default: gpu
 
 gpu:
 	@echo "Building uCRM example for GPU"
-	${GPU_CXX} -g ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 linear_static.cu ${LINK}
+	${GPU_CXX} -g ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 linear_static.cu ${LINK}
 
 run:
 	rm out.txt || echo "no out.txt"
