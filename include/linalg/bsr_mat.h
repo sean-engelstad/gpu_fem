@@ -126,7 +126,7 @@ template <class Vec_> class BsrMat {
         int blocks_per_elem = bsr_data.nodes_per_elem * bsr_data.nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         int block_dim = bsr_data.block_dim;
-        int num_global_rows = block_dim * nnodes;
+        // int num_global_rows = block_dim * nnodes;
 
 #ifdef USE_GPU
         dim3 block = bcs_block;
@@ -160,7 +160,7 @@ template <class Vec_> class BsrMat {
         int *t_cols = mat.getColPtr();
         T *t_vals = mat.getPtr();
         int block_dim = bsr_data.block_dim;
-        int block_dim2 = block_dim * block_dim;
+        // int block_dim2 = block_dim * block_dim;
         int nnodes = bsr_data.nnodes;
 
 #ifndef USE_GPU

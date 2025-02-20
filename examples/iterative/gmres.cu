@@ -22,20 +22,20 @@ int main(void)
 
     // problem size (computational size)
     // ---------------------
-    int nxe = 10;
+    int nxe = 100;
 
     // reordering inputs
     // ---------------------
 
     bool perform_rcm = true;
     bool perform_qordering = true;
-    double qorder_p = 0.5; // lower p value 0.5, 1.0, 2.0
+    double qorder_p = 2.0; // lower p value is more nnz : 0.5, 1.0, 2.0
     bool perform_ilu = true;
-    int levFill = 3; // ILU(k) fill level 0,1,2,3
+    int levFill = 2; // ILU(k) fill level 0,1,2,3,...
 
     // GMRES inputs
     // ---------------------
-    int m = 2; // number of GMRES iterations
+    int m = 30; // number of GMRES iterations
     double tolerance = 1e-11;
 
     // ----------------------
@@ -270,13 +270,19 @@ int main(void)
 
     // NOTE : flips the order of perm, iperm when storing in the kmat (because I use reverse convention in my code)
     
+    // TODO : do I need to swap lperm, rperm? maybe to get correct answer
+    // int *lperm = final_perm;
+    // int *rperm = final_iperm;
+    int *lperm = final_iperm;
+    int *rperm = final_perm;
+
     // TODO: clean up all of the above and move into main repos
     // update kmat bsr data with reordering (flipped perm, iperm here bc flipped convention)
-    bsr_data.post_reordering_update(kmat_nnzb, kmat_rowPtr, kmat_colPtr, final_iperm, final_perm);
+    bsr_data.post_reordering_update(kmat_nnzb, kmat_rowPtr, kmat_colPtr, lperm, rperm);
     // printf("checkpt0.5\n");
 
     // make the bsr data for the preconditioner (flipped perm, iperm here bc flipped convention)
-    auto precond_bsr_data = BsrData(nnodes, 6, nnzb, rowPtr, colPtr, final_iperm, final_perm);
+    auto precond_bsr_data = BsrData(nnodes, 6, nnzb, rowPtr, colPtr, lperm, rperm);
 
     // printf("kmat_nnzb = %d\n", kmat_nnzb);
     // printf("kmat rowPtr:");
@@ -357,7 +363,7 @@ int main(void)
     int *dk_rowp = d_bsr_data.rowPtr;
     int *dk_cols = d_bsr_data.colPtr;
 
-    int ct = 0;
+    // int ct = 0;
     // ct++;
     // printf("checkpt%d\n", ct);
 
@@ -366,84 +372,28 @@ int main(void)
     // printVec<double>(h_precond_vals.getSize(), h_precond_vals.getPtr());
 
     cusparseHandle_t cusparseHandle;
-    cusparseMatDescr_t descr;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
-    CHECK_CUSPARSE(cusparseCreateMatDescr(&descr));
-    cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
-
     cublasHandle_t cublasHandle = NULL;
     CHECK_CUBLAS(cublasCreate(&cublasHandle));
-
-    // ct++;
-    // printf("checkpt%d\n", ct);
-
-    // Setup ILU preconditioner
-    bsrilu02Info_t iluInfo;
-    CHECK_CUSPARSE(cusparseCreateBsrilu02Info(&iluInfo));
-
-    cusparseSolvePolicy_t policy = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
-    void *buffer;
-    int bufferSize;
-    CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(
-        cusparseHandle, CUSPARSE_DIRECTION_ROW, mb, nnzb, descr, precond_vals,
-        dp_rowp, dp_cols, block_dim, iluInfo, &bufferSize));
-    CHECK_CUDA(cudaMalloc(&buffer, bufferSize));
-
-    // ct++;
-    // printf("checkpt%d\n", ct);
-
-    // Analyze ILU(0) structure for efficient numeric factorization
-    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(
-        cusparseHandle, CUSPARSE_DIRECTION_ROW, mb, nnzb, descr, precond_vals,
-        dp_rowp, dp_cols, block_dim, iluInfo, policy, buffer));
-
-    // ct++;
-    // printf("checkpt%d\n", ct); // doesn't reach this checkpoint
-
-    // numeric ILU(0) factorization (in-place on precond_vals)
-    CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, CUSPARSE_DIRECTION_ROW, mb,
-        nnzb, descr, precond_vals, dp_rowp, dp_cols,
-        block_dim, iluInfo, policy, buffer));
-
-    // Check for zero pivots (numerical singularities)
-    int numerical_zero;
-    cusparseStatus_t status = cusparseXbsrilu02_zeroPivot(cusparseHandle, iluInfo, &numerical_zero);
-    if (status == CUSPARSE_STATUS_ZERO_PIVOT) {
-        printf("Block U(%d, %d) is not invertible (zero pivot detected)\n", numerical_zero, numerical_zero);
-    }
-
-    // ct++;
-    // printf("checkpt%d\n", ct);
-
-    // Define matrix descriptors
-    // cusparseIndexBase_t baseIdx = CUSPARSE_INDEX_BASE_ZERO;
-    // cusparseSpMatDescr_t matL, matU;
 
     // Create original matrix descriptor A
     cusparseMatDescr_t descrA;
     cusparseCreateMatDescr(&descrA);
     cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL);
     cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
-    // CHECK_CUSPARSE(cusparseCreateBsr(&matA, mb, mb, kmat_nnzb, block_dim, block_dim, 
-    //     dk_rowp, dk_cols, kmat_vals, 
-    //     CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, 
-    //     baseIdx, CUDA_R_64F, CUSPARSE_ORDER_ROW));
 
-
-    // Initialize the cuda cusparse handle
-    // Constant scalar coefficienct
-    const double alpha = 1.0;
-
+    // initialize L and U precond matrices
     cusparseMatDescr_t descr_M = 0, descr_L = 0, descr_U = 0;
     bsrilu02Info_t info_M = 0;
     bsrsv2Info_t info_L = 0, info_U = 0;
     int pBufferSize_M, pBufferSize_L, pBufferSize_U, pBufferSize;
     void *pBuffer = 0;
     int structural_zero;
+    // do this CUSPARSE_SOLVE_POLICY_USE_LEVEL so that it parallelizes the triangular solves better
     const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
-    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL; // CUSPARSE_SOLVE_POLICY_NO_LEVEL, CUSPARSE_SOLVE_POLICY_USE_LEVEL
     const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+
     const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseOperation_t trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
@@ -473,31 +423,33 @@ int main(void)
 
     // step 3: query how much memory used in bsrilu02 and bsrsv2, and
     // allocate the buffer
-    cusparseDbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
+    CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
                                  dp_rowp, dp_cols, block_dim, info_M,
-                                 &pBufferSize_M);
-    cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_L, mb, nnzb, descr_L,
+                                 &pBufferSize_M))
+    CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_L, mb, nnzb, descr_L,
         precond_vals, dp_rowp, dp_cols, block_dim,
-                               info_L, &pBufferSize_L);
-    cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_U, mb, nnzb, descr_U,
+                               info_L, &pBufferSize_L))
+    CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_U, mb, nnzb, descr_U,
         precond_vals, dp_rowp, dp_cols, block_dim,
-                               info_U, &pBufferSize_U);
+                               info_U, &pBufferSize_U))
     pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
     // pBuffer returned by cudaMalloc is automatically aligned to 128 bytes.
     cudaMalloc((void **)&pBuffer, pBufferSize);
 
     // analyze ILU structure of M
-    cusparseDbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
+    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
                                dp_rowp, dp_cols, block_dim, info_M,
-                               policy_M, pBuffer);
-    status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
+                               policy_M, pBuffer))
+    cusparseStatus_t status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
     if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
         printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
     }
 
+    // switched the order here.. so Dbsrilu02 is after L and U analyses
     // perform ILU numerical factorization in M
-    cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals, dp_rowp,
-        dp_cols, block_dim, info_M, policy_M, pBuffer);
+    CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals, dp_rowp,
+        dp_cols, block_dim, info_M, policy_M, pBuffer))
+    int numerical_zero;
     status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
     if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
         printf("block U(%d,%d) is not invertible\n", numerical_zero,
@@ -505,12 +457,12 @@ int main(void)
     }
 
     // analyze sparsity pattern of L and U for later triangular solves
-    cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L, 
-                            precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-                             policy_L, pBuffer);
-    cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U, 
-                            precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-                             policy_U, pBuffer);
+    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L, 
+        precond_vals, dp_rowp, dp_cols, block_dim, info_L,
+         policy_L, pBuffer))
+    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U, 
+            precond_vals, dp_rowp, dp_cols, block_dim, info_U,
+            policy_U, pBuffer))
     
 
     // (2) implement GMRES solver
@@ -520,7 +472,7 @@ int main(void)
     DeviceVec<T> rhs = bsr_pre_solve<DeviceVec<T>>(kmat, loads, soln);
 
     // create vector descriptor types
-    cusparseDnVecDescr_t d_X, d_B, d_tmp1, d_tmp2, d_tmp3, d_R;
+    // cusparseDnVecDescr_t d_X, d_B, d_tmp1, d_tmp2, d_tmp3, d_R;
     auto resid = assembler.createVarsVec();
     auto tmp1 = assembler.createVarsVec();
     auto tmp2 = assembler.createVarsVec();
@@ -535,28 +487,10 @@ int main(void)
     double* w_ptr = w.getPtr();
     double *soln_ptr = soln.getPtr();
 
-    double one = 1.0, zero = 0.0, minus_one = -1.0;
-
-    // Create vector descriptors
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_X, mb * block_dim, soln.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_B, mb * block_dim, loads.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp1, mb * block_dim, tmp1.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp2, mb * block_dim, tmp2.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_tmp3, mb * block_dim, tmp3.getPtr(), CUDA_R_64F));
-    // CHECK_CUSPARSE(cusparseCreateDnVec(&d_R, mb * block_dim, resid.getPtr(), CUDA_R_64F));
+    // double one = 1.0, zero = 0.0, minus_one = -1.0;
 
     // compute initial resid = b - A * x0
     rhs.copyValuesTo(resid); // copies b into resid
-
-    // auto h_resid = resid.createHostVec();
-    // printf("h_resid: ");
-    // printVec<double>(100, h_resid.getPtr());
-
-    // auto h_loads = loads.createHostVec();
-    // printf("h_loads: ");
-    // printVec<double>(100, h_loads.getPtr());
-
-    // return 0;
 
     // compute resid = - A * x0 + resid
     double a = -1.0, b = 1.0;
@@ -582,22 +516,22 @@ int main(void)
     // then compute resid = U^-1 * L^-1 * tmp (M^-1 on the init resid for preconditioner)
     // compute resid = U^-1 * L^-1 * b (with preconditioner)
 
-    // in first precond solve want to get buffer sizes (don't need in subsequent precond solves)
-    size_t bufferSizeL, bufferSizeU;
-    void *d_bufferL, *d_bufferU;
-    cusparseSpSVDescr_t spsvDescrL, spsvDescrU;
-
     //    (a) L^-1 tmp1 => tmp2    (triangular solver)
     a = 1.0;
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_M,
+    // printf("checkpt1\n");
+    CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
         precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-        tmp1_ptr, tmp2_ptr, policy_L, pBuffer);
+        tmp1_ptr, tmp2_ptr, policy_L, pBuffer))
+
+    // printf("checkpt2\n");
 
     //    (b) U^-1 tmp2 => resid    (triangular solver)
     a = 1.0;
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_M,
+    CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
         precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-        tmp2_ptr, resid_ptr, policy_U, pBuffer);
+        tmp2_ptr, resid_ptr, policy_U, pBuffer))
+
+    // printf("checkpt3\n");
     
     // we have now computed resid = M^-1* (resid - A * x0)
     
@@ -606,7 +540,7 @@ int main(void)
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, resid_ptr, 1, &nrm_R))
     double threshold = tolerance * nrm_R;
     double beta = nrm_R;
-    printf("  Initial Residual: Norm %e, threshold %e\n", nrm_R, threshold);
+    printf("GMRES Initial Residual: Norm %e, threshold %e\n", nrm_R, threshold);
 
     // return 0;
 
@@ -647,6 +581,8 @@ int main(void)
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, V[j].getPtr(), 1, &nrm_debug))
         printf("||v[%d]|| = %.4e\n", j, nrm_debug);
 
+        // printf("checkpt4\n");
+
         // compute w_j = 0 * w_j + A * v_j (v_j is tmp1 into w_j as tmp2)
         a = 1.0, b = 0.0;
         CHECK_CUSPARSE(cusparseDbsrmv(
@@ -660,37 +596,45 @@ int main(void)
             V[j].getPtr(),
             &b,
             w_ptr
-        ));
+        ))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
         printf("||A*v[%d]|| = %.4e\n", j, nrm_debug);
-
-        // CHECK_CUSPARSE(cusparseSpMV(cusparseHandle,
-        //     CUSPARSE_OPERATION_NON_TRANSPOSE, &minus_one,
-        //     matA, d_tmp1, &zero, d_tmp2, CUDA_R_64F,
-        //     CUSPARSE_SPMV_ALG_DEFAULT, d_bufferA))
-        // doesn't work because SpMV only works for CSR not BSR
+        // printf("checkpt5\n");
 
         // compute w_j = U^-1 L^-1 w_j
-        // L^-1 * tmp2 => tmp3
+        // L^-1 * w => tmp1
         a = 1.0;
         tmp1.zeroValues(); // must always zero out the output vec for triangular solve
-        cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_M,
+        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
             precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-            w_ptr, tmp1_ptr, policy_L, pBuffer);
+            w_ptr, tmp1_ptr, policy_L, pBuffer))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, tmp1_ptr, 1, &nrm_debug))
         printf("||L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
+        if (isnan(nrm_debug)) {
+            printf("NaN detected in L^-1 solve!\n");
+        }
+        // printf("checkpt6\n");
 
-        // U^-1 * tmp3 => tmp2 (tmp2 is w)
+        // U^-1 * tmp1 => w
         a = 1.0;
         w.zeroValues(); // must always zero out the output vec for triangular solve
-        cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_M,
+        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
             precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-            tmp1_ptr, w_ptr, policy_U, pBuffer);
+            tmp1_ptr, w_ptr, policy_U, pBuffer))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
         printf("||U^-1 * L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
+        if (isnan(nrm_debug)) {
+            printf("NaN detected in U^-1 solve!\n");
+        }
+        // printf("checkpt7\n");
+
+        // auto h_precond_mat = precond_mat.getVec().createHostVec();
+        // write_to_csv<int>(rowPtr,nnodes+1, "csv/precond_rowp.csv");
+        // write_to_csv<int>(colPtr, rowPtr[nnodes], "csv/precond_cols.csv");
+        // write_to_csv<double>(h_precond_mat.getPtr(), h_precond_mat.getSize(), "csv/precond_vals.csv");
 
         // now we have found wj = M^-1 * A * vj with wj as tmp2
         // recall that v_j is still in temp1 or d_tmp1 from last iteration
@@ -734,18 +678,6 @@ int main(void)
 
         // compute new givens rotatios on H[j,j] and H[j+1,j] into cs[j], ss[j]
         double _a = H[j * m + j], _b = H[(j+1) * m + j];
-        // if (_b == 0.0) {
-        //     cs[j] = 1.0;
-        //     ss[j] = 0.0;
-        // } else if (abs(_b) > abs(_a)) {
-        //     double tau = -_a / _b;
-        //     ss[j] = 1.0 / sqrt(1.0 + tau * tau);
-        //     cs[j] = ss[j] * tau;
-        // } else {
-        //     double tau = -_b / _a;
-        //     cs[j] = 1.0 / sqrt(1.0 + tau * tau);
-        //     ss[j] = cs[j] * tau;
-        // }
 
         // from p. 162 of Saad
         double hyp = sqrt(_a * _a + _b * _b);
@@ -816,22 +748,17 @@ int main(void)
         resid_ptr
     ));
 
-    // CHECK_CUSPARSE(cusparseSpMV(cusparseHandle,
-    //     CUSPARSE_OPERATION_NON_TRANSPOSE, &minus_one,
-    //     matA, d_X, &one, d_R, CUDA_R_64F,
-    //     CUSPARSE_SPMV_ALG_DEFAULT, d_bufferA))
-
     // L^-1 * resid => tmp2
     a = 1.0;
     tmp2.zeroValues(); // must always zero out the output vec for triangular solve
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_M,
+    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
         precond_vals, dp_rowp, dp_cols, block_dim, info_L,
         resid_ptr, tmp2_ptr, policy_L, pBuffer);
 
     // U^-1 * tmp2 => resid
     a = 1.0;
     resid.zeroValues(); // must always zero out the output vec for triangular solve
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_M,
+    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
         precond_vals, dp_rowp, dp_cols, block_dim, info_U,
         tmp2_ptr, resid_ptr, policy_U, pBuffer);
 

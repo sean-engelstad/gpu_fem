@@ -16,7 +16,7 @@ __GLOBAL__ void apply_mat_bcs_rows_kernel(Vec<int> bcs, const int *rowPtr, const
     {
         // get data associated with the row of this BC in the BSR matrix
         int bc_dof = bcs[this_thread_bc];
-        int _global_row = bc_dof;
+        // int _global_row = bc_dof;
         int _block_row = bc_dof / block_dim;
         int block_row = perm[_block_row];
         int inner_row = bc_dof % block_dim;
@@ -69,7 +69,7 @@ __GLOBAL__ void apply_mat_bcs_cols_kernel(Vec<int> bcs,
     {
         // get data associated with the row of this BC in the BSR matrix
         int bc_dof = bcs[this_thread_bc];
-        int _global_col = bc_dof;
+        // int _global_col = bc_dof;
         int _block_col = bc_dof / block_dim;
         int block_col = perm[_block_col];
         int inner_col = bc_dof % block_dim;
@@ -119,7 +119,7 @@ __GLOBAL__ void copy_mat_values_kernel(int nnodes, int block_dim,
         // target matrix column bounds
         // we assume target has at least the sparsity of original matrix (like in preconditioners as target)
         int t_jp = t_rowp[irow];
-        int t_jp_max = t_rowp[irow + 1];
+        // int t_jp_max = t_rowp[irow + 1];
 
         for (int jp = rowp[irow]; jp < rowp[irow + 1]; jp++)
         {
