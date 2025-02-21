@@ -1,8 +1,8 @@
 #include "svd_utils.h"
 
 template <typename T>
-__GLOBAL__ void compute_aerostruct_conn(DeviceVec<int> nn, DeviceVec<T> xa0, DeviceVec<T> xs0, DeviceVec<int> &aerostruct_conn)
-{
+__GLOBAL__ void compute_aerostruct_conn(DeviceVec<int> nn, DeviceVec<T> xa0, DeviceVec<T> xs0,
+                                        DeviceVec<int> &aerostruct_conn) {
     int ns_block = blockDim.x;
     int thread_starting_idxs = threadIdx.x;
 
@@ -10,8 +10,7 @@ __GLOBAL__ void compute_aerostruct_conn(DeviceVec<int> nn, DeviceVec<T> xa0, Dev
 }
 
 template <typename T>
-__GLOBAL__ void compute_centroid_kernel(DeviceVec<T> x, DeviceVec<T> weights, DeviceVec<T> x_bar)
-{
+__GLOBAL__ void compute_centroid_kernel(DeviceVec<T> x, DeviceVec<T> weights, DeviceVec<T> x_bar) {
     // assumes x and weights are size 3 * n
     // x_bar is size 3
 
@@ -24,26 +23,77 @@ __GLOBAL__ void compute_centroid_kernel(DeviceVec<T> x, DeviceVec<T> weights, De
     __SHARED__ T loc_xbar[3];
     memset(&loc_xbar[0], 0.0, 3 * sizeof(T));
 
-    if (local_ind < ns)
-    {
-        for (int idim = 0; idim < 3; idim++)
-        {
+    if (local_ind < ns) {
+        for (int idim = 0; idim < 3; idim++) {
             loc_xbar[idim] += loc_x[idim] * loc_w[idim];
         }
     }
 
     // then atomicAdd back from loc_xbar into xbar
-    for (int idim = 0; idim < 3; idim++)
-    {
+    for (int idim = 0; idim < 3; idim++) {
         atomicAdd(&xbar[idim], loc_xbar[idim]);
     }
 }
 
 template <typename T>
+__GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> xs0,
+                                       DeviceVec<T> xa0, double beta, DeviceVec<T> weights) {
+    // each block of threads if just computing ua for one aero node
+    // among all the nearest neighbor struct nodes
+    int aero_ind = blockIdx.x;
+    int na = xa0.getSize() / 3;
+    int ns = xs0.getSize() / 3;
+
+    __SHARED__ loc_conn[nn];
+    __SHARED__ loc_w[nn];
+    __SHARED__ loc_xs0[3 * nn];
+    __SHARED__ loc_xa0[3];
+
+    // copy data from global to shared
+    int glob_start = aero_ind * nn;
+    bool active_thread = (glob_start + threadIdx.x) < na * nn;
+    aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
+                                       &loc_conn[0]);
+    weights.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
+                               &loc_w[0]);
+    xa0.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_xa0[0]);
+    // need to use conn here so may need copyElemValuesToShared
+    xs0.copyElemValuesToShared(true, threadIdx.x, blockDim.x, 3, nn, &loc_conn[0], &loc_xs0[0]);
+    __syncthreads();
+
+    // compute weights (un-normalized first)
+    memset(loc_w, 0.0, nn * sizeof(T));
+    T sum = 0.0;
+    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
+        // first compute the distance squared
+        T distsq = 0.0;
+        for (int idim = 0; idim < 3; idim++) {
+            T delta = loc_xa0[3 * inode + idim] - loc_xs0[3 * inode + idim];
+            distsq += delta * delta;
+        }
+
+        T new_weight = exp(-beta * distsq);
+        loc_w[inode] += new_weight;
+        sum += new_weight;
+    }
+
+    // normalize the weights so it becomes a partition of unity
+    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
+        loc_w[inode] /= sum;
+    }
+    __syncthreads();
+
+    int global_start = aero_ind;
+    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
+        // no atomic add here, unique
+        weights[global_start + inode] = loc_w[inode];
+    }
+}
+
+template <typename T>
 __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
-                                      DeviceVec<T> xs0, DeviceVec<T> xs,
-                                      DeviceVec<T> xa0, DeviceVec<T> xa, DeviceVec<T> ua)
-{
+                                      DeviceVec<T> xs0, DeviceVec<T> xs, DeviceVec<T> xa0,
+                                      DeviceVec<T> xa, DeviceVec<T> ua) {
     // each block of threads if just computing ua for one aero node
     // among all the nearest neighbor struct nodes
     int aero_ind = blockIdx.x;
@@ -63,8 +113,10 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     // copy data from global to shared
     int glob_start = aero_ind * nn;
     bool active_thread = (glob_start + threadIdx.x) < na * nn;
-    aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn, &loc_conn[0]);
-    weights.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn, &loc_w[0]);
+    aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
+                                       &loc_conn[0]);
+    weights.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
+                               &loc_w[0]);
     xa0.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_xa0[0]);
     // need to use conn here so may need copyElemValuesToShared
     xs0.copyElemValuesToShared(true, threadIdx.x, blockDim.x, 3, nn, &loc_conn[0], &loc_xs0[0]);
@@ -77,8 +129,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     // compute the centroids of the nearest neighbors
     // xs0_bar
     memset(&xs0_bar[0], 0.0, 3 * sizeof(T));
-    for (int i = threadIdx.x; i < 3 * nn; i += blockDim.x)
-    {
+    for (int i = threadIdx.x; i < 3 * nn; i += blockDim.x) {
         int inode = i / 3;
         int idim = i % 3;
         xs0_bar[idim] += loc_w[i] * loc_xs0[i];
@@ -86,8 +137,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
 
     // xs_bar
     memset(&xs_bar[0], 0.0, 3 * sizeof(T));
-    for (int i = 0; i < 3 * nn; i++)
-    {
+    for (int i = 0; i < 3 * nn; i++) {
         int inode = i / 3;
         int idim = i % 3;
         xs_bar[idim] += loc_w[i] * loc_xs[i];
@@ -95,8 +145,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     __syncthreads();
 
     // compute covariance H (reduction step across threads)
-    for (int i = threadIdx.x; i < 9 * nn; i += blockDim.x)
-    {
+    for (int i = threadIdx.x; i < 9 * nn; i += blockDim.x) {
         int inode = i / 9;
         int i9 = inode % 9;
         int idim = i9 / 3;
@@ -105,7 +154,8 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
         // H += w_{inode} * p_{inode,idim} * q_{inode,jdim}
         // where p = xS - xSbar for each node and dim, sim q = xS0 - xS0bar
         // could do warp shuffling here
-        T h_val = loc_w[inode] * (loc_xs[3 * inode + idim] - xs_bar[idim]) * (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
+        T h_val = loc_w[inode] * (loc_xs[3 * inode + idim] - xs_bar[idim]) *
+                  (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
         atomicAdd(&H[i9], h_val);
     }
     __syncthreads();
@@ -137,20 +187,16 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     int nb = blockDim.x;
     // should probably do warp shuffle here among the threads to speed it up
     // before atomic add
-    for (int i = 0; i < 3; i++)
-    {
+    for (int i = 0; i < 3; i++) {
         atomicAdd(&xa[3 * aero_ind], 1.0 / nb * loc_xa[i]);
         atomicAdd(&ua[3 * aero_ind], 1.0 / nb * loc_ua[i]);
     }
 }
 
-transfer_loads_kernel<T><<<grid, block>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
 template <typename T>
-__GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
-                                      DeviceVec<T> xs0, DeviceVec<T> xs,
-                                      DeviceVec<T> xa0, DeviceVec<T> xa,
-                                      DeviceVec<T> fa, DeviceVec<T> fs)
-{
+__GLOBAL__ void transfer_loads_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
+                                      DeviceVec<T> xs0, DeviceVec<T> xs, DeviceVec<T> xa0,
+                                      DeviceVec<T> xa, DeviceVec<T> fa, DeviceVec<T> fs) {
     // each block of threads if just computing ua for one aero node
     // among all the nearest neighbor struct nodes
     int aero_ind = blockIdx.x;
@@ -172,8 +218,10 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     // copy data from global to shared
     int glob_start = aero_ind * nn;
     bool active_thread = (glob_start + threadIdx.x) < na * nn;
-    aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn, &loc_conn[0]);
-    weights.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn, &loc_w[0]);
+    aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
+                                       &loc_conn[0]);
+    weights.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
+                               &loc_w[0]);
     xa0.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_xa0[0]);
     fa.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_fa[0]);
     // need to use conn here so may need copyElemValuesToShared
@@ -181,8 +229,8 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     xs.copyElemValuesToShared(true, threadIdx.x, blockDim.x, 3, nn, &loc_conn[0], &loc_xs[0]);
     __syncthreads();
 
-    // TODO : this is the same code as with transfer_disps_kernel ? can we make a method that calls some of this stuff?
-    // to avoid repeated code?
+    // TODO : this is the same code as with transfer_disps_kernel ? can we make a method that calls
+    // some of this stuff? to avoid repeated code?
 
     // all of the following will be reduction-like operations
     // until H is computed (each thread helps in the work)
@@ -190,8 +238,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     // compute the centroids of the nearest neighbors
     // xs0_bar
     memset(&xs0_bar[0], 0.0, 3 * sizeof(T));
-    for (int i = threadIdx.x; i < 3 * nn; i += blockDim.x)
-    {
+    for (int i = threadIdx.x; i < 3 * nn; i += blockDim.x) {
         int inode = i / 3;
         int idim = i % 3;
         xs0_bar[idim] += loc_w[i] * loc_xs0[i];
@@ -199,8 +246,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
 
     // xs_bar
     memset(&xs_bar[0], 0.0, 3 * sizeof(T));
-    for (int i = 0; i < 3 * nn; i++)
-    {
+    for (int i = 0; i < 3 * nn; i++) {
         int inode = i / 3;
         int idim = i % 3;
         xs_bar[idim] += loc_w[i] * loc_xs[i];
@@ -208,8 +254,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     __syncthreads();
 
     // compute covariance H (reduction step across threads)
-    for (int i = threadIdx.x; i < 9 * nn; i += blockDim.x)
-    {
+    for (int i = threadIdx.x; i < 9 * nn; i += blockDim.x) {
         int inode = i / 9;
         int i9 = inode % 9;
         int idim = i9 / 3;
@@ -218,7 +263,8 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
         // H += w_{inode} * p_{inode,idim} * q_{inode,jdim}
         // where p = xS - xSbar for each node and dim, sim q = xS0 - xS0bar
         // could do warp shuffling here
-        T h_val = loc_w[inode] * (loc_xs[3 * inode + idim] - xs_bar[idim]) * (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
+        T h_val = loc_w[inode] * (loc_xs[3 * inode + idim] - xs_bar[idim]) *
+                  (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
         atomicAdd(&H[i9], h_val);
     }
     __syncthreads();
@@ -237,24 +283,20 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
 
     // copy adjoint solutions out for each thread
     T X[9], Y[6];
-    for (int i = 0; i < 9; i++)
-    {
+    for (int i = 0; i < 9; i++) {
         X[i] = adjoint[i];
     }
-    for (int j = 0; j < 6; j++)
-    {
+    for (int j = 0; j < 6; j++) {
         Y[j] = adjoint[9 + j];
     }
 
     // now compute struct loads
     // fs_{n} += w_n * fA + wn * X^T * qn
     // and add into global struct loads directly
-    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x)
-    {
+    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
         T fs_tmp[3];
         // w_n * fA part
-        for (int idim = 0; idim < 3; idim++)
-        {
+        for (int idim = 0; idim < 3; idim++) {
             fs_tmp[idim] = loc_w[inode] * loc_fa[idim];
         }
 
@@ -268,8 +310,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
 
         // could do warp shuffle here?
         int global_node = aero_struct_conn[inode];
-        for (int idim = 0; idim < 3; idim++)
-        {
+        for (int idim = 0; idim < 3; idim++) {
             atomicAdd(&fs[3 * global_node + idim], fs_tmp[idim]);
         }
     }

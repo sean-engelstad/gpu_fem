@@ -208,6 +208,15 @@ public:
         BaseVec<T>::apply_bcs(bcs);
 #endif
     }
+
+    __HOST__ void ~DeviceVec()
+    {
+        if (this->data)
+        {
+            cudaFree(this->data);
+        }
+    }
+
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
     __HOST__ HostVec<T> createHostVec()
     {
@@ -412,6 +421,14 @@ public:
         auto new_vec = copyVec();
         new_vec.permuteData(block_dim, perm);
         return new_vec;
+    }
+
+    __HOST_DEVICE__ void ~HostVec()
+    {
+        if (this->data)
+        {
+            delete[] this->data;
+        }
     }
 
     __HOST__ DeviceVec<T> createDeviceVec(bool memset = true,

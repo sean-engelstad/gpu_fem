@@ -1,17 +1,18 @@
 #pragma once
-#include "cuda_utils.h"
 #include "a2d_core.h"
+#include "cuda_utils.h"
 #include "math.h"
 
 // perform SVD on 3x3 covariance matrix H
-// need to implement myself since can't call from inside the __global__ other cusparse, cublas methods, etc.
-// was going to try this one: jacobi SVD https://netlib.org/lapack/lawnspdf/lawn170.pdf which is fast for small matrices
-// this is a nice one too, but a lot of steps: https://pages.cs.wisc.edu/~sifakis/papers/SVD_TR1690.pdf
-// decided to use this exact solution for eigenvalues of a 3x3 matrix, https://dl.acm.org/doi/pdf/10.1145/355578.366316
+// need to implement myself since can't call from inside the __global__ other cusparse, cublas
+// methods, etc. was going to try this one: jacobi SVD
+// https://netlib.org/lapack/lawnspdf/lawn170.pdf which is fast for small matrices this is a nice
+// one too, but a lot of steps: https://pages.cs.wisc.edu/~sifakis/papers/SVD_TR1690.pdf decided to
+// use this exact solution for eigenvalues of a 3x3 matrix,
+// https://dl.acm.org/doi/pdf/10.1145/355578.366316
 
 template <typename T>
-__HOST_DEVICE__ void computeRotation(const T H[9], T R[9])
-{
+__HOST_DEVICE__ void computeRotation(const T H[9], T R[9]) {
     T sigma[3], U[9], VT[9];
     svd3x3(H, sigma, U, VT);
 
@@ -22,8 +23,7 @@ __HOST_DEVICE__ void computeRotation(const T H[9], T R[9])
 }
 
 template <typename T>
-__HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9])
-{
+__HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9]) {
     T sigma[3], U[9], VT[9];
     svd3x3(H, sigma, U, VT);
 
@@ -32,8 +32,7 @@ __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9])
 
     // compute symmetric matrix S = V * Sigma * VT
     T tmp[9];
-    for (int i = 0; i < 3; i++)
-    {
+    for (int i = 0; i < 3; i++) {
         A2D::VecScaleCore<T, 3>(sigma[i], &VT[3 * i], &tmp[3 * i])
     }
 
@@ -42,8 +41,7 @@ __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9])
 }
 
 template <typename T>
-__HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9])
-{
+__HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
     // TODO : test this routine on the host for debugging
 
     // so are given H a 3x3 matrix and we wish to find H = U * Sigma * V^T
@@ -54,8 +52,9 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9])
     T A[9];
     A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(H, H, A);
 
-    // exact eigenvalues of a 3x3 matrix from this source, https://dl.acm.org/doi/pdf/10.1145/355578.366316
-    // using cubic equation formula (Cardano's), uses invariants => trace(A), det(A) and the squared one
+    // exact eigenvalues of a 3x3 matrix from this source,
+    // https://dl.acm.org/doi/pdf/10.1145/355578.366316 using cubic equation formula (Cardano's),
+    // uses invariants => trace(A), det(A) and the squared one
 
     // m = trace(A)/3
     T m = (A[0] + A[4] + A[8]) / 3.0;
@@ -65,8 +64,7 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9])
     T p, q;
     {
         T AmI[9];
-        for (int i = 0; i < 9; i++)
-        {
+        for (int i = 0; i < 9; i++) {
             AmI[i] = A[i];
         }
         AmI[0] -= m;
@@ -76,8 +74,7 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9])
         q = 0.5 * A2D::MatDetCore<T, 3>(AmI);
 
         p = 0.0;
-        for (int i = 0; i < 9; i++)
-        {
+        for (int i = 0; i < 9; i++) {
             p += AmI[i] * AmI[i];
         }
     }
@@ -95,14 +92,13 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9])
 
     // now that we have S diag matrix, how do we get V and U?
     // for V we can solve the system (A - sigma[i] * I) * vi = 0 for each S[i]
-    // one cool way to find each vi is to take the cross product of the first two rows of Bi = A - S[i] * I
-    { // scope block here
-        for (int ieig = 0; ieig < 3; ieig++)
-        {
+    // one cool way to find each vi is to take the cross product of the first two rows of Bi = A -
+    // S[i] * I
+    {  // scope block here
+        for (int ieig = 0; ieig < 3; ieig++) {
             // compute B_i = A - lam_i *I
             T B[9];
-            for (int i = 0; i < 9; i++)
-            {
+            for (int i = 0; i < 9; i++) {
                 B[i] = A[i];
             }
             B[0] -= sigma[ieig];
@@ -137,24 +133,23 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9])
         // normalize v3
         T norm3 = sqrt(A2D::VecDotCore<T, 3>(&VT[6], &VT[6]));
         A2D::VecScaleCore<T, 3>(1.0 / norm3, &VT[6], &VT[6]);
-    } // end of scope block for getting VT
+    }  // end of scope block for getting VT
 
     // change sigma^0.5 => sigma because we had sigma^2 before
-    for (int i = 0; i < 3; i++)
-    {
+    for (int i = 0; i < 3; i++) {
         sigma[i] = sqrt(sigma[i]);
     }
 
-    { // scope block for computing U
+    {  // scope block for computing U
         // now we have sigma and VT in H = U * sigma * VT
         // U can be found by U = H * V * sigma^-1
 
         // first U (tmp) = H * VT^T = H * V
         A2D::MatMatMultCore3x3<double, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, tmp);
 
-        // now find U = U (tmp) * sigma^-1 by scaling each column by 1.0/si (see if later I need numerical stability for si near 0)
-        for (int i = 0; i < 9; i++)
-        {
+        // now find U = U (tmp) * sigma^-1 by scaling each column by 1.0/si (see if later I need
+        // numerical stability for si near 0)
+        for (int i = 0; i < 9; i++) {
             int irow = i / 3;
             int icol = i % 3;
             U[3 * irow + icol] /= sigma[icol];
@@ -164,8 +159,8 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9])
 }
 
 template <typename T>
-__HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[3], T d[3], T R[9], T S[9])
-{
+__HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[3], T d[3], T R[9],
+                                       T S[9]) {
     // the two adjoint eqns which become 15x15 are:
     // dL/dR = fA*d^T - X^T * S + R * Y = 0 [9 eqns]
     // dL/dS = XR + R^T X^T = 0             [6 eqns]
@@ -176,14 +171,12 @@ __HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[
     // assemble the M matrix
     // first for R system
     // TODO : can parallelize this assembly some
-    for (int eqn = 0; eqn < 9; eqn++)
-    {
+    for (int eqn = 0; eqn < 9; eqn++) {
         int ieqn = eqn / 3, jeqn = eqn % 3;
-        int jx = ieqn; // bc of transpose
+        int jx = ieqn;  // bc of transpose
 
         // -X^T * S term
-        for (int ix = 0; ix < 3; ix++)
-        {
+        for (int ix = 0; ix < 3; ix++) {
             int is = ix, js = jeqn;
             int xind = 3 * ix + jx;
             M[eqn * 15 + xind] = -S[3 * is + js];
@@ -205,10 +198,8 @@ __HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[
     // R * Y term
     int tri_rows[3] = {1, 1, 2};
     int tri_cols[3] = {3, 4, 3};
-    for (int eqn = 0; eqn < 3; eqn++)
-    {
-        for (int j = 0; j < 3; j++)
-        {
+    for (int eqn = 0; eqn < 3; eqn++) {
+        for (int j = 0; j < 3; j++) {
             // the main [0,1,2] [3,4,5], [6,7,8] section
             M[15 * eqn + 9 + j] = R[j];
             M[15 * (eqn + 3) + 9 + j] = R[j + 3];
@@ -222,17 +213,14 @@ __HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[
     // XR + R^T X^T term
     // need to check whether this is correct
     int rowIndex = 0;
-    for (int i = 0; i < 3; ++i)
-    {
-        for (int j = 0; j < 3; ++j)
-        {
-            int idx = i * 3 + j; // Linear index for 3x3 matrix R
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            int idx = i * 3 + j;  // Linear index for 3x3 matrix R
 
             // Fill first 3 rows (equations)
-            M[15 * (9 + rowIndex) + idx] = R[idx]; // XR part for first 3 rows
-            if (i != j)
-            {
-                M[15 * (9 + rowIndex + 3) + idx] = R[idx]; // R^T X^T part for next 3 rows
+            M[15 * (9 + rowIndex) + idx] = R[idx];  // XR part for first 3 rows
+            if (i != j) {
+                M[15 * (9 + rowIndex + 3) + idx] = R[idx];  // R^T X^T part for next 3 rows
             }
         }
         ++rowIndex;
@@ -240,10 +228,9 @@ __HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[
 
     // assemble the rhs
     memset(&rhs[0], 0.0, 9 * sizeof(T));
-    for (int i = 0; i < 9; i++)
-    {
+    for (int i = 0; i < 9; i++) {
         int row = i / 3, col = i % 3;
-        rhs[i] = -fa[row] * d[col]; // outer product fA * d^T
+        rhs[i] = -fa[row] * d[col];  // outer product fA * d^T
     }
 
     // pass the system to
@@ -253,62 +240,51 @@ __HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[
 }
 
 template <typename T>
-__HOST_DEVICE__ void _solve15x15(T *M, T *y, T *x, int num_aero_nodes)
-{
+__HOST_DEVICE__ void _solve15x15(T *M, T *y, T *x, int num_aero_nodes) {
     // solve the 15x15 dense linear system M * x = y
     // for a single aero node
 
     // Perform Gaussian elimination (simplified version)
-    for (int i = 0; i < 15; ++i)
-    {
+    for (int i = 0; i < 15; ++i) {
         // Each thread computes the pivot row
-        if (threadIdx.x == i)
-        {
+        if (threadIdx.x == i) {
             float pivot = M[i * 15 + i];
             // Normalize pivot row
-            for (int j = 0; j < 15; ++j)
-            {
+            for (int j = 0; j < 15; ++j) {
                 M[i * 15 + j] /= pivot;
             }
             y[i] /= pivot;
         }
 
-        __syncthreads(); // Ensure that the pivot row is updated before proceeding
+        __syncthreads();  // Ensure that the pivot row is updated before proceeding
 
         // Eliminate below pivot
-        for (int j = i + 1 + threadIdx.x; j < 15; j += blockDim.x)
-        {
-            if (j > i)
-            {
+        for (int j = i + 1 + threadIdx.x; j < 15; j += blockDim.x) {
+            if (j > i) {
                 float factor = M[j * 15 + i];
-                for (int k = 0; k < 15; ++k)
-                {
+                for (int k = 0; k < 15; ++k) {
                     M[j * 15 + k] -= factor * M[i * 15 + k];
                 }
                 y[j] -= factor * y[i];
             }
         }
 
-        __syncthreads(); // Ensure elimination step is complete
+        __syncthreads();  // Ensure elimination step is complete
     }
 
     // Back-substitution (starting from last row to first row)
-    for (int i = 14; i >= 0; --i)
-    {
-        if (threadIdx.x == i)
-        {
+    for (int i = 14; i >= 0; --i) {
+        if (threadIdx.x == i) {
             // Each thread does its part of the back-substitution
-            for (int j = i + 1; j < 15; ++j)
-            {
+            for (int j = i + 1; j < 15; ++j) {
                 y[i] -= M[i * 15 + j] * y[j];
             }
         }
-        __syncthreads(); // Synchronize before moving to the next row
+        __syncthreads();  // Synchronize before moving to the next row
     }
 
     // Write back the solution
-    for (int i = threadIdx.x; i < 15; i += blockDim.x)
-    {
+    for (int i = threadIdx.x; i < 15; i += blockDim.x) {
         x[aero_node_id * 15 + i] = y[i];
     }
 }

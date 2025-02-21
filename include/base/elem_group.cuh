@@ -17,7 +17,8 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ void
 add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
                  const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                 const Vec<T> vars, Vec<int> bcs, Vec<Data> physData, const int32_t *perm, Vec<T> res) {
+                 const Vec<T> vars, Vec<int> bcs, Vec<Data> physData, const int32_t *perm, Vec<T> res)
+{
 
     // note in the above : CPU code passes Vec<> objects by reference
     // GPU kernel code cannot do so for complex objects otherwise weird behavior
@@ -51,19 +52,21 @@ add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
 
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
-    xpts.copyValuesToShared(active_thread, threadIdx.y, blockDim.y,
-                            Geo::spatial_dim, Geo::num_nodes, perm, geo_elem_conn,
-                            &block_xpts[local_elem][0]);
+    xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y,
+                                Geo::spatial_dim, Geo::num_nodes, perm, geo_elem_conn,
+                                &block_xpts[local_elem][0]);
 
     const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
-    vars.copyValuesToShared(active_thread, threadIdx.y, blockDim.y,
-                            Phys::vars_per_node, Basis::num_nodes,
-                            perm, vars_elem_conn, &block_vars[local_elem][0]);
+    vars.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y,
+                                Phys::vars_per_node, Basis::num_nodes,
+                                perm, vars_elem_conn, &block_vars[local_elem][0]);
 
-    if (active_thread) {
+    if (active_thread)
+    {
         memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
 
-        if (local_thread < elems_per_block) {
+        if (local_thread < elems_per_block)
+        {
             int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
             block_data[local_thread] = _phys_data[global_elem_thread];
         }
@@ -100,7 +103,8 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ static void
 add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
                  Vec<int32_t> geo_conn, Vec<int32_t> vars_conn, Vec<T> xpts,
-                 Vec<T> vars, Vec<Data> physData, Vec<T> res, Mat mat) {
+                 Vec<T> vars, Vec<Data> physData, Vec<T> res, Mat mat)
+{
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
@@ -139,20 +143,22 @@ add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
 
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
-    xpts.copyValuesToShared(active_thread, thread_yz, nthread_yz,
-                            Geo::spatial_dim, Geo::num_nodes, geo_elem_conn,
-                            &block_xpts[local_elem][0]);
+    xpts.copyElemValuesToShared(active_thread, thread_yz, nthread_yz,
+                                Geo::spatial_dim, Geo::num_nodes, geo_elem_conn,
+                                &block_xpts[local_elem][0]);
 
     const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
-    vars.copyValuesToShared(active_thread, thread_yz, nthread_yz,
-                            Phys::vars_per_node, Basis::num_nodes, vars_elem_conn, 
-                            &block_vars[local_elem][0]);
+    vars.copyElemValuesToShared(active_thread, thread_yz, nthread_yz,
+                                Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
+                                &block_vars[local_elem][0]);
 
-    if (active_thread) {
+    if (active_thread)
+    {
         memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
         memset(&block_mat[local_elem][0], 0.0, vars_per_elem2 * sizeof(T));
 
-        if (local_thread < elems_per_block) {
+        if (local_thread < elems_per_block)
+        {
             block_data[local_thread] = _phys_data[global_elem_thread];
         }
     }
