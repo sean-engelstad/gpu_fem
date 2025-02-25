@@ -193,8 +193,13 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     T loc_ua[3];
     A2D::VecSumCore<T, 3>(1.0, loc_xa, -1.0, loc_xa0, loc_ua);
 
+    // debug states
+    T loc_us[3];
+    A2D::VecSumCore<T, 3>(1.0, xs_bar, -1.0, xs0_bar, loc_us);
+
+
     // bool cond = loc_xs0[0] == 1.0 && loc_xs0[1] == 1.0;
-    bool cond = aero_ind == 0;
+    bool cond = aero_ind == 899;
 
     if (cond && threadIdx.x == 0) {
 
@@ -217,6 +222,9 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
 
         printf("rho:");
         printVec<double>(3, &rho[0]);
+
+        printf("loc_us:");
+        printVec<double>(3, &loc_us[0]);
 
         printf("loc_ua:");
         printVec<double>(3, &loc_ua[0]);

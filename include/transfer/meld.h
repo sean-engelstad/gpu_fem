@@ -188,9 +188,12 @@ class MELDTransfer {
         CHECK_CUDA(cudaDeviceSynchronize());
         printf("\tfinished transfer_disps_kernel\n");
 
-        // auto h_ua = ua.createHostVec();
+        auto h_ua = ua.createHostVec();
         // printf("h_ua:");
         // printVec<double>(h_ua.getSize(), h_ua.getPtr());
+
+        printf("h_ua at node 899:");
+        printVec<double>(3, &h_ua[3 * 899]);
 
         return ua;
     }

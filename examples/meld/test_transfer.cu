@@ -6,6 +6,12 @@
 #include <string>
 
 template <typename T>
+T convertNanToZero(T value)
+{
+    return std::isnan(value) ? 0.0f : value;
+}
+
+template <typename T>
 void printGridToVTK(int nnx, int nny, HostVec<T> &x0, HostVec<T> &u, std::string filename) {
     // NOTE : better to use F5 binary for large cases, we will handle that
     // later
@@ -62,9 +68,9 @@ void printGridToVTK(int nnx, int nny, HostVec<T> &x0, HostVec<T> &u, std::string
     string scalarName = "disp";
     myfile << "VECTORS " << scalarName << " double64\n";
     for (int inode = 0; inode < num_nodes; inode++) {
-        myfile << u[3 * inode] << sp;
-        myfile << u[3 * inode + 1] << sp;
-        myfile << u[3 * inode + 2] << "\n";
+        myfile << convertNanToZero(u[3 * inode]) << sp;
+        myfile << convertNanToZero(u[3 * inode + 1]) << sp;
+        myfile << convertNanToZero(u[3 * inode + 2]) << "\n";
     }
 
     myfile.close();
@@ -181,6 +187,12 @@ int main() {
     // visualize one of the meshes in paraview
     printGridToVTK<T>(nnx_s, nny_s, xs0, us, "xs.vtk");
     printGridToVTK<T>(nnx_a, nny_a, xa0, h_ua, "xa.vtk");
+
+    printf("xa0 len %d\n", xa0.getSize() / 3);
+    printf("h_ua len %d\n", h_ua.getSize() / 3);
+
+    printf("h_ua at node 899:");
+    printVec<double>(3, &h_ua[3 * 899]);
 
     auto xs = meld.getStructDeformed();
     auto h_xs = xs.createHostVec();
