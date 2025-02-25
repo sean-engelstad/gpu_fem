@@ -1,5 +1,8 @@
 #pragma once
-#include "a2d_core.h"
+#ifdef USE_GPU
+#include <cuda_runtime.h>
+#endif
+#include "a2dcore.h"
 #include "cuda_utils.h"
 #include "math.h"
 
@@ -12,41 +15,14 @@
 // https://dl.acm.org/doi/pdf/10.1145/355578.366316
 
 template <typename T>
-__HOST_DEVICE__ void computeRotation(const T H[9], T R[9]) {
-    T sigma[3], U[9], VT[9];
-    svd3x3(H, sigma, U, VT);
-
-    // compute rotation matrix R = U * VT
-    A2D::MatMatMultCore3x3<T>(U, VT, R);
-
-    // TODO : later we'll also need S[9] = V * Sigma * VT and add arg for loads transfer
-}
-
-template <typename T>
-__HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9]) {
-    T sigma[3], U[9], VT[9];
-    svd3x3(H, sigma, U, VT);
-
-    // compute rotation matrix R = U * VT
-    A2D::MatMatMultCore3x3<T>(U, VT, R);
-
-    // compute symmetric matrix S = V * Sigma * VT
-    T tmp[9];
-    for (int i = 0; i < 3; i++) {
-        A2D::VecScaleCore<T, 3>(sigma[i], &VT[3 * i], &tmp[3 * i])
-    }
-
-    // S = V * tmp
-    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(VT, tmp, S);
-}
-
-template <typename T>
-__HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
+__DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
     // TODO : test this routine on the host for debugging
 
     // so are given H a 3x3 matrix and we wish to find H = U * Sigma * V^T
     // we can find the singular values in the diagonal
     // from the 3x3 eigenvalue problem H^* H = V Sigma^2 V^T
+
+    double pi = 3.141592653589723846;
 
     // let A = H^* H (note if complex I need to add cmplx conjugate's here for hermitian transpose)
     T A[9];
@@ -77,7 +53,10 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
         for (int i = 0; i < 9; i++) {
             p += AmI[i] * AmI[i];
         }
+        p /= 6.0;
     }
+
+    // printf("m %.4e p %.4e q %.4e\n", m, p, q);
 
     // we now have our three invariants m, p, q
     // we also need this angle from trigonomery phi
@@ -85,10 +64,16 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
     // ensures phi is in [0,pi] and ? symbol prevents warp divergence
     phi += phi < 0.0 ? pi : 0.0;
 
+    // printf("phi %.4e\n", phi);
+
     // then the three eigenvalues of A are sigma^2 eigvals
     sigma[0] = m + 2 * sqrt(p) * cos(phi);
-    sigma[1] = m - sqrt(p) * (cos(phi) + sqrt(3) * sin(phi));
-    sigma[2] = m - sqrt(p) * (cos(phi) - sqrt(3) * sin(phi));
+    sigma[1] = m - sqrt(p) * (cos(phi) + sqrt(3.0) * sin(phi));
+    sigma[2] = m - sqrt(p) * (cos(phi) - sqrt(3.0) * sin(phi));
+
+    // for (int i = 0; i < 3; i++) {
+    //     printf("sigma[%d] = %.4e\n", i, sigma[i]);
+    // }
 
     // now that we have S diag matrix, how do we get V and U?
     // for V we can solve the system (A - sigma[i] * I) * vi = 0 for each S[i]
@@ -145,7 +130,7 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
         // U can be found by U = H * V * sigma^-1
 
         // first U (tmp) = H * VT^T = H * V
-        A2D::MatMatMultCore3x3<double, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, tmp);
+        A2D::MatMatMultCore3x3<double, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, U);
 
         // now find U = U (tmp) * sigma^-1 by scaling each column by 1.0/si (see if later I need
         // numerical stability for si near 0)
@@ -159,8 +144,35 @@ __HOST_DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
 }
 
 template <typename T>
-__HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[3], T d[3], T R[9],
-                                       T S[9]) {
+__DEVICE__ void computeRotation(const T H[9], T R[9]) {
+    T sigma[3], U[9], VT[9];
+    svd3x3<T>(H, sigma, U, VT);
+
+    // compute rotation matrix R = U * VT
+    A2D::MatMatMultCore3x3<T>(U, VT, R);
+}
+
+template <typename T>
+__DEVICE__ void computeRotation(const T H[9], T R[9], T S[9]) {
+    T sigma[3], U[9], VT[9];
+    svd3x3<T>(H, sigma, U, VT);
+
+    // compute rotation matrix R = U * VT
+    A2D::MatMatMultCore3x3<T>(U, VT, R);
+
+    // compute symmetric matrix S = V * Sigma * VT
+    T tmp[9];
+    for (int i = 0; i < 3; i++) {
+        A2D::VecScaleCore<T, 3>(sigma[i], &VT[3 * i], &tmp[3 * i]);
+    }
+
+    // S = V * tmp
+    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(VT, tmp, S);
+}
+
+template <typename T>
+__DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fa[3], T d[3], T R[9],
+                                  T S[9]) {
     // the two adjoint eqns which become 15x15 are:
     // dL/dR = fA*d^T - X^T * S + R * Y = 0 [9 eqns]
     // dL/dS = XR + R^T X^T = 0             [6 eqns]
@@ -240,7 +252,7 @@ __HOST_DEVICE__ void svd_15x15_adjoint(T M[225], T adjoint[15], T rhs[15], T fA[
 }
 
 template <typename T>
-__HOST_DEVICE__ void _solve15x15(T *M, T *y, T *x, int num_aero_nodes) {
+__DEVICE__ void _solve15x15(T *M, T *y, T *x, int num_aero_nodes) {
     // solve the 15x15 dense linear system M * x = y
     // for a single aero node
 
@@ -285,6 +297,6 @@ __HOST_DEVICE__ void _solve15x15(T *M, T *y, T *x, int num_aero_nodes) {
 
     // Write back the solution
     for (int i = threadIdx.x; i < 15; i += blockDim.x) {
-        x[aero_node_id * 15 + i] = y[i];
+        x[i] = y[i];
     }
 }

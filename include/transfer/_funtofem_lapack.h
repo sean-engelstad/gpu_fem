@@ -5,7 +5,7 @@
   This file contains the definitions of several LAPACK/BLAS functions.
 */
 
-#include "TransferScheme.h"
+// #include "TransferScheme.h"
 
 #define LAPACKsyevd dsyevd_
 #define LAPACKdgesvd dgesvd_
@@ -26,51 +26,50 @@
 #endif
 
 template <typename T>
-T F2FRealPart(T val) {
+T doublePart(T val) {
     return val;
     // TODO : go back later and extend this to complex properly
 }
 
 extern "C" {
 // Compute an LU factorization of a matrix
-extern void LAPACKgetrf(int *m, int *n, F2FScalar *a, int *lda, int *ipiv, int *info);
+extern void LAPACKgetrf(int *m, int *n, double *a, int *lda, int *ipiv, int *info);
 
 // This routine solves a system of equations with a factored matrix
-extern void LAPACKgetrs(const char *c, int *n, int *nrhs, const F2FScalar *a, int *lda,
-                        const int *ipiv, F2FScalar *b, int *ldb, int *info);
+extern void LAPACKgetrs(const char *c, int *n, int *nrhs, const double *a, int *lda,
+                        const int *ipiv, double *b, int *ldb, int *info);
 
 // Compute the eigenvalues of a symmetric matrix
-extern void LAPACKsyevd(const char *jobz, const char *uplo, int *N, F2FReal *A, int *lda,
-                        F2FReal *w, F2FReal *work, int *lwork, int *iwork, int *liwork, int *info);
+extern void LAPACKsyevd(const char *jobz, const char *uplo, int *N, double *A, int *lda, double *w,
+                        double *work, int *lwork, int *iwork, int *liwork, int *info);
 
 // Compute the SVD decomposition of a matrix
-extern void LAPACKdgesvd(const char *jobu, const char *jobvt, int *m, int *n, F2FReal *a, int *lda,
-                         F2FReal *s, F2FReal *u, int *ldu, F2FReal *vt, int *ldvt, F2FReal *work,
+extern void LAPACKdgesvd(const char *jobu, const char *jobvt, int *m, int *n, double *a, int *lda,
+                         double *s, double *u, int *ldu, double *vt, int *ldvt, double *work,
                          int *lwork, int *info);
 
 // Compute the complex SVD decomposition of a matrix
-extern void LAPACKzgesvd(const char *jobu, const char *jobvt, int *m, int *n, F2FComplex *a,
-                         int *lda, F2FReal *s, F2FComplex *u, int *ldu, F2FComplex *vt, int *ldvt,
-                         F2FComplex *work, int *lwork, F2FReal *rwork, int *info);
+extern void LAPACKzgesvd(const char *jobu, const char *jobvt, int *m, int *n, double *a, int *lda,
+                         double *s, double *u, int *ldu, double *vt, int *ldvt, double *work,
+                         int *lwork, double *rwork, int *info);
 
 // Level 2 BLAS routines
 // y = alpha * A * x + beta * y, for a general matrix
-extern void BLASgemv(const char *c, int *m, int *n, F2FScalar *alpha, F2FScalar *a, int *lda,
-                     F2FScalar *x, int *incx, F2FScalar *beta, F2FScalar *y, int *incy);
+extern void BLASgemv(const char *c, int *m, int *n, double *alpha, double *a, int *lda, double *x,
+                     int *incx, double *beta, double *y, int *incy);
 
 // Level 3 BLAS routines
 // C := alpha*op( A )*op( B ) + beta*C,
-extern void BLASgemm(const char *ta, const char *tb, int *m, int *n, int *k, F2FScalar *alpha,
-                     F2FScalar *a, int *lda, F2FScalar *b, int *ldb, F2FScalar *beta, F2FScalar *c,
-                     int *ldc);
+extern void BLASgemm(const char *ta, const char *tb, int *m, int *n, int *k, double *alpha,
+                     double *a, int *lda, double *b, int *ldb, double *beta, double *c, int *ldc);
 
 // Solve an over or underdetermined system of equations
 extern void LAPACKdgelss(int *m, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb,
                          double *s, double *rcond, int *rank, double *work, int *lwork, int *info);
 
-extern void LAPACKzgelss(int *m, int *n, int *nrhs, F2FComplex *a, int *lda, F2FComplex *b,
-                         int *ldb, double *s, double *rcond, int *rank, F2FComplex *work,
-                         int *lwork, double *rwork, int *info);
+extern void LAPACKzgelss(int *m, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb,
+                         double *s, double *rcond, int *rank, double *work, int *lwork,
+                         double *rwork, int *info);
 }
 
 #endif

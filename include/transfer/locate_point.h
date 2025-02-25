@@ -4,7 +4,10 @@
 #include <math.h>
 #include <stdio.h>
 
-#include "_funtofemlapack.h"
+#include "_funtofem_lapack.h"
+#include "base/utils.h"
+
+double F2FRealPart(double x) { return x; }
 
 /*!
   Given a set of points in R^3, locate the closest one to a given
@@ -22,6 +25,8 @@ class LocatePoint {
         npts = _npts;
         max_num_points = _max_num_points;
 
+        // printf("checkpt1\n");
+
         // Calculate approximately how many nodes there should be
         max_nodes = (2 * npts) / max_num_points;
         if (max_nodes < 1) {
@@ -34,6 +39,7 @@ class LocatePoint {
         for (int i = 0; i < npts; i++) {
             indices[i] = i;
         }
+        // printf("checkpt2\n");
 
         // Set up the data structure that represents the
         // splitting planes
@@ -45,6 +51,7 @@ class LocatePoint {
         // planes
         node_xav = new T[3 * max_nodes];
         node_normal = new T[3 * max_nodes];
+        // printf("checkpt3\n");
 
         for (int i = 0; i < max_nodes; i++) {
             nodes[2 * i] = nodes[2 * i + 1] = -1;
@@ -58,7 +65,9 @@ class LocatePoint {
         }
 
         // Recursively split the points
+        // printf("checkpt4\n");
         split(0, npts);
+        // printf("checkpt5\n");
     }
     ~LocatePoint() {
         delete[] indices;
@@ -76,7 +85,34 @@ class LocatePoint {
 
     // Locate the K-closest points (note that dist/indices must of length K)
     // ---------------------------------------------------------------------
-    void locateKClosest(int K, int indices[], T dist[], const T xpt[]) {
+    void locateKClosest(int K, int indx[], T dist[], const T xpt[]) {
+        int nk = 0;  // Length of the array
+        int root = 0;
+
+        locateKClosest(K, root, xpt, dist, indx, &nk);
+
+        // Check that the array of indices is in fact sorted
+        if (nk < K) {
+            printf("Error nk = %d < K = %d \n", nk, K);
+        }
+
+        // Check if the list is properly sorted
+        int flag = 0;
+        for (int k = 0; k < nk - 1; k++) {
+            if (!(F2FRealPart(dist[k]) <= F2FRealPart(dist[k + 1]))) {
+                flag = 1;
+                break;
+            }
+        }
+        if (flag) {
+            printf("Error: list not sorted \n");
+            for (int k = 0; k < nk; k++) {
+                printf("dist[%d] = %g \n", k, F2FRealPart(dist[k]));
+            }
+        }
+    }
+
+    void locateKClosest(int K, int root, const T xpt[], T *dist, int *indx, int *nk) {
         int start = indices_ptr[root];
         int left_node = nodes[2 * root];
         int right_node = nodes[2 * root + 1];
@@ -142,12 +178,14 @@ class LocatePoint {
     // // Sort the list of initial indices into the tree data structure
     int split(int start, int end) {
         int root = num_nodes;
+        // printf("checkpt4.1\n");
 
         num_nodes++;
         if (num_nodes >= max_nodes) {
             extendArrays(num_nodes, 2 * (num_nodes + 1));
             max_nodes = 2 * (num_nodes + 1);
         }
+        // printf("checkpt4.2\n");
 
         if (end - start <= max_num_points) {
             nodes[2 * root] = -1;
@@ -163,12 +201,14 @@ class LocatePoint {
 
             return root;
         }
+        // printf("checkpt4.3\n");
 
         indices_ptr[root] = -1;
         num_indices[root] = 0;
 
         int mid =
             splitList(&node_xav[3 * root], &node_normal[3 * root], &indices[start], end - start);
+        // printf("checkpt4.4\n");
 
         if (mid == 0 || mid == end - start) {
             fprintf(stderr,
@@ -183,10 +223,12 @@ class LocatePoint {
 
         nodes[2 * root] = left_node;
         nodes[2 * root + 1] = right_node;
+        // printf("checkpt4.5\n");
 
         return root;
     }
-    int splitList(T xav[], T normal[], int *indices, int npts) {
+
+    int splitList(T xav[], T normal[], int *ind, int np) {
         xav[0] = xav[1] = xav[2] = T(0.0);
         normal[0] = normal[1] = normal[2] = T(0.0);
 
@@ -210,6 +252,8 @@ class LocatePoint {
             for (int k = 0; k < 3; k++) {
                 xav[k] += doublePart(Xpts[3 * n + k]);
             }
+            // printf("xav_temp:\n");
+            // printVec<T>(3, xav);
 
             // I[0] = Ix = y^2 + z^2
             I[0] +=
@@ -257,6 +301,14 @@ class LocatePoint {
 
         // Now, split the index array such that
         while (high > low) {
+            // printf("low-high %d-%d\n", low, high);
+            // const double *low_pt = &Xpts[3 * ind[low]];
+            // printf("lowpt:");
+            // printVec<double>(3, low_pt);
+            // const double *high_pt = &Xpts[3 * ind[high]];
+            // printf("highpt:");
+            // printVec<double>(3, high_pt);
+
             // (dot(Xpts[ind] - xav, n ) < 0 ) < 0.0 for i < low
             while (high > low && doublePart((Xpts[3 * ind[low]] - xav[0]) * normal[0] +
                                             (Xpts[3 * ind[low] + 1] - xav[1]) * normal[1] +
@@ -283,6 +335,7 @@ class LocatePoint {
         if (low == 0 || low == np) {
             fprintf(stderr, "LocatePoint: Error split points\n");
         }
+        // printf("checkpt 4.3.5\n");
 
         return low;
     }
@@ -323,6 +376,45 @@ class LocatePoint {
         delete[] array;
 
         return temp;
+    }
+
+    /*!
+  Insert a point into a sorted list based upon the distance from the
+  given point
+*/
+    void insertIndex(T *dist, int *indx, int *nk, T d, int dindex, int K) {
+        if (*nk == 0) {
+            dist[*nk] = d;
+            indx[*nk] = dindex;
+            *nk += 1;
+            return;
+        } else if (*nk < K && F2FRealPart(dist[*nk - 1]) <= F2FRealPart(d)) {
+            dist[*nk] = d;
+            indx[*nk] = dindex;
+            *nk += 1;
+            return;
+        }
+
+        // Place it into the list
+        int i = 0;
+        while (i < *nk && (F2FRealPart(d) >= F2FRealPart(dist[i]))) {
+            i++;
+        }
+
+        for (; i < *nk; i++) {
+            int tindex = indx[i];
+            T t = dist[i];
+            indx[i] = dindex;
+            dist[i] = d;
+            dindex = tindex;
+            d = t;
+        }
+
+        if (*nk < K) {
+            indx[*nk] = dindex;
+            dist[*nk] = d;
+            *nk += 1;
+        }
     }
 
     // The cloud of points to match

@@ -33,14 +33,20 @@ __GLOBAL__ void permute_vec_kernel(int num_nodes, T *data, T *temp, int block_di
     }
 }
 
-template <typename T>
-__GLOBAL__ void vec_add_kernel(DeviceVec<T> v1, DeviceVec<T> v2, DeviceVec<T> v3)
+template <typename T, template <typename> class Vec>
+__GLOBAL__ void vec_add_kernel(Vec<T> v1, Vec<T> v2, Vec<T> v3)
 {
     int thread_start = blockDim.x * blockIdx.x + threadIdx.x;
     int N = v1.getSize();
 
-    for (int i = thread_start; i < N; i += blockDim.x)
-    {
-        v3[i] = v2[i] + v1[i];
+    int i = thread_start;
+    if (i < N) {
+        atomicAdd(&v3[i], v1[i] + v2[i]);
+        // printf("adding ind %d\n", i);
     }
+
+    // for (int i = thread_start; i < (thread_start + blockDim.x) && i < N; i += blockDim.x)
+    // {
+    //     atomicAdd(&v3[i], v1[i] + v2[i]);
+    // }
 }
