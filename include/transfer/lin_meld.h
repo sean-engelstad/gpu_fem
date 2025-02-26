@@ -4,7 +4,9 @@
 #include "linalg/vec.h"
 #include "locate_point.h"
 #ifdef USE_GPU
-#include "meld.cuh"
+#include <cublas_v2.h>
+
+#include "lin_meld.cuh"
 #endif
 
 // intended for the GPU here, later could generalize it if you want
@@ -14,9 +16,9 @@
 // https://github.com/smdogroup/funtofem/blob/master/src/MELD.cpp
 
 template <typename T>
-class MELD {
+class LinearizedMELD {
    public:
-    MELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym)
+    LinearizedMELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym)
         : xs0(xs0), xa0(xa0), beta(beta), nn(num_nearest), sym(sym) {
         // assumes 3D so that xs0, xa0 are 3*nS, 3*nA sizes
         ns = xs0.getSize() / 3;
@@ -28,9 +30,9 @@ class MELD {
         xa = DeviceVec<T>(3 * na);
         ua = DeviceVec<T>(3 * na);
 
-        // auto h_xs0 = xs0.createHostVec();
-        // printf("h_xs0 constructor:");
-        // printVec<double>(10, h_xs0.getPtr());
+        global_H = DeviceVec<T>(9 * na);
+        global_rhs = DeviceVec<T>(3 * na);
+        global_soln = DeviceVec<T>(3 * na);
     }
 
     __HOST__ DeviceVec<T> &getStructDisps() { return us; }
@@ -40,53 +42,26 @@ class MELD {
     __HOST__ void initialize() {
         printf("inside initialize\n");
 
-        // auto h_xs0 = xs0.createHostVec();
-        // printf("h_xs0:");
-        // printVec<double>(10, h_xs0.getPtr());
-        // return;
-
         // was going to maybe compute aero struct connectivity (nearest neighbors)
         // using octree, but instead just going to reuse CPU code for this from F2F MELD
         computeAeroStructConn();
         printf("\tfinished aero struct conn\n");
-
-        // compute aero struct connectivity (DEPRECATED here)
-        // aerostruct_conn = DeviceVec<int>(nn * na);
-        // dim3 block(128); // number of struct nodes considered at a time
-        // int nblocks = (ns + block.x) / block.x;
-        // dim3 grid(na);
-        // compute_aerostruct_conn<double><<<grid, block>>>(nn, xa0, xs0, aerostruct_conn);
 
         // compute weights (assumes fixed here even) => reinitialize under shape change
         weights = DeviceVec<double>(nn * na);
         dim3 block(32);
         dim3 grid(na);
 
-        // debug with 1 thread
-        // dim3 block(32);
-        // dim3 grid(1);
-
-        // auto h_conn = aerostruct_conn.createHostVec();
-        // printf("h_conn");
-        // printVec<int>(h_conn.getSize(), h_conn.getPtr());
-
         compute_weights_kernel<T><<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, weights);
         CHECK_CUDA(cudaDeviceSynchronize());
         printf("\tfinished weights kernel\n");
-
-        // auto h_weights = weights.createHostVec();
-        // printVec<double>(h_weights.getSize(), h_weights.getPtr());
     }
 
     __HOST__ void computeAeroStructConn() {
         HostVec<int> conn(nn * na);
         // printf("inside aero struct conn\n");
         auto h_xa0 = xa0.createHostVec();
-
-        // TODO : later do sym case
         auto h_xs = xs0.createHostVec();
-        // printVec<double>(10, h_xs.getPtr());
-        // return;
 
         int min_bin_size = 10;
         int npts = h_xs.getSize() / 3;
@@ -114,11 +89,6 @@ class MELD {
                 // }
                 conn[nn * i + k] = indx[k];
             }
-
-            // if (i < 3) {
-            // printf("node %d conn:", i);
-            // printVec<int>(nn, &conn[nn * i]);
-            // }
         }
 
         // cleanup
@@ -133,15 +103,8 @@ class MELD {
         }
         delete locator;
 
-        // printf("conn:");
-        // printVec<int>(nn * na, conn.getPtr());
-
         // then copy onto the device in
         aerostruct_conn = conn.createDeviceVec();
-
-        // auto h_conn = aerostruct_conn.createHostVec();
-        // printf("h_conn:");
-        // printVec<int>(nn * na, h_conn.getPtr());
     }
 
     __HOST__ DeviceVec<T> &transferDisps(DeviceVec<T> &new_us) {
@@ -149,51 +112,59 @@ class MELD {
         new_us.copyValuesTo(us);
         xs.zeroValues();
 
-        // auto h_us = us.createHostVec();
-        // printf("h_us:");
-        // printVec<double>(h_us.getSize(), h_us.getPtr());
-
         // add us to xs0
-        // use cublas or a custom kernel here for axpy?
         dim3 block1(32);
         int nblocks = (3 * ns + block1.x - 1) / block1.x;
         dim3 grid1(nblocks);
         vec_add_kernel<T><<<grid1, block1>>>(us, xs0, xs);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished vec_add_kernel\n");
-
-        // auto h_xs = xs.createHostVec();
-        // printf("h_xs:");
-        // printVec<double>(h_xs.getSize(), h_xs.getPtr());
+        printf("\tfinished vec_add_kernel for us\n");
 
         // zero out xa, ua before we change them
         xa.zeroValues();
         ua.zeroValues();
+        global_H.zeroValues();
+        global_rhs.zeroValues();
 
         // transfer disps on the kernel for each aero node
-        // dim3 block2(128);  // power of 2 larger than the # nearest neighbors?
-        // dim3 grid2(na);
-
         dim3 block2(32);
         dim3 grid2(na);
-
-        // debug launch
-        // dim3 block2(1);
-        // dim3 grid2(1);
-
-        // return ua;
-
-        transfer_disps_kernel<T>
-            <<<grid2, block2>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, xa, ua);
+        transfer_disps_H_kernel<T>
+            <<<grid2, block2>>>(nn, aerostruct_conn, weights, xs0, us, xa0, global_H, global_rhs);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished transfer_disps_kernel\n");
+        printf("\tfinished transfer_disps_H_kernel\n");
 
-        auto h_ua = ua.createHostVec();
-        // printf("h_ua:");
-        // printVec<double>(h_ua.getSize(), h_ua.getPtr());
+        // auto h_globalH = global_H.createHostVec();
+        // printf("h_globalH:");
+        // printVec<double>(h_globalH.getSize(), h_globalH.getPtr());
 
-        printf("h_ua at node 899:");
-        printVec<double>(3, &h_ua[3 * 899]);
+        // auto h_global_rhs = global_rhs.createHostVec();
+        // printf("h_global_rhs:");
+        // printVec<double>(h_global_rhs.getSize(), h_global_rhs.getPtr());
+
+        // use cublas to solve H^-1 * rhs for each
+        cublasStatus_t blas_stat;
+        cublasHandle_t cublas_handle;
+        blas_stat = cublasCreate(&cublas_handle);
+        const double alpha = 1.0;
+        const double beta = 0.0;
+        cublasDgemmStridedBatched(cublas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 3, 3, 3, &alpha,
+                                  global_H.getPtr(), 3, 9, global_rhs.getPtr(), 3, 3, &beta,
+                                  global_soln.getPtr(), 3, 3, na);
+
+        dim3 block3(32);
+        dim3 grid3(na);
+        transfer_disps_ua_kernel<T>
+            <<<grid3, block3>>>(nn, aerostruct_conn, weights, xs0, us, xa0, global_soln, ua);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        printf("\tfinished transfer_disps_ua_kernel\n");
+
+        dim3 block4(32);
+        nblocks = (3 * na + block4.x - 1) / block4.x;
+        dim3 grid4(nblocks);
+        vec_add_kernel<T><<<grid4, block4>>>(ua, xa0, xa);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        printf("\tfinished vec_add_kernel for ua\n");
 
         return ua;
     }
@@ -215,6 +186,9 @@ class MELD {
     DeviceVec<T> xs, xa;
     DeviceVec<T> us, ua;
     DeviceVec<T> fs, fa;
+
+    DeviceVec<T> global_H, global_rhs, global_soln;
+
     DeviceVec<int> aerostruct_conn;
     double beta;
     int sym, nn;

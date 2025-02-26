@@ -1,13 +1,13 @@
-#include "transfer/meld.h"
-#include "linalg/vec.h"
+#pragma once
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <string>
 
+#include "linalg/vec.h"
+
 template <typename T>
-T convertNanToZero(T value)
-{
+T convertNanToZero(T value) {
     return std::isnan(value) ? 0.0f : value;
 }
 
@@ -34,8 +34,7 @@ void printGridToVTK(int nnx, int nny, HostVec<T> &x0, HostVec<T> &u, std::string
     double *xpts_ptr = x0.getPtr();
     for (int inode = 0; inode < num_nodes; inode++) {
         double *node_xpts = &xpts_ptr[3 * inode];
-        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2]
-               << "\n";
+        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2] << "\n";
     }
 
     // print all the cells
@@ -46,7 +45,7 @@ void printGridToVTK(int nnx, int nny, HostVec<T> &x0, HostVec<T> &u, std::string
 
     int nxe = nnx - 1, nye = nny - 1;
     for (int iy = 0; iy < nye; iy++) {
-        for (int ix = 0; ix < nxe ; ix++) {
+        for (int ix = 0; ix < nxe; ix++) {
             int istart = iy * nnx + ix;
             myfile << sp << 4;
             myfile << sp << istart;
@@ -79,7 +78,7 @@ void printGridToVTK(int nnx, int nny, HostVec<T> &x0, HostVec<T> &u, std::string
 template <typename T>
 HostVec<T> makeGridMesh(int nnx, int nny, T Lx, T Ly, T z0) {
     int N = nnx * nny;
-    HostVec<T> x0(3*N);
+    HostVec<T> x0(3 * N);
     T pi = 3.14159265358979323846;
     printf("z0 = %.4e\n", z0);
 
@@ -93,9 +92,9 @@ HostVec<T> makeGridMesh(int nnx, int nny, T Lx, T Ly, T z0) {
             T xfac = sin(pi * xi);
 
             int ind = iy * nnx + ix;
-            x0[3*ind] = ix * dx;
-            x0[3*ind+1] = iy * dy;
-            x0[3*ind+2] = z0 * xfac * yfac;
+            x0[3 * ind] = ix * dx;
+            x0[3 * ind + 1] = iy * dy;
+            x0[3 * ind + 2] = z0 * xfac * yfac;
             // printf("ix %d xi %.4e, iy %d eta %.4e\n", ix, xi, iy, eta);
             // printf("zval = %.4e, xfac %.4e, yfac %.4e\n", x0[3*ind+2], xfac, yfac);
         }
@@ -107,12 +106,12 @@ HostVec<T> makeGridMesh(int nnx, int nny, T Lx, T Ly, T z0) {
 template <typename T>
 HostVec<T> makeInPlaneShearDisp(HostVec<T> &x0, T angleDeg) {
     int N = x0.getSize() / 3;
-    HostVec<T> u(3*N);
+    HostVec<T> u(3 * N);
     T angleRad = angleDeg * 3.14159265 / 180.0;
 
     for (int inode = 0; inode < N; inode++) {
-        T* xpt = &x0[3*inode];
-        T* upt = &u[3*inode];
+        T *xpt = &x0[3 * inode];
+        T *upt = &u[3 * inode];
         upt[0] = tan(angleRad / 2.0) * xpt[1];
         upt[1] = tan(angleRad / 2.0) * xpt[0];
         upt[2] = 0.0;
@@ -124,12 +123,12 @@ HostVec<T> makeInPlaneShearDisp(HostVec<T> &x0, T angleDeg) {
 template <typename T>
 HostVec<T> makeCustomDisp(HostVec<T> &x0, T scale) {
     int N = x0.getSize() / 3;
-    HostVec<T> u(3*N);
+    HostVec<T> u(3 * N);
     T pi = 3.14159265;
 
     for (int inode = 0; inode < N; inode++) {
-        T* xpt = &x0[3*inode];
-        T* upt = &u[3*inode];
+        T *xpt = &x0[3 * inode];
+        T *upt = &u[3 * inode];
         upt[0] = sin(4 * pi * xpt[0]) * cos(6 * pi * xpt[1]) + 0.5 * cos(7 * pi * xpt[0] * xpt[1]);
         upt[1] = cos(5 * pi * xpt[0]) * sin(4 * pi * xpt[1]) + 0.3 * sin(6 * pi * xpt[0] * xpt[1]);
         upt[2] = sin(3 * pi * xpt[0]) * cos(5 * pi * xpt[1]) + 0.4 * cos(6 * pi * xpt[0] * xpt[1]);
@@ -140,63 +139,3 @@ HostVec<T> makeCustomDisp(HostVec<T> &x0, T scale) {
 
     return u;
 }
-
-int main() {
-
-    using T = double;
-    
-    // setup 
-    T Lx = 1.0, Ly = 1.0;
-    int nnx_a = 30, nny_a = 30;
-    int nnx_s = 17, nny_s = 17;
-
-    auto xs0 = makeGridMesh<T>(nnx_s, nny_s, Lx, Ly, -0.2);
-    auto xa0 = makeGridMesh<T>(nnx_a, nny_a, Lx, Ly,-0.15);
-
-    // prescribed displacements
-    auto us = makeInPlaneShearDisp<T>(xs0, 20.0);
-    // auto us = makeCustomDisp<T>(xs0, 0.1);
-    // auto ua = HostVec<T>(xa0.getSize());
-    // printVec<T>(N, )
-
-    // convert to device vecs
-    auto d_xa0 = xa0.createDeviceVec();
-    auto d_xs0 = xs0.createDeviceVec();
-    auto d_us = us.createDeviceVec();
-
-    // auto h_xs0 = d_xs0.createHostVec();
-    // printVec<double>(10, h_xs0.getPtr());
-    // return 0;
-    
-    // create MELD
-    T beta = 10.0;
-    int nn = 32;
-    int sym = 0;
-    auto meld = MELDTransfer<T>(d_xs0, d_xa0, beta, nn, sym);
-    meld.initialize();
-    // return 0;
-
-    // perform disp transfer
-    // return 0;
-    auto d_ua = meld.transferDisps(d_us);
-    // return 0;
-
-    // copy out of device
-    auto h_ua = d_ua.createHostVec();
-
-    // visualize one of the meshes in paraview
-    printGridToVTK<T>(nnx_s, nny_s, xs0, us, "xs.vtk");
-    printGridToVTK<T>(nnx_a, nny_a, xa0, h_ua, "xa.vtk");
-
-    printf("xa0 len %d\n", xa0.getSize() / 3);
-    printf("h_ua len %d\n", h_ua.getSize() / 3);
-
-    printf("h_ua at node 899:");
-    printVec<double>(3, &h_ua[3 * 899]);
-
-    auto xs = meld.getStructDeformed();
-    auto h_xs = xs.createHostVec();
-    printGridToVTK<T>(nnx_s, nny_s, h_xs, us, "xs_def.vtk");
-
-    return 0;
-};

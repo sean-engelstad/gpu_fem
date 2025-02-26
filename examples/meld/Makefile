@@ -1,12 +1,16 @@
 include ../../Makefile.in
 
-default: gpu
+default: lin-meld
 
-gpu:
+meld:
 	@echo "Building MELD example for GPU"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 test_transfer.cu ${LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 test_meld.cu ${LINK}
+
+lin-meld:
+	@echo "Building MELD example for GPU"
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 test_lin_meld.cu ${LINK}
 
 run:
-	make gpu
+	make lin-meld
 	./a.out
 	paraview xa0.vtk
