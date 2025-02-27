@@ -1,9 +1,9 @@
-# TODO
-
-*Type Ctrl+Shift+V to view in VScode*
+# High-Level TODO List
+* "todo_0.md" is for high-level tasks only and a priority list, "todo_1.md" is low-level tasks for the current high-level task.
+*Type Ctrl+Shift+V to view in VScode to view markdown*
 
 ## Current task priorities
-* for geom programming 1.1 and 1.2
+* for geom programming 2.1 and 2.2
 * make ppt for Monday meeting 3/3/2025 (show results from sec 1)
     * MELD, iterative solver, speedup kernels (launch params and # elems per block)
 * for NASA scalable structures 1.1 and 1.2
@@ -17,7 +17,7 @@
 
 ### 2 - for geometric programming paper
 1. [ ] **(2.1)** implement derivatives of linear static analysis
-2. [ ] **(2.2)** demo structural optimization
+2. [ ] **(2.2)** demo structural optimization with unstiffened panels
 3. [ ] **(2.3)** demo GEP + FSD methods on unstiffened wing
 4. [ ] **(2.4)** implement stiffened 
 
