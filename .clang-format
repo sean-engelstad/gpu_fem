@@ -1,0 +1,11 @@
+BasedOnStyle: Google  # You can change to Google, Mozilla, WebKit, etc.
+IndentWidth: 4      # Set indentation width to 4 spaces
+ColumnLimit: 100    # Set maximum column width
+BraceWrapping:
+  AfterControlStatement: false  # Puts braces on the same line
+  AfterFunction: false
+  AfterNamespace: false
+  BeforeElse: true  # Ensures `else` is properly formatted
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
