@@ -13,8 +13,9 @@
 
 template <typename T_, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat_>
-class ElementAssembler {
-  public:
+class ElementAssembler
+{
+public:
     using T = T_;
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
@@ -33,7 +34,8 @@ class ElementAssembler {
                      HostVec<int32_t> &vars_conn, HostVec<T> &xpts,
                      HostVec<int> &bcs, HostVec<Data> &physData)
         : num_geo_nodes(num_geo_nodes_), num_vars_nodes(num_vars_nodes_),
-          num_elements(num_elements_) {
+          num_elements(num_elements_)
+    {
 
         // keeping inputs as HostVec even if running on device eventually here
         // std::unique, std::sort, and std::vector not directly supported on GPU
@@ -73,13 +75,15 @@ class ElementAssembler {
     };
 
     BsrData getBsrData() { return bsr_data; }
-    void symbolic_factorization(double fillin = 100.0, bool print = false) {
+    void symbolic_factorization(double fillin = 100.0, bool print = false)
+    {
         bsr_data.symbolic_factorization(fillin, print);
 #ifdef USE_GPU
         this->bsr_data = bsr_data.createDeviceBsrData();
 #endif
     }
-    void bsrDataToDevice(double fillin = 100.0, bool print = false) {
+    void bsrDataToDevice(double fillin = 100.0, bool print = false)
+    {
         // move bsr data to device for single Kelem (for debugging)
 #ifdef USE_GPU
         this->bsr_data = bsr_data.createDeviceBsrData();
@@ -90,7 +94,8 @@ class ElementAssembler {
     // as long as that BDF file has only one element type (TODO on multiple
     // element types later)
     static ElementAssembler createFromBDF(TACSMeshLoader<T> &mesh_loader,
-                                          Data single_data) {
+                                          Data single_data)
+    {
         int vars_per_node = Phys::vars_per_node; // input
 
         int num_nodes, num_elements, num_bcs;
@@ -116,8 +121,10 @@ class ElementAssembler {
 
     int get_num_xpts() { return num_geo_nodes * spatial_dim; }
     int get_num_vars() { return num_vars_nodes * vars_per_node; }
-    __HOST__ void apply_bcs(Vec<T> &vec, bool can_print = false) {
-        if (can_print) {
+    __HOST__ void apply_bcs(Vec<T> &vec, bool can_print = false)
+    {
+        if (can_print)
+        {
             printf("apply bcs to vector\n");
         }
         auto start = std::chrono::high_resolution_clock::now();
@@ -128,14 +135,17 @@ class ElementAssembler {
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        double dt = duration.count() / 1e6; 
-        if (can_print) {
+        double dt = duration.count() / 1e6;
+        if (can_print)
+        {
             printf("\tfinished apply bcs vec in %.4e seconds\n",
                    dt);
         }
     }
-    void apply_bcs(Mat &mat, bool can_print = false) {
-        if (can_print) {
+    void apply_bcs(Mat &mat, bool can_print = false)
+    {
+        if (can_print)
+        {
             printf("apply bcs to matrix\n");
         }
         auto start = std::chrono::high_resolution_clock::now();
@@ -147,20 +157,26 @@ class ElementAssembler {
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
-        if (can_print) {
+        if (can_print)
+        {
             printf("\tfinished apply bcs matrix in %.4e sec\n",
                    dt);
         }
     }
 
-    HostVec<T> createVarsHostVec(T *data = nullptr, bool randomize = false) {
+    HostVec<T> createVarsHostVec(T *data = nullptr, bool randomize = false)
+    {
         HostVec<T> h_vec;
-        if (data == nullptr) {
+        if (data == nullptr)
+        {
             h_vec = HostVec<T>(get_num_vars());
-        } else {
+        }
+        else
+        {
             h_vec = HostVec<T>(get_num_vars(), data);
         }
-        if (randomize) {
+        if (randomize)
+        {
             h_vec.randomize();
         }
         return h_vec;
@@ -168,36 +184,44 @@ class ElementAssembler {
 
 #ifdef USE_GPU
     DeviceVec<T> createVarsVec(T *data = nullptr, bool randomize = false,
-                               bool can_print = false) {
-        if (can_print) {
+                               bool can_print = false)
+    {
+        if (can_print)
+        {
             printf("begin create vars host vec\n");
         }
         auto h_vec = createVarsHostVec(data, randomize);
-        if (can_print) {
+        if (can_print)
+        {
             printf("inner checkpt 2\n");
         }
         auto d_vec = h_vec.createDeviceVec(true, can_print);
-        if (can_print) {
+        if (can_print)
+        {
             printf("inner checkpt 3\n");
         }
         return d_vec;
     }
 #else
-    HostVec<T> createVarsVec(T *data = nullptr, bool randomize = false) {
+    HostVec<T> createVarsVec(T *data = nullptr, bool randomize = false)
+    {
         return createVarsHostVec(data, randomize);
     }
 #endif
 
-    void set_variables(Vec<T> &newVars) {
+    void set_variables(Vec<T> &newVars)
+    {
         // vars is either device array on GPU or a host array if not USE_GPU
         // should we not do deep copy here?
         this->vars.setData(newVars.getPtr(), bsr_data.perm, bsr_data.block_dim);
     }
 
     //  template <class ExecParameters>
-    void add_energy(T &Uenergy, bool can_print = false) {
+    void add_energy(T &Uenergy, bool can_print = false)
+    {
         auto start = std::chrono::high_resolution_clock::now();
-        if (can_print) {
+        if (can_print)
+        {
             printf("begin add_energy\n");
         }
 
@@ -211,7 +235,7 @@ class ElementAssembler {
         add_energy_gpu<T, ElemGroup, Data, elems_per_block><<<grid, block>>>(
             num_elements, geo_conn, vars_conn, xpts, physData, Uenergy);
 
-        gpuErrchk(cudaDeviceSynchronize());
+        CHECK_CUDA(cudaDeviceSynchronize());
 #else  // USE_GPU
         ElemGroup::template add_energy_cpu<Data>(
             num_elements, geo_conn, vars_conn, xpts, vars, physData, Uenergy);
@@ -222,16 +246,19 @@ class ElementAssembler {
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
-        if (can_print) {
+        if (can_print)
+        {
             printf("\tfinished assembly in %.4e sec\n",
                    dt);
         }
     };
 
     //  template <class ExecParameters>
-    void add_residual(Vec<T> &res, bool can_print = false) {
+    void add_residual(Vec<T> &res, bool can_print = false)
+    {
         auto start = std::chrono::high_resolution_clock::now();
-        if (can_print) {
+        if (can_print)
+        {
             printf("begin add_residual\n");
         }
 
@@ -246,7 +273,7 @@ class ElementAssembler {
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars,
                               bcs, physData, bsr_data.perm, res);
 
-        gpuErrchk(cudaDeviceSynchronize());
+        CHECK_CUDA(cudaDeviceSynchronize());
 #else  // USE_GPU
         ElemGroup::template add_residual_cpu<Data, Vec>(
             num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
@@ -257,17 +284,136 @@ class ElementAssembler {
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
-        if (can_print) {
+        if (can_print)
+        {
             printf("\tfinished assembly in %.4e\n",
+                   dt);
+        }
+    };
+
+    void compute_stresses(DeviceVec<T> &stresses, bool can_print = false)
+    {
+        auto start = std::chrono::high_resolution_clock::now();
+        if (can_print)
+        {
+            printf("begin add_residual\n");
+        }
+
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+        dim3 block = ElemGroup::stress_block;
+        int nblocks = (num_elements + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+        constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+
+        auto stress_cts = DeviceVec<int>(num_vars_nodes);
+
+        compute_stresses_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars,
+                              bcs, physData, stresses, stress_cts);
+
+        // normalize the stresses and compute KS stress
+        dim3 block2(32);
+        dim3 grid2(num_vars_nodes);
+
+        normalize_stresses_kernel<T, ElemGroup><<<grid2, block2>>>(stresses, stress_cts);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+#else  // USE_GPU
+       // ElemGroup::template add_residual_cpu<Data, Vec>(
+       //     num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+#endif // USE_GPU
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration.count() / 1e6;
+        if (can_print)
+        {
+            printf("\tfinished compute stresses in %.4e\n",
+                   dt);
+        }
+    };
+
+    void evalFunctions(std::vector<Function> funcs)
+    {
+        for (func : funcs)
+        {
+            if (func type == mass)
+            {
+                _compute_mass(...)
+            }
+            else if (func type == ksfailure)
+            {
+                _compute_ks_failure(...)
+            }
+        }
+    }
+
+    void evalFunctionSens(std::vector<Function> funcs)
+    {
+        for (func : funcs)
+        {
+            if (func type == mass)
+            {
+                _compute_mass(...)
+            }
+            else if (func type == ksfailure)
+            {
+                _compute_ks_failure(...)
+            }
+        }
+    }
+
+    T _compute_ks_failure(T rho_KS, bool can_print = false)
+    {
+
+        auto start = std::chrono::high_resolution_clock::now();
+        if (can_print)
+        {
+            printf("begin compute ks stress\n");
+        }
+
+#ifdef USE_GPU
+
+        // compute nodal averaged stresses
+        DeviceVec<T> stresses(num_vars_nodes * vars_per_node);
+        compute_stresses(stresses, can_print);
+
+        // compute ks stresses
+        dim3 block(32);
+        int nblocks = (num_vars_nodes + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+        T sum_exp_fail;
+
+        compute_ks_failure<T, Data>(stresses, rho_KS, &sum_exp_fail);
+
+        T ks_failure = 1.0 / rho_KS * log(sum_exp_fail);
+
+        return ks_failure;
+
+#endif
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration.count() / 1e6;
+        if (can_print)
+        {
+            printf("\tfinished ks stresses in %.4e\n",
                    dt);
         }
     };
 
     //  template <class ExecParameters>
     void add_jacobian(Vec<T> &res, Mat &mat,
-                      bool can_print = false) { // TODO : make this Vec here..
+                      bool can_print = false)
+    { // TODO : make this Vec here..
         auto start = std::chrono::high_resolution_clock::now();
-        if (can_print) {
+        if (can_print)
+        {
             printf("begin add_jacobian\n");
         }
 
@@ -283,7 +429,7 @@ class ElementAssembler {
             <<<grid, block>>>(num_vars_nodes, num_elements, geo_conn, vars_conn,
                               xpts, vars, physData, res, mat);
 
-        gpuErrchk(cudaDeviceSynchronize());
+        CHECK_CUDA(cudaDeviceSynchronize());
 
 #else // CPU data
       // maybe a way to call add_residual_kernel as same method on CPU
@@ -298,7 +444,8 @@ class ElementAssembler {
         auto duration =
             std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
-        if (can_print) {
+        if (can_print)
+        {
             printf("\tfinished assembly in %.4e sec\n",
                    dt);
         }
@@ -309,7 +456,7 @@ class ElementAssembler {
     int get_num_nodes() { return num_vars_nodes; }
     int get_num_elements() { return num_elements; }
 
-  private:
+private:
     int32_t num_geo_nodes;
     int32_t num_vars_nodes;
     int32_t num_elements; // Number of elements of this type

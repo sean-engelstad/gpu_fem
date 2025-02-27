@@ -12,8 +12,9 @@
 template <typename T, class Director_, class Basis_, class Phys_>
 class ShellElementGroup
     : public BaseElementGroup<ShellElementGroup<T, Director_, Basis_, Phys_>, T,
-                              typename Basis_::Geo, Basis_, Phys_> {
-  public:
+                              typename Basis_::Geo, Basis_, Phys_>
+{
+public:
     using Director = Director_;
     using Basis = Basis_;
     using Geo = typename Basis::Geo;
@@ -40,7 +41,8 @@ class ShellElementGroup
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_energy(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data physData, T &Uelem) {
+        const T vars[dof_per_elem], const Data physData, T &Uelem)
+    {
         // keep in mind max of ~256 floats on single thread
 
         if (!active_thread)
@@ -183,7 +185,8 @@ class ShellElementGroup
     __HOST_DEVICE__ static void add_element_quadpt_jacobian_col(
         const bool active_thread, const int iquad, const int ivar,
         const T xpts[xpts_per_elem], const T vars[dof_per_elem],
-        const Data physData, T res[dof_per_elem], T matCol[dof_per_elem]) {
+        const Data physData, T res[dof_per_elem], T matCol[dof_per_elem])
+    {
         // keep in mind max of ~256 floats on single thread
 
         if (!active_thread)
@@ -303,12 +306,69 @@ class ShellElementGroup
     } // add_element_quadpt_jacobian_col
 
     template <class Data>
+    __HOST_DEVICE__ static void compute_element_quadpt_stresses(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data physData, T stresses[vars_per_node])
+
+    {
+        // keep in mind max of ~256 floats on single thread
+
+        if (!active_thread)
+            return;
+
+        // data to store in forwards + backwards section
+        T fn[3 * num_nodes]; // node normals
+        T pt[2];             // quadrature point
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+        // in-out of forward & backwards section
+        A2D::Mat<T, 3, 3> u0x, u1x;
+        A2D::SymMat<T, 3> e0ty;
+        A2D::Vec<T, 1> et;
+
+        // forward scope block for strain energy
+        // ------------------------------------------------
+        {
+            // compute node normals fn
+            ShellComputeNodeNormals<T, Basis>(xpts, fn);
+
+            // compute the interpolated drill strain
+            ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
+                pt, physData.refAxis, xpts, vars, fn, et.get_data());
+
+            // compute directors
+            T d[3 * num_nodes];
+            Director::template computeDirector<vars_per_node, num_nodes>(vars,
+                                                                         fn, d);
+
+            // compute tying strain
+            T ety[Basis::num_all_tying_points];
+            Phys::template computeTyingStrain<Basis>(xpts, fn, vars, d, ety);
+
+            // compute all shell displacement gradients
+            T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+                pt, physData.refAxis, xpts, vars, fn, d, ety,
+                u0x.get_data(), u1x.get_data(), e0ty.get_data());
+
+            // get the scale for disp grad sens of the energy
+            T scale = detXd * weight;
+
+            // compute energy + energy-dispGrad sensitivites with physics
+            Phys::template computeQuadptStresses<T>(physData, scale, u0x, u1x, e0ty,
+                                                    et, stresses);
+
+        } // end of forward scope block for strain energy
+        // ------------------------------------------------
+    }
+
+    template <class Data>
     __HOST_DEVICE__ static void
     add_element_quadpt_gmat_col(const bool active_thread, const int iquad,
                                 const int ivar, const T xpts[xpts_per_elem],
                                 const T vars0[dof_per_elem],
                                 const T path[dof_per_elem], const Data physData,
-                                T matCol[dof_per_elem]) {
+                                T matCol[dof_per_elem])
+    {
 
         if (!active_thread)
             return;
@@ -319,7 +379,8 @@ class ShellElementGroup
         // copy variables over and set
         // directional deriv in for path deriv of vars
         T2 vars[dof_per_elem];
-        for (int i = 0; i < dof_per_elem; i++) {
+        for (int i = 0; i < dof_per_elem; i++)
+        {
             vars[i].value = vars0[i];
             vars[i].deriv = path[i];
         }

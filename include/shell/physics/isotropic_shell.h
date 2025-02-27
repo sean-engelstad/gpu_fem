@@ -64,6 +64,20 @@ public:
     // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
   } // end of computeWeakRes
 
+  __HOST_DEVICE__ static void computeQuadptStresses(
+      const Data &physData, const T &scale, A2D::Mat<T2, 3, 3> &u0x,
+      A2D::Mat<T2, 3, 3> &u1x, A2D::SymMat<T2, 3> &e0ty,
+      A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S)
+  {
+    A2D::ADObj<A2D::Vec<T, 9>> E;
+
+    // use stack to compute shell strains, stresses and then to strain energy
+    auto strain_energy_stack = A2D::MakeStack(
+        A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+        A2D::IsotropicShellStress<T, Data>(
+            physData.E, physData.nu, physData.thick, physData.tOffset, E, S));
+  } // end of computeQuadptStresses
+
   template <typename T2>
   __HOST_DEVICE__ static void computeWeakJacobianCol(
       const Data &physData, const T &scale, A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
@@ -210,9 +224,10 @@ public:
 
   template <class Basis>
   __HOST_DEVICE__ static void computeTyingStrainHfwd(const T Xpts[], const T fn[],
-                                                 const T p_vars[], const T p_d[],
-                                                 T p_ety[]) {
-    
+                                                     const T p_vars[], const T p_d[],
+                                                     T p_ety[])
+  {
+
     // since linear for now (add NL later) => just call forward analysis
     computeTyingStrain<Basis>(Xpts, fn, p_vars, p_d, p_ety);
   }
@@ -342,8 +357,9 @@ public:
   __HOST_DEVICE__ static void computeTyingStrainHrev(const T Xpts[],
                                                      const T fn[],
                                                      const T h_ety[], T matCol[],
-                                                     T h_d[]) {
-    
+                                                     T h_d[])
+  {
+
     // since linear, call sens for now
     computeTyingStrainSens<Basis>(Xpts, fn, h_ety, matCol, h_d);
   }
