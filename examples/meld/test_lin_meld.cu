@@ -12,7 +12,7 @@ int main() {
     int nnx_s = 17, nny_s = 17;
 
     auto xs0 = makeGridMesh<T>(nnx_s, nny_s, Lx, Ly, -0.2);
-    auto xa0 = makeGridMesh<T>(nnx_a, nny_a, Lx, Ly, 0.0);
+    auto xa0 = makeGridMesh<T>(nnx_a, nny_a, Lx, Ly, -0.1);
 
     // prescribed displacements
     auto us = makeInPlaneShearDisp<T>(xs0, 20.0);
@@ -49,15 +49,19 @@ int main() {
     printGridToVTK<T>(nnx_s, nny_s, xs0, us, "xs.vtk");
     printGridToVTK<T>(nnx_a, nny_a, xa0, h_ua, "xa.vtk");
 
-    printf("xa0 len %d\n", xa0.getSize() / 3);
-    printf("h_ua len %d\n", h_ua.getSize() / 3);
+    // auto xs = meld.getStructDeformed();
+    // auto h_xs = xs.createHostVec();
+    // printGridToVTK<T>(nnx_s, nny_s, h_xs, us, "xs_def.vtk");
 
-    printf("h_ua at node 899:");
-    printVec<double>(3, &h_ua[3 * 899]);
+    // now setup loads and we'll do a load transfer
+    auto h_fa = makeInPlaneShearDisp<T>(xa0, 10.0);
+    auto d_fa = h_fa.createDeviceVec();
 
-    auto xs = meld.getStructDeformed();
-    auto h_xs = xs.createHostVec();
-    printGridToVTK<T>(nnx_s, nny_s, h_xs, us, "xs_def.vtk");
+    auto d_fs = meld.transferLoads(d_fa);
+    auto h_fs = d_fs.createHostVec();
+
+    printGridToVTK<T>(nnx_a, nny_a, xa0, h_fa, "fa.vtk");
+    printGridToVTK<T>(nnx_s, nny_s, xs0, h_fs, "fs.vtk");
 
     return 0;
 };

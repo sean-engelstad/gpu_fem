@@ -30,6 +30,9 @@ class LinearizedMELD {
         xa = DeviceVec<T>(3 * na);
         ua = DeviceVec<T>(3 * na);
 
+        fa = DeviceVec<T>(3 * na);
+        fs = DeviceVec<T>(3 * ns);
+
         global_H = DeviceVec<T>(9 * na);
         global_rhs = DeviceVec<T>(3 * na);
         global_soln = DeviceVec<T>(3 * na);
@@ -123,41 +126,13 @@ class LinearizedMELD {
         // zero out xa, ua before we change them
         xa.zeroValues();
         ua.zeroValues();
-        global_H.zeroValues();
-        global_rhs.zeroValues();
 
         // transfer disps on the kernel for each aero node
         dim3 block2(32);
         dim3 grid2(na);
-        transfer_disps_H_kernel<T>
-            <<<grid2, block2>>>(nn, aerostruct_conn, weights, xs0, us, xa0, global_H, global_rhs);
+        transfer_disps_kernel<T><<<grid2, block2>>>(nn, aerostruct_conn, weights, xs0, us, xa0, ua);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished transfer_disps_H_kernel\n");
-
-        // auto h_globalH = global_H.createHostVec();
-        // printf("h_globalH:");
-        // printVec<double>(h_globalH.getSize(), h_globalH.getPtr());
-
-        // auto h_global_rhs = global_rhs.createHostVec();
-        // printf("h_global_rhs:");
-        // printVec<double>(h_global_rhs.getSize(), h_global_rhs.getPtr());
-
-        // use cublas to solve H^-1 * rhs for each
-        cublasStatus_t blas_stat;
-        cublasHandle_t cublas_handle;
-        blas_stat = cublasCreate(&cublas_handle);
-        const double alpha = 1.0;
-        const double beta = 0.0;
-        cublasDgemmStridedBatched(cublas_handle, CUBLAS_OP_N, CUBLAS_OP_N, 3, 3, 3, &alpha,
-                                  global_H.getPtr(), 3, 9, global_rhs.getPtr(), 3, 3, &beta,
-                                  global_soln.getPtr(), 3, 3, na);
-
-        dim3 block3(32);
-        dim3 grid3(na);
-        transfer_disps_ua_kernel<T>
-            <<<grid3, block3>>>(nn, aerostruct_conn, weights, xs0, us, xa0, global_soln, ua);
-        CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished transfer_disps_ua_kernel\n");
+        printf("\tfinished transfer_disps_kernel\n");
 
         dim3 block4(32);
         nblocks = (3 * na + block4.x - 1) / block4.x;
@@ -170,13 +145,15 @@ class LinearizedMELD {
     }
 
     __HOST__ DeviceVec<T> transferLoads(DeviceVec<T> new_fa) {
+        printf("inside transferLoads\n");
         new_fa.copyValuesTo(fa);
         fs.zeroValues();
 
-        dim3 block(128);
+        dim3 block(32);
         dim3 grid(na);
-        transfer_loads_kernel<T>
-            <<<grid, block>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
+        transfer_loads_kernel<T><<<grid, block>>>(nn, aerostruct_conn, weights, xa0, fa, xs0, fs);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        printf("\tfinished transfer_loads_kernel\n");
 
         return fs;
     }

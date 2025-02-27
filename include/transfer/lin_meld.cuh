@@ -45,6 +45,7 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
 
     // compute weights (un-normalized first)
     memset(loc_w, 0.0, nn * sizeof(T));
+    memset(sum, 0.0, 1 * sizeof(T));
     for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
         // first compute the distance squared
         T distsq = 0.0;
@@ -57,6 +58,7 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
         loc_w[inode] += new_weight;
         atomicAdd(&sum[0], new_weight);
     }
+    __syncthreads();
 
     // normalize the weights so it becomes a partition of unity
     for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
@@ -78,8 +80,8 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
 }
 
 template <typename T>
-__GLOBAL__ void transfer_disps_H_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
-                                      DeviceVec<T> xs0, DeviceVec<T> us, DeviceVec<T> xa0, DeviceVec<T> global_H, DeviceVec<T> global_rhs) {
+__GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
+                                      DeviceVec<T> xs0, DeviceVec<T> us, DeviceVec<T> xa0, DeviceVec<T> ua) {
     // each block of threads if just computing ua for one aero node
     // among all the nearest neighbor struct nodes
     int aero_ind = blockIdx.x;
@@ -97,7 +99,6 @@ __GLOBAL__ void transfer_disps_H_kernel(int nn, DeviceVec<int> aerostruct_conn, 
 
     __SHARED__ T xs0_bar[3];
     __SHARED__ T H[9];
-    __SHARED__ T rhs[3];
 
     // copy data from global to shared
     int glob_start = aero_ind * nn;
@@ -152,49 +153,74 @@ __GLOBAL__ void transfer_disps_H_kernel(int nn, DeviceVec<int> aerostruct_conn, 
     Hbar[4] -= tr_H;
     Hbar[8] -= tr_H;
 
+    // add a small nugget matrix before the matrix inverse?
+    T eta = tr_H * 1e-8; // 
+    Hbar[0] += eta;
+    Hbar[4] += eta;
+    Hbar[8] += eta;
+
+    // compute Hinv = Hbar^-1 of 3x3
+    // this was not numerically stable for some points in the mesh
+    T Hinv[9];
+    A2D::MatInvCore<T,3>(Hbar, Hinv);
+
+    // compute d = xa0 - xs0_bar (length-3 vec) with at same time computing,
+    // compute dcross, skew-sym cross-product matrix
+    T dcross[9];
+    memset(dcross, 0.0, 9 * sizeof(T));
+    dcross[2] = loc_xa0[1] - xs0_bar[1];
+    dcross[3] = loc_xa0[2] - xs0_bar[2];
+    dcross[7] = loc_xa0[0] - xs0_bar[0];
+
+    dcross[1] = -dcross[3];
+    dcross[5] = -dcross[7];
+    dcross[6] = -dcross[2];
+    
+
+    // T det = A2D::MatDetCore<T,3>(Hbar);
+    // if (abs(det) < 1e-12 and threadIdx.x == 0) {
+    //     printf("det(Hbar) at aeronode %d = %.4e\n", aero_ind, det);
+    // }
+
     // now find Tn = wn * (d^x Hbar^-1 qn^x + I) on the fly and find ua = sum_n Tn * us,n
-    memset(&rhs[0], 0.0, 3 * sizeof(T));
     for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
-        const T *_xs0 = &loc_xs0[3 * inode];
-        const T *_us = &loc_us[3*inode];
+        T *_xs0 = &loc_xs0[3 * inode];
 
-        // compute rhs = qn cross uS,n  and  qn = xs0,n - xs0_bar
-        T qn[3];
-        A2D::VecSumCore<T, 3>(1.0, _xs0, -1.0, xs0_bar, qn);
-        T loc_rhs[3];
-        A2D::VecCrossCore<T>(qn, _us, loc_rhs);
+        // compute qn = xs0,n - xs0_bar as qn^x skew-sym on the fly
+        T qcross[9];
+        memset(qcross, 0.0, 9 * sizeof(T));
+        qcross[2] = _xs0[1] - xs0_bar[1];
+        qcross[3] = _xs0[2] - xs0_bar[2];
+        qcross[7] = _xs0[0] - xs0_bar[0];
 
-        if (aero_ind == 40) {
-            printf("loc_rhs %d:", threadIdx.x);
-            printVec<double>(3, loc_rhs);
-        }
+        qcross[1] = -qcross[3];
+        qcross[5] = -qcross[7];
+        qcross[6] = -qcross[2];
+
+
+        // compute Tn = wn * (d^x Hbar^-1 qn^x + I) 3x3 matrix
+        T Tn[9], tmp[9];
+        A2D::MatMatMultCore3x3<T>(dcross, Hinv, Tn);
+        A2D::MatMatMultCore3x3<T>(Tn, qcross, tmp);
+        tmp[0] += 1.0;
+        tmp[4] += 1.0;
+        tmp[8] += 1.0;
+        A2D::MatScaleCore<T,3,3>(loc_w[inode], tmp, Tn);        
+
+        // add in Tn * uS,n into uA
+        T loc_ua[3];
+        A2D::MatVecCore<T,3,3>(Tn, &loc_us[3*inode], loc_ua);
         
         // add into the same aero node
         for (int i = 0; i < 3; i++) {
-            atomicAdd(&rhs[i], loc_rhs[i] * loc_w[inode]);
-        }
-    }
-
-    // now add back to global
-    if (threadIdx.x == 0) {
-        
-        if (aero_ind == 37) {
-            printf("rhs:");
-            printVec<double>(3, rhs);
-        }
-
-        for (int i = 0; i < 9; i++) {
-            atomicAdd(&global_H[9*aero_ind+i], Hbar[i]);
-        }
-        for (int i = 0; i < 3; i++) {
-            atomicAdd(&global_rhs[3*aero_ind+i], rhs[i]);
+            atomicAdd(&ua[3*aero_ind + i], loc_ua[i]);
         }
     }
 }
 
 template <typename T>
-__GLOBAL__ void transfer_disps_ua_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
-                                      DeviceVec<T> xs0, DeviceVec<T> us, DeviceVec<T> xa0, DeviceVec<T> global_soln, DeviceVec<T> ua) {
+__GLOBAL__ void transfer_loads_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
+            DeviceVec<T> xa0, DeviceVec<T> fa, DeviceVec<T> xs0, DeviceVec<T> fs) {
     // each block of threads if just computing ua for one aero node
     // among all the nearest neighbor struct nodes
     int aero_ind = blockIdx.x;
@@ -207,25 +233,24 @@ __GLOBAL__ void transfer_disps_ua_kernel(int nn, DeviceVec<int> aerostruct_conn,
     __SHARED__ int loc_conn[NN];
     __SHARED__ T loc_w[NN];
     __SHARED__ T loc_xs0[3 * NN];
-    __SHARED__ T loc_us[3 * NN];
+    __SHARED__ T loc_fs[3 * NN];
     __SHARED__ T loc_xa0[3];
+    __SHARED__ T loc_fa[3];
 
     __SHARED__ T xs0_bar[3];
-    __SHARED__ T loc_soln[3];
-    __SHARED__ T loc_ua[3];
+    __SHARED__ T H[9];
 
     // copy data from global to shared
     int glob_start = aero_ind * nn;
     bool active_thread = (glob_start + threadIdx.x) < na * nn;
     aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
-                                       &loc_conn[0]);
+                                        &loc_conn[0]);
     weights.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
-                               &loc_w[0]);
+                                &loc_w[0]);
     xa0.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_xa0[0]);
-    global_soln.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_soln[0]);
+    fa.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_fa[0]);
     // need to use conn here so may need copyElemValuesToShared
     xs0.copyElemValuesToShared(true, threadIdx.x, blockDim.x, 3, nn, &loc_conn[0], &loc_xs0[0]);
-    us.copyElemValuesToShared(true, threadIdx.x, blockDim.x, 3, nn, &loc_conn[0], &loc_us[0]);
     __syncthreads();
 
     // all of the following will be reduction-like operations
@@ -241,96 +266,8 @@ __GLOBAL__ void transfer_disps_ua_kernel(int nn, DeviceVec<int> aerostruct_conn,
     }
     __syncthreads();
 
-    // compute d = xa0 - xs0_bar
-    T d[3];
-    A2D::VecSumCore<T, 3>(1.0, loc_xa0, -1.0, xs0_bar, d);
-
-    // add the term ua += wn * us,n in
-    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {        
-        // add into the same aero node
-        for (int i = 0; i < 3; i++) {
-            atomicAdd(&loc_ua[i], loc_us[3*inode+i] * loc_w[inode]);
-        }
-    }
-
-    // now add back to global
-    if (threadIdx.x == 0) {
-        T ua_diff[3]; // add term d cross soln in
-        A2D::VecCrossCore<T>(d, loc_soln, ua_diff);
-        A2D::VecSumCore<T, 3>(1.0, ua_diff, 1.0, loc_ua, loc_ua);
-        for (int i = 0; i < 3; i++) {
-            atomicAdd(&ua[3*aero_ind+i], loc_ua[i]);
-        }
-    }
-}
-
-template <typename T>
-__GLOBAL__ void transfer_loads_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
-                                      DeviceVec<T> xs0, DeviceVec<T> xs, DeviceVec<T> xa0,
-                                      DeviceVec<T> xa, DeviceVec<T> fa, DeviceVec<T> fs) {
-    // each block of threads if just computing ua for one aero node
-    // among all the nearest neighbor struct nodes
-    int aero_ind = blockIdx.x;
-    int na = xa0.getSize() / 3;
-    int ns = xs0.getSize() / 3;
-
-    #define NN 32 // need nn < 64 then
-    // may want to check this and throw error if nn > NN          
-
-    __SHARED__ int loc_conn[NN];
-    __SHARED__ T loc_w[NN];
-    __SHARED__ T loc_xs0[3 * NN];
-    __SHARED__ T loc_xs[3 * NN];
-    __SHARED__ T loc_xa0[3];
-    __SHARED__ T loc_fa[3];
-
-    __SHARED__ T xs0_bar[3];
-    __SHARED__ T xs_bar[3];
-    __SHARED__ T loc_d[3];
-    __SHARED__ T H[9];
-    __SHARED__ T M[225];
-    __SHARED__ T adjoint[15];
-    __SHARED__ T rhs[15];
-
-    // copy data from global to shared
-    int glob_start = aero_ind * nn;
-    bool active_thread = (glob_start + threadIdx.x) < na * nn;
-    aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
-                                       &loc_conn[0]);
-    weights.copyValuesToShared(active_thread, threadIdx.x, nn, blockDim.x, aero_ind * nn,
-                               &loc_w[0]);
-    xa0.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_xa0[0]);
-    fa.copyValuesToShared(true, threadIdx.x, 3, blockDim.x, 3 * aero_ind, &loc_fa[0]);
-    // need to use conn here so may need copyElemValuesToShared
-    xs0.copyElemValuesToShared(true, threadIdx.x, blockDim.x, 3, nn, &loc_conn[0], &loc_xs0[0]);
-    xs.copyElemValuesToShared(true, threadIdx.x, blockDim.x, 3, nn, &loc_conn[0], &loc_xs[0]);
-    __syncthreads();
-
-    // TODO : this is the same code as with transfer_disps_kernel ? can we make a method that calls
-    // some of this stuff? to avoid repeated code?
-
-    // all of the following will be reduction-like operations
-    // until H is computed (each thread helps in the work)
-
-    // compute the centroids of the nearest neighbors
-    // xs0_bar
-    memset(&xs0_bar[0], 0.0, 3 * sizeof(T));
-    for (int i = threadIdx.x; i < 3 * nn; i += blockDim.x) {
-        int inode = i / 3;
-        int idim = i % 3;
-        xs0_bar[idim] += loc_w[i] * loc_xs0[i];
-    }
-
-    // xs_bar
-    memset(&xs_bar[0], 0.0, 3 * sizeof(T));
-    for (int i = threadIdx.x; i < 3 * nn; i += blockDim.x) {
-        int inode = i / 3;
-        int idim = i % 3;
-        xs_bar[idim] += loc_w[i] * loc_xs[i];
-    }
-    __syncthreads();
-
     // compute covariance H (reduction step across threads)
+    memset(&H[0], 0.0, 9 * sizeof(T));
     for (int i = threadIdx.x; i < 9 * nn; i += blockDim.x) {
         int inode = i / 9;
         int i9 = i % 9;
@@ -340,58 +277,91 @@ __GLOBAL__ void transfer_loads_kernel(int nn, DeviceVec<int> aerostruct_conn, De
         // H += w_{inode} * p_{inode,idim} * q_{inode,jdim}
         // where p = xS - xSbar for each node and dim, sim q = xS0 - xS0bar
         // could do warp shuffling here
-        T h_val = loc_w[inode] * (loc_xs[3 * inode + idim] - xs_bar[idim]) *
-                  (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
+        T h_val = loc_w[inode] * (loc_xs0[3 * inode + idim] - xs0_bar[idim]) *
+                    (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
         atomicAdd(&H[i9], h_val);
     }
     __syncthreads();
 
-    // after computing H, each thread is going to do the same thing
-    // and we'll just average the result (same answer), but computations are cheap
-
-    // get SVD of H (call device function in svd_utils.h)
-    T R[9], S[9];
-    computeRotation<T>(H, R, S);
-
-    // compute d = xa0 - xs0_bar
-    A2D::VecSumCore<T, 3>(1.0, &loc_xa0[0], -1.0, xs0_bar, &loc_d[0]);
-
-    // note in the CPU version of MELD we store R, S for each aero node
-    // I could do that, but I've chosen to just re-compute it for now (maybe this is incorrect)
-    // now we have H, R, S so we can begin assembling and solving the 15x15 linear system
-    svd_15x15_adjoint(M, adjoint, rhs, loc_fa, &loc_d[0], R, S);
-
-    // copy adjoint solutions out for each thread
-    T X[9], Y[6];
+    // compute Hbar = H - tr(H)
+    T Hbar[9];
     for (int i = 0; i < 9; i++) {
-        X[i] = adjoint[i];
+        Hbar[i] = H[i];
     }
-    for (int j = 0; j < 6; j++) {
-        Y[j] = adjoint[9 + j];
-    }
+    T tr_H = Hbar[0] + Hbar[4] + Hbar[8];
+    Hbar[0] -= tr_H;
+    Hbar[4] -= tr_H;
+    Hbar[8] -= tr_H;
 
-    // now compute struct loads
-    // fs_{n} += w_n * fA + wn * X^T * qn
-    // and add into global struct loads directly
+    // add a small nugget matrix before the matrix inverse?
+    T eta = tr_H * 1e-8; // 
+    Hbar[0] += eta;
+    Hbar[4] += eta;
+    Hbar[8] += eta;
+
+    // compute Hinv = Hbar^-1 of 3x3
+    // this was not numerically stable for some points in the mesh
+    T Hinv[9];
+    A2D::MatInvCore<T,3>(Hbar, Hinv);
+
+    // compute d = xa0 - xs0_bar (length-3 vec) with at same time computing,
+    // compute dcross, skew-sym cross-product matrix
+    T dcross[9];
+    memset(dcross, 0.0, 9 * sizeof(T));
+    dcross[2] = loc_xa0[1] - xs0_bar[1];
+    dcross[3] = loc_xa0[2] - xs0_bar[2];
+    dcross[7] = loc_xa0[0] - xs0_bar[0];
+
+    dcross[1] = -dcross[3];
+    dcross[5] = -dcross[7];
+    dcross[6] = -dcross[2];
+    
+
+    // T det = A2D::MatDetCore<T,3>(Hbar);
+    // if (abs(det) < 1e-12 and threadIdx.x == 0) {
+    //     printf("det(Hbar) at aeronode %d = %.4e\n", aero_ind, det);
+    // }
+
+    // now find Tn = wn * (d^x Hbar^-1 qn^x + I) on the fly and find ua = sum_n Tn * us,n
     for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
-        T fs_tmp[3];
-        // w_n * fA part
+        T *_xs0 = &loc_xs0[3 * inode];
+
+        // compute qn = xs0,n - xs0_bar as qn^x skew-sym on the fly
+        T qcross[9];
+        memset(qcross, 0.0, 9 * sizeof(T));
+        qcross[2] = _xs0[1] - xs0_bar[1];
+        qcross[3] = _xs0[2] - xs0_bar[2];
+        qcross[7] = _xs0[0] - xs0_bar[0];
+
+        qcross[1] = -qcross[3];
+        qcross[5] = -qcross[7];
+        qcross[6] = -qcross[2];
+
+
+        // compute Tn = wn * (d^x Hbar^-1 qn^x + I) 3x3 matrix
+        T Tn[9], tmp[9];
+        A2D::MatMatMultCore3x3<T>(dcross, Hinv, Tn);
+        A2D::MatMatMultCore3x3<T>(Tn, qcross, tmp);
+        tmp[0] += 1.0;
+        tmp[4] += 1.0;
+        tmp[8] += 1.0;
+        A2D::MatScaleCore<T,3,3>(loc_w[inode], tmp, Tn);        
+
+        // add in Tn^T * fa into fs_n
+        A2D::MatVecCore<T,3,3, A2D::MatOp::TRANSPOSE>(Tn, loc_fa, &loc_fs[3*inode]);
+        
+        int global_inode = loc_conn[inode];
+        // if (aero_ind == 650 and threadIdx.x == 0) {
+        //     printf("global fs node %d\n", global_inode);
+        //     printf("loc_fa:");
+        //     printVec<double>(3, loc_fa);
+        //     printf("loc_fs:");
+        //     printVec<double>(3, &loc_fs[3*inode]);
+        // }
+
+        // add loc_fs contribution back into the global fs
         for (int idim = 0; idim < 3; idim++) {
-            fs_tmp[idim] = loc_w[inode] * loc_fa[idim];
-        }
-
-        // compute qn = xS0,n - xs0_bar
-        T qn[3];
-        A2D::VecSumCore<T, 3>(1.0, loc_xs[3 * inode], -1.0, xs0_bar, qn);
-
-        // += wn * X^T * qn part
-        bool additive = true;
-        A2D::MatVecCoreScale<T, 3, 3, A2D::MatOp::TRANSPOSE, additive>(loc_w[inode], X, qn, fs_tmp);
-
-        // could do warp shuffle here?
-        int global_node = loc_conn[inode];
-        for (int idim = 0; idim < 3; idim++) {
-            atomicAdd(&fs[3 * global_node + idim], fs_tmp[idim]);
+            atomicAdd(&fs[3*global_inode + idim], loc_fs[3*inode+idim]);
         }
     }
 }
