@@ -12,7 +12,7 @@ int main() {
     int nnx_s = 17, nny_s = 17;
 
     auto xs0 = makeGridMesh<T>(nnx_s, nny_s, Lx, Ly, -0.2);
-    auto xa0 = makeGridMesh<T>(nnx_a, nny_a, Lx, Ly,-0.15);
+    auto xa0 = makeGridMesh<T>(nnx_a, nny_a, Lx, Ly, 0.0);
 
     // prescribed displacements
     auto us = makeInPlaneShearDisp<T>(xs0, 20.0);
