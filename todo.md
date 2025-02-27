@@ -4,9 +4,12 @@
 
 ## Current
 - [ ] put all of our code in namespace's
-By next week 2/10/2025
-- [ ] Nested disection (is this cuthill-mcgee) in TACS CPU => use for better baseline symbolic factorization on GPU
+* By next week 2/10/2025
+- [ ] implement reverse cuthill-mckee (RCM) from TACS_Utilities.cpp => use for better baseline symbolic factorization on GPU
 - [ ] Q ordering for incomplete ILU solve (very fast iterative solve)
+- [ ] implement iterative solve strategies with cusparse
+- [ ] get setup on NAS to run GPU code and install nvcc locally on my laptop
+- [ ] ssh into Meryem's desktop machine.. to run GPU stuff in the lab
 
 By two weeks 2/17/2025
 - [ ] put MELD on GPU

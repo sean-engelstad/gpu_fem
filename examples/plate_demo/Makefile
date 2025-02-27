@@ -10,12 +10,15 @@ debug:
 
 gpu:
 	@echo "Building plate example with GPU support"
-	${GPU_CXX} -g ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 linear_static.cu ${LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 linear_static.cu ${LINK}
 #   ${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler -DUSE_CUSPARSE ${SSPARSE_INCLUDE} ${INCLUDE_FLAGS} -DSUITE_SPARSE -std=c++17 linear_static.cu ${CUSPARSE_GPU_LIBS} ${SSPARSE_LINK}
 
 assembler:
 	@echo "Building plate example with GPU support"
 	${CXX} -g -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 make_assembler.cpp
+
+reordering:
+	${CXX} -g -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 reordering.cpp
 
 # gpu-pcg:
 # 	@echo "Building plate example for 10x10 mesh with GPU support for PCG solver"
