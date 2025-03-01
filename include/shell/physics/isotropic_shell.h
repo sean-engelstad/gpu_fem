@@ -2,365 +2,442 @@
 
 #include "a2dcore.h"
 #include "a2dshell.h"
+#include "shell/data/isotropic.h"
 
 template <typename T, class Data_, bool isNonlinear = false>
-class IsotropicShell
-{
-public:
-  using Data = Data_;
+class IsotropicShell {
+   public:
+    using Data = Data_;
 
-  // u, v, w, thx, thy, thz
-  static constexpr int32_t vars_per_node = 6;
-  // whether strain is linear or nonlinear (in this case linear)
-  static constexpr A2D::ShellStrainType STRAIN_TYPE =
-      isNonlinear ? A2D::ShellStrainType::NONLINEAR
-                  : A2D::ShellStrainType::LINEAR;
+    // ensure the data is only allowed to be ShellIsotropicData
+    static_assert(std::is_same<Data_, ShellIsotropicData>::value,
+                  "Error IsotropicShell physics class must use Data class 'ShellIsotropicData'");
 
-  template <typename T2>
-  __HOST_DEVICE__ static void computeStrainEnergy(
-      const Data physData, const T scale, A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
-      A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x, A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
-      A2D::ADObj<A2D::Vec<T2, 1>> et, A2D::ADObj<T2> &Uelem)
-  {
-    A2D::ADObj<A2D::Vec<T2, 9>> E, S;
-    A2D::ADObj<T2> ES_dot;
+    // u, v, w, thx, thy, thz
+    static constexpr int32_t vars_per_node = 6;
+    // whether strain is linear or nonlinear (in this case linear)
+    static constexpr A2D::ShellStrainType STRAIN_TYPE =
+        isNonlinear ? A2D::ShellStrainType::NONLINEAR : A2D::ShellStrainType::LINEAR;
+    static constexpr bool is_nonlinear = isNonlinear;
+    static constexpr num_dvs = 1;
 
-    // use stack to compute shell strains, stresses and then to strain energy
-    auto strain_energy_stack = A2D::MakeStack(
-        A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
-        A2D::IsotropicShellStress<T, Data>(
-            physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
-        // A2D::VecScale(1.0, E, S), // debugging statement
-        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(0.5 * scale) * ES_dot, Uelem));
-    // printf("Uelem = %.8e\n", Uelem.value());
+    // function declarations
+    // -------------------------------------------------------
 
-  } // end of computeStrainEnergy
+    template <typename T2>
+    __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
+                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
+                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x,
+                                                    A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
+                                                    A2D::ADObj<A2D::Vec<T2, 1>> et,
+                                                    A2D::ADObj<T2> &Uelem);
 
-  // could template by ADType = ADObj or A2DObj later to allow different
-  // derivative levels maybe
-  template <typename T2>
-  __HOST_DEVICE__ static void computeWeakRes(
-      const Data &physData, const T &scale, A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
-      A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x, A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
-      A2D::ADObj<A2D::Vec<T2, 1>> &et)
-  {
-    // using ADVec = A2D::ADObj<A2D::Vec<T2,9>>;
-    A2D::ADObj<A2D::Vec<T2, 9>> E, S;
-    A2D::ADObj<T2> ES_dot, Uelem;
-    // isotropicShellStress expression uses many fewer floats than storing ABD
-    // matrix
+    template <typename T2>
+    __HOST_DEVICE__ static void computeWeakRes(const Data &physData, const T &scale,
+                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                               A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                               A2D::ADObj<A2D::Vec<T2, 1>> &et);
 
-    // use stack to compute shell strains, stresses and then to strain energy
-    auto strain_energy_stack = A2D::MakeStack(
-        A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
-        A2D::IsotropicShellStress<T, Data>(
-            physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
-        // no 1/2 here to match TACS formulation (just scales eqns) [is removing the 0.5 correct?]
-        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
-    // printf("Uelem = %.8e\n", Uelem.value());
+    template <typename T2>
+    __HOST_DEVICE__ static void computeWeakJacobianCol(const Data &physData, const T &scale,
+                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                       A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                       A2D::A2DObj<A2D::Vec<T2, 1>> &et);
 
-    Uelem.bvalue() = 1.0;
-    strain_energy_stack.reverse();
-    // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
-  } // end of computeWeakRes
+    __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
+                                                            A2D::Mat<T2, 3, 3> &u0x,
+                                                            A2D::Mat<T2, 3, 3> &u1x,
+                                                            A2D::SymMat<T2, 3> &e0ty,
+                                                            A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S);
 
-  __HOST_DEVICE__ static void computeQuadptStresses(
-      const Data &physData, const T &scale, A2D::Mat<T2, 3, 3> &u0x,
-      A2D::Mat<T2, 3, 3> &u1x, A2D::SymMat<T2, 3> &e0ty,
-      A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S)
-  {
-    A2D::ADObj<A2D::Vec<T, 9>> E;
+    __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
+                                                     A2D::Mat<T2, 3, 3> &u0x,
+                                                     A2D::Mat<T2, 3, 3> &u1x,
+                                                     A2D::SymMat<T2, 3> &e0ty, A2D::Vec<T2, 1> &et,
+                                                     A2D::Vec<T, 9> E);
 
-    // use stack to compute shell strains, stresses and then to strain energy
-    auto strain_energy_stack = A2D::MakeStack(
-        A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
-        A2D::IsotropicShellStress<T, Data>(
-            physData.E, physData.nu, physData.thick, physData.tOffset, E, S));
-  } // end of computeQuadptStresses
+    __HOST_DEVICE__
+    static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
+                                 T *fail_index);
 
-  template <typename T2>
-  __HOST_DEVICE__ static void computeWeakJacobianCol(
-      const Data &physData, const T &scale, A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
-      A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x, A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
-      A2D::A2DObj<A2D::Vec<T2, 1>> &et)
-  {
-    // computes a projected Hessian (or jacobian column)
+    // -------------------------------------------------------
+    // end of function declarations
 
-    // using ADVec = A2D::ADObj<A2D::Vec<T2,9>>;
-    A2D::A2DObj<A2D::Vec<T2, 9>> E, S;
-    A2D::A2DObj<T2> ES_dot, Uelem;
+    template <typename T2>
+    __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
+                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
+                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x,
+                                                    A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
+                                                    A2D::ADObj<A2D::Vec<T2, 1>> et,
+                                                    A2D::ADObj<T2> &Uelem) {
+        A2D::ADObj<A2D::Vec<T2, 9>> E, S;
+        A2D::ADObj<T2> ES_dot;
 
-    // use stack to compute shell strains, stresses and then to strain energy
-    auto strain_energy_stack = A2D::MakeStack(
-        A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
-        A2D::IsotropicShellStress<T, Data>(
-            physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
-        // no 1/2 here to match TACS formulation (just scales eqns) [is removing the 0.5 correct?]
-        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
-    // note TACS differentiates based on 2 * Uelem here.. hmm
-    // printf("Uelem = %.8e\n", Uelem.value());
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+                           A2D::IsotropicShellStress<T, Data>(
+                               physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
+                           // A2D::VecScale(1.0, E, S), // debugging statement
+                           A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(0.5 * scale) * ES_dot, Uelem));
+        // printf("Uelem = %.8e\n", Uelem.value());
 
-    Uelem.bvalue() = 1.0;
-    strain_energy_stack.hproduct(); // computes projected hessians
-    // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
-  } // end of computeWeakRes
+    }  // end of computeStrainEnergy
 
-  template <class Basis>
-  __HOST_DEVICE__ static void computeTyingStrain(const T Xpts[], const T fn[],
-                                                 const T vars[], const T d[],
-                                                 T ety[])
-  {
-    // using unrolled loop here for efficiency (if statements and for loops not
-    // great for device)
-    int32_t offset, num_tying;
+    // could template by ADType = ADObj or A2DObj later to allow different
+    // derivative levels maybe
+    template <typename T2>
+    __HOST_DEVICE__ static void computeWeakRes(const Data &physData, const T &scale,
+                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                               A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                               A2D::ADObj<A2D::Vec<T2, 1>> &et) {
+        // using ADVec = A2D::ADObj<A2D::Vec<T2,9>>;
+        A2D::ADObj<A2D::Vec<T2, 9>> E, S;
+        A2D::ADObj<T2> ES_dot, Uelem;
+        // isotropicShellStress expression uses many fewer floats than storing ABD
+        // matrix
 
-    // get g11 tying strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(0);
-    num_tying = Basis::num_tying_points(0);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<0>(itying, pt);
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+                           A2D::IsotropicShellStress<T, Data>(
+                               physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
+                           // no 1/2 here to match TACS formulation (just scales eqns) [is removing
+                           // the 0.5 correct?]
+                           A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
+        // printf("Uelem = %.8e\n", Uelem.value());
 
-      // Interpolate the field value
-      T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-      Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        Uelem.bvalue() = 1.0;
+        strain_energy_stack.reverse();
+        // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
+    }  // end of computeWeakRes
 
-      // store g11 strain
-      ety[offset + itying] = A2D::VecDotCore<T, 3>(Uxi, Xxi);
-    } // end of itying for loop for g11
+    template <typename T2>
+    __HOST_DEVICE__ static void computeWeakJacobianCol(const Data &physData, const T &scale,
+                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                       A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                       A2D::A2DObj<A2D::Vec<T2, 1>> &et) {
+        // computes a projected Hessian (or jacobian column)
 
-    // get g22 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(1);
-    num_tying = Basis::num_tying_points(1);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<1>(itying, pt);
+        // using ADVec = A2D::ADObj<A2D::Vec<T2,9>>;
+        A2D::A2DObj<A2D::Vec<T2, 9>> E, S;
+        A2D::A2DObj<T2> ES_dot, Uelem;
 
-      // Interpolate the field value
-      T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-      Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+                           A2D::IsotropicShellStress<T, Data>(
+                               physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
+                           // no 1/2 here to match TACS formulation (just scales eqns) [is removing
+                           // the 0.5 correct?]
+                           A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
+        // note TACS differentiates based on 2 * Uelem here.. hmm
+        // printf("Uelem = %.8e\n", Uelem.value());
 
-      // store g22 strain
-      ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
-    } // end of itying for loop for g22
+        Uelem.bvalue() = 1.0;
+        strain_energy_stack.hproduct();  // computes projected hessians
+        // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
+    }  // end of computeWeakRes
 
-    // get g12 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(2);
-    num_tying = Basis::num_tying_points(2);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<2>(itying, pt);
+    __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
+                                                            A2D::Mat<T2, 3, 3> &u0x,
+                                                            A2D::Mat<T2, 3, 3> &u1x,
+                                                            A2D::SymMat<T2, 3> &e0ty,
+                                                            A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S) {
+        A2D::ADObj<A2D::Vec<T, 9>> E;
 
-      // Interpolate the field value
-      T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-      Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+                           A2D::IsotropicShellStress<T, Data>(
+                               physData.E, physData.nu, physData.thick, physData.tOffset, E, S));
 
-      // store g12 strain
-      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Uxi, Xeta) +
-                                    A2D::VecDotCore<T, 3>(Ueta, Xxi));
-    } // end of itying for loop for g12
+        // technically the IsotropicShellStress computes sectional stresses aka sectional loads
+    }  // end of computeQuadptSectionalLoads
 
-    // get g23 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(3);
-    num_tying = Basis::num_tying_points(3);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<3>(itying, pt);
+    __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
+                                                     A2D::Mat<T2, 3, 3> &u0x,
+                                                     A2D::Mat<T2, 3, 3> &u1x,
+                                                     A2D::SymMat<T2, 3> &e0ty, A2D::Vec<T2, 1> &et,
+                                                     A2D::Vec<T, 9> E) {
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E));
+    }  // end of computeQuadptStrains
 
-      // Interpolate the field value
-      T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-      Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+    __HOST_DEVICE__ static void computeQuadptStrainsSens(const Data &physData, const T &scale,
+                                                         A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                         A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                         A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                         A2D::ADObj<A2D::Vec<T2, 1>> &et,
+                                                         T strain_bar[9]) {
+        A2D::Vec<T, 9> E;
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E));
+        T *Eb = E.bvalue();
+        for (int i = 0; i < 6; i++) {
+            Eb[i] = strain_bar[i];
+        }
+        strain_energy_stack.reverse();
+    }  // end of computeQuadptStrains
 
-      T d0[3], n0[3];
-      Basis::template interpFields<3, 3>(pt, d, d0);
-      Basis::template interpFields<3, 3>(pt, fn, n0);
+    __HOST_DEVICE__ static void vonMisesFailure2D(const Data &data, const T stress[3], T *failure) {
+        // stress[3] refers to s11, s22, s12; ys refers to yield stress
+        return sqrt(stress[0] * stress[0] + stress[1] * stress[1] - stress[0] * stress[1] +
+                    3.0 * stress[2] * stress[2]) /
+               data.ys;
+    }
 
-      // store g23 strain
-      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xeta, d0) +
-                                    A2D::VecDotCore<T, 3>(n0, Ueta));
-    } // end of itying for loop for g23
+    __HOST_DEVICE__ static void vonMisesFailure2DSens(const Data &data, const T stress[3],
+                                                      const T &fail_bar, T *stress_bar) {
+        // stress[3] refers to s11, s22, s12; ys refers to yield stress
+        T my_sqrt = sqrt(stress[0] * stress[0] + stress[1] * stress[1] - stress[0] * stress[1] +
+                         3.0 * stress[2] * stress[2]);
+        T factor = 0.5 * fail_bar / my_sqrt / data.ys;
 
-    // get g13 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(4);
-    num_tying = Basis::num_tying_points(4);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<4>(itying, pt);
+        stress_bar[0] = factor * (2 * stress[0] - stress[1]);
+        stress_bar[1] = factor * (2 * stress[1] - stress[0]);
+        stress_bar[2] = factor * 6 * stress[2];
+    }
 
-      // Interpolate the field value
-      T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-      Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+    __HOST_DEVICE__
+    static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
+                                 T *fail_index) {
+        // compute the von mises ksfailure index in the shell
+        // strains are the 'nodal_strains' 6 of them
 
-      T d0[3], n0[3];
-      Basis::template interpFields<3, 3>(pt, d, d0);
-      Basis::template interpFields<3, 3>(pt, fn, n0);
+        // upper and lower surface thicknesses in z the normal coordinate
+        T zU = (0.5 - data.tOffset) * data.thick;
+        T zL = -(0.5 + data.tOffset) * data.thick;
 
-      // store g13 strain
-      ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xxi, d0) +
-                                    A2D::VecDotCore<T, 3>(n0, Uxi));
-    } // end of itying for loop for g13
+        // compute the upper and lower surface strains
+        T strainU[3], strainL[3];
+        A2D::VecSumCore<T, 3>(1.0, &strains[0], zU, &strains[3], strainU);
+        A2D::VecSumCore<T, 3>(1.0, &strains[0], zL, &strains[3], strainL);
 
-  } // end of computeTyingStrain
+        // compute the 2D tangent stiffness matrix C or Q
+        T C[6];
+        Data::evalTangentStiffness2D(data.E, data.nu, C);
 
-  template <class Basis>
-  __HOST_DEVICE__ static void computeTyingStrainHfwd(const T Xpts[], const T fn[],
-                                                     const T p_vars[], const T p_d[],
-                                                     T p_ety[])
-  {
+        // compute upper and lower surface stresses
+        T stressU[3], stressL[3];
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainL, stressL);
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainU, stressU);
 
-    // since linear for now (add NL later) => just call forward analysis
-    computeTyingStrain<Basis>(Xpts, fn, p_vars, p_d, p_ety);
-  }
+        // note stress[3] refers to s11, s22, s12 stresses
+        // compute von mises failure at upper and lower surfaces
+        T failU, failL;
+        vonMisesFailure2D(data, stressU, &failU);
+        vonMisesFailure2D(data, stressL, &failL);
 
-  template <class Basis>
-  __HOST_DEVICE__ static void computeTyingStrainSens(const T Xpts[],
-                                                     const T fn[],
-                                                     const T ety_bar[], T res[],
-                                                     T d_bar[])
-  {
-    // using unrolled loop here for efficiency (if statements and for loops not
-    // great for device)
-    int32_t offset, num_tying;
+        // now do KS max among upper and lower surface stresses
+        T ksMax;
+        if (failU > failL) {
+            ksMax = failU;
+        } else {
+            ksMax = failL;
+        }
 
-    // get g11 tying strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(0);
-    num_tying = Basis::num_tying_points(0);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<0>(itying, pt);
-      //   ety[offset + itying] = A2D::VecDotCore<T, 3>(Uxi, Xxi);
+        T ksSum = exp(rho_KS * (failU - ksMax)) + exp(rho_KS * (failL - ksMax));
+        T ksVal = ksMax + log(ksSum) / rho_KS;
+        return ksVal;
+    }
 
-      T Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+    __HOST_DEVICE__
+    static void computeKSFailureDVSens(const Data &data, T rho_KS, const T strains[vars_per_node],
+                                       const T fail_index_bar, T *x_bar) {
+        // compute the von mises ksfailure index in the shell
+        // strains are the 'nodal_strains' 6 of them
+        // x_bar is a scalar
 
-      A2D::Vec<T, 3> Uxi_bar, zero;
-      A2D::VecAddCore<T, 3>(ety_bar[offset + itying], Xxi, Uxi_bar.get_data());
-      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_bar.get_data(), zero.get_data(),
-                                                                  res);
+        // upper and lower surface thicknesses in z the normal coordinate
+        T zU = (0.5 - data.tOffset) * data.thick;
+        T zL = -(0.5 + data.tOffset) * data.thick;
 
-    } // end of itying for loop for g11
+        // compute the upper and lower surface strains
+        T strainU[3], strainL[3];
+        A2D::VecSumCore<T, 3>(1.0, &strains[0], zU, &strains[3], strainU);
+        A2D::VecSumCore<T, 3>(1.0, &strains[0], zL, &strains[3], strainL);
 
-    // get g22 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(1);
-    num_tying = Basis::num_tying_points(1);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<1>(itying, pt);
-      //   ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
+        // compute the 2D tangent stiffness matrix C or Q
+        T C[6];
+        Data::evalTangentStiffness2D(data.E, data.nu, C);
 
-      T Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        // compute upper and lower surface stresses
+        T stressU[3], stressL[3];
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainL, stressL);
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainU, stressU);
 
-      A2D::Vec<T, 3> Ueta_bar, zero;
-      A2D::VecAddCore<T, 3>(ety_bar[offset + itying], Xeta, Ueta_bar.get_data());
-      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, zero.get_data(), Ueta_bar.get_data(), res);
+        // note stress[3] refers to s11, s22, s12 stresses
+        // compute von mises failure at upper and lower surfaces
+        T failU, failL;
+        vonMisesFailure2D(data, stressU, &failU);
+        vonMisesFailure2D(data, stressL, &failL);
 
-    } // end of itying for loop for g22
+        // now do KS max among upper and lower surface stresses
+        T ksMax;
+        if (failU > failL) {
+            ksMax = failU;
+        } else {
+            ksMax = failL;
+        }
 
-    // get g12 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(2);
-    num_tying = Basis::num_tying_points(2);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<2>(itying, pt);
-      //   ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Uxi, Xeta) +
-      //                                 A2D::VecDotCore<T, 3>(Ueta, Xxi));
+        T ksSum = exp(rho_KS * (failU - ksMax)) + exp(rho_KS * (failL - ksMax));
+        T ksVal = ksMax + log(ksSum) / rho_KS;
 
-      T Xxi[3], Xeta[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        // end of forward analysis
+        // backprop now first to dsigma_KS/dthick through zL and zU
+        x_bar = 0.0;  // init the scalar to zero from this quadpt
 
-      A2D::Vec<T, 3> Uxi_bar, Ueta_bar;
-      A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xxi, Ueta_bar.get_data());
-      A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xeta, Uxi_bar.get_data());
-      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_bar.get_data(), Ueta_bar.get_data(), res);
-    } // end of itying for loop for g12
+        // first for lower stresses
+        T fail_bar = exp(rho_KS * (failL - ksMax)) / ksSum;
+        T stress_bar[3];
+        vonMisesFailure2DSens(data, stressL, fail_bar, stress_bar);
+        T surf_strain_bar[3];
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
+        T zL_bar = A2D::VecDotCore<T, 3>(surf_strain_bar, &strains[3]);
+        x_bar += zL_bar * -0.5;
 
-    // get g23 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(3);
-    num_tying = Basis::num_tying_points(3);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<3>(itying, pt);
-      //   ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xeta, d0) +
-      //                                 A2D::VecDotCore<T, 3>(n0, Ueta));
+        // then for upper stresses
+        T fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
+        vonMisesFailure2DSens(data, stressU, fail_bar, stress_bar);
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
+        T zU_bar = A2D::VecDotCore<T, 3>(surf_strain_bar, &strains[3]);
+        x_bar += zU_bar * 0.5;
 
-      T Xxi[3], Xeta[3], n0[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-      Basis::template interpFields<3, 3>(pt, fn, n0);
+        return ksVal;
+    }
 
-      A2D::Vec<T, 3> zero, d0_bar, Ueta_bar;
-      A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xeta, d0_bar.get_data());
-      A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], n0, Ueta_bar.get_data());
-      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, zero.get_data(), Ueta_bar.get_data(), res);
-      Basis::template interpFieldsTranspose<3, 3>(pt, d0_bar.get_data(), d_bar);
-    } // end of itying for loop for g23
+    __HOST_DEVICE__
+    static void computeKSFailureSVSens(const Data &data, T rho_KS, const T strains[vars_per_node],
+                                       const T fail_index_bar, T strain_bar[vars_per_node]) {
+        // compute the von mises ksfailure index in the shell
+        // strains are the 'nodal_strains' 6 of them
+        // x_bar is a scalar
 
-    // get g13 strain
-    // ------------------------------------
-    offset = Basis::tying_point_offsets(4);
-    num_tying = Basis::num_tying_points(4);
-#pragma unroll // for low num_tying can speed up?
-    for (int itying = 0; itying < num_tying; itying++)
-    {
-      T pt[2];
-      Basis::template getTyingPoint<4>(itying, pt);
-      //   ety[offset + itying] = 0.5 * (A2D::VecDotCore<T, 3>(Xxi, d0) +
-      //                                 A2D::VecDotCore<T, 3>(n0, Uxi));
+        // upper and lower surface thicknesses in z the normal coordinate
+        T zU = (0.5 - data.tOffset) * data.thick;
+        T zL = -(0.5 + data.tOffset) * data.thick;
 
-      T Xxi[3], Xeta[3], n0[3];
-      Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-      Basis::template interpFields<3, 3>(pt, fn, n0);
+        // compute the upper and lower surface strains
+        T strainU[3], strainL[3];
+        A2D::VecSumCore<T, 3>(1.0, &strains[0], zU, &strains[3], strainU);
+        A2D::VecSumCore<T, 3>(1.0, &strains[0], zL, &strains[3], strainL);
 
-      A2D::Vec<T, 3> zero, Uxi_bar, d0_bar;
-      A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], Xxi, d0_bar.get_data());
-      A2D::VecAddCore<T, 3>(0.5 * ety_bar[offset + itying], n0, Uxi_bar.get_data());
-      Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_bar.get_data(), zero.get_data(), res);
-      Basis::template interpFieldsTranspose<3, 3>(pt, d0_bar.get_data(), d_bar);
+        // compute the 2D tangent stiffness matrix C or Q
+        T C[6];
+        Data::evalTangentStiffness2D(data.E, data.nu, C);
 
-    } // end of itying for loop for g13
+        // compute upper and lower surface stresses
+        T stressU[3], stressL[3];
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainL, stressL);
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainU, stressU);
 
-  } // end of computeTyingStrainSens
+        // note stress[3] refers to s11, s22, s12 stresses
+        // compute von mises failure at upper and lower surfaces
+        T failU, failL;
+        vonMisesFailure2D(data, stressU, &failU);
+        vonMisesFailure2D(data, stressL, &failL);
 
-  template <class Basis>
-  __HOST_DEVICE__ static void computeTyingStrainHrev(const T Xpts[],
-                                                     const T fn[],
-                                                     const T h_ety[], T matCol[],
-                                                     T h_d[])
-  {
+        // now do KS max among upper and lower surface stresses
+        T ksMax;
+        if (failU > failL) {
+            ksMax = failU;
+        } else {
+            ksMax = failL;
+        }
 
-    // since linear, call sens for now
-    computeTyingStrainSens<Basis>(Xpts, fn, h_ety, matCol, h_d);
-  }
+        T ksSum = exp(rho_KS * (failU - ksMax)) + exp(rho_KS * (failL - ksMax));
+        T ksVal = ksMax + log(ksSum) / rho_KS;
+
+        // end of forward analysis
+        // backprop now first to dsigma_KS/dthick through zL and zU
+
+        // first for lower stresses
+        T fail_bar = exp(rho_KS * (failL - ksMax)) / ksSum;
+        T stress_bar[3];
+        vonMisesFailure2DSens(data, stressL, fail_bar, stress_bar);
+        T surf_strain_bar[3];
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
+
+        // backprop from lower surf strains to strain_bar
+        A2D::VecSumCore<T, 3>(surf_strain_bar, &strain_bar[0]);
+        A2D::VecSumCore<T, 3>(zL, surf_strain_bar, &strain_bar[3]);
+
+        // then for upper stresses
+        T fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
+        vonMisesFailure2DSens(data, stressU, fail_bar, stress_bar);
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
+
+        // backprop from upper surf strains to strain_bar
+        A2D::VecSumCore<T, 3>(surf_strain_bar, &strain_bar[0]);
+        A2D::VecSumCore<T, 3>(zU, surf_strain_bar, &strain_bar[3]);
+
+        return ksVal;
+    }
+
+    __HOST_DEVICE__ static void compute_dRdx(const int local_dv, const Data &physData,
+                                             const T &scale, A2D::ADObj<A2D::Mat<T, 3, 3>> &u0x,
+                                             A2D::ADObj<A2D::Mat<T, 3, 3>> &u1x,
+                                             A2D::ADObj<A2D::SymMat<T, 3>> &e0ty,
+                                             A2D::ADObj<A2D::Vec<T, 1>> &et) {
+        // for isotropic material only one local_dv aka thickness
+        // so ignore this input
+
+        using T2 = A2D::ADScalar<T>;
+
+        // copy into local
+        A2D::ADObj<A2D::Mat<T2, 3, 3>> _u0x, _u1x;
+        A2D::ADObj<A2D::SymMat<T2, 3>> _e0ty;
+        A2D::ADObj<A2D::Vec<T2, 1>> _et;
+
+        for (int i = 0; i < 9; i++) {
+            _u0x.value()[i].value = u0x.value()[i];
+            _u1x.value()[i].value = u1x.value()[i];
+        }
+        for (int i = 0; i < 6; i++) {
+            _e0ty.value()[i].value = e0ty.value()[i];
+        }
+        _et.value()[0].value = et.value()[0];
+
+        // use forward AD to get dstrain/dthick?
+        A2D::ADObj<A2D::Vec<T2, 9>> E, S;
+        A2D::ADObj<T2> ES_dot, Uelem;
+
+        // some way to check that T2 is indeed ADScalar<> type?
+        T2 thick;
+        if (local_dv == 0) {
+            thick = physData.thick;
+            thick.deriv = 1.0;
+        }
+
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+                           A2D::IsotropicShellStress<T2, Data>(T2(physData.E), T2(physData.nu),
+                                                               thick, physData.tOffset, E, S),
+                           // no 1/2 here to match TACS formulation (just scales eqns) [is removing
+                           // the 0.5 correct?]
+                           A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
+        // printf("Uelem = %.8e\n", Uelem.value());
+
+        Uelem.bvalue() = 1.0;
+        strain_energy_stack.reverse();
+        // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
+
+        // now copy back data from ADScalar to regular types
+        for (int i = 0; i < 9; i++) {
+            u0x.value()[i] = _u0x.value()[i].deriv;
+            u1x.value()[i] = _u1x.value()[i].deriv;
+        }
+        for (int i = 0; i < 6; i++) {
+            e0ty.value()[i] = _e0ty.value()[i].deriv;
+        }
+        et.value()[0] = _et.value()[0].deriv;
+    }  // end of computeWeakRes
 };

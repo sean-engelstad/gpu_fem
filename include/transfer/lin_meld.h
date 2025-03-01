@@ -38,16 +38,28 @@ class LinearizedMELD {
         global_soln = DeviceVec<T>(3 * na);
     }
 
+    // function declarations (for ease of use)
+    // ---------------------------------------------------------------
+
+    __HOST__ void initialize();
+    __HOST__ DeviceVec<T> transferDisps(DeviceVec<T> uS);
+    __HOST__ DeviceVec<T> transferLoads(DeviceVec<T> fA);
+
     __HOST__ DeviceVec<T> &getStructDisps() { return us; }
     __HOST__ DeviceVec<T> &getAeroDisps() { return ua; }
     __HOST__ DeviceVec<T> &getStructDeformed() { return xs; }
+
+    __HOST__ void _computeAeroStructConn();
+
+    // ----------------------------------------------------------------
+    // end of function declarations
 
     __HOST__ void initialize() {
         printf("inside initialize\n");
 
         // was going to maybe compute aero struct connectivity (nearest neighbors)
         // using octree, but instead just going to reuse CPU code for this from F2F MELD
-        computeAeroStructConn();
+        _computeAeroStructConn();
         printf("\tfinished aero struct conn\n");
 
         // compute weights (assumes fixed here even) => reinitialize under shape change
@@ -60,7 +72,7 @@ class LinearizedMELD {
         printf("\tfinished weights kernel\n");
     }
 
-    __HOST__ void computeAeroStructConn() {
+    __HOST__ void _computeAeroStructConn() {
         HostVec<int> conn(nn * na);
         // printf("inside aero struct conn\n");
         auto h_xa0 = xa0.createHostVec();
@@ -110,7 +122,7 @@ class LinearizedMELD {
         aerostruct_conn = conn.createDeviceVec();
     }
 
-    __HOST__ DeviceVec<T> &transferDisps(DeviceVec<T> &new_us) {
+    __HOST__ DeviceVec<T> transferDisps(DeviceVec<T> new_us) {
         printf("inside transferDisps\n");
         new_us.copyValuesTo(us);
         xs.zeroValues();

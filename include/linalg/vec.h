@@ -270,6 +270,8 @@ class DeviceVec : public BaseVec<T> {
     __DEVICE__ static void copyLocalToShared(const bool active_thread, const T scale, const int N,
                                              const T *local, T *shared) {
         for (int i = 0; i < N; i++) {
+            // shared[i] = scale * local[i];
+            // do some warp reduction across quad pts maybe
             atomicAdd(&shared[i], scale * local[i]);
         }
         __syncthreads();
