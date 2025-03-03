@@ -9,7 +9,7 @@ gmres-debug:
 	${GPU_CXX} -g ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 gmres_plate.cu ${LINK}
 
 reordering:
-	${CXX} -g -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 reordering.cpp
+	${CXX} -g ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 reordering.cpp
 
 clean:
 	rm *.out || echo "no .out files"

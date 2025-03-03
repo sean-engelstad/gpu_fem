@@ -31,7 +31,7 @@ int main(void)
     bool perform_qordering = true;
     double qorder_p = 0.5; // lower p value is more nnz : 0.5, 1.0, 2.0
     bool perform_ilu = true;
-    int levFill = 4; // ILU(k) fill level 0,1,2,3,...
+    int levFill = 3; // ILU(k) fill level 0,1,2,3,...
 
     // load and other utils/settings
     // --------------------
@@ -43,7 +43,7 @@ int main(void)
 
     // GMRES inputs
     // ---------------------
-    int m = 300; // number of GMRES iterations
+    int m = 100; // number of GMRES iterations
     double tolerance = 1e-14;
 
     // ----------------------
@@ -624,6 +624,7 @@ int main(void)
 
     // define givens rotations
     HostVec<T> g(m+1), cs(m), ss(m);
+    std::vector<T> err;
 
     // start Arnoldi process
     // --------------
@@ -638,7 +639,8 @@ int main(void)
     // set g[0] = beta (initial givens rotation)
     g[0] = beta; 
     double nrm_debug;
-    int jj; // j at checkout 
+    int jj = m - 1; // j at checkout 
+    err.push_back(abs(g[0]));
 
     // loop over GMRES iterations (later can implement restarts too)
     for (int j = 0; j < m; j++) {
@@ -783,6 +785,7 @@ int main(void)
 
         printf("j = %d, g[%d] = %.4e\n", j, j+1, g[j+1]);
         // printf("\tpre zero H[%d,%d] = %.4e\n", j+1, j, _b);
+        err.push_back(abs(g[j+1]));
 
         if (abs(g[j+1]) < tolerance) {
             printf("g[%d+1] = %.4e < %.4e so break\n", j, abs(g[j+1]), tolerance);
@@ -790,6 +793,10 @@ int main(void)
             break;
         }
     }
+
+    // write g[j] Givens rotation history to csv
+    // write_to_csv<double>(g.getPtr(), jj+1, "csv/givens_rot.csv");
+    write_to_csv<double>(err.data(), err.size(), "csv/givens_rot.csv");
 
     // extract the (jj+1) x (jj+1) triangular part of H out of it on the host
     // to do this just use only the m^2 values since stored in row-major format

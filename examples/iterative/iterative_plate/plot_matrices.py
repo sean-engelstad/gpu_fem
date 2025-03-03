@@ -54,7 +54,7 @@ def plot_mat(mat, filename):
     return
 
 if __name__=="__main__":
-    nxe = 30
+    nxe = 10
     kmat,_,_,_ = get_mat("kmat", nxe=nxe)
     plot_mat(kmat, "img/kmat.png")
     precond,_,_,_ = get_mat("precond", nxe=nxe)

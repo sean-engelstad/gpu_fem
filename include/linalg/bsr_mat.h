@@ -160,11 +160,11 @@ public:
     int *t_cols = mat.getColPtr();
     T *t_vals = mat.getPtr();
     int block_dim = bsr_data.block_dim;
-    // int block_dim2 = block_dim * block_dim;
     int nnodes = bsr_data.nnodes;
 
 #ifndef USE_GPU
     // CPU version
+    int block_dim2 = block_dim * block_dim;
     for (int irow = 0; irow < nnodes; irow++) {
       int t_jp = t_rowp[irow];
       int t_jp_max = t_rowp[irow + 1];

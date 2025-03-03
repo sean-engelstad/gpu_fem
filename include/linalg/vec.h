@@ -212,8 +212,10 @@ public:
   }
 
   __HOST__ void copyValuesTo(DeviceVec<T> dest) {
+#ifdef USE_GPU
     cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T),
                cudaMemcpyDeviceToDevice);
+#endif
   }
 
   __HOST__ DeviceVec<T> createDeviceVec() { return *this; }
