@@ -64,6 +64,18 @@ class BaseVec {
         }
     }
 
+    __HOST_DEVICE__ void axpy(T a, Vec<T> x) {
+        // this vec is y
+        // compute y := a * x + y
+#ifdef USE_GPU
+        dim3 block(32);
+        int nblocks = (this->N + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+
+        vec_axpy_kernel<T><<<grid, block>>>(this->N, a, x.getPtr(), this->data);
+#endif
+    }
+
     __HOST_DEVICE__ static int permuteDof(int _idof, int *myPerm, int myBlockDim) {
         int _inode = _idof / myBlockDim;
         int inner_dof = _idof % myBlockDim;
