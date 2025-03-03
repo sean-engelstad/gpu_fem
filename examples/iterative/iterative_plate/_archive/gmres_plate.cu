@@ -421,109 +421,88 @@ int main(void)
     cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
 
     // initialize L and U precond matrices
-    // descr_M = 0,
-    cusparseMatDescr_t  descr_L = 0, descr_U = 0;
-    // bsrilu02Info_t info_M = 0;
-    bsrilu02Info_t info_L_fct = 0, info_U_fct = 0;
+    cusparseMatDescr_t descr_M = 0, descr_L = 0, descr_U = 0;
+    bsrilu02Info_t info_M = 0;
     bsrsv2Info_t info_L = 0, info_U = 0;
-    // int pBufferSize_M, 
-    int pBufferSize_L, pBufferSize_U, pBufferSize;
+    int pBufferSize_M, pBufferSize_L, pBufferSize_U, pBufferSize;
     void *pBuffer = 0;
-    int structural_zero, numerical_zero;
+    int structural_zero;
     // do this CUSPARSE_SOLVE_POLICY_USE_LEVEL so that it parallelizes the triangular solves better
-    // const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
-    // const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL; // CUSPARSE_SOLVE_POLICY_NO_LEVEL, CUSPARSE_SOLVE_POLICY_USE_LEVEL
-    // const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
-
-    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL; // CUSPARSE_SOLVE_POLICY_NO_LEVEL, CUSPARSE_SOLVE_POLICY_USE_LEVEL
     const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
 
-    
     const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseOperation_t trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
 
     // step 1: create a descriptor which contains
-    // cusparseCreateMatDescr(&descr_M);
-    // cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO);
-    // cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseCreateMatDescr(&descr_M);
+    cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO);
+    cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL);
 
     cusparseCreateMatDescr(&descr_L);
     cusparseSetMatIndexBase(descr_L, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL); // need general for ilu
+    cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL);
     cusparseSetMatFillMode(descr_L, CUSPARSE_FILL_MODE_LOWER);
     cusparseSetMatDiagType(descr_L, CUSPARSE_DIAG_TYPE_UNIT);
     
     cusparseCreateMatDescr(&descr_U);
     cusparseSetMatIndexBase(descr_U, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL); // need general for ilu
+    cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL);
     cusparseSetMatFillMode(descr_U, CUSPARSE_FILL_MODE_UPPER);
     cusparseSetMatDiagType(descr_U, CUSPARSE_DIAG_TYPE_NON_UNIT);
 
     // step 2: create a empty info structure
     // we need one info for bsrilu02 and two info's for bsrsv2
-    cusparseCreateBsrilu02Info(&info_L_fct);
-    cusparseCreateBsrilu02Info(&info_U_fct);
+    cusparseCreateBsrilu02Info(&info_M);
     cusparseCreateBsrsv2Info(&info_L);
     cusparseCreateBsrsv2Info(&info_U);
 
     // step 3: query how much memory used in bsrilu02 and bsrsv2, and
     // allocate the buffer
-    // CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
-    //                              dp_rowp, dp_cols, block_dim, info_M,
-    //                              &pBufferSize_M))
+    CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
+                                 dp_rowp, dp_cols, block_dim, info_M,
+                                 &pBufferSize_M))
     CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_L, mb, nnzb, descr_L,
         precond_vals, dp_rowp, dp_cols, block_dim,
                                info_L, &pBufferSize_L))
     CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_U, mb, nnzb, descr_U,
         precond_vals, dp_rowp, dp_cols, block_dim,
                                info_U, &pBufferSize_U))
-    // pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
-    pBufferSize = max(pBufferSize_L, pBufferSize_U);
+    pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
     // pBuffer returned by cudaMalloc is automatically aligned to 128 bytes.
     cudaMalloc((void **)&pBuffer, pBufferSize);
 
-    // Perform ILU numerical factorization directly into L and U
-    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_L, precond_vals, dp_rowp, dp_cols, block_dim, info_L_fct, policy_L, pBuffer));
-    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_U, precond_vals, dp_rowp, dp_cols, block_dim, info_U_fct, policy_U, pBuffer));
-
-    cusparseStatus_t status_L = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_L_fct, &structural_zero);
-    if (status_L == CUSPARSE_STATUS_ZERO_PIVOT) {
-        printf("L factor has a zero pivot at row %d\n", structural_zero);
+    // analyze ILU structure of M
+    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
+                               dp_rowp, dp_cols, block_dim, info_M,
+                               policy_M, pBuffer))
+    cusparseStatus_t status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
+    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+        printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
     }
 
-    cusparseStatus_t status_U = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_U_fct, &structural_zero);
-    if (status_U == CUSPARSE_STATUS_ZERO_PIVOT) {
-        printf("U factor has a zero pivot at row %d\n", structural_zero);
+    // switched the order here.. so Dbsrilu02 is after L and U analyses
+    // perform ILU numerical factorization in M
+    CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals, dp_rowp,
+        dp_cols, block_dim, info_M, policy_M, pBuffer))
+    int numerical_zero;
+    status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
+    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+        printf("block U(%d,%d) is not invertible\n", numerical_zero,
+                numerical_zero);
     }
-
-    // Now perform the actual ILU factorization into L and U
-    CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_L, precond_vals, dp_rowp, dp_cols, block_dim, info_L_fct, policy_L, pBuffer));
-    CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_U, precond_vals, dp_rowp, dp_cols, block_dim, info_U_fct, policy_U, pBuffer));
-
-    status_L = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_L_fct, &numerical_zero);
-    if (status_L == CUSPARSE_STATUS_ZERO_PIVOT) {
-        printf("block L(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
-    }
-
-    status_U = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_U_fct, &numerical_zero);
-    if (status_U == CUSPARSE_STATUS_ZERO_PIVOT) {
-        printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
-    }
-
-    // ---- Change Matrix Type to TRIANGULAR for bsrsv2 (solves) ----
-    // cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_TRIANGULAR);
-    // cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_TRIANGULAR);
 
     // analyze sparsity pattern of L and U for later triangular solves
-    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L, 
-        precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-         policy_L, pBuffer))
-    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U, 
-            precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-            policy_U, pBuffer))
+    // CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L, 
+    //     precond_vals, dp_rowp, dp_cols, block_dim, info_L,
+    //      policy_L, pBuffer))
+    // CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U, 
+    //         precond_vals, dp_rowp, dp_cols, block_dim, info_U,
+    //         policy_U, pBuffer))
 
-    CHECK_CUDA(cudaDeviceSynchronize());
+    // CHECK_CUDA(cudaDeviceSynchronize());
 
     // check preconditioner after LU factorization
     auto d_precond_vec2 = DeviceVec<T>(h_precond_mat.getSize(),precond_vals);

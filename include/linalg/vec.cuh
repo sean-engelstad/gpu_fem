@@ -25,3 +25,12 @@ __GLOBAL__ void permute_vec_kernel(int num_nodes, T *data, T *temp, int block_di
     }
     }
 }
+
+template <typename T>
+__GLOBAL__ void vec_scale_kernel(int N, T *data, T scale) {
+    int ind = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ind < N) {
+        data[ind] *= scale;
+    }
+    
+}
