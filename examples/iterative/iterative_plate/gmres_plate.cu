@@ -1,4 +1,4 @@
-#include "../plate_demo/_plate_utils.h"
+#include "../../plate_demo/_plate_utils.h"
 #include "chrono"
 #include "linalg/linalg.h"
 #include "mesh/vtk_writer.h"
@@ -22,20 +22,20 @@ int main(void)
 
     // problem size (computational size)
     // ---------------------
-    int nxe = 100;
+    int nxe = 10; // 10
 
     // reordering inputs
     // ---------------------
 
     bool perform_rcm = true;
-    bool perform_qordering = true;
+    bool perform_qordering = false;
     double qorder_p = 2.0; // lower p value is more nnz : 0.5, 1.0, 2.0
     bool perform_ilu = true;
-    int levFill = 2; // ILU(k) fill level 0,1,2,3,...
+    int levFill = 10; // ILU(k) fill level 0,1,2,3,...
 
     // GMRES inputs
     // ---------------------
-    int m = 30; // number of GMRES iterations
+    int m = 12; // number of GMRES iterations
     double tolerance = 1e-11;
 
     // ----------------------
@@ -271,18 +271,19 @@ int main(void)
     // NOTE : flips the order of perm, iperm when storing in the kmat (because I use reverse convention in my code)
     
     // TODO : do I need to swap lperm, rperm? maybe to get correct answer
-    // int *lperm = final_perm;
-    // int *rperm = final_iperm;
-    int *lperm = final_iperm;
-    int *rperm = final_perm;
+    // int *my_perm = final_perm;
+    // int *my_iperm = final_iperm;
+    // should be swapping the perm order here based on AMD example
+    int *my_perm = final_iperm;
+    int *my_iperm = final_perm;
 
     // TODO: clean up all of the above and move into main repos
     // update kmat bsr data with reordering (flipped perm, iperm here bc flipped convention)
-    bsr_data.post_reordering_update(kmat_nnzb, kmat_rowPtr, kmat_colPtr, lperm, rperm);
+    bsr_data.post_reordering_update(kmat_nnzb, kmat_rowPtr, kmat_colPtr, my_perm, my_iperm);
     // printf("checkpt0.5\n");
 
     // make the bsr data for the preconditioner (flipped perm, iperm here bc flipped convention)
-    auto precond_bsr_data = BsrData(nnodes, 6, nnzb, rowPtr, colPtr, lperm, rperm);
+    auto precond_bsr_data = BsrData(nnodes, 6, nnzb, rowPtr, colPtr, my_perm, my_iperm);
 
     // printf("kmat_nnzb = %d\n", kmat_nnzb);
     // printf("kmat rowPtr:");
@@ -463,6 +464,15 @@ int main(void)
     CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U, 
             precond_vals, dp_rowp, dp_cols, block_dim, info_U,
             policy_U, pBuffer))
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    // check preconditioner after LU factorization
+    auto d_precond_vec2 = DeviceVec<T>(h_precond_mat.getSize(),precond_vals);
+    auto h_precond_mat2 = d_precond_vec2.createHostVec();
+    write_to_csv<int>(rowPtr,nnodes+1, "csv/precond2_rowp.csv");
+    write_to_csv<int>(colPtr, rowPtr[nnodes], "csv/precond2_cols.csv");
+    write_to_csv<double>(h_precond_mat2.getPtr(), h_precond_mat2.getSize(), "csv/precond2_vals.csv");
     
 
     // (2) implement GMRES solver
@@ -570,6 +580,7 @@ int main(void)
     // set g[0] = beta (initial givens rotation)
     g[0] = beta; 
     double nrm_debug;
+    int jj; // j at checkout 
 
     // loop over GMRES iterations (later can implement restarts too)
     for (int j = 0; j < m; j++) {
@@ -579,11 +590,11 @@ int main(void)
 
         
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, V[j].getPtr(), 1, &nrm_debug))
-        printf("||v[%d]|| = %.4e\n", j, nrm_debug);
+        // printf("||v[%d]|| = %.4e\n", j, nrm_debug);
 
         // printf("checkpt4\n");
 
-        // compute w_j = 0 * w_j + A * v_j (v_j is tmp1 into w_j as tmp2)
+        // compute w_j = a * A * v_j + b * w_j (v_j is tmp1 into w_j as tmp2)
         a = 1.0, b = 0.0;
         CHECK_CUSPARSE(cusparseDbsrmv(
             cusparseHandle, 
@@ -599,7 +610,7 @@ int main(void)
         ))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
-        printf("||A*v[%d]|| = %.4e\n", j, nrm_debug);
+        // printf("||A*v[%d]|| = %.4e\n", j, nrm_debug);
         // printf("checkpt5\n");
 
         // compute w_j = U^-1 L^-1 w_j
@@ -611,7 +622,7 @@ int main(void)
             w_ptr, tmp1_ptr, policy_L, pBuffer))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, tmp1_ptr, 1, &nrm_debug))
-        printf("||L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
+        // printf("||L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
         if (isnan(nrm_debug)) {
             printf("NaN detected in L^-1 solve!\n");
         }
@@ -625,7 +636,7 @@ int main(void)
             tmp1_ptr, w_ptr, policy_U, pBuffer))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
-        printf("||U^-1 * L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
+        // printf("||U^-1 * L^-1 * A*v[%d]|| = %.4e\n", j, nrm_debug);
         if (isnan(nrm_debug)) {
             printf("NaN detected in U^-1 solve!\n");
         }
@@ -643,12 +654,25 @@ int main(void)
         for (int i = 0; i < j+1; i++) {
 
             // Hij = dot(wj, vi), wj is tmp2 and vi is V[i]
-            CHECK_CUBLAS(cublasDdot(cublasHandle, m, w_ptr, 1, V[i].getPtr(), 1, &H[i * m + j]));
+            CHECK_CUBLAS(cublasDdot(cublasHandle, nvars, w_ptr, 1, V[i].getPtr(), 1, &H[i * m + j]));
             
             // compute wj = wj - H[i,j] * vi with vi as V[i] and wj as tmp2
             a = -H[i * m + j]; // a * tmp1 + b * tmp2 => into tmp2
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[i].getPtr(), 1, w_ptr, 1));;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[i].getPtr(), 1, w_ptr, 1));
+
         }
+
+        // now check orthogonality of w with previous V[i]
+        // is orthogonal
+        // for (int i = 0; i < j+1; i++) {
+
+        //     // Hij = dot(wj, vi), wj is tmp2 and vi is V[i]
+        //     double dotprod;
+        //     CHECK_CUBLAS(cublasDdot(cublasHandle, nvars, w_ptr, 1, V[i].getPtr(), 1, &dotprod));
+            
+        //     printf("dotprod w with v[%d] = %.4e\n", i, dotprod);
+
+        // }
 
         // reorthogonalization step
         // for (int i = 0; i < j+1; i++) {
@@ -669,11 +693,10 @@ int main(void)
         w.copyValuesTo(V[j+1]);
 
         // apply given's rotations
-        int k = j;
         for (int ii = 0; ii < j; ii++) {
-            double _temp = cs[ii] * H[ii * m + k] + ss[ii] * H[(ii+1) * m + k];
-            H[(ii+1) * m + k] = -ss[ii] * H[ii * m + k] + cs[ii] * H[(ii+1)*m + k];
-            H[ii * m + k] = _temp;
+            double _temp = cs[ii] * H[ii * m + j] + ss[ii] * H[(ii+1) * m + j];
+            H[(ii+1) * m + j] = -ss[ii] * H[ii * m + j] + cs[ii] * H[(ii+1)*m + j];
+            H[ii * m + j] = _temp;
         }
 
         // compute new givens rotatios on H[j,j] and H[j+1,j] into cs[j], ss[j]
@@ -692,46 +715,100 @@ int main(void)
         g[j] = cs[j] * g[j];
 
         printf("j = %d, g[%d] = %.4e\n", j, j+1, g[j+1]);
-        printf("\tpre zero H[%d,%d] = %.4e\n", j+1, j, _b);
+        // printf("\tpre zero H[%d,%d] = %.4e\n", j+1, j, _b);
 
         if (abs(g[j+1]) < tolerance) {
-            printf("g[%d+1] = %.4e so break\n", j, tolerance);
+            printf("g[%d+1] = %.4e < %.4e so break\n", j, abs(g[j+1]), tolerance);
+            jj = j;
             break;
         }
     }
 
-    // extract the m x m triangular part of H out of it on the host
+    // extract the (jj+1) x (jj+1) triangular part of H out of it on the host
     // to do this just use only the m^2 values since stored in row-major format
     // copy data onto the device now
-    double *d_H;
-    cudaMalloc(&d_H, m * m * sizeof(double));
-    cudaMemcpy(d_H, H.data(), m*m*sizeof(double), cudaMemcpyHostToDevice);
-    // double check if this part is right by looking at the python GMRES code (H becomes m x m)?
 
-    auto y = g.createDeviceVec();
-    double *d_y = y.getPtr();
+    // make a smaller Hred matrix of size jj+1 x jj+1 on the host
+    std::vector<double> Hred((jj+1)*(jj+1), 0.0);
+    for (int row = 0; row < jj+1; row++) {
+        for (int col = 0; col < jj+1; col++) {
+            // in-place transpose to be compatible with column-major cublasDtrsv later on
+            // Hred[row * (jj+1) + col] = H[row * m + col]; // non-transpose copy
+            Hred[row * (jj+1) + col] = H[col * m + row];
+        }
+    }
+
+    // TODO: cleanup later
+
+    // now copy data from Hred to d_Hred
+    double *d_Hred;
+    cudaMalloc(&d_Hred, (jj+1) * (jj+1) * sizeof(double));
+    cudaMemcpy(d_Hred, Hred.data(), (jj+1) * (jj+1) * sizeof(double), cudaMemcpyHostToDevice);
+    
+    // also create gred
+    HostVec<T> gred(jj+1);
+    memcpy(gred.getPtr(), g.getPtr(), (jj+1) * sizeof(T));
+
+    auto d_y = gred.createDeviceVec(); // inout so soln temp becomes rhs
+    auto d_gcopy = gred.createDeviceVec();
+
+    auto h_y_pre = d_y.createHostVec();
+    printf("g rhs prelim: ");
+    printVec<double>(jj+1, h_y_pre.getPtr());
 
     // solve the upper triangular system H * y = g
-    // d_H was stored row-major use CUBLAS_OP_T to transpose it to column-major (the assumed storage)
-    cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, 
-                CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, 
-                m, d_H, m, d_y, 1);
+    // since d_Hred is stored row-major but this is column major, I need CUBLAS_OP_N not CUBLAS_OP_T
+    CHECK_CUBLAS(cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, 
+        CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, 
+                jj+1, d_Hred, jj+1, d_y.getPtr(), 1));
 
-    auto h_y = y.createHostVec();
+    auto h_y = d_y.createHostVec();
+    printf("H * y = g, answer y: ");
+    printVec<double>(jj+1, h_y.getPtr());
+
+    // H matrix
+    printf("H matrix:");
+    printVec<double>((jj+1)*(jj+1), Hred.data());
+
+    // check whether the solution to H * y = g is achieved
+    int n = jj + 1;
+    auto d_Hy = DeviceVec<T>(jj+1);
+    double alpha = 1.0;
+    beta = 0.0;
+    // here CUBLAS_OP_T because Hred is row major
+    cublasDgemv(cublasHandle, CUBLAS_OP_N, n, n, &alpha, d_Hred, n, d_y.getPtr(), 1, &beta, d_Hy.getPtr(), 1);
+
+    // Compute residual: residual = Hy - rhs
+    alpha = -1.0;
+    // cublasDcopy(handle, n, d_Hy, 1, d_residual, 1);  // Copy Hy to residual
+    cublasDaxpy(cublasHandle, n, &alpha, d_gcopy.getPtr(), 1, d_Hy.getPtr(), 1); // residual -= rhs
+    
+    // Compute the norm of the residual
+    double resNorm;
+    cublasDnrm2(cublasHandle, n, d_Hy.getPtr(), 1, &resNorm);
+
+    printf("residual of H * y = g system is: %.4e\n", resNorm);
 
     // update the solution
     // soln = 1.0 * soln + V @ y (do V * y product manually since V stored in vectors)
+
+    // so now I update the solution vector with V * y in order for the solution update
     
-    for (int j = 0; j < m; j++) {
+    for (int j = 0; j < jj+1; j++) {
         // copy vj into tmp1
         // V[j].copyValuesTo(tmp1);
 
         a = h_y[j]; // y[j] * tmp1 + d_soln => into d_soln
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[j].getPtr(), 1, soln_ptr, 1));
+        
+        // auto h_soln = soln.createHostVec();
+        // printf("h_soln at step j %d: ", j);
+        // printVec<double>(30, h_soln.getPtr());
+
     }
 
     // compute residual again
-    loads.copyValuesTo(resid); // copies b into resid
+    rhs.copyValuesTo(resid); // copies b into resid
 
     // compute resid = - A * x0 + resid
     a = -1.0, b = 1.0;
