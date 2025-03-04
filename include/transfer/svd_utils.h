@@ -15,7 +15,7 @@
 // https://dl.acm.org/doi/pdf/10.1145/355578.366316
 
 template <typename T>
-__DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
+__DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9], const bool print = false) {
     // TODO : test this routine on the host for debugging
 
     // so are given H a 3x3 matrix and we wish to find H = U * Sigma * V^T
@@ -90,12 +90,35 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
             B[4] -= sigma[ieig];
             B[8] -= sigma[ieig];
 
-            // now take cross product of first two rows of B to get V[i,:] row
-            T c[3];
-            A2D::VecCrossCore<T>(&B[0], &B[3], c);
+            // now take cross product of each pair of rows and add them to get null space vector
+            T c[3], tmp[3];
+            for (int i = 0; i < 3; i++) {
+                c[i] = 0.0;
+            }
+            A2D::VecCrossCore<T>(&B[0], &B[3], tmp);
+            A2D::VecAddCore<T, 3>(tmp, c);
+            A2D::VecCrossCore<T>(&B[0], &B[6], tmp);
+            A2D::VecAddCore<T, 3>(tmp, c);
+            A2D::VecCrossCore<T>(&B[3], &B[6], tmp);
+            A2D::VecAddCore<T, 3>(tmp, c);
             // normalize c
-            T cnorm = sqrt(A2D::VecDotCore<T, 3>(c, c));
+            T cnorm = sqrt(A2D::VecDotCore<T, 3>(c, c));  //  + 1e-12
             A2D::VecScaleCore<T, 3>(1.0 / cnorm, c, &VT[3 * ieig]);
+        }
+
+        if constexpr (std::is_same<T, A2D::ADScalar<double, 1>>::value) {
+            if (print) {
+                printf("m: (%.4e,%.4e)\n", m.value, m.deriv[0]);
+                printf("p: (%.4e,%.4e)\n", p.value, p.deriv[0]);
+                printf("q: (%.4e,%.4e)\n", q.value, q.deriv[0]);
+                printf("phi: (%.4e,%.4e)\n", phi.value, phi.deriv[0]);
+                for (int i = 0; i < 3; i++) {
+                    printf("sigma[%d]: (%.4e,%.4e)\n", i, sigma[i].value, sigma[i].deriv[0]);
+                }
+                for (int i = 0; i < 9; i++) {
+                    printf("VT[%d]: (%.4e,%.4e)\n", i, VT[i].value, VT[i].deriv[0]);
+                }
+            }
         }
 
         // now need to apply Graham-Schmidt process on the V matrix
@@ -104,7 +127,7 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
         A2D::VecAddCore<T, 3>(-v12, &VT[0], &VT[3]);
 
         // normalize v2
-        T norm2 = sqrt(A2D::VecDotCore<T, 3>(&VT[3], &VT[3]));
+        T norm2 = sqrt(A2D::VecDotCore<T, 3>(&VT[3], &VT[3])) + 1e-12;
         A2D::VecScaleCore<T, 3>(1.0 / norm2, &VT[3], &VT[3]);
 
         // then v3 -= <v1,v3> v1
@@ -116,7 +139,7 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
         A2D::VecAddCore<T, 3>(-v23, &VT[3], &VT[6]);
 
         // normalize v3
-        T norm3 = sqrt(A2D::VecDotCore<T, 3>(&VT[6], &VT[6]));
+        T norm3 = sqrt(A2D::VecDotCore<T, 3>(&VT[6], &VT[6])) + 1e-12;
         A2D::VecScaleCore<T, 3>(1.0 / norm3, &VT[6], &VT[6]);
     }  // end of scope block for getting VT
 
@@ -130,7 +153,7 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
         // U can be found by U = H * V * sigma^-1
 
         // first U (tmp) = H * VT^T = H * V
-        A2D::MatMatMultCore3x3<double, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, U);
+        A2D::MatMatMultCore3x3<T, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, U);
 
         // now find U = U (tmp) * sigma^-1 by scaling each column by 1.0/si (see if later I need
         // numerical stability for si near 0)
@@ -140,13 +163,14 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9]) {
             U[3 * irow + icol] /= sigma[icol];
         }
     }
+
     // now we have completed the SVD
 }
 
 template <typename T>
-__DEVICE__ void computeRotation(const T H[9], T R[9]) {
+__DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = false) {
     T sigma[3], U[9], VT[9];
-    svd3x3<T>(H, sigma, U, VT);
+    svd3x3<T>(H, sigma, U, VT, print);
 
     // compute rotation matrix R = U * VT
     A2D::MatMatMultCore3x3<T>(U, VT, R);

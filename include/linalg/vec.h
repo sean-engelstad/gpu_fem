@@ -231,6 +231,7 @@ class DeviceVec : public BaseVec<T> {
             int global_inode = elem_conn[local_inode];  // no perm here since
                                                         // xpts isn't permuted
             int iglobal = global_inode * dof_per_node + (idof % dof_per_node);
+            // printf("shared[%d] from global[%d]\n", idof, iglobal);
             shared_data[idof] = this->data[iglobal];
         }
         // make sure you call __syncthreads() at some point after this
