@@ -33,9 +33,9 @@ class LinearizedMELD {
         fa = DeviceVec<T>(3 * na);
         fs = DeviceVec<T>(3 * ns);
 
-        global_H = DeviceVec<T>(9 * na);
-        global_rhs = DeviceVec<T>(3 * na);
-        global_soln = DeviceVec<T>(3 * na);
+        // global_H = DeviceVec<T>(9 * na);
+        // global_rhs = DeviceVec<T>(3 * na);
+        // global_soln = DeviceVec<T>(3 * na);
     }
 
     __HOST__ DeviceVec<T> &getStructDisps() { return us; }
@@ -164,7 +164,7 @@ class LinearizedMELD {
     DeviceVec<T> us, ua;
     DeviceVec<T> fs, fa;
 
-    DeviceVec<T> global_H, global_rhs, global_soln;
+    // DeviceVec<T> global_H, global_rhs, global_soln;
 
     DeviceVec<int> aerostruct_conn;
     double beta;

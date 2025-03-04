@@ -28,6 +28,9 @@ class MELD {
         xa = DeviceVec<T>(3 * na);
         ua = DeviceVec<T>(3 * na);
 
+        fa = DeviceVec<T>(3 * na);
+        fs = DeviceVec<T>(3 * ns);
+
         // auto h_xs0 = xs0.createHostVec();
         // printf("h_xs0 constructor:");
         // printVec<double>(10, h_xs0.getPtr());
@@ -40,35 +43,15 @@ class MELD {
     __HOST__ void initialize() {
         printf("inside initialize\n");
 
-        // auto h_xs0 = xs0.createHostVec();
-        // printf("h_xs0:");
-        // printVec<double>(10, h_xs0.getPtr());
-        // return;
-
         // was going to maybe compute aero struct connectivity (nearest neighbors)
         // using octree, but instead just going to reuse CPU code for this from F2F MELD
         computeAeroStructConn();
         printf("\tfinished aero struct conn\n");
 
-        // compute aero struct connectivity (DEPRECATED here)
-        // aerostruct_conn = DeviceVec<int>(nn * na);
-        // dim3 block(128); // number of struct nodes considered at a time
-        // int nblocks = (ns + block.x) / block.x;
-        // dim3 grid(na);
-        // compute_aerostruct_conn<double><<<grid, block>>>(nn, xa0, xs0, aerostruct_conn);
-
         // compute weights (assumes fixed here even) => reinitialize under shape change
         weights = DeviceVec<double>(nn * na);
         dim3 block(32);
         dim3 grid(na);
-
-        // debug with 1 thread
-        // dim3 block(32);
-        // dim3 grid(1);
-
-        // auto h_conn = aerostruct_conn.createHostVec();
-        // printf("h_conn");
-        // printVec<int>(h_conn.getSize(), h_conn.getPtr());
 
         compute_weights_kernel<T><<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, weights);
         CHECK_CUDA(cudaDeviceSynchronize());
@@ -149,10 +132,6 @@ class MELD {
         new_us.copyValuesTo(us);
         xs.zeroValues();
 
-        // auto h_us = us.createHostVec();
-        // printf("h_us:");
-        // printVec<double>(h_us.getSize(), h_us.getPtr());
-
         // add us to xs0
         // use cublas or a custom kernel here for axpy?
         dim3 block1(32);
@@ -162,50 +141,49 @@ class MELD {
         CHECK_CUDA(cudaDeviceSynchronize());
         printf("\tfinished vec_add_kernel\n");
 
-        // auto h_xs = xs.createHostVec();
-        // printf("h_xs:");
-        // printVec<double>(h_xs.getSize(), h_xs.getPtr());
-
         // zero out xa, ua before we change them
         xa.zeroValues();
         ua.zeroValues();
 
-        // transfer disps on the kernel for each aero node
-        // dim3 block2(128);  // power of 2 larger than the # nearest neighbors?
-        // dim3 grid2(na);
-
         dim3 block2(32);
         dim3 grid2(na);
-
-        // debug launch
         // dim3 block2(1);
         // dim3 grid2(1);
 
-        // return ua;
-
-        transfer_disps_kernel<T>
-            <<<grid2, block2>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, xa, ua);
+        transfer_disps_kernel<T><<<grid2, block2>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, ua);
         CHECK_CUDA(cudaDeviceSynchronize());
         printf("\tfinished transfer_disps_kernel\n");
 
-        auto h_ua = ua.createHostVec();
-        // printf("h_ua:");
-        // printVec<double>(h_ua.getSize(), h_ua.getPtr());
-
-        printf("h_ua at node 899:");
-        printVec<double>(3, &h_ua[3 * 899]);
+        dim3 block4(32);
+        nblocks = (3 * na + block4.x - 1) / block4.x;
+        dim3 grid4(nblocks);
+        vec_add_kernel<T><<<grid4, block4>>>(ua, xa0, xa);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        printf("\tfinished vec_add_kernel for ua\n");
 
         return ua;
     }
 
     __HOST__ DeviceVec<T> transferLoads(DeviceVec<T> new_fa) {
+        printf("inside transferLoads\n");
         new_fa.copyValuesTo(fa);
         fs.zeroValues();
 
-        dim3 block(128);
+        // auto h_fa = fa.createHostVec();
+        // printf("fa:");
+        // printVec<double>(h_fa.getSize(), h_fa.getPtr());
+
+        dim3 block(32, 3);  // one warp for parallelization by spatial_dim
         dim3 grid(na);
+
+        // dim3 block(1, 1);
+        // dim3 grid(1);
+
+        printf("launch transfer_loads_kernel\n");
         transfer_loads_kernel<T>
             <<<grid, block>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        printf("\tdone with transfer_loads_kernel\n");
 
         return fs;
     }
