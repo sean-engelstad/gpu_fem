@@ -8,7 +8,10 @@
 
 template <typename T>
 T convertNanToZero(T value) {
-    return std::isnan(value) ? 0.0f : value;
+    // return std::isnan(value) ? 0.0f : value;
+
+    // temporarily keep nans
+    return value;
 }
 
 template <typename T>
