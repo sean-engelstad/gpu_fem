@@ -36,7 +36,8 @@ int main() {
     // T beta = 3.0;
     int nn = 32;
     int sym = -1; // no symmetry yet I believe
-    auto meld = MELD<T>(d_xs0, d_xa0, beta, nn, sym);
+    double Hreg = 1e-4; // regularization for H
+    auto meld = MELD<T>(d_xs0, d_xa0, beta, nn, sym, Hreg);
     meld.initialize();
 
     // transfer disps
@@ -45,8 +46,8 @@ int main() {
 
     printf("us:");
     printVec<T>(10, h_us.getPtr());
-    printf("ua:");
-    printVec<T>(10, h_ua.getPtr());
+    // printf("ua:");
+    // printVec<T>(2700, h_ua.getPtr());
 
     // visualize one of the meshes in paraview
     printGridToVTK<T>(nnx_s, nny_s, xs0, h_us, "out/xs.vtk");
