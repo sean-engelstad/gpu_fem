@@ -33,6 +33,7 @@ int main() {
     
     // create MELD
     T beta = 10.0;
+    // T beta = 3.0;
     int nn = 32;
     int sym = -1; // no symmetry yet I believe
     auto meld = MELD<T>(d_xs0, d_xa0, beta, nn, sym);
@@ -41,6 +42,11 @@ int main() {
     // transfer disps
     auto d_ua = meld.transferDisps(d_us);
     auto h_ua = d_ua.createHostVec();
+
+    printf("us:");
+    printVec<T>(10, h_us.getPtr());
+    printf("ua:");
+    printVec<T>(10, h_ua.getPtr());
 
     // visualize one of the meshes in paraview
     printGridToVTK<T>(nnx_s, nny_s, xs0, h_us, "out/xs.vtk");

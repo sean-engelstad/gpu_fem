@@ -23,6 +23,7 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
     __SHARED__ T loc_w[NN];
     __SHARED__ T loc_xs0[3 * NN];
     __SHARED__ T loc_xa0[3];
+    __SHARED__ T sum_distsq[1];
     __SHARED__ T sum[1];
 
     // copy data from global to shared
@@ -44,6 +45,23 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
     // printf("loc_xa0\n");
     // printVec<double>(3, &loc_xa0[0]);
 
+    // compute avg dist_sq for normalization
+    memset(sum_distsq, 0.0, 1 * sizeof(T));
+    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
+        // first compute the distance squared
+        T distsq = 0.0;
+        for (int idim = 0; idim < 3; idim++) {
+            T delta = loc_xa0[3 * inode + idim] - loc_xs0[3 * inode + idim];
+            distsq += delta * delta;
+        }
+
+        atomicAdd(&sum_distsq[0], distsq);
+    }
+    __syncthreads();
+    T avg_distsq = sum_distsq[0] / (1.0 * nn);
+    avg_distsq += 1e-7;
+    // printf("avg_distsq = %.4e\n", avg_distsq);
+
     // compute weights (un-normalized first)
     memset(loc_w, 0.0, nn * sizeof(T));
     memset(sum, 0.0, 1 * sizeof(T));
@@ -55,7 +73,7 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
             distsq += delta * delta;
         }
 
-        T new_weight = exp(-beta * distsq);
+        T new_weight = exp(-beta * distsq / avg_distsq);
         loc_w[inode] += new_weight;
         atomicAdd(&sum[0], new_weight);
     }

@@ -75,6 +75,10 @@ if __name__=="__main__":
     meld.transferDisps(us, ua)
     meld.transferLoads(fa, fs)
 
+    np.set_printoptions(threshold=np.inf)
+    print(f"{us[:10]=}")
+    print(f"{ua[:10]=}")
+
     plot_quantity(xs0, us, r"$u_s$")
     plot_quantity(xa0, ua, r"$u_a$")
     plot_quantity(xa0, fa, r"$f_a$")
