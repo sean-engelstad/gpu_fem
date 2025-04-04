@@ -64,6 +64,18 @@ class BaseVec {
         }
     }
 
+    __HOST_DEVICE__ void axpy(T a, Vec<T> x) {
+        // this vec is y
+        // compute y := a * x + y
+#ifdef USE_GPU
+        dim3 block(32);
+        int nblocks = (this->N + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+
+        vec_axpy_kernel<T><<<grid, block>>>(this->N, a, x.getPtr(), this->data);
+#endif
+    }
+
     __HOST_DEVICE__ static int permuteDof(int _idof, int *myPerm, int myBlockDim) {
         int _inode = _idof / myBlockDim;
         int inner_dof = _idof % myBlockDim;
@@ -271,6 +283,8 @@ class DeviceVec : public BaseVec<T> {
     __DEVICE__ static void copyLocalToShared(const bool active_thread, const T scale, const int N,
                                              const T *local, T *shared) {
         for (int i = 0; i < N; i++) {
+            // shared[i] = scale * local[i];
+            // do some warp reduction across quad pts maybe
             atomicAdd(&shared[i], scale * local[i]);
         }
         __syncthreads();
