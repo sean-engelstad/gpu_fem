@@ -16,7 +16,7 @@
 template <typename T>
 class MELD {
    public:
-    MELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym)
+    MELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym, T H_reg)
         : xs0(xs0), xa0(xa0), beta(beta), nn(num_nearest), sym(sym) {
         // assumes 3D so that xs0, xa0 are 3*nS, 3*nA sizes
         ns = xs0.getSize() / 3;
@@ -30,6 +30,8 @@ class MELD {
 
         fa = DeviceVec<T>(3 * na);
         fs = DeviceVec<T>(3 * ns);
+
+        H_reg = H_reg;
 
         // auto h_xs0 = xs0.createHostVec();
         // printf("h_xs0 constructor:");
@@ -150,7 +152,7 @@ class MELD {
         // dim3 block2(1);
         // dim3 grid2(1);
 
-        transfer_disps_kernel<T><<<grid2, block2>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, ua);
+        transfer_disps_kernel<T><<<grid2, block2>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, ua);
         CHECK_CUDA(cudaDeviceSynchronize());
         printf("\tfinished transfer_disps_kernel\n");
 
@@ -181,7 +183,7 @@ class MELD {
 
         printf("launch transfer_loads_kernel\n");
         transfer_loads_kernel<T>
-            <<<grid, block>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
+            <<<grid, block>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
         CHECK_CUDA(cudaDeviceSynchronize());
         printf("\tdone with transfer_loads_kernel\n");
 
@@ -197,4 +199,5 @@ class MELD {
     double beta;
     int sym, nn;
     int na, ns;
+    T H_reg;
 };

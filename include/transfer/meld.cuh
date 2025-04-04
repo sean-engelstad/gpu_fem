@@ -23,6 +23,7 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
     __SHARED__ T loc_w[NN];
     __SHARED__ T loc_xs0[3 * NN];
     __SHARED__ T loc_xa0[3];
+    __SHARED__ T sum_distsq[1];
     __SHARED__ T sum[1];
 
     // copy data from global to shared
@@ -44,6 +45,23 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
     // printf("loc_xa0\n");
     // printVec<double>(3, &loc_xa0[0]);
 
+    // compute avg dist_sq for normalization
+    memset(sum_distsq, 0.0, 1 * sizeof(T));
+    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
+        // first compute the distance squared
+        T distsq = 0.0;
+        for (int idim = 0; idim < 3; idim++) {
+            T delta = loc_xa0[idim] - loc_xs0[3 * inode + idim];
+            distsq += delta * delta;
+        }
+
+        atomicAdd(&sum_distsq[0], distsq);
+    }
+    __syncthreads();
+    T avg_distsq = sum_distsq[0] / (1.0 * nn);
+    avg_distsq += 1e-7;
+    // printf("avg_distsq = %.4e\n", avg_distsq);
+
     // compute weights (un-normalized first)
     memset(loc_w, 0.0, nn * sizeof(T));
     memset(sum, 0.0, 1 * sizeof(T));
@@ -51,14 +69,15 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
         // first compute the distance squared
         T distsq = 0.0;
         for (int idim = 0; idim < 3; idim++) {
-            T delta = loc_xa0[3 * inode + idim] - loc_xs0[3 * inode + idim];
+            T delta = loc_xa0[idim] - loc_xs0[3 * inode + idim];
             distsq += delta * delta;
         }
 
-        T new_weight = exp(-beta * distsq);
+        T new_weight = exp(-beta * distsq / avg_distsq);
         loc_w[inode] += new_weight;
         atomicAdd(&sum[0], new_weight);
     }
+    __syncthreads();
 
     // normalize the weights so it becomes a partition of unity
     for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
@@ -80,7 +99,7 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
 }
 
 template <typename T>
-__GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
+__GLOBAL__ void transfer_disps_kernel(int nn, T H_reg, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
                                       DeviceVec<T> xs0, DeviceVec<T> xs, DeviceVec<T> xa0,
                                       DeviceVec<T> ua) {
     // each block of threads if just computing ua for one aero node
@@ -162,12 +181,30 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     }
     __syncthreads();
 
+    // diagonalization of u for stability
+    // change later to use trace(H)
+    H[0] += H_reg;
+    H[4] += H_reg;
+    H[8] += H_reg;
+
+    // if ((aero_ind == 522 || aero_ind == 521) && threadIdx.x == 0) {
+    //     printf("H[%d]: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", aero_ind, H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]);
+    //     // printVec<T>(3, loc_ua);
+    // }
+
     // after computing H, each thread is going to do the same thing
     // and we'll just average the result (same answer), but computations are cheap
 
     // get SVD of H (call device function in svd_utils.h)
     T R[9];
-    computeRotation<T>(H, R);
+    // bool print = (aero_ind == 522 || aero_ind == 521) && threadIdx.x == 0;
+    bool print = false;
+    computeRotation<T>(H, R, print);
+
+    // if (print) {
+    //     printf("R[%d]: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", aero_ind, R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7], R[8]);
+    //     // printVec<T>(3, loc_ua);
+    // }
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];
@@ -189,6 +226,11 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     T loc_us[3];
     A2D::VecSumCore<T, 3>(1.0, xs_bar, -1.0, xs0_bar, loc_us);
 
+    // if ((aero_ind == 522 || aero_ind == 521) && threadIdx.x == 0) {
+    //     printf("loc_ua[%d]: %.4e %.4e %.4e\n", aero_ind, loc_ua[0], loc_ua[1], loc_ua[2]);
+    //     // printVec<T>(3, loc_ua);
+    // }
+
     // update xa and u0 globally with add reduction by the blockDim.x
     // int nb = blockDim.x;
     // should probably do warp shuffle here among the threads to speed it up
@@ -202,7 +244,7 @@ __GLOBAL__ void transfer_disps_kernel(int nn, DeviceVec<int> aerostruct_conn, De
 }
 
 template <typename T>
-__GLOBAL__ void transfer_loads_kernel(int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
+__GLOBAL__ void transfer_loads_kernel(int nn, T H_reg, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
                                       DeviceVec<T> xs0, DeviceVec<T> us, DeviceVec<T> xa0,
                                       DeviceVec<T> xa, DeviceVec<T> fa, DeviceVec<T> fs) {
     // each block of threads if just computing ua for one aero node
@@ -288,6 +330,11 @@ __GLOBAL__ void transfer_loads_kernel(int nn, DeviceVec<int> aerostruct_conn, De
     }
     __syncthreads();
 
+    // diagonalization of u for stability
+    H[0] += H_reg;
+    H[4] += H_reg;
+    H[8] += H_reg;
+
     // return;
 
     // forward AD section on uA(uS,n) for single nn node n and x,y,z direc on each thread
@@ -326,7 +373,7 @@ __GLOBAL__ void transfer_loads_kernel(int nn, DeviceVec<int> aerostruct_conn, De
         // compute forward AD part
         T2 temp = loc_w[inode] * (loc_xs0[3 * inode + idim] + this_us[idim] - xs_bar2[idim]) * 
         (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
-        H2[3 * idim + jdim].deriv[0] = temp.deriv[0];
+        H2[3 * idim + jdim].deriv[0] = temp.deriv[0] + idim == jdim ? H_reg : 0.0;
     }
 
     // now forward AD types through the SVD and final uA disp calculation

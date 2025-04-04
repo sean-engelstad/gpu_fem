@@ -4,7 +4,7 @@ default: meld
 
 meld:
 	@echo "Building MELD example for GPU"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 test_meld.cu ${LINK}
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 meld_gpu.cu ${LINK}
 
 lin-meld:
 	@echo "Building Linear MELD example for GPU"
