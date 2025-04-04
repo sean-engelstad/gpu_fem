@@ -337,59 +337,59 @@ class BsrData {
         return nnzb * block_dim * block_dim;
     }
 
-    __HOST__ void ~BsrData() {
-        if (this->host) {
-            if (this->rowPtr) {
-                cudaFree(this->rowPtr);
-            }
-            if (this->colPtr) {
-                cudaFree(this->colPtr);
-            }
-            if (this->elemIndMap) {
-                cudaFree(this->elemIndMap);
-            }
-            if (this->perm) {
-                cudaFree(this->perm);
-            }
-            if (this->iperm) {
-                cudaFree(this->iperm);
-            }
-            if (this->transpose_rowPtr) {
-                cudaFree(this->transpose_rowPtr);
-            }
-            if (this->transpose_colPtr) {
-                cudaFree(this->transpose_colPtr);
-            }
-            if (this->transpose_block_map) {
-                cudaFree(this->transpose_block_map);
-            }
-        } else {  // on the device
-            if (this->rowPtr) {
-                delete[] rowPtr;
-            }
-            if (this->colPtr) {
-                delete[] colPtr;
-            }
-            if (this->elemIndMap) {
-                delete[] elemIndMap;
-            }
-            if (this->perm) {
-                delete[] perm;
-            }
-            if (this->iperm) {
-                delete[] iperm;
-            }
-            if (this->transpose_rowPtr) {
-                delete[] transpose_rowPtr;
-            }
-            if (this->transpose_colPtr) {
-                delete[] transpose_colPtr;
-            }
-            if (this->transpose_block_map) {
-                delete[] transpose_block_map;
-            }
-        }
-    }
+    // __HOST__ ~BsrData() {
+    //     if (this->host) {
+    //         if (this->rowPtr) {
+    //             cudaFree(this->rowPtr);
+    //         }
+    //         if (this->colPtr) {
+    //             cudaFree(this->colPtr);
+    //         }
+    //         if (this->elemIndMap) {
+    //             cudaFree(this->elemIndMap);
+    //         }
+    //         if (this->perm) {
+    //             cudaFree(this->perm);
+    //         }
+    //         if (this->iperm) {
+    //             cudaFree(this->iperm);
+    //         }
+    //         if (this->transpose_rowPtr) {
+    //             cudaFree(this->transpose_rowPtr);
+    //         }
+    //         if (this->transpose_colPtr) {
+    //             cudaFree(this->transpose_colPtr);
+    //         }
+    //         if (this->transpose_block_map) {
+    //             cudaFree(this->transpose_block_map);
+    //         }
+    //     } else {  // on the device
+    //         if (this->rowPtr) {
+    //             delete[] rowPtr;
+    //         }
+    //         if (this->colPtr) {
+    //             delete[] colPtr;
+    //         }
+    //         if (this->elemIndMap) {
+    //             delete[] elemIndMap;
+    //         }
+    //         if (this->perm) {
+    //             delete[] perm;
+    //         }
+    //         if (this->iperm) {
+    //             delete[] iperm;
+    //         }
+    //         if (this->transpose_rowPtr) {
+    //             delete[] transpose_rowPtr;
+    //         }
+    //         if (this->transpose_colPtr) {
+    //             delete[] transpose_colPtr;
+    //         }
+    //         if (this->transpose_block_map) {
+    //             delete[] transpose_block_map;
+    //         }
+    //     }
+    // }
 
     // private: (keep public for now?)
     int32_t nnzb;  // num nonzero blocks (in full matrix)

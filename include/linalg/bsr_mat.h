@@ -341,10 +341,10 @@ class BsrMat {
         return values[i];
     }
 
-    __HOST__ void ~BsrMat() {
-        delete bsr_data;
-        delete values;
-    }
+    // __HOST__ void ~BsrMat() {
+    //     delete bsr_data;
+    //     delete values;
+    // }
 
    private:
     const BsrData bsr_data;

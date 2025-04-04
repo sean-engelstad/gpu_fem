@@ -188,10 +188,19 @@ class ElementAssembler {
     }
 #endif
 
-    void set_variables(Vec<T> &newVars) {
+    void permuteVec(Vec<T> vec) {
+        return vec.permuteData(bsr_data.block_dim, bsr_data.perm);
+    }
+
+    void invPermuteVec(Vec<T> vec) {
+        return vec.permuteData(bsr_data.block_dim, bsr_data.iperm);
+    }
+
+    void set_variables(Vec<T> newVars) {
         // vars is either device array on GPU or a host array if not USE_GPU
         // should we not do deep copy here?
-        this->vars.setData(newVars.getPtr(), bsr_data.perm, bsr_data.block_dim);
+        auto permute_vec = newVars.createPermuteVec(bsr_data.block_dim, bsr_data.perm);
+        newVars.copyValuesTo(this->vars);
     }
 
     //  template <class ExecParameters>
@@ -234,6 +243,7 @@ class ElementAssembler {
         if (can_print) {
             printf("begin add_residual\n");
         }
+        res.zeroValues();
 
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
@@ -251,6 +261,10 @@ class ElementAssembler {
         ElemGroup::template add_residual_cpu<Data, Vec>(
             num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 #endif // USE_GPU
+
+        // inverse permute the residual
+        // so can be added to non-permuted data
+        this->invPermuteVec(res);
 
         // print timing data
         auto stop = std::chrono::high_resolution_clock::now();
@@ -270,6 +284,8 @@ class ElementAssembler {
         if (can_print) {
             printf("begin add_jacobian\n");
         }
+        mat.zeroValues();
+        res.zeroValues();
 
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
@@ -293,6 +309,10 @@ class ElementAssembler {
             physData, res, mat);
 #endif
 
+        // inverse permute the residual
+        // so can be added to non-permuted data
+        this->invPermuteVec(res);
+
         // print timing data
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration =
@@ -305,6 +325,7 @@ class ElementAssembler {
     };
 
     Vec<T> getXpts() { return xpts; }
+    Vec<int> getBCs() { return bcs; }
     Vec<int> getConn() { return vars_conn; }
     int get_num_nodes() { return num_vars_nodes; }
     int get_num_elements() { return num_elements; }

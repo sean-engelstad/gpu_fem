@@ -90,7 +90,7 @@ class DenseMat {
         return data[i];
     }
 
-    __HOST__ void ~DenseMat() { delete data; }
+    // __HOST__ void ~DenseMat() { delete data; }
 
    private:
     int N, N2;
