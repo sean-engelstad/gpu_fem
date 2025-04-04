@@ -71,9 +71,12 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9], const bool pri
     sigma[1] = m - sqrt(p) * (cos(phi) + sqrt(3.0) * sin(phi));
     sigma[2] = m - sqrt(p) * (cos(phi) - sqrt(3.0) * sin(phi));
 
-    // for (int i = 0; i < 3; i++) {
-    //     printf("sigma[%d] = %.4e\n", i, sigma[i]);
-    // }
+    if (print) {
+        printf("sigmas: %.4e %.4e %.4e\n", sigma[0], sigma[1], sigma[2]);
+        // for (int i = 0; i < 3; i++) {
+        //     printf("sigma[%d] = %.4e\n", i, sigma[i]);
+        // }
+    }
 
     // now that we have S diag matrix, how do we get V and U?
     // for V we can solve the system (A - sigma[i] * I) * vi = 0 for each S[i]
@@ -104,6 +107,10 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9], const bool pri
             // normalize c
             T cnorm = sqrt(A2D::VecDotCore<T, 3>(c, c));  //  + 1e-12
             A2D::VecScaleCore<T, 3>(1.0 / cnorm, c, &VT[3 * ieig]);
+        }
+
+        if (print) {
+            printf("VT: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", VT[0], VT[1], VT[2], VT[3], VT[4], VT[5], VT[6], VT[7], VT[8]);
         }
 
         if constexpr (std::is_same<T, A2D::ADScalar<double, 1>>::value) {
@@ -143,9 +150,17 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9], const bool pri
         A2D::VecScaleCore<T, 3>(1.0 / norm3, &VT[6], &VT[6]);
     }  // end of scope block for getting VT
 
+    if (print) {
+        printf("VT-GS: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", VT[0], VT[1], VT[2], VT[3], VT[4], VT[5], VT[6], VT[7], VT[8]);
+    }
+
     // change sigma^0.5 => sigma because we had sigma^2 before
     for (int i = 0; i < 3; i++) {
         sigma[i] = sqrt(sigma[i]);
+    }
+
+    if (print) {
+        printf("rt-sigmas: %.4e %.4e %.4e\n", sigma[0], sigma[1], sigma[2]);
     }
 
     {  // scope block for computing U
@@ -155,6 +170,10 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9], const bool pri
         // first U (tmp) = H * VT^T = H * V
         A2D::MatMatMultCore3x3<T, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, U);
 
+        if (print) {
+            printf("U1: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", U[0], U[1], U[2], U[3], U[4], U[5], U[6], U[7], U[8]);
+        }
+
         // now find U = U (tmp) * sigma^-1 by scaling each column by 1.0/si (see if later I need
         // numerical stability for si near 0)
         for (int i = 0; i < 9; i++) {
@@ -162,6 +181,10 @@ __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9], const bool pri
             int icol = i % 3;
             U[3 * irow + icol] /= sigma[icol];
         }
+    }
+
+    if (print) {
+        printf("U2: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", U[0], U[1], U[2], U[3], U[4], U[5], U[6], U[7], U[8]);
     }
 
     // now we have completed the SVD
