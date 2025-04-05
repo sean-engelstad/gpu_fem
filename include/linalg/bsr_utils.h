@@ -337,7 +337,7 @@ class BsrData {
         return nnzb * block_dim * block_dim;
     }
 
-    // __HOST__ void ~BsrData() {
+    // __HOST__ ~BsrData() {
     //     if (this->host) {
     //         if (this->rowPtr) {
     //             cudaFree(this->rowPtr);

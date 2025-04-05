@@ -3,7 +3,14 @@
 #include "chrono"
 #include "linalg/linalg.h"
 #include "mesh/vtk_writer.h"
-#include "shell/shell.h"
+
+#include <sstream>
+#include <string>
+
+// shell imports
+#include "assembler.h"
+#include "shell/shell_elem_group.h"
+#include "shell/physics/isotropic_shell.h"
 
 /**
  solve on CPU with cusparse for debugging
@@ -24,72 +31,134 @@ int main(void) {
 
     constexpr bool has_ref_axis = false;
     constexpr bool is_nonlinear = true;
+    // constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    double E = 70e9, nu = 0.3, thick = 0.005; // material & thick properties
+    // material & thick properties
+    double E = 1.2e6, nu = 0.0, thick = 0.1; 
     auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
+
+    // check bcs
+    // DeviceVec<int> d_bcs = assembler.getBCs();
+    // auto h_bcs = d_bcs.createHostVec();
+    // printf("bcs:");
+    // printVec<int>(h_bcs.getSize(), h_bcs.getPtr());
 
     // perform a factorization on the rowPtr, colPtr (before creating matrix)
     double fillin = 10.0;  // 10.0
-    bool print = true;
-    assembler.symbolic_factorization(fillin, print);
+    assembler.symbolic_factorization(fillin, true);
 
-    // get the loads
-    double Q = 100.0;  // load magnitude
-    // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
-    auto loads = assembler.createVarsVec(); // my_loads);
-    assembler.apply_bcs(loads, true);
+    // compute load magnitude of tip force
+    double length = 10.0; 
+    double width = 1.0;
+    double Izz = width * thick * thick * thick / 12.0;
+    double beam_tip_force = 4.0 * E * Izz / length / length;
+
+    // find nodes within tolerance of x=10.0
+    int num_nodes = assembler.get_num_nodes();
+    int num_vars = assembler.get_num_vars();
+    HostVec<T> h_loads(num_vars);
+    DeviceVec<T> d_xpts = assembler.getXpts();
+    auto h_xpts = d_xpts.createHostVec();
+    int num_tip_nodes = 0;
+    for (int inode = 0; inode < num_nodes; inode++) {
+        if (abs(h_xpts[3*inode] - length) < 1e-6) {
+            num_tip_nodes++;
+        }
+    }
+    for (int inode = 0; inode < num_nodes; inode++) {
+        if (abs(h_xpts[3*inode] - length) < 1e-6) {
+            h_loads[6*inode+2] = beam_tip_force / num_tip_nodes;
+        }
+    }
+    auto d_loads = h_loads.createDeviceVec();
+    assembler.apply_bcs(d_loads);
+
+    double loads_norm = CUSPARSE::get_vec_norm(d_loads);
+    printf("loads_norm = %.4e\n", loads_norm);
+
 
     // setup kmat, res, variables
     auto res = assembler.createVarsVec();
+    auto rhs = assembler.createVarsVec();
     auto soln = assembler.createVarsVec();
     auto vars = assembler.createVarsVec();
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
 
-    // TODO : need continuation solver that increases load factor successively
 
-    printf("Begin newton iterations\n");
-    // demo Newton solve loop
-    for (int inewton = 0; inewton < 10; inewton++) {
-        // set new U or vars for Kmat computation
-        assembler.set_variables(vars);
+    // nonlinear static solve settings
+    // -------------------------------
+    // int num_load_steps = 20;
+    int num_load_steps = 4;
+    int num_newton = 10; //30;
+    double max_load_factor = 1.0;
 
-        // reset residual and kmat, soln
-        kmat.zeroValues();
-        res.zeroValues();
-        soln.zeroValues();
+    // continuation solver
+    // -------------------
+    for (int load_step = 0; load_step < num_load_steps; load_step++) {
+        double load_factor = max_load_factor * (load_step + 1) / num_load_steps;
+        printf("load step %d, load_Factor = %.4e\n", load_step, load_factor);
 
-        // now assemble new kmat, res (adding into previous)
-        auto start = std::chrono::high_resolution_clock::now();
-        assembler.add_jacobian(res, kmat, print);
-        auto stop = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-        assembler.apply_bcs(res, print);
-        assembler.apply_bcs(kmat, print);
+        // Newton iteration nonlinear solve
+        // --------------------------------
+        for (int inewton = 0; inewton < num_newton; inewton++) {
+            
+            // compute internal residual and stiffness matrix
+            assembler.set_variables(vars);
+            assembler.add_jacobian(res, kmat);
+            assembler.apply_bcs(res);
+            assembler.apply_bcs(kmat);
 
-        // add in -loads to it, need to add this routine
-        res.axpy(-1.0, loads);
-        res.scale(-1.0);  // res = F  - Fint(u) = rhs
-        // then K(u0) * du = rhs = -res(u0)
+            // auto h_kmat = kmat.getVec();
+            // printf("h_kmat:");
+            // printVec<double>(10, h_kmat.getPtr());
 
-        // report initial residual norm?
-        // TODO : need code to get this..
-        double nrm_R;
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, res.getSize(), res.getPtr(), 1, &nrm_R))
-        printf("\tnewton step %d, res = %.4e\n", inewton, nrm_R);
+            // compute the RHS
+            rhs.zeroValues();
+            CUSPARSE::axpy(load_factor, d_loads, rhs);
+            CUSPARSE::axpy(-1.0, res, rhs);
+            assembler.apply_bcs(rhs);
+            double rhs_norm = CUSPARSE::get_vec_norm(rhs);
 
-        // do new linear solve
-        CUSPARSE::direct_LU_solve_old<T>(kmat, res, soln, true);
+            // printf("rhs[104] = %.4e\n", rhs[104]);
+
+            // solve for the change in variables (soln = u - u0) and update variables
+            soln.zeroValues();
+            CUSPARSE::direct_LU_solve_old<T>(kmat, rhs, soln);
+            double soln_norm = CUSPARSE::get_vec_norm(soln);
+            printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, rhs_norm, soln_norm);
+            CUSPARSE::axpy(1.0, soln, vars);
+
+            // this node should be constraint to zero disp
+            // auto h_soln = soln.createHostVec();
+            // printf("soln[104] = %.4e\n", h_soln[104]);
+            // auto h_vars = vars.createHostVec();
+            // printf("vars[104] = %.4e\n", h_vars[104]);
+
+
+            // compute the residual (much cheaper computation on GPU)
+            assembler.set_variables(vars);
+            assembler.add_residual(res);
+            rhs.zeroValues();
+            CUSPARSE::axpy(load_factor, d_loads, rhs);
+            CUSPARSE::axpy(-1.0, res, rhs);
+            assembler.apply_bcs(rhs);
+            double full_resid_norm = CUSPARSE::get_vec_norm(rhs);
+            printf("\t\tfull res = %.4e\n", full_resid_norm);
+
+            // TODO : need residual check
+        }
+
+        std::stringstream filename;
+        filename << "out/beam_" << load_step << ".vtk";
+
+        auto h_vars = vars.createHostVec();
+        printToVTK<Assembler, HostVec<T>>(assembler, h_vars, filename.str());
+        
     }
-
-    auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate.vtk");
-
-    delete[] my_loads;
-
     return 0;
 };
