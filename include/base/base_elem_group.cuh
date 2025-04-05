@@ -50,11 +50,11 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
     xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,
-                                Geo::num_nodes, perm, geo_elem_conn, &block_xpts[local_elem][0]);
+                                Geo::num_nodes, geo_elem_conn, &block_xpts[local_elem][0]);
 
     const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
     vars.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Phys::vars_per_node,
-                                Basis::num_nodes, perm, vars_elem_conn, &block_vars[local_elem][0]);
+                                Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
 
     if (active_thread) {
         memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));

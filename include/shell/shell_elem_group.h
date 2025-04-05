@@ -125,7 +125,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -158,8 +158,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
 
         // backprop tying strain sens ety_bar to d_bar and res
-        computeTyingStrainSens<Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), res,
-                                            d_bar.get_data());
+        computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), res,
+                                               d_bar.get_data());
 
         // directors back to residuals
         Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(), res);
@@ -246,7 +246,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 u1x.bvalue().get_data(), e0ty.bvalue(), res, d_bar.get_data(), ety_bar.get_data());
 
             computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), res,
-                                                d_bar.get_data());
+                                                   d_bar.get_data());
 
             Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(),
                                                                              res);
@@ -265,7 +265,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 u1x.hvalue().get_data(), e0ty.hvalue(), res, d_hat.get_data(), ety_hat.get_data());
 
             computeTyingStrainHrev<T, Phys, Basis>(xpts, fn, vars, d, ety_hat.get_data(), matCol,
-                                                d_hat.get_data());
+                                                   d_hat.get_data());
 
             Director::template computeDirectorHrev<vars_per_node, num_nodes>(fn, d_hat.get_data(),
                                                                              matCol);
@@ -700,7 +700,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T d[3 * num_nodes];   // needed for reverse mode, nonlinear case
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
 
-        using T2 = A2D::ADScalar<T,1>;
+        using T2 = A2D::ADScalar<T, 1>;
 
         // in-out of forward & backwards section
         A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;
