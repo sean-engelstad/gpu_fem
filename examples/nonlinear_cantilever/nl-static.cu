@@ -92,8 +92,8 @@ int main(void) {
 
     // nonlinear static solve settings
     // -------------------------------
-    // int num_load_steps = 20;
-    int num_load_steps = 4;
+    int num_load_steps = 20;
+    // int num_load_steps = 100;
     int num_newton = 10; //30;
     double max_load_factor = 1.0;
 
@@ -139,8 +139,11 @@ int main(void) {
             assembler.apply_bcs(rhs);
             double full_resid_norm = CUSPARSE::get_vec_norm(rhs);
             printf("\t\tfull res = %.4e\n", full_resid_norm);
-
             // TODO : need residual check
+
+            if (abs(full_resid_norm) < 1e-7) {
+                break;
+            }
         }
 
         std::stringstream filename;

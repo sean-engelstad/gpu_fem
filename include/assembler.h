@@ -479,6 +479,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
     using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
 
+    res.zeroValues();
+
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
     dim3 block = ElemGroup::res_block;
@@ -523,6 +525,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     using Data = typename Phys::Data;
     using Mat = Mat_<Vec<T>>;
 
+    res.zeroValues();
+    mat.zeroValues();
+
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
 
@@ -542,6 +547,10 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     ElemGroup::template add_jacobian_cpu<Data, Vec, Mat>(num_vars_nodes, num_elements, geo_conn,
                                                          vars_conn, xpts, vars, physData, res, mat);
 #endif
+
+    // inverse permute the residual
+    // so can be added to non-permuted data
+    this->invPermuteVec(res);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
