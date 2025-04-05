@@ -94,12 +94,13 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ void compute_sectional_loads_kernel(const int32_t num_elements,
                                                const Vec<int32_t> geo_conn,
                                                const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                               const Vec<T> vars, Vec<Data> physData, Vec<T> loads,
-                                               Vec<int> load_cts) {
+                                               const Vec<T> vars, Vec<Data> physData, const int32_t *perm, 
+                                               Vec<T> loads, Vec<int> load_cts) {
     // compute sectional resultants like in plane loads, moments
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
@@ -110,6 +111,7 @@ __GLOBAL__ void compute_sectional_loads_kernel(const int32_t num_elements,
     const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
     const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
     const int vars_per_node = Phys::vars_per_node;
+    const int nodes_per_elem = Basis::num_nodes;
     const int num_quad_pts = Quadrature::num_quad_pts;
 
     const int32_t *_geo_conn = geo_conn.getPtr();
@@ -131,7 +133,7 @@ __GLOBAL__ void compute_sectional_loads_kernel(const int32_t num_elements,
                             Basis::num_nodes, perm, vars_elem_conn, &block_vars[local_elem][0]);
 
     if (active_thread) {
-        memset(&block_loads[local_elem][0], 0.0, vars_per_ndoe * sizeof(T));
+        memset(&block_loads[local_elem][0], 0.0, vars_per_node * sizeof(T));
 
         if (local_thread < elems_per_block) {
             int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
@@ -172,7 +174,7 @@ __GLOBAL__ void compute_sectional_loads_kernel(const int32_t num_elements,
         int global_inode = vars_elem_conn[local_inode];
         // note we don't use perm here since this goes to visualization not solve
 
-        atomicAdd(&loads[dof_per_node * global_inode + idof], block_loads[local_elem][idof]);
+        atomicAdd(&loads[vars_per_node * global_inode + idof], block_loads[local_elem][idof]);
     }
 
     // also add up load counts
@@ -185,7 +187,7 @@ __GLOBAL__ void compute_sectional_loads_kernel(const int32_t num_elements,
 
 // add_jacobian_gpu kernel
 // -------------------
-template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
+template <typename T, class ElemGroup, class Data, int32_t elems_per_block,
           template <typename> class Vec, class Mat>
 __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
                                         Vec<int32_t> geo_conn, Vec<int32_t> vars_conn, Vec<T> xpts,
@@ -293,12 +295,13 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void compute_strains_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                        const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                       const Vec<T> vars, Vec<Data> physData, Vec<T> strains,
-                                       Vec<int> strain_cts) {
+                                       const Vec<T> vars, Vec<Data> physData, const int *perm,
+                                       Vec<T> strains, Vec<int> strain_cts) {
     // compute the strains for the kernel
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
@@ -309,6 +312,7 @@ __GLOBAL__ void compute_strains_kernel(const int32_t num_elements, const Vec<int
     const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
     const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
     const int vars_per_node = Phys::vars_per_node;
+    const int nodes_per_elem = Basis::num_nodes;
     const int num_quad_pts = Quadrature::num_quad_pts;
 
     const int32_t *_geo_conn = geo_conn.getPtr();
@@ -371,7 +375,7 @@ __GLOBAL__ void compute_strains_kernel(const int32_t num_elements, const Vec<int
         int global_inode = vars_elem_conn[local_inode];
         // note we don't use perm here since this goes to visualization not solve
 
-        atomicAdd(&strains[dof_per_node * global_inode + idof], block_strains[local_elem][idof]);
+        atomicAdd(&strains[vars_per_node * global_inode + idof], block_strains[local_elem][idof]);
     }
 
     // also add up load counts
@@ -381,6 +385,7 @@ __GLOBAL__ void compute_strains_kernel(const int32_t num_elements, const Vec<int
     }
 
 }  // end of compute_sectional_loads_kernel
+
 
 template <typename T, class ElemGroup, template <typename> class Vec>
 __GLOBAL__ void normalize_states(Vec<T> states, Vec<int> state_cts) {
@@ -393,8 +398,8 @@ __GLOBAL__ void normalize_states(Vec<T> states, Vec<int> state_cts) {
     const int vars_per_node = Phys::vars_per_node;
 
     int global_node = blockIdx.x;
-    T *loc_state = states[vars_per_node * global_inode];
-    int nodal_state_ct = state_cts[global_inode];
+    T *loc_state = states[vars_per_node * global_node];
+    int nodal_state_ct = state_cts[global_node];
 
     for (int idof = threadIdx.x; idof < vars_per_node; idof += blockDim.x) {
         loc_state[idof] /= nodal_state_ct;
@@ -406,8 +411,8 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                         const Vec<T> vars, Vec<Data> physData, T rho_KS,
-                                         T *sumexp_ksFailure) {
+                                         const Vec<T> vars, Vec<Data> physData, const int *perm, 
+                                         T rho_KS, T *sumexp_ksFailure) {
     // computes average strains in the element (among quadpts)
     // then KS failure on those strains (could also max among quadpts but that gets more expensive
     // for optimization potentially) doesn't make sense to use nodal average strains for KS failure
@@ -415,6 +420,7 @@ __GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<i
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
@@ -511,11 +517,12 @@ __GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<i
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void compute_mass_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
-                                    const Vec<T> xpts, Vec<Data> physData, T *total_mass) {
+                                    const Vec<T> xpts, Vec<Data> physData, const int *perm, T *total_mass) {
     // computes total mass of the structure
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
@@ -595,11 +602,12 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ void compute_mass_DVsens_kernel(const int32_t num_elements,
                                            const Vec<int32_t> elem_components,
                                            const Vec<int32_t> geo_conn, const Vec<T> xpts,
-                                           Vec<Data> physData, Vec<T> dfdx) {
+                                           Vec<Data> physData, const int *perm, Vec<T> dfdx) {
     // computes total mass of the structure
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
@@ -668,8 +676,8 @@ __GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
                                                 const Vec<int32_t> elem_components,
                                                 const Vec<int32_t> geo_conn,
                                                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                                const Vec<T> vars, Vec<Data> physData, T rho_KS,
-                                                T sumexp_kfail, Vec<T> dfdx) {
+                                                const Vec<T> vars, Vec<Data> physData, const int *perm,
+                                                T rho_KS, T sumexp_kfail, Vec<T> dfdx) {
     // computes average strains in the element (among quadpts)
     // then KS failure on those strains (could also max among quadpts but that gets more expensive
     // for optimization potentially) doesn't make sense to use nodal average strains for KS failure
@@ -677,6 +685,7 @@ __GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
@@ -775,6 +784,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
@@ -875,7 +885,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void compute_adjResProduct_kernel(const int32_t num_elements, const int32_t *perm,
-                                             const Vec<int32_t> geo_conn,
+                                             const Vec<int> elem_components,  const Vec<int32_t> geo_conn, 
                                              const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                              const Vec<T> vars, Vec<Data> physData, Vec<T> psi,
                                              Vec<T> dfdx) {
@@ -950,16 +960,15 @@ __GLOBAL__ void compute_adjResProduct_kernel(const int32_t num_elements, const i
             block_data[local_elem], local_dRdx);
 
         block_dfdxe[local_elem][local_dv] +=
-            A2D::VecDotCore<T, vars_per_elem>(local_dRdx, &block_psi[local_elem][0])
+            A2D::VecDotCore<T, vars_per_elem>(local_dRdx, &block_psi[local_elem][0]);
     }
 
     // TODO : this just does it for one DV right now, in future need for loop over DVs here
     // probably.. (For stiffened panel case)
 
     // compute dot product with local psi
-
-    Vec<T>::copyLocalToShared(active_thread, 1.0, vars_per_elem, &local_res_product[0],
-                              &block_res_product[local_elem][0]);
+    // Vec<T>::copyLocalToShared(active_thread, 1.0, vars_per_elem, &local_res_product[0],
+    //                           &block_res_product[local_elem][0]);
 
     // now add df/dxe into global df/dx based on which component it's from
     for (int local_dv = threadIdx.y; local_dv < num_local_dvs; local_dv += blockDim.y) {

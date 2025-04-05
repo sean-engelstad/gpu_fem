@@ -1,7 +1,6 @@
 #pragma once
-#include "../cuda_utils.h"
+#include "../../cuda_utils.h"
 #include "a2dcore.h"
-#include "data/composite_stiffened.h"
 
 // could be an internal class for each type of physics
 // but I would like physics to be linear vs nonlinear and this class has methods which get ABD, etc.

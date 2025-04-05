@@ -4,9 +4,7 @@
 #include "a2dcore.h"
 #include "a2dshell.h"
 #include "basis.h"
-#include "data.h"
 #include "director.h"
-#include "physics.h"
 #include "shell_utils.h"
 
 template <typename T, class Director_, class Basis_, class Phys_>
@@ -202,7 +200,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
 
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis>(xpts, fn, vars, d, ety);
 
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.value().get_data(),
@@ -225,7 +223,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                                                                              p_d);
 
             T p_ety[Basis::num_all_tying_points];
-            computeTyingStrainHfwd<Phys, Basis>(xpts, fn, p_vars.get_data(), p_d, p_ety);
+            computeTyingStrainHfwd<T, Phys, Basis>(xpts, fn, p_vars.get_data(), p_d, p_ety);
 
             ShellComputeDispGradHfwd<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, p_vars.get_data(), fn, p_d, p_ety,
@@ -247,7 +245,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 pt, physData.refAxis, xpts, vars, fn, u0x.bvalue().get_data(),
                 u1x.bvalue().get_data(), e0ty.bvalue(), res, d_bar.get_data(), ety_bar.get_data());
 
-            computeTyingStrainSens<Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), res,
+            computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), res,
                                                 d_bar.get_data());
 
             Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(),
@@ -266,7 +264,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 pt, physData.refAxis, xpts, vars, fn, u0x.hvalue().get_data(),
                 u1x.hvalue().get_data(), e0ty.hvalue(), res, d_hat.get_data(), ety_hat.get_data());
 
-            computeTyingStrainHrev<Phys, Basis>(xpts, fn, vars, d, ety_hat.get_data(), matCol,
+            computeTyingStrainHrev<T, Phys, Basis>(xpts, fn, vars, d, ety_hat.get_data(), matCol,
                                                 d_hat.get_data());
 
             Director::template computeDirectorHrev<vars_per_node, num_nodes>(fn, d_hat.get_data(),
@@ -568,9 +566,9 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T detXd = A2D::MatDetCore<T, 3>(Xd);
 
         // compute integrand
-        T integrand = data.rho * data.thick;
+        T integrand = physData.rho * physData.thick;
 
-        *output = weight * detXd * data.density * integrand;
+        *output = weight * detXd * physData.density * integrand;
     }
 
     template <class Data>
@@ -602,7 +600,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T detXd = A2D::MatDetCore<T, 3>(Xd);
 
         // only one local DV in isotropic shell (panel thickness)
-        dm_dxlocal[0] = weight * detXd * data.density * data.rho;
+        dm_dxlocal[0] = weight * detXd * physData.density * physData.rho;
     }
 
     template <class Data>
@@ -702,7 +700,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T d[3 * num_nodes];   // needed for reverse mode, nonlinear case
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
 
-        using T2 = A2D::ADScalar<T>;
+        using T2 = A2D::ADScalar<T,1>;
 
         // in-out of forward & backwards section
         A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "a2dcore.h"
-#include "a2dshell.h"
+#include "shell/a2dshell.h"
 #include "shell/data/isotropic.h"
 
 template <typename T, class Data_, bool isNonlinear = false>
@@ -10,8 +10,8 @@ class IsotropicShell {
     using Data = Data_;
 
     // ensure the data is only allowed to be ShellIsotropicData
-    static_assert(std::is_same<Data_, ShellIsotropicData>::value,
-                  "Error IsotropicShell physics class must use Data class 'ShellIsotropicData'");
+    // static_assert(std::is_same<Data_, ShellIsotropicData>::value,
+    //               "Error IsotropicShell physics class must use Data class 'ShellIsotropicData'");
 
     // u, v, w, thx, thy, thz
     static constexpr int32_t vars_per_node = 6;
@@ -19,11 +19,12 @@ class IsotropicShell {
     static constexpr A2D::ShellStrainType STRAIN_TYPE =
         isNonlinear ? A2D::ShellStrainType::NONLINEAR : A2D::ShellStrainType::LINEAR;
     static constexpr bool is_nonlinear = isNonlinear;
-    static constexpr num_dvs = 1;
+    static constexpr int num_dvs = 1;
 
     // function declarations
     // -------------------------------------------------------
 
+    /**
     template <typename T2>
     __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
                                                     A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
@@ -46,12 +47,14 @@ class IsotropicShell {
                                                        A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
                                                        A2D::A2DObj<A2D::Vec<T2, 1>> &et);
 
+                                                       template <typename T2>
     __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
                                                             A2D::Mat<T2, 3, 3> &u0x,
                                                             A2D::Mat<T2, 3, 3> &u1x,
                                                             A2D::SymMat<T2, 3> &e0ty,
                                                             A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S);
 
+                                                            template <typename T2>
     __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
                                                      A2D::Mat<T2, 3, 3> &u0x,
                                                      A2D::Mat<T2, 3, 3> &u1x,
@@ -61,6 +64,7 @@ class IsotropicShell {
     __HOST_DEVICE__
     static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
                                  T *fail_index);
+     */
 
     // -------------------------------------------------------
     // end of function declarations
@@ -143,6 +147,7 @@ class IsotropicShell {
         // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
     }  // end of computeWeakRes
 
+    template <typename T2>
     __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
                                                             A2D::Mat<T2, 3, 3> &u0x,
                                                             A2D::Mat<T2, 3, 3> &u1x,
@@ -159,6 +164,7 @@ class IsotropicShell {
         // technically the IsotropicShellStress computes sectional stresses aka sectional loads
     }  // end of computeQuadptSectionalLoads
 
+    template <typename T2>
     __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
                                                      A2D::Mat<T2, 3, 3> &u0x,
                                                      A2D::Mat<T2, 3, 3> &u1x,
@@ -169,6 +175,7 @@ class IsotropicShell {
             A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E));
     }  // end of computeQuadptStrains
 
+    template <typename T2>
     __HOST_DEVICE__ static void computeQuadptStrainsSens(const Data &physData, const T &scale,
                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
@@ -304,7 +311,7 @@ class IsotropicShell {
         x_bar += zL_bar * -0.5;
 
         // then for upper stresses
-        T fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
+        fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
         vonMisesFailure2DSens(data, stressU, fail_bar, stress_bar);
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
         T zU_bar = A2D::VecDotCore<T, 3>(surf_strain_bar, &strains[3]);
@@ -370,7 +377,7 @@ class IsotropicShell {
         A2D::VecSumCore<T, 3>(zL, surf_strain_bar, &strain_bar[3]);
 
         // then for upper stresses
-        T fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
+        fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
         vonMisesFailure2DSens(data, stressU, fail_bar, stress_bar);
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
 
@@ -389,7 +396,7 @@ class IsotropicShell {
         // for isotropic material only one local_dv aka thickness
         // so ignore this input
 
-        using T2 = A2D::ADScalar<T>;
+        using T2 = A2D::ADScalar<T,1>;
 
         // copy into local
         A2D::ADObj<A2D::Mat<T2, 3, 3>> _u0x, _u1x;

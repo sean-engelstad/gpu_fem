@@ -22,6 +22,7 @@ class ShellQuadBasis {
     // function declarations (for ease of use)
     // -------------------------------------------------------
 
+    /** 
     __HOST_DEVICE__ static constexpr int32_t num_tying_points(int icomp);
     __HOST_DEVICE__ static constexpr int32_t tying_point_offsets(int icomp);
     class LinearQuadGeo;
@@ -59,7 +60,6 @@ class ShellQuadBasis {
     template <int icomp>
     __HOST_DEVICE__ static void getTyingInterp(const T pt[], T N[]);
 
-    /**
      * defined below / outside the class
      *
      * template <typename T, class Basis>

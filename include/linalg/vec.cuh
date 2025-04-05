@@ -27,13 +27,13 @@ __GLOBAL__ void permute_vec_kernel(int num_nodes, T *data, T *temp, int block_di
     }
 }
 
-template <typename T>
-__GLOBAL__ void vec_axpy_kernel(int N, T a, T *x, T *y) {
-    int ind = blockDim.x * blockIdx.x + threadIdx.x;
-    if (ind < N) {
-        y[ind] += a * x[ind];
-    }
-}
+// template <typename T>
+// __GLOBAL__ void vec_axpy_kernel(int N, T a, T *x, T *y) {
+//     int ind = blockDim.x * blockIdx.x + threadIdx.x;
+//     if (ind < N) {
+//         y[ind] += a * x[ind];
+//     }
+// }
 
 template <typename T, template <typename> class Vec>
 __GLOBAL__ void vec_add_kernel(Vec<T> v1, Vec<T> v2, Vec<T> v3) {

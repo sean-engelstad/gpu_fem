@@ -190,6 +190,7 @@ __HOST_DEVICE__ static void computeTyingStrain(const T Xpts[], const T fn[], con
     // great for device)
     int32_t offset, num_tying;
     static constexpr bool is_nonlinear = Physics::is_nonlinear;
+    static constexpr int vars_per_node = Physics::vars_per_node;
 
     // get g11 tying strain
     // ------------------------------------
@@ -325,7 +326,7 @@ template <typename T, class Physics, class Basis>
 __HOST_DEVICE__ static void computeTyingStrainHfwd(const T Xpts[], const T fn[], const T p_vars[],
                                                    const T p_d[], T p_ety[]) {
     // since linear for now (add NL later) => just call forward analysis
-    computeTyingStrain<Physics, Basis>(Xpts, fn, p_vars, p_d, p_ety);
+    computeTyingStrain<T, Physics, Basis>(Xpts, fn, p_vars, p_d, p_ety);
 }
 
 template <typename T, class Physics, class Basis>
@@ -336,6 +337,7 @@ __HOST_DEVICE__ static void computeTyingStrainSens(const T Xpts[], const T fn[],
     // great for device)
     int32_t offset, num_tying;
     static constexpr bool is_nonlinear = Physics::is_nonlinear;
+    static constexpr int vars_per_node = Physics::vars_per_node;
 
     // get g11 tying strain
     // ------------------------------------
@@ -509,5 +511,5 @@ __HOST_DEVICE__ static void computeTyingStrainHrev(const T Xpts[], const T fn[],
                                                    const T d[], const T h_ety[], T matCol[],
                                                    T h_d[]) {
     // since linear, call sens for now
-    computeTyingStrainSens<Physics, Basis>(Xpts, fn, vars, d, h_ety, matCol, h_d);
+    computeTyingStrainSens<T, Physics, Basis>(Xpts, fn, vars, d, h_ety, matCol, h_d);
 }

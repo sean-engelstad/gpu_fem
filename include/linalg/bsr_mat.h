@@ -137,7 +137,6 @@ class BsrMat {
         apply_mat_bcs_cols_kernel<T, DeviceVec>
             <<<grid, block>>>(bcs, transpose_rowPtr, transpose_colPtr, transpose_block_map, perm,
                               nnodes, valPtr, blocks_per_elem, nnz_per_block, block_dim);
-
         CHECK_CUDA(cudaDeviceSynchronize());
 #endif  // USE_GPU
     }
@@ -341,10 +340,10 @@ class BsrMat {
         return values[i];
     }
 
-    __HOST__ void ~BsrMat() {
-        delete bsr_data;
-        delete values;
-    }
+    // __HOST__ void ~BsrMat() {
+    //     delete bsr_data;
+    //     delete values;
+    // }
 
    private:
     const BsrData bsr_data;

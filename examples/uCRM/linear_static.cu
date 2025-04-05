@@ -2,8 +2,11 @@
 #include "base/utils.h"
 #include "linalg/linalg.h"
 #include "mesh/TACSMeshLoader.h"
-#include "shell/shell.h"
 #include "mesh/vtk_writer.h"
+
+// shell imports
+#include "shell/shell_elem_group.h"
+#include "shell/physics/isotropic_shell.h"
 
 int main() {
     using T = double;

@@ -5,9 +5,9 @@
 #include "linalg/vec.h"
 
 template <typename T, template <typename> class Vec>
-class Function {
+class AnalysisFunction {
    public:
-    Function(std::string& name) : name(name), setup(false) { *value = 0.0; }
+   AnalysisFunction(std::string& name) : name(name), setup(false) { *value = 0.0; }
     std::string name;
     T* value;
     bool setup;
@@ -31,14 +31,14 @@ class Function {
 };
 
 template <typename T, template <typename> class Vec>
-class KSFailure : public Function<T> {
+class KSFailure : public AnalysisFunction<T, Vec> {
    public:
-    KSFailure(T rho_KS) : Function("ksfailure"), rho_KS(rho_KS) {}
+    KSFailure(T rho_KS) : AnalysisFunction<T,Vec>("ksfailure"), rho_KS(rho_KS) {}
     T rho_KS;
 };
 
 template <typename T, template <typename> class Vec>
-class Mass : public Function<T> {
+class Mass : public AnalysisFunction<T, Vec> {
    public:
-    Mass() : Function("mass") {}
+    Mass() : AnalysisFunction<T,Vec>("mass") {}
 };
