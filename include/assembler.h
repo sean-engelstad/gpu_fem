@@ -84,6 +84,10 @@ class ElementAssembler {
     T _compute_ks_failure(T rho_KS);
     T _compute_mass();
 
+    void permuteVec(Vec<T> vec) { return vec.permuteData(bsr_data.block_dim, bsr_data.perm); }
+
+    void invPermuteVec(Vec<T> vec) { return vec.permuteData(bsr_data.block_dim, bsr_data.iperm); }
+
     // ------------------------
     // end of function declaration section
 
@@ -421,7 +425,9 @@ template <typename T, typename ElemGroup, template <typename> class Vec,
 void ElementAssembler<T, ElemGroup, Vec, Mat>::set_variables(Vec<T> &newVars) {
     // vars is either device array on GPU or a host array if not USE_GPU
     // should we not do deep copy here?
-    this->vars.setData(newVars.getPtr(), bsr_data.perm, bsr_data.block_dim);
+    // this->vars.setData(newVars.getPtr(), bsr_data.perm, bsr_data.block_dim);
+    auto permute_vec = newVars.createPermuteVec(bsr_data.block_dim, bsr_data.perm);
+    newVars.copyValuesTo(this->vars);
 }
 
 //  template <class ExecParameters>
@@ -488,6 +494,10 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
     ElemGroup::template add_residual_cpu<Data, Vec>(num_elements, geo_conn, vars_conn, xpts, vars,
                                                     physData, res);
 #endif  // USE_GPU
+
+    // inverse permute the residual
+    // so can be added to non-permuted data
+    this->invPermuteVec(res);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();

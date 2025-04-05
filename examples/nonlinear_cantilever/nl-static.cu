@@ -113,10 +113,6 @@ int main(void) {
             assembler.apply_bcs(res);
             assembler.apply_bcs(kmat);
 
-            // auto h_kmat = kmat.getVec();
-            // printf("h_kmat:");
-            // printVec<double>(10, h_kmat.getPtr());
-
             // compute the RHS
             rhs.zeroValues();
             CUSPARSE::axpy(load_factor, d_loads, rhs);
@@ -132,12 +128,6 @@ int main(void) {
             double soln_norm = CUSPARSE::get_vec_norm(soln);
             printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, rhs_norm, soln_norm);
             CUSPARSE::axpy(1.0, soln, vars);
-
-            // this node should be constraint to zero disp
-            // auto h_soln = soln.createHostVec();
-            // printf("soln[104] = %.4e\n", h_soln[104]);
-            // auto h_vars = vars.createHostVec();
-            // printf("vars[104] = %.4e\n", h_vars[104]);
 
 
             // compute the residual (much cheaper computation on GPU)

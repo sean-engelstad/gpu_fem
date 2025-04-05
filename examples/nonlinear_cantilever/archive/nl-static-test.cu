@@ -10,10 +10,9 @@
 #include "assembler.h"
 
 // shell imports
-// #include "shell/shell_elem_group.h"
-// #include "shell/physics/isotropic_shell.h"
-
-#include "shell/shell.h"
+#include "shell/shell_elem_group.h"
+#include "shell/physics/isotropic_shell.h"
+// #include "shell/shell.h"
 
 /**
  solve on CPU with cusparse for debugging
@@ -127,7 +126,8 @@ int main(void) {
             assembler.apply_bcs(rhs);
             double rhs_norm = CUSPARSE::get_vec_norm(rhs);
 
-            // printf("rhs[104] = %.4e\n", rhs[104]);
+            auto h_rhs = rhs.createHostVec();
+            printf("rhs[104] = %.4e\n", h_rhs[104]);
 
             // solve for the change in variables (soln = u - u0) and update variables
             soln.zeroValues();
@@ -137,22 +137,30 @@ int main(void) {
             CUSPARSE::axpy(1.0, soln, vars);
 
             // this node should be constraint to zero disp
-            // auto h_soln = soln.createHostVec();
-            // printf("soln[104] = %.4e\n", h_soln[104]);
-            // auto h_vars = vars.createHostVec();
-            // printf("vars[104] = %.4e\n", h_vars[104]);
+            auto h_soln = soln.createHostVec();
+            printf("soln[104] = %.4e\n", h_soln[104]);
+            auto h_vars = vars.createHostVec();
+            printf("vars[104] = %.4e\n", h_vars[104]);
 
 
             // compute the residual (much cheaper computation on GPU)
             assembler.set_variables(vars);
+            auto h_vars4 = vars.createHostVec();
+            printf("vars[104] = %.4e\n", h_vars4[104]);
+
             assembler.add_residual(res);
 
-            auto h_vars = vars.createHostVec();
+            // auto h_rhs = rhs.createHostVec();
+            printf("rhs vec:");
+            printVec<T>(30, h_rhs.getPtr());
+            // auto h_vars = vars.createHostVec();
             printf("vars vec:");
-            printVec<T>(10, h_vars.getPtr());
+            printVec<T>(30, h_vars.getPtr());
             auto h_res = res.createHostVec();
             printf("res vec:");
-            printVec<T>(10, h_res.getPtr());
+            printVec<T>(30, h_res.getPtr());
+            auto h_vars3 = vars.createHostVec();
+            printf("vars[104] = %.4e\n", h_vars3[104]);
 
             rhs.zeroValues();
             CUSPARSE::axpy(load_factor, d_loads, rhs);
@@ -166,8 +174,9 @@ int main(void) {
         std::stringstream filename;
         filename << "out/beam_" << load_step << ".vtk";
 
-        auto h_vars = vars.createHostVec();
-        printToVTK<Assembler, HostVec<T>>(assembler, h_vars, filename.str());
+        auto h_vars2 = vars.createHostVec();
+        printf("vars[104] = %.4e\n", h_vars2[104]);
+        printToVTK<Assembler, HostVec<T>>(assembler, h_vars2, filename.str());
         
     }
     return 0;
