@@ -1,9 +1,12 @@
 #include "_plate_utils.h"
 #include "chrono"
 #include "linalg/linalg.h"
-#include "shell/shell.h"
 #include <iostream>
 #include "mesh/vtk_writer.h"
+
+// shell imports
+#include "shell/shell_elem_group.h"
+#include "shell/physics/isotropic_shell.h"
 
 /**
  solve on CPU with cusparse for debugging

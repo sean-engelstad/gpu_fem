@@ -30,8 +30,8 @@ int main(void) {
     using Geo = Basis::Geo;
 
     constexpr bool has_ref_axis = false;
-    constexpr bool is_nonlinear = true;
-    // constexpr bool is_nonlinear = false;
+    // constexpr bool is_nonlinear = true;
+    constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
