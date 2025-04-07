@@ -92,10 +92,11 @@ int main(void) {
 
     // nonlinear static solve settings
     // -------------------------------
-    int num_load_steps = 1;
-    // int num_load_steps = 100;
-    int num_newton = 10; //30;
-    double max_load_factor = 0.1; // 1.0
+    // int num_load_steps = 1;
+    int num_load_steps = 20;
+    int num_newton = 30; //30;
+    // double max_load_factor = 0.05;
+    double max_load_factor = 1.0;
 
     // continuation solver
     // -------------------
