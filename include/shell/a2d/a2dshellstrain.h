@@ -94,23 +94,33 @@ A2D_FUNCTION void NonlinearShellStrainCore(const T u0x[], const T u1x[],
 template <typename T>
 A2D_FUNCTION void NonlinearShellStrainForwardCore(const T u0x[], const T u1x[],
                                                   const T e0ty[], const T et[],
-                                                  T e[]) {
+                                                  const T u0xF[], const T u1xF[],
+                                                  const T e0tyF[], const T etF[],
+                                                  T eF[]) {
   // Evaluate the in-plane strains from the tying strain expressions
-  e[0] = e0ty[0];        // e11
-  e[1] = e0ty[3];        // e22
-  e[2] = 2.0 * e0ty[1];  // e12
+  eF[0] = e0tyF[0];        // e11
+  eF[1] = e0tyF[3];        // e22
+  eF[2] = 2.0 * e0tyF[1];  // e12
 
   // Compute the bending strain (here's where nonlinearity comes in)
-  e[3] = u1x[0] + (u0x[0] * u1x[0] + u0x[3] * u1x[3] + u0x[6] * u1x[6]);  // k11
-  e[4] = u1x[4] + (u0x[1] * u1x[1] + u0x[4] * u1x[4] + u0x[7] * u1x[7]);  // k22
-  e[5] = u1x[1] + u1x[3] +
-         (u0x[0] * u1x[1] + u0x[3] * u1x[4] + u0x[6] * u1x[7] +
-          u1x[0] * u0x[1] + u1x[3] * u0x[4] + u1x[6] * u0x[7]);  // k12
+  eF[3] = u1xF[0] + (u0xF[0] * u1x[0] + u0x[0] * u1xF[0] +
+     + u0xF[3] * u1x[3] + u0x[3] * u1xF[3] 
+     + u0xF[6] * u1x[6] + u0x[6] * u1xF[6]);  // k11
+  eF[4] = u1xF[4] + (u0x[1] * u1x[1] + u0x[1] * u1x[1] 
+    + u0xF[4] * u1x[4] + u0x[4] * u1xF[4]
+    + u0xF[7] * u1x[7] + u0x[7] * u1xF[7]);  // k22
+  eF[5] = u1xF[1] + u1xF[3] +
+         ( u0xF[0] * u1x[1] + u0x[0] * u1xF[1]
+         + u0xF[3] * u1x[4] + u0x[3] * u1xF[4] 
+         + u0xF[6] * u1x[7] + u0x[6] * u1xF[7] 
+         + u1xF[0] * u0x[1] + u1x[0] * u0xF[1]
+         + u1xF[3] * u0x[4] + u1x[3] * u0xF[4]
+         + u1xF[6] * u0x[7] + u1x[6] * u0xF[7]);  // k12
 
   // Add the components of the shear strain
-  e[6] = 2.0 * e0ty[4];  // e23, transverse shear
-  e[7] = 2.0 * e0ty[2];  // e13, transverse shear
-  e[8] = et[0];          // e12 (drill strain)
+  eF[6] = 2.0 * e0tyF[4];  // e23, transverse shear
+  eF[7] = 2.0 * e0tyF[2];  // e13, transverse shear
+  eF[8] = etF[0];          // e12 (drill strain)
   
 }
 
@@ -335,6 +345,8 @@ class ShellStrainExpr {
           GetSeed<seed>::get_data(e));
     } else {
       NonlinearShellStrainForwardCore<T>(
+          get_data(u0x), get_data(u1x),
+          get_data(e0ty), get_data(et),
           GetSeed<seed>::get_data(u0x), GetSeed<seed>::get_data(u1x),
           GetSeed<seed>::get_data(e0ty), GetSeed<seed>::get_data(et),
           GetSeed<seed>::get_data(e));
