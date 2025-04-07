@@ -191,7 +191,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block,
           template <typename> class Vec, class Mat>
 __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
                                         Vec<int32_t> geo_conn, Vec<int32_t> vars_conn, Vec<T> xpts,
-                                        Vec<T> vars, Vec<Data> physData, Vec<T> res, Mat mat) {
+                                        Vec<T> vars, Vec<Data> physData, const int32_t *perm, Vec<T> res, Mat mat) {
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
@@ -214,7 +214,6 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
     const int32_t *_geo_conn = geo_conn.getPtr();
     const int32_t *_vars_conn = vars_conn.getPtr();
     const Data *_phys_data = physData.getPtr();
-    const int32_t *perm = mat.getBsrData().perm;
 
     // currently using 1416 T values per block on this element (want to be below
     // 6000 doubles shared mem)

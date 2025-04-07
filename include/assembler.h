@@ -84,9 +84,13 @@ class ElementAssembler {
     T _compute_ks_failure(T rho_KS);
     T _compute_mass();
 
-    void permuteVec(Vec<T> vec) { return vec.permuteData(bsr_data.block_dim, bsr_data.perm); }
+    void permuteVec(Vec<T> vec) {
+        if (bsr_data.perm) return vec.permuteData(bsr_data.block_dim, bsr_data.perm);
+    }
 
-    void invPermuteVec(Vec<T> vec) { return vec.permuteData(bsr_data.block_dim, bsr_data.iperm); }
+    void invPermuteVec(Vec<T> vec) {
+        if (bsr_data.perm) return vec.permuteData(bsr_data.block_dim, bsr_data.iperm);
+    }
 
     // ------------------------
     // end of function declaration section
@@ -426,7 +430,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::set_variables(Vec<T> &newVars) {
     // vars is either device array on GPU or a host array if not USE_GPU
     // should we not do deep copy here?
     // this->vars.setData(newVars.getPtr(), bsr_data.perm, bsr_data.block_dim);
-    auto permute_vec = newVars.createPermuteVec(bsr_data.block_dim, bsr_data.perm);
+    // auto permute_vec = newVars.createPermuteVec(bsr_data.block_dim, bsr_data.perm);
     newVars.copyValuesTo(this->vars);
 }
 
@@ -536,8 +540,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
 
-    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
-        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat>
+        <<<grid, block>>>(num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData,
+                          bsr_data.perm, res, mat);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 

@@ -4,17 +4,6 @@
 #include "TACSShellElementDefs.h"
 #include "TACSShellElementTransform.h"
 
-template <typename T>
-void printVec(const int N, const T *vec);
-
-template <>
-void printVec<double>(const int N, const double *vec) {
-    for (int i = 0; i < N; i++) {
-        printf("%.5e,", vec[i]);
-    }
-    printf("\n");
-}
-
 // this example is based off of examples/crm/crm.cpp in TACS
 
 int main() {
@@ -35,7 +24,7 @@ int main() {
     TacsScalar E = 70.0e9;
     TacsScalar nu = 0.3;
     TacsScalar ys = 1e11;
-    TacsScalar cte = 10e-6;  // double check this value
+    TacsScalar cte = 10e-6; // double check this value
     TacsScalar kappa = 0.0;
     TACSMaterialProperties *mat =
         new TACSMaterialProperties(rho, specific_heat, E, nu, ys, cte, kappa);
@@ -63,62 +52,50 @@ int main() {
 
     T *res = new T[num_vars];
     memset(res, 0.0, num_vars * sizeof(T));
-    T *Kmat = new T[num_vars * num_vars];
-    memset(Kmat, 0.0, num_vars * num_vars * sizeof(T));
 
     bool nz_vars = true;
     if (nz_vars) {
         for (int ivar = 0; ivar < num_vars; ivar++) {
             vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
-#ifdef NLINEAR
-            vars[ivar] *= 1e6;
-#endif
         }
     }
 
     T *p_vars = new T[num_vars];
     memset(p_vars, 0.0, num_vars * sizeof(T));
-    T *p_vars2 = new T[num_vars];
-    memset(p_vars2, 0.0, num_vars * sizeof(T));
-    for (int ivar = 0; ivar < 24; ivar++) {
+    for (int ivar = 0; ivar < 24; ivar++)
         p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
-        p_vars2[ivar] = (-1.4543 * 1.024343 + 2.812 * -9.4323 * ivar);
-    }
 
-    TacsScalar thick = 0.005;  // shell thickness
+    // for (int i = 0; i < 12; i++) {
+    //   printf("xpts[%d] = %.8e\n", i, xpts[i]);
+    // }
+    // for (int i = 0; i < 24; i++) {
+    //   printf("vars[%d] = %.8e\n", i, vars[i]);
+    // }
+
+    TacsScalar thick = 0.005; // shell thickness
     TACSIsoShellConstitutive *con = new TACSIsoShellConstitutive(mat, thick);
 
-// now create the shell element object
-#ifdef NLINEAR
-    TACSQuad4NonlinearShell *elem = new TACSQuad4NonlinearShell(transform, con);
-#else
+    // now create the shell element object
     TACSQuad4Shell *elem = new TACSQuad4Shell(transform, con);
-#endif
 
     // call compute energies on the one element
     int elemIndex = 0;
     double time = 0.0;
     // printf("TACS Ue 1 = %.8e\n", *Ue);
-    elem->addJacobian(elemIndex, time, 1.0, 0.0, 0.0, xpts, vars, dvars, ddvars, res, Kmat);
+    elem->addResidual(elemIndex, time, xpts, vars, dvars, ddvars, res);
+    printf("Analytic residual\n");
 
-    // take a vec-mat-vec product on Kmat
-    double jac_TD = 0.0;
+    double resTD = 0.0;
     for (int i = 0; i < 24; i++) {
-        for (int j = 0; j < 24; j++) {
-            jac_TD += p_vars[i] * p_vars2[j] * Kmat[24 * i + j];
-        }
+        resTD += p_vars[i] * res[i];
     }
-
-    printf("Analytic jacobian CPU\n");
-    printf("jac TD = %.8e\n", jac_TD);
+    printf("res TD = %.8e\n", resTD);
 
     printf("res: ");
-    printVec<double>(24, res);
-
-    for (int i = 0; i < 2; i++) {
-        printf("kmat row %d: ", i);
-        printVec<double>(num_vars, &Kmat[24 * i]);
+    for (int i = 0; i < 24; i++) {
+        printf("%.5e, ", res[i]);
     }
+    printf("\n");
 
     MPI_Finalize();
 

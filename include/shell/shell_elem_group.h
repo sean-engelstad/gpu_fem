@@ -70,7 +70,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(

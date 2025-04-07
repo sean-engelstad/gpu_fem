@@ -1,5 +1,8 @@
 // the following are some reordering utils
 
+#pragma once
+#include <cstring>
+
 // q-ordering (writing it myself),
 // https://arc.aiaa.org/doi/epdf/10.2514/6.2020-3022 how to apply ILU(k) from
 // below RCM reorderings (reverrse cuthill-mckee)? here's how to implement
@@ -10,9 +13,7 @@
 //      normal prune widths are 2,1,1/2,1/4 (lower prune width results in more
 //      nnz but more stable convergence of iterative solvers like GMRES)
 
-int TacsIntegerComparator(const void *a, const void *b) {
-    return (*(int *)a - *(int *)b);
-}
+int TacsIntegerComparator(const void *a, const void *b) { return (*(int *)a - *(int *)b); }
 
 /*!
   Merge two sorted arrays into a single sorted array, in place.
@@ -41,7 +42,7 @@ int TacsMergeSortedArrays(int na, int *a, int nb, const int *b) {
         }
     }
 
-    int len = na + nb - ndup; // End of the array
+    int len = na + nb - ndup;  // End of the array
     int end = len - 1;
 
     j = nb - 1;
@@ -53,7 +54,7 @@ int TacsMergeSortedArrays(int na, int *a, int nb, const int *b) {
         } else if (b[j] > a[i]) {
             a[end] = b[j];
             end--, j--;
-        } else { // b[j] == a[i]
+        } else {  // b[j] == a[i]
             a[end] = a[i];
             end--, j--, i--;
         }
@@ -112,12 +113,11 @@ int TacsUniqueSort(int len, int *array) {
     // Sort the array
     qsort(array, len, sizeof(int), TacsIntegerComparator);
 
-    int i = 0; // The location from which to take the entires
-    int j = 0; // The location to place the entries
+    int i = 0;  // The location from which to take the entires
+    int j = 0;  // The location to place the entries
 
     // Remove the negative entries
-    while (i < len && array[i] < 0)
-        i++;
+    while (i < len && array[i] < 0) i++;
 
     for (; i < len; i++, j++) {
         while ((i < len - 1) && (array[i] == array[i + 1])) {
@@ -186,11 +186,10 @@ void TacsSortAndUniquifyCSR(int nvars, int *rowp, int *cols, int remove_diag) {
   Here levset is a unique, 0 to nvars array containing the level
   sets
 */
-static int TacsComputeRCMLevSetOrder(const int nvars, const int *rowp,
-                                     const int *cols, int *rcm_vars,
-                                     int *levset, int root) {
-    int start = 0; // The start of the current level
-    int end = 0;   // The end of the current level
+static int TacsComputeRCMLevSetOrder(const int nvars, const int *rowp, const int *cols,
+                                     int *rcm_vars, int *levset, int root) {
+    int start = 0;  // The start of the current level
+    int end = 0;    // The end of the current level
 
     // Set all the new variable numbers to -1
     for (int k = 0; k < nvars; k++) {
@@ -269,8 +268,8 @@ static int TacsComputeRCMLevSetOrder(const int nvars, const int *rowp,
 
   The number of variables ordered in this pass of the RCM reordering
 */
-int TacsComputeRCMOrder(const int nvars, const int *rowp, const int *cols,
-                        int *rcm_vars, int root, int n_rcm_iters) {
+int TacsComputeRCMOrder(const int nvars, const int *rowp, const int *cols, int *rcm_vars, int root,
+                        int n_rcm_iters) {
     if (n_rcm_iters < 1) {
         n_rcm_iters = 1;
     }
@@ -278,8 +277,7 @@ int TacsComputeRCMOrder(const int nvars, const int *rowp, const int *cols,
     int *levset = new int[nvars];
     int rvars = 0;
     for (int k = 0; k < n_rcm_iters; k++) {
-        rvars = TacsComputeRCMLevSetOrder(nvars, rowp, cols, rcm_vars, levset,
-                                          root);
+        rvars = TacsComputeRCMLevSetOrder(nvars, rowp, cols, rcm_vars, levset, root);
         if (nvars != rvars) {
             return rvars;
         }

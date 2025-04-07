@@ -1,22 +1,12 @@
 #include "chrono"
 #include "linalg/linalg.h"
 #include "../shell_res/local_utils.h"
+#include "shell/shell.h"
 
-// shell imports
-#include "assembler.h"
-#include "shell/shell_elem_group.h"
-#include "shell/physics/isotropic_shell.h"
-
-// get jacobian directional derivative analytically on the CPU
+// get residual directional derivative analytically on the CPU
 
 int main(void) {
     using T = double;
-
-#ifdef NLINEAR
-    constexpr bool is_nonlinear = true;
-#else
-    constexpr bool is_nonlinear = false;
-#endif
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -25,7 +15,7 @@ int main(void) {
 
     constexpr bool has_ref_axis = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
-    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+    using Physics = IsotropicShell<T, Data>;
 
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, DenseMat>;
@@ -36,22 +26,19 @@ int main(void) {
 
     // init variables u
     int num_vars = assembler.get_num_vars();
+    auto h_vars = assembler.createVarsHostVec();
+    auto p_vars = assembler.createVarsHostVec();
+    auto p_vars2 = assembler.createVarsHostVec();
     auto res = assembler.createVarsVec();
-    auto h_vars = HostVec<T>(num_vars);
-    auto p_vars = HostVec<T>(num_vars);
-    auto p_vars2 = HostVec<T>(num_vars);    
 
     // fixed perturbations of the host and pert vars
     for (int ivar = 0; ivar < 24; ivar++) {
         h_vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
-#ifdef NLINEAR
-        h_vars[ivar] *= 1e6;
-#endif
         p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
         p_vars2[ivar] = (-1.4543 * 1.024343 + 2.812 * -9.4323 * ivar);
     }
     
-    auto vars = h_vars.createDeviceVec();
+    auto vars = convertVecType<T>(h_vars);
     assembler.set_variables(vars);
 
     DenseMat<VecType<T>> mat(num_vars);  
@@ -75,7 +62,7 @@ int main(void) {
       }
     }
 
-    printf("Analytic Jacobian GPU\n");
+    printf("Analytic Jacobian\n");
     printf("jac TD = %.8e\n", jac_TD);
 
     // print residual

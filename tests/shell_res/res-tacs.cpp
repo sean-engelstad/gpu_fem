@@ -24,7 +24,7 @@ int main() {
     TacsScalar E = 70.0e9;
     TacsScalar nu = 0.3;
     TacsScalar ys = 1e11;
-    TacsScalar cte = 10e-6; // double check this value
+    TacsScalar cte = 10e-6;  // double check this value
     TacsScalar kappa = 0.0;
     TACSMaterialProperties *mat =
         new TACSMaterialProperties(rho, specific_heat, E, nu, ys, cte, kappa);
@@ -57,13 +57,15 @@ int main() {
     if (nz_vars) {
         for (int ivar = 0; ivar < num_vars; ivar++) {
             vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
+#ifdef NLINEAR
+            vars[ivar] *= 1e6;
+#endif
         }
     }
 
     T *p_vars = new T[num_vars];
     memset(p_vars, 0.0, num_vars * sizeof(T));
-    for (int ivar = 0; ivar < 24; ivar++)
-        p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
+    for (int ivar = 0; ivar < 24; ivar++) p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
 
     // for (int i = 0; i < 12; i++) {
     //   printf("xpts[%d] = %.8e\n", i, xpts[i]);
@@ -72,11 +74,17 @@ int main() {
     //   printf("vars[%d] = %.8e\n", i, vars[i]);
     // }
 
-    TacsScalar thick = 0.005; // shell thickness
+    TacsScalar thick = 0.005;  // shell thickness
     TACSIsoShellConstitutive *con = new TACSIsoShellConstitutive(mat, thick);
 
-    // now create the shell element object
+// now create the shell element object
+#ifdef NLINEAR
+    printf("nonlinear CPU shell\n");
+    TACSQuad4NonlinearShell *elem = new TACSQuad4NonlinearShell(transform, con);
+#else
     TACSQuad4Shell *elem = new TACSQuad4Shell(transform, con);
+#endif
+    //
 
     // call compute energies on the one element
     int elemIndex = 0;
@@ -93,7 +101,7 @@ int main() {
 
     printf("res: ");
     for (int i = 0; i < 24; i++) {
-        printf("%.5e, ", res[i]);
+        printf("%.5e,", res[i]);
     }
     printf("\n");
 

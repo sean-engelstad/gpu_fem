@@ -1,5 +1,5 @@
 
-TACS_DIR = ${HOME}/git/_archive/tacs
+TACS_DIR = ${HOME}/git/tacs
 
 # GPU_FEM include
 include ../../Makefile.in
@@ -11,38 +11,46 @@ include ${TACS_DIR}/TACS_Common.mk
 check-jac:
 # check jac against TACS
 	make clean
-	make jac-gpu
-	./jac-gpu.out >> out1.txt
+	make jac
+	./jac-cpu.out >> out1.txt
 	make jac-tacs
 	./tacs-jac.x >> out2.txt
 	diff out1.txt out2.txt >> diff.txt
 
-check-jacNL:
-# check jac against TACS
+check-jac-cs:
+# check jacobian complex-step
 	make clean
-	make jac-gpuNL
-	./jac-gpu.out >> out1.txt
-	make jac-tacsNL
-	./tacs-jac.x >> out2.txt
-	diff out1.txt out2.txt >> diff.txt
+	make jac
+	./jac-cpu.out >> out-anl.txt
+	make jac-cs
+	./jac-cs.out >> out-cs.txt
+	diff out-anl.txt out-cs.txt >> diff.txt
+
+check-jac-gpu:
+# check jac CPU vs GPU
+	make clean
+	make jac
+	./jac-cpu.out >> out-cpu.txt
+	make jac-gpu
+	./jac-gpu.out >> out-gpu.txt
+
+jac:
+    # builds analytic residual on CPU
+	@echo "Building with CPU support"
+	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac-cpu.out
 
 jac-gpu:
     # builds analytic residual on GPU
 	@echo "Building with GPU support"
 	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac-gpu.out
 
+jac-cs:
+    # complex-step jacobian
+	@echo "Building with CPU support"
+	g++ -x c++ ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 jac-cs.cu -o jac-cs.out
+
 jac-tacs: jac-tacs.o
 	@echo "Building with TACS CPU"
-	mpicxx -o tacs-jac.x jac-tacs.o ${TACS_LD_FLAGS}
-
-jac-gpuNL:
-    # builds analytic residual on GPU
-	@echo "Building NL with GPU support"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -DNLINEAR -Xcompiler ${INCLUDE_FLAGS} -std=c++17 jac.cu -o jac-gpu.out
-
-jac-tacsNL: jac-tacs.o
-	@echo "Building NL with TACS CPU"
-	${CXX} -DNLINEAR ${TACS_CC_FLAGS} -std=c++11 -c jac-tacs.cpp -o jac-tacs.o
 	mpicxx -o tacs-jac.x jac-tacs.o ${TACS_LD_FLAGS}
 
 clean:
