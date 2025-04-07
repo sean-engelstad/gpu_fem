@@ -1,5 +1,5 @@
 
-TACS_DIR = ${HOME}/git/archive/tacs
+TACS_DIR = ${HOME}/git/_archive/tacs
 
 # GPU_FEM include
 include ../../Makefile.in
@@ -44,6 +44,9 @@ jac-tacsNL: jac-tacs.o
 	@echo "Building NL with TACS CPU"
 	${CXX} -DNLINEAR ${TACS_CC_FLAGS} -std=c++11 -c jac-tacs.cpp -o jac-tacs.o
 	mpicxx -o tacs-jac.x jac-tacs.o ${TACS_LD_FLAGS}
+
+test-tying-strain:
+	g++ ${INCLUDE_FLAGS} test-tying-strain.cpp
 
 a2d-shell-strain:
 	g++ ${INCLUDE_FLAGS} a2d_shellstrain.cpp

@@ -69,13 +69,16 @@ int main(void) {
     auto h_res = res.createHostVec();
     auto h_mat = mat.createHostVec();
     T jac_TD = 0.0;
+    T res_TD = 0.0;
     for (int i = 0; i < 24; i++) {
+        res_TD += p_vars[i] * h_res[i];
       for (int j = 0; j < 24; j++) {
         jac_TD += p_vars[i] * p_vars2[j] * h_mat[24*i+j];
       }
     }
 
     printf("Analytic Jacobian GPU\n");
+    printf("res TD = %.8e\n", res_TD);
     printf("jac TD = %.8e\n", jac_TD);
 
     // print residual
@@ -83,7 +86,7 @@ int main(void) {
     printVec<double>(num_vars, h_res.getPtr());
     
     const double *h_mat_ptr = h_mat.getPtr();
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 24; i++) { // i < 2
         printf("kmat row %d: ", i);
         printVec<double>(num_vars, &h_mat_ptr[num_vars*i]);
     }

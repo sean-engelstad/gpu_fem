@@ -103,19 +103,22 @@ int main() {
 
     // take a vec-mat-vec product on Kmat
     double jac_TD = 0.0;
+    double res_TD = 0.0;
     for (int i = 0; i < 24; i++) {
+        res_TD += p_vars[i] * res[i];
         for (int j = 0; j < 24; j++) {
             jac_TD += p_vars[i] * p_vars2[j] * Kmat[24 * i + j];
         }
     }
 
     printf("Analytic jacobian CPU\n");
+    printf("res TD = %.8e\n", res_TD);
     printf("jac TD = %.8e\n", jac_TD);
 
     printf("res: ");
     printVec<double>(24, res);
 
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 24; i++) {  // i < 2
         printf("kmat row %d: ", i);
         printVec<double>(num_vars, &Kmat[24 * i]);
     }

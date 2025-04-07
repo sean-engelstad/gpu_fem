@@ -53,6 +53,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
         A2D::ADObj<A2D::Vec<T, 1>> et;
         A2D::ADObj<T> _Uelem;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward scope block for strain energy
         // ------------------------------------------------
@@ -70,7 +71,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<T, Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -109,6 +110,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;
         A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
         A2D::ADObj<A2D::Vec<T, 1>> et;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward scope block for strain energy
         // ------------------------------------------------
@@ -125,7 +127,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<T, Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -189,6 +191,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::A2DObj<A2D::Mat<T, 3, 3>> u0x, u1x;
         A2D::A2DObj<A2D::SymMat<T, 3>> e0ty;
         A2D::A2DObj<A2D::Vec<T, 1>> et;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward section
         {
@@ -200,7 +203,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
 
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<T, Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.value().get_data(),
@@ -214,16 +217,17 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         // hforward section (pvalue's)
         A2D::Vec<T, dof_per_elem> p_vars;
         p_vars[ivar] = 1.0;  // p_vars is unit vector for current column to compute
+        T p_d[3 * num_nodes];
         {
             ShellComputeDrillStrainHfwd<T, vars_per_node, Data, Basis, Director>(
                 pt, physData.refAxis, xpts, p_vars.get_data(), fn, et.pvalue().get_data());
 
-            T p_d[3 * num_nodes];
             Director::template computeDirectorHfwd<vars_per_node, num_nodes>(p_vars.get_data(), fn,
                                                                              p_d);
 
             T p_ety[Basis::num_all_tying_points];
-            computeTyingStrainHfwd<T, Phys, Basis>(xpts, fn, p_vars.get_data(), p_d, p_ety);
+            computeTyingStrainHfwd<T, Phys, Basis>(xpts, fn, vars, d, p_vars.get_data(), p_d,
+                                                   p_ety);
 
             ShellComputeDispGradHfwd<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, p_vars.get_data(), fn, p_d, p_ety,
@@ -238,9 +242,9 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         // begin reverse blocks from strain energy => physical disp grad sens
 
         // breverse (1st order derivs)
+        A2D::Vec<T, Basis::num_all_tying_points> ety_bar;  // zeroes out on init
         {
-            A2D::Vec<T, Basis::num_all_tying_points> ety_bar;  // zeroes out on init
-            A2D::Vec<T, 3 * num_nodes> d_bar;                  // zeroes out on init
+            A2D::Vec<T, 3 * num_nodes> d_bar;  // zeroes out on init
             ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, u0x.bvalue().get_data(),
                 u1x.bvalue().get_data(), e0ty.bvalue(), res, d_bar.get_data(), ety_bar.get_data());
@@ -264,7 +268,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 pt, physData.refAxis, xpts, vars, fn, u0x.hvalue().get_data(),
                 u1x.hvalue().get_data(), e0ty.hvalue(), res, d_hat.get_data(), ety_hat.get_data());
 
-            computeTyingStrainHrev<T, Phys, Basis>(xpts, fn, vars, d, ety_hat.get_data(), matCol,
+            computeTyingStrainHrev<T, Phys, Basis>(xpts, fn, vars, d, p_vars.get_data(), p_d,
+                                                   ety_bar.get_data(), ety_hat.get_data(), matCol,
                                                    d_hat.get_data());
 
             Director::template computeDirectorHrev<vars_per_node, num_nodes>(fn, d_hat.get_data(),
@@ -306,6 +311,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::A2DObj<A2D::SymMat<T2, 3>> e0ty;
         A2D::A2DObj<A2D::Vec<T2, 1>> et;
 
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
+
         // forward scope block for strain energy
         // ------------------------------------------------
         {
@@ -327,7 +334,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -363,8 +370,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain projection
             T p_ety[Basis::num_all_tying_points];
-            computeTyingStrainHfwd<Phys, Basis>(xpts, fn, p_vars.get_data(), p_d, p_vars.get_data(),
-                                                p_d, p_ety);
+            computeTyingStrainHfwd<Phys, Basis>(xpts, fn, vars, d, p_vars.get_data(), p_d,
+                                                p_vars.get_data(), p_d, p_ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -445,6 +452,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::Mat<T, 3, 3> u0x, u1x;
         A2D::SymMat<T, 3> e0ty;
         A2D::Vec<T, 1> et;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward scope block for strain energy
         // ------------------------------------------------
@@ -462,7 +470,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -500,6 +508,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::SymMat<T, 3> e0ty;
         A2D::Vec<T, 1> et;
         A2D::Vec<T, 9> E;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward scope block for strain energy
         // ------------------------------------------------
@@ -517,7 +526,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -625,6 +634,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::ADObj<A2D::Vec<T, 1>> et;
         A2D::ADObj<A2D::Vec<T, 9>> E;
         T d[3 * num_nodes];
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward scope block for strain energy
         // ------------------------------------------------
@@ -641,7 +651,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
@@ -706,6 +716,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;
         A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
         A2D::ADObj<A2D::Vec<T, 1>> et;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward scope block for strain energy
         // ------------------------------------------------
@@ -722,7 +733,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // compute tying strain
             T ety[Basis::num_all_tying_points];
-            computeTyingStrain<Phys, Basis>(xpts, fn, vars, d, ety);
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
             T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
