@@ -36,7 +36,7 @@ def make_inplane_shear_disp(x0, angleDeg):
 def plot_quantity(xpts, vars, title:str):
     # assume xpts, vars are same size and only plot xy plane behavior
     # with subplots
-    fig, ax = plt.subplots(2, 1)
+    fig, ax = plt.subplots(1, 2, figsize=(20,10))
     N = xpts.shape[0] // 3
     n = int(np.sqrt(N))
     X = xpts[0::3].reshape((n,n))
@@ -44,7 +44,8 @@ def plot_quantity(xpts, vars, title:str):
     plt.title(title)
     for i in range(2):
         vd = vars[i::3].reshape((n,n))
-        ax[i].contourf(X, Y, vd)
+        # 'RdBu_r'
+        ax[i].contourf(X, Y, vd, antialiased=True, cmap='coolwarm', levels=100)
     # plt.show()
     plt.savefig(f"out/{title}.png", dpi=400)
 
