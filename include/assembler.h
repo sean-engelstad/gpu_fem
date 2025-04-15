@@ -21,6 +21,7 @@ class ElementAssembler {
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
+    using VecType = typename Vec;
     using Mat = Mat_<Vec<T>>;
     using MyFunction = AnalysisFunction<T, Vec>;
     static constexpr int32_t geo_nodes_per_elem = Geo::num_nodes;
