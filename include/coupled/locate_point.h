@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 #include "_funtofem_lapack.h"
-#include "base/utils.h"
+#include "utils.h"
 
 double F2FRealPart(double x) { return x; }
 

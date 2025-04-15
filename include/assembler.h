@@ -2,9 +2,9 @@
 
 #include <cstring>
 
-#include "base/base_elem_group.h"
 #include "chrono"
 #include "cuda_utils.h"
+#include "element/base_elem_group.h"
 #include "mesh/TACSMeshLoader.h"
 
 // linear algebra formats
@@ -21,9 +21,15 @@ class ElementAssembler {
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
-    using VecType = typename Vec;
     using Mat = Mat_<Vec<T>>;
     using MyFunction = AnalysisFunction<T, Vec>;
+
+    template <typename U>
+    using VecType = Vec<U>;
+
+    template <typename V>
+    using MatType = Mat_<V>;
+
     static constexpr int32_t geo_nodes_per_elem = Geo::num_nodes;
     static constexpr int32_t vars_nodes_per_elem = Basis::num_nodes;
     static constexpr int32_t spatial_dim = Geo::spatial_dim;

@@ -1,5 +1,5 @@
 #pragma once
-#include "../../cuda_utils.h"
+#include "../../../cuda_utils.h"
 #include "a2dcore.h"
 
 // could be an internal class for each type of physics
@@ -15,8 +15,8 @@ class ShellIsotropicData {
 
     // constructor with ref Axis
     template <bool U = has_ref_axis, typename std::enable_if<U, int>::type = 0>
-    __HOST_DEVICE__ ShellIsotropicData(T E_, T nu_, T thick_, T refAxis_[], T ys_ = 1.0, T rho_ = 1.0, 
-                                       T tOffset_ = 0.0)
+    __HOST_DEVICE__ ShellIsotropicData(T E_, T nu_, T thick_, T refAxis_[], T ys_ = 1.0,
+                                       T rho_ = 1.0, T tOffset_ = 0.0)
         : E(E_), nu(nu_), thick(thick_), ys(ys_), rho(rho_), tOffset(tOffset_) {
         // deep copy the ref axis
         for (int i = 0; i < 3; i++) {
@@ -26,7 +26,8 @@ class ShellIsotropicData {
 
     // constructor without refAxis input
     template <bool U = has_ref_axis, typename std::enable_if<!U, int>::type = 0>
-    __HOST_DEVICE__ ShellIsotropicData(T E_, T nu_, T thick_, T ys_ = 1.0, T rho_ = 1.0, T tOffset_ = 0.0)
+    __HOST_DEVICE__ ShellIsotropicData(T E_, T nu_, T thick_, T ys_ = 1.0, T rho_ = 1.0,
+                                       T tOffset_ = 0.0)
         : E(E_), nu(nu_), thick(thick_), ys(ys_), rho(rho_), tOffset(tOffset_) {}
 
     // constitutive methods

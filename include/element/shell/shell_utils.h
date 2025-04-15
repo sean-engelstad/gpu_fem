@@ -1,5 +1,5 @@
 #pragma once
-#include "../cuda_utils.h"
+#include "../../cuda_utils.h"
 
 template <typename T, class Data>
 __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], const T dXdeta[],

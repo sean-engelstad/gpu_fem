@@ -3,7 +3,7 @@
 #include <random>
 #include <vector>
 
-#include "../base/utils.h"
+#include "../utils.h"
 #include "chrono"
 #include "cuda_utils.h"
 #include "reordering_utils.h"

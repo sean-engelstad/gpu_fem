@@ -1,4 +1,5 @@
 #pragma once
+
 #include "bsr_utils.h"
 #include "vec.h"
 #ifdef USE_GPU

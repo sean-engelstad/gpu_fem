@@ -1,5 +1,5 @@
 #pragma once
-#include "../../cuda_utils.h"
+#include "../../../cuda_utils.h"
 #include "a2dcore.h"
 
 // could be an internal class for each type of physics

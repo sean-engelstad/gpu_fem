@@ -1,5 +1,5 @@
-#ifndef FUNTOFEM_LAPACK_H_
-#define FUNTOFEM_LAPACK_H_
+#ifndef FUNTOFEM_LAPACK_H
+#define FUNTOFEM_LAPACK_H
 
 /*
   This file contains the definitions of several LAPACK/BLAS functions.
@@ -31,7 +31,10 @@ T doublePart(T val) {
     // TODO : go back later and extend this to complex properly
 }
 
+#ifdef __cplusplus
 extern "C" {
+#endif
+
 // Compute an LU factorization of a matrix
 extern void LAPACKgetrf(int *m, int *n, double *a, int *lda, int *ipiv, int *info);
 
@@ -70,6 +73,9 @@ extern void LAPACKdgelss(int *m, int *n, int *nrhs, double *a, int *lda, double 
 extern void LAPACKzgelss(int *m, int *n, int *nrhs, double *a, int *lda, double *b, int *ldb,
                          double *s, double *rcond, int *rank, double *work, int *lwork,
                          double *rwork, int *info);
-}
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif  // FUNTOFEM_LAPACK_H

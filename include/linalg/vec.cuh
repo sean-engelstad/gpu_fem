@@ -45,9 +45,17 @@ __GLOBAL__ void vec_add_kernel(Vec<T> v1, Vec<T> v2, Vec<T> v3) {
         atomicAdd(&v3[i], v1[i] + v2[i]);
         // printf("adding ind %d\n", i);
     }
+}
 
-    // for (int i = thread_start; i < (thread_start + blockDim.x) && i < N; i += blockDim.x)
-    // {
-    //     atomicAdd(&v3[i], v1[i] + v2[i]);
-    // }
+template <typename T, template <typename> class Vec>
+__GLOBAL__ void copyRotationalDOF(int N1, int N2, T *v1, T *v2) {
+    int thread_start = blockDim.x * blockIdx.x + threadIdx.x;
+
+    int i2 = thread_start;
+    int group_num = i2 / 3;
+    int i1 = 6 * group_num + i2 % 3;
+
+    if (i1 < N1 && i2 < N2) {
+        v2[i2] = v1[i1];
+    }
 }

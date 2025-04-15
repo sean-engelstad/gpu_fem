@@ -1,8 +1,8 @@
 #pragma once
 
+#include "../a2dshell.h"
+#include "../data/isotropic.h"
 #include "a2dcore.h"
-#include "shell/a2dshell.h"
-#include "shell/data/isotropic.h"
 
 template <typename T, class Data_, bool isNonlinear = false>
 class IsotropicShell {
@@ -396,7 +396,7 @@ class IsotropicShell {
         // for isotropic material only one local_dv aka thickness
         // so ignore this input
 
-        using T2 = A2D::ADScalar<T,1>;
+        using T2 = A2D::ADScalar<T, 1>;
 
         // copy into local
         A2D::ADObj<A2D::Mat<T2, 3, 3>> _u0x, _u1x;

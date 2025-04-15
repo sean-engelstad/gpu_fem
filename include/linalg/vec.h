@@ -2,8 +2,8 @@
 #include <complex>
 #include <cstring>
 
-#include "../base/utils.h"
 #include "../cuda_utils.h"
+#include "../utils.h"
 #include "chrono"
 #include "stdlib.h"
 
@@ -290,6 +290,17 @@ class DeviceVec : public BaseVec<T> {
             atomicAdd(&shared[i], scale * local[i]);
         }
         __syncthreads();
+    }
+
+    __HOST__ DeviceVec<T> removeRotationalDOF() {
+        // create new vec with only 3*num_nodes length
+        int num_nodes = this->N / 6;  // assumes 6 DOF per node here
+        DeviceVec<T> new_vec(3 * num_nodes);
+
+        int num_blocks = (new_vec.N + 32 - 1) / 32;
+        copyRotationalDOF<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
+        return new_vec;
     }
 
     __DEVICE__ void addElementValuesFromShared(const bool active_thread, const int start,
