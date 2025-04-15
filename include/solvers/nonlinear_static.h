@@ -1,0 +1,73 @@
+#pragma once
+
+#include <functional>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+#include "_utils.h"
+#include "mesh/vtk_writer.h"
+
+template <class Mat, class Vec>
+using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool);
+
+// assume data is on the device
+template <typename T, class Mat, class Vec, class Assembler>
+void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads, Vec &soln,
+                  Assembler &assembler, int num_load_factors, T min_load_factor, T max_load_factor,
+                  int num_newton, T abs_tol, T rel_tol, std::string outputFilePrefix,
+                  bool print = false) {
+    // initialize vectors
+    auto res = assembler.createVarsVec();
+    auto rhs = assembler.createVarsVec();
+    auto vars = assembler.createVarsVec();
+
+    for (int iload = 0; iload < num_load_factors; iload++) {
+        T load_factor =
+            min_load_factor + (max_load_factor - min_load_factor) * iload / (num_load_factors - 1);
+
+        for (int inewton = 0; inewton < num_newton; inewton++) {
+            // compute internal residual and stiffness matrix
+            assembler.set_variables(vars);
+            assembler.add_jacobian(res, kmat);
+            assembler.apply_bcs(res);
+            assembler.apply_bcs(kmat);
+
+            // compute the RHS
+            rhs.zeroValues();
+            CUBLAS::axpy(load_factor, loads, rhs);
+            CUBLAS::axpy(-1.0, res, rhs);
+            assembler.apply_bcs(rhs);
+            double rhs_norm = CUBLAS::get_vec_norm(rhs);
+
+            // solve for the change in variables (soln = u - u0) and update variables
+            soln.zeroValues();
+            linear_solve(kmat, rhs, soln, print);
+            double soln_norm = CUBLAS::get_vec_norm(soln);
+            printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, rhs_norm, soln_norm);
+            CUBLAS::axpy(1.0, soln, vars);
+
+            // compute the residual (much cheaper computation on GPU)
+            assembler.set_variables(vars);
+            assembler.add_residual(res);
+            rhs.zeroValues();
+            CUBLAS::axpy(load_factor, loads, rhs);
+            CUBLAS::axpy(-1.0, res, rhs);
+            assembler.apply_bcs(rhs);
+            double full_resid_norm = CUBLAS::get_vec_norm(rhs);
+            printf("\t\tfull res = %.4e\n", full_resid_norm);
+            // TODO : need residual check
+
+            if (abs(full_resid_norm) < abs_tol) {
+                break;
+            }
+        }  // end of newton loop
+
+        // write out solution
+        auto h_vars = vars.createHostVec();
+        std::stringstream outputFile;
+        outputFile << outputFilePrefix << iload << ".vtk";
+        printToVTK<Assembler, HostVec<T>>(assembler, h_vars, outputFile.str());
+
+    }  // end of load factor loop
+}
