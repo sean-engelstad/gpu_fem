@@ -290,7 +290,7 @@ class LocatePoint {
         const char *jobz = "V";
         const char *uplo = "U";
 
-        LAPACKsyevd(jobz, uplo, &N, I, &N, eigs, work, &lwork, iwork, &liwork, &info);
+        Funtofem::LAPACKsyevd(jobz, uplo, &N, I, &N, eigs, work, &lwork, iwork, &liwork, &info);
 
         normal[0] = I[0];
         normal[1] = I[1];
