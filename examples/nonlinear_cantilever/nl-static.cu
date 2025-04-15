@@ -7,8 +7,8 @@
 
 // shell imports
 #include "assembler.h"
-#include "shell/physics/isotropic_shell.h"
-#include "shell/shell_elem_group.h"
+#include "element/shell/physics/isotropic_shell.h"
+#include "element/shell/shell_elem_group.h"
 
 template <typename T, class Assembler>
 HostVec<T> getTipLoads(Assembler &assembler, T length, T beam_tip_force) {
