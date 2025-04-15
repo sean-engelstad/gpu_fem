@@ -75,9 +75,12 @@ int main(void) {
   auto d_loads = h_loads.createDeviceVec();
   assembler.apply_bcs(d_loads);
 
-  // setup kmat, res, variables
-  auto soln = assembler.createVarsVec();
+  // setup kmat and initial vecs
   auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+  auto soln = assembler.createVarsVec();
+  auto res = assembler.createVarsVec();
+  auto rhs = assembler.createVarsVec();
+  auto vars = assembler.createVarsVec();
 
   // newton solve
   int num_load_factors = 20, num_newton = 30;
@@ -86,9 +89,9 @@ int main(void) {
   auto solve_func = CUSPARSE::direct_LU_solve<T>;
   std::string outputPrefix = "out/beam_";
   newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
-      solve_func, kmat, d_loads, soln, assembler, num_load_factors,
-      min_load_factor, max_load_factor, num_newton, abs_tol, rel_tol,
-      outputPrefix);
+      solve_func, kmat, d_loads, soln, assembler, res, rhs, vars,
+      num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
+      rel_tol, outputPrefix);
 
   return 0;
 };

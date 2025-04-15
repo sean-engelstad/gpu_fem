@@ -14,14 +14,9 @@ using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool);
 // assume data is on the device
 template <typename T, class Mat, class Vec, class Assembler>
 void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads, Vec &soln,
-                  Assembler &assembler, int num_load_factors, T min_load_factor, T max_load_factor,
-                  int num_newton, T abs_tol, T rel_tol, std::string outputFilePrefix,
-                  bool print = false) {
-    // initialize vectors
-    auto res = assembler.createVarsVec();
-    auto rhs = assembler.createVarsVec();
-    auto vars = assembler.createVarsVec();
-
+                  Assembler &assembler, Vec &res, Vec &rhs, Vec &vars, int num_load_factors,
+                  T min_load_factor, T max_load_factor, int num_newton, T abs_tol, T rel_tol,
+                  std::string outputFilePrefix, bool print = false) {
     for (int iload = 0; iload < num_load_factors; iload++) {
         T load_factor =
             min_load_factor + (max_load_factor - min_load_factor) * iload / (num_load_factors - 1);
