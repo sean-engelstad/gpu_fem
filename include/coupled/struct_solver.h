@@ -25,7 +25,7 @@ public:
     }
 
     int get_num_vars() {return assembler.get_num_vars();}
-    Vec get_struct_disps() {return soln;}
+    Vec getStructDisps() {return soln;}
 
     virtual void solve(Vec &struct_loads);
 

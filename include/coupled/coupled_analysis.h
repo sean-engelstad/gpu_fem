@@ -32,7 +32,7 @@ public:
             fa = aero_solver.getAeroLoads();
             fs = transfer_scheme(fa);
             struct_solver.solve(fs);
-            us = struct_solver.get_struct_disps();
+            us = struct_solver.getStructDisps();
 
         }
     }
