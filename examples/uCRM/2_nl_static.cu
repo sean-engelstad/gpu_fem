@@ -63,10 +63,10 @@ int main() {
     auto rhs = assembler.createVarsVec();
     auto vars = assembler.createVarsVec();
 
-    // newton solve
-    int num_load_factors = 20, num_newton = 30;
-    T min_load_factor = 0.05, max_load_factor = 1.0, abs_tol = 1e-8,
-        rel_tol = 1e-6;
+    // newton solve => go to 10x the 1m up disp from initial loads
+    int num_load_factors = 100, num_newton = 50;
+    T min_load_factor = 0.1, max_load_factor = 10.0, abs_tol = 1e-8,
+        rel_tol = 1e-8;
     auto solve_func = CUSPARSE::direct_LU_solve<T>;
     std::string outputPrefix = "out/uCRM_";
     newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(

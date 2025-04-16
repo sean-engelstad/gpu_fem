@@ -24,6 +24,8 @@ HostVec<T> getTipLoads(Assembler &assembler, T length, T beam_tip_force) {
       num_tip_nodes++;
     }
   }
+  T nodal_force = beam_tip_force / num_tip_nodes;
+  printf("nodal force = %.4e\n", nodal_force);
   for (int inode = 0; inode < num_nodes; inode++) {
     if (abs(h_xpts[3 * inode] - length) < 1e-6) {
       h_loads[6 * inode + 2] = beam_tip_force / num_tip_nodes;
@@ -84,14 +86,29 @@ int main(void) {
 
   // newton solve
   int num_load_factors = 20, num_newton = 30;
-  T min_load_factor = 0.05, max_load_factor = 1.0, abs_tol = 1e-8,
+  T min_load_factor = 0.05, max_load_factor = 1.00, abs_tol = 1e-8,
     rel_tol = 1e-5;
   auto solve_func = CUSPARSE::direct_LU_solve<T>;
   std::string outputPrefix = "out/beam_";
+  bool print = true;
   newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
       solve_func, kmat, d_loads, soln, assembler, res, rhs, vars,
       num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
-      rel_tol, outputPrefix);
+      rel_tol, outputPrefix, print);
+
+  // get tip displacements
+  int num_nodes = assembler.get_num_nodes();
+  auto xpts = assembler.getXpts();
+  auto h_xpts = xpts.createHostVec();
+  auto h_soln = vars.createHostVec();
+  for (int inode = 0; inode < num_nodes; inode++) {
+    if (abs(h_xpts[3 * inode] - length) < 1e-6) {
+      printf("End disp (u,v,w):");
+      printVec<T>(3, &h_soln.getPtr()[6*inode]);
+    }
+  }
+
+  printf("ref (u,v,w): -3.316, 0.0, 6.72\n"); // even with linear rotation element
 
   return 0;
 };

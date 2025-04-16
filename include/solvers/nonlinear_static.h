@@ -22,6 +22,9 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             min_load_factor + (max_load_factor - min_load_factor) * iload / (num_load_factors - 1);
 
         T init_res = 1e50;
+        if (print) {
+            printf("load step %d / %d : load factor %.4e\n", iload, num_load_factors, load_factor);
+        }
 
         for (int inewton = 0; inewton < num_newton; inewton++) {
             // compute internal residual and stiffness matrix
@@ -39,11 +42,9 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
 
             // solve for the change in variables (soln = u - u0) and update variables
             soln.zeroValues();
-            linear_solve(kmat, rhs, soln, print);
+            bool linear_print = false;
+            linear_solve(kmat, rhs, soln, linear_print);
             double soln_norm = CUBLAS::get_vec_norm(soln);
-            if (print) {
-                printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, rhs_norm, soln_norm);
-            }
             CUBLAS::axpy(1.0, soln, vars);
 
             // compute the residual (much cheaper computation on GPU)
@@ -56,13 +57,16 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             CUBLAS::axpy(-1.0, res, rhs);
             assembler.apply_bcs(rhs);
             double full_resid_norm = CUBLAS::get_vec_norm(rhs);
-            if (print) {
-                printf("\t\tfull res = %.4e\n", full_resid_norm);
-            }
+            // if (print) {
+            //     printf("\t\tfull res = %.4e\n", full_resid_norm);
+            // }
             if (inewton == 0) {
                 init_res = full_resid_norm;
             }
             // TODO : need residual check
+            if (print) {
+                printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, full_resid_norm, soln_norm);
+            }
 
             if (abs(full_resid_norm) < (abs_tol + rel_tol * init_res)) {
                 break;
