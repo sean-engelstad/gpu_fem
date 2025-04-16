@@ -1,6 +1,6 @@
 #pragma once
 #include "assembler.h"
-#include "base/utils.h"
+#include "utils.h"
 #include "linalg/vec.h"
 #include "math.h"
 #include <fstream>
@@ -101,7 +101,7 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
             // TODO : issue with defining conn out of order like this, needs to
             // be sorted now?""
             int nodes[] = {nnx * iye + ixe, nnx * iye + ixe + 1,
-                           nnx * (iye + 1) + ixe + 1, nnx * (iye + 1) + ixe};
+                           nnx * (iye + 1) + ixe, nnx * (iye + 1) + ixe + 1};
             for (int inode = 0; inode < Basis::num_nodes; inode++) {
                 elem_conn[Basis::num_nodes * ielem + inode] = nodes[inode];
             }

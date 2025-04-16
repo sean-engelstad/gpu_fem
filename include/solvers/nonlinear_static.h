@@ -21,6 +21,8 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
         T load_factor =
             min_load_factor + (max_load_factor - min_load_factor) * iload / (num_load_factors - 1);
 
+        T init_res = 1e50;
+
         for (int inewton = 0; inewton < num_newton; inewton++) {
             // compute internal residual and stiffness matrix
             assembler.set_variables(vars);
@@ -46,7 +48,9 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
 
             // compute the residual (much cheaper computation on GPU)
             assembler.set_variables(vars);
-            assembler.add_residual(res);
+            // assembler.add_residual(res); // TODO : for some reason using this add_residual doesn't match add_jacobian res..
+            assembler.add_jacobian(res, kmat);
+            assembler.apply_bcs(res);
             rhs.zeroValues();
             CUBLAS::axpy(load_factor, loads, rhs);
             CUBLAS::axpy(-1.0, res, rhs);
@@ -55,9 +59,12 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             if (print) {
                 printf("\t\tfull res = %.4e\n", full_resid_norm);
             }
+            if (inewton == 0) {
+                init_res = full_resid_norm;
+            }
             // TODO : need residual check
 
-            if (abs(full_resid_norm) < abs_tol) {
+            if (abs(full_resid_norm) < (abs_tol + rel_tol * init_res)) {
                 break;
             }
         }  // end of newton loop

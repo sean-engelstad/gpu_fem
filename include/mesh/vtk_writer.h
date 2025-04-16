@@ -1,3 +1,4 @@
+#pragma once
 #include "assembler.h"
 #include <cmath>
 #include <fstream>
