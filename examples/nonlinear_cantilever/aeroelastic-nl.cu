@@ -107,15 +107,15 @@ int main(void) {
   AeroSolver aero_solver = AeroSolver(na_surf, d_loads);
 
   auto d_xpts = assembler.getXpts(); // just use same mesh for aero and surf in this example
-  T beta = 10.0, Hreg = 1e-4;
-  int nn = 32, sym = -1;
+  T beta = 10.0, Hreg = 1e-1;
+  int nn = 8, sym = -1;
   Transfer transfer = Transfer(d_xpts, d_xpts, beta, nn, sym, Hreg);
   transfer.initialize();
 
   // make coupled analysis object
   // ----------------------------
 
-  int num_coupled_steps = 5;
+  int num_coupled_steps = 1;
   CoupledDriver driver = CoupledDriver(struct_solver, aero_solver, transfer, num_coupled_steps);
   driver.solve_forward();
 

@@ -39,7 +39,9 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             soln.zeroValues();
             linear_solve(kmat, rhs, soln, print);
             double soln_norm = CUBLAS::get_vec_norm(soln);
-            printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, rhs_norm, soln_norm);
+            if (print) {
+                printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, rhs_norm, soln_norm);
+            }
             CUBLAS::axpy(1.0, soln, vars);
 
             // compute the residual (much cheaper computation on GPU)
@@ -50,7 +52,9 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             CUBLAS::axpy(-1.0, res, rhs);
             assembler.apply_bcs(rhs);
             double full_resid_norm = CUBLAS::get_vec_norm(rhs);
-            printf("\t\tfull res = %.4e\n", full_resid_norm);
+            if (print) {
+                printf("\t\tfull res = %.4e\n", full_resid_norm);
+            }
             // TODO : need residual check
 
             if (abs(full_resid_norm) < abs_tol) {
