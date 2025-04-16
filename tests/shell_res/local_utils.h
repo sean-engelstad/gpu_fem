@@ -1,6 +1,6 @@
 #pragma once
 #include "assembler.h"
-#include "linalg/linalg.h"
+#include "linalg/_linalg.h"
 
 template <class Assembler>
 Assembler createOneElementAssembler(int num_bcs) {

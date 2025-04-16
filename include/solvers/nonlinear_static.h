@@ -79,5 +79,20 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
         outputFile << outputFilePrefix << iload << ".vtk";
         printToVTK<Assembler, HostVec<T>>(assembler, h_vars, outputFile.str());
 
+        // temp debug
+        if (print) {
+            rhs.zeroValues();
+            CUBLAS::axpy(load_factor, loads, rhs);
+            auto h_vars2 = vars.createHostVec();
+            auto h_rhs = rhs.createHostVec();
+            int inode = 16; // 0-based, is 17 1-based
+            printf("end z nodal force = %.4e\n", h_rhs[6*inode + 2]);
+            printf("end z disp = %.4e\n", h_vars2[6*inode + 2]);
+
+            inode = 33; // 0-based, is 17 1-based
+            printf("end z nodal force 2 = %.4e\n", h_rhs[6*inode + 2]);
+            printf("end z disp 2 = %.4e\n", h_vars2[6*inode + 2]);
+        }
+
     }  // end of load factor loop
 }

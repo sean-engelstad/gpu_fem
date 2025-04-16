@@ -1,11 +1,11 @@
 #include "chrono"
-#include "linalg/linalg.h"
+#include "linalg/_linalg.h"
 #include "../shell_res/local_utils.h"
 
 // shell imports
 #include "assembler.h"
-#include "shell/shell_elem_group.h"
-#include "shell/physics/isotropic_shell.h"
+#include "element/shell/shell_elem_group.h"
+#include "element/shell/physics/isotropic_shell.h"
 
 // get jacobian directional derivative analytically on the CPU
 

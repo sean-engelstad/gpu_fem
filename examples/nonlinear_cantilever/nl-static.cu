@@ -87,7 +87,7 @@ int main(void) {
   // newton solve
   int num_load_factors = 20, num_newton = 30;
   T min_load_factor = 0.05, max_load_factor = 1.00, abs_tol = 1e-8,
-    rel_tol = 1e-5;
+    rel_tol = 1e-7;
   auto solve_func = CUSPARSE::direct_LU_solve<T>;
   std::string outputPrefix = "out/beam_";
   bool print = true;
@@ -109,6 +109,9 @@ int main(void) {
   }
 
   printf("ref (u,v,w): -3.316, 0.0, 6.72\n"); // even with linear rotation element
+
+  // additional debug printout stiffness matrix from random displacements here?
+  // maybe residual is wrong?
 
   return 0;
 };
