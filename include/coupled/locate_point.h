@@ -4,7 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#include "_funtofem_lapack.h"
+#include "linalg/_funtofem_lapack.h"
 #include "utils.h"
 
 double F2FRealPart(double x) { return x; }

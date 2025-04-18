@@ -1,5 +1,5 @@
 #pragma once
-#include "_svd_utils.h"
+#include "linalg/svd_utils.h"
 #include "a2dcore.h"
 
 template <typename T>

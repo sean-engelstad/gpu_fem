@@ -14,6 +14,21 @@
 // use this exact solution for eigenvalues of a 3x3 matrix,
 // https://dl.acm.org/doi/pdf/10.1145/355578.366316
 
+// uncomment for debugging
+// if (print) {
+//     printf("rt-sigmas: [%.4e, %.4e, %.4e]\n", sigma[0], sigma[1], sigma[2]);
+// }
+
+// if (print) {
+//     printf("VT-GS: [%.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e]\n", VT[0], VT[1],
+//            VT[2], VT[3], VT[4], VT[5], VT[6], VT[7], VT[8]);
+// }
+
+// if (print) {
+//     printf("U: [%.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e]\n", U[0], U[1], U[2],
+//            U[3], U[4], U[5], U[6], U[7], U[8]);
+// }
+
 template <typename T>
 __DEVICE__ void svd3x3(const T H[9], T sigma[3], T U[9], T VT[9], const bool print = false) {
     // TODO : test this routine on the host for debugging

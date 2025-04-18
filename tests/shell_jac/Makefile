@@ -1,6 +1,4 @@
 
-TACS_DIR = ${HOME}/git/_archive/tacs
-
 # GPU_FEM include
 include ../../Makefile.in
 
