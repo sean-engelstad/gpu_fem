@@ -278,10 +278,80 @@ __HOST_DEVICE__ void svd3x3_givens(const T H[9], T sigma[3], T U[9], T VT[9],
 }
 
 template <typename T>
+__HOST_DEVICE__ void _QR_3x3_decomp(T B[9], T U[9]) {
+    for (int i = 0; i < 9; i++) {
+        U[i] = 0.0;
+    }
+    for (int j = 0; j < 3; j++) {
+        U[j] = 1.0;
+    }
+
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < row; col++) {
+            aqq = B[3 * col + col];
+            apq = B[3 * row + col];
+            c = aqq / sqrt(aqq * aqq + apq * apq);
+            s = apq / sqrt(aqq * aqq + apq * apq);
+
+            // construct givens rotation matrix
+            A2D::Mat<T,3,3> Q;
+            for (int i = 0; i < 3; i++) {
+                Q[i,i] = 1.0; // after overwrite one 1 on diag will remain
+            }
+            Q[col,col] = c;
+            Q[row,row] = c;
+            Q[row,col] = s;
+            Q[col, row] = -s;
+
+            // update the U matrix
+            T tmp[9];
+            for (int i = 0; i < 9; i++) {
+                tmp[i] = B[i];
+            }
+            A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(Q, tmp, B);
+
+            for (int i = 0; i < 9; i++) {
+                tmp[i] = U[i];
+            }
+            A2D::MatMatMultCore3x3<T>(tmp, Q, U);
+        }
+    }
+
+}
+
+template <typename T>
+__HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9],
+                                   const bool print = false) {
+    // so are given H a 3x3 matrix and we wish to find H = U * Sigma * V^T
+
+    // now call the 3x3 eigenvalue problem on A = H^T H = V * Sigma^2 * V^T
+    T A[9];
+    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(H, H, A);
+    eig3x3_givens<T, 45>(A, sigma, VT);  // use 15 iterations of convergence
+
+    // now do QR decomposition on B = H * V to decomposite it B = QR similar to B=U*Sigma where U is Q
+    T B[9];
+    A2D::MatMatMultCore3x3<T, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, B);
+    _QR_3x3_decomp<T>(B, U)
+
+    // reorder U and VT to have sigma, sigma2 orders the same?
+
+    // change sigma^0.5 => sigma because we had sigma^2 before
+    for (int i = 0; i < 3; i++) {
+        sigma[i] = sqrt(sigma[i]);
+    }
+
+    // now we have completed the SVD
+}
+
+
+
+template <typename T>
 __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = false) {
     T sigma[3], U[9], VT[9];
     // svd3x3_cubic<T>(H, sigma, U, VT, print);
-    svd3x3_givens<T>(H, sigma, U, VT, print);
+    // svd3x3_givens<T>(H, sigma, U, VT, print);
+    svd3x3_QR<T>(H, sigma, U, VT, print);
 
     // compute rotation matrix R = U * VT
     A2D::MatMatMultCore3x3<T>(U, VT, R);
@@ -291,7 +361,8 @@ template <typename T>
 __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9]) {
     T sigma[3], U[9], VT[9];
     // svd3x3_cubic<T>(H, sigma, U, VT);
-    svd3x3_givens<T>(H, sigma, U, VT);
+    // svd3x3_givens<T>(H, sigma, U, VT);
+    svd3x3_QR<T>(H, sigma, U, VT);
 
     // compute rotation matrix R = U * VT
     A2D::MatMatMultCore3x3<T>(U, VT, R);

@@ -45,40 +45,6 @@ def eig3x3_givens(A_orig):
     # now sort:: using conditional swap, I also 
     return eig, V
 
-def svd_QR(A_orig):
-
-    A = A_orig.copy()
-    sig, V = eig3x3_givens(A)
-    B = A @ V
-    U = np.eye(3)
-
-    # now QR factorize B = QR which is also B = U * Sigma
-    # to find U matrix
-    for row in range(3):
-        for col in range(3):
-            if row <= col: continue
-            aqq = B[col, col]
-            apq = B[row, col]
-            c = aqq / np.sqrt(aqq**2 + apq**2)
-            s = apq / np.sqrt(aqq**2 + apq**2)
-            Q = np.zeros((3,3))
-            Q[col, col] = c
-            Q[row, row] = c
-            Q[row, col] = s
-            Q[col, row] = -s
-            ind = [_ for _ in range(3) if not(_ in [row, col])]
-            rem_ind = ind[0]
-            Q[rem_ind, rem_ind] = 1.0
-
-            B = Q.T @ B
-            print(f"{B=}")
-            # print(f"{row=} {col=}", flush=True)
-
-            U = U @ Q
-    
-    print(f"{B=}")
-    return U, sig, V.T
-
 
 if __name__ == "__main__":
 
@@ -92,10 +58,16 @@ if __name__ == "__main__":
     H = H.reshape((3,3))
     print(f"{H=}")
 
-    U, sig, VT = svd_QR(H)
-    R = U @ VT
-    print(f"{U=}\n{sig=}\n{VT=}\n{R=}")
+    A = H.T @ H
 
-    U2, sig2, VT2 = np.linalg.svd(H)
-    R2 = U2 @ VT2
-    print(f"{U2=}\n{sig2=}\n{VT2=}\n{R2=}")
+    print(f"orig {A=}")
+
+    eig, V = eig3x3_givens(A)
+    print(f'{eig=}\n{V=}')
+    # also double check A = V * eig * V^T
+    Acheck = V @ np.diag(eig) @ V.T
+    print(f"{Acheck=}")
+
+    # compare to analytic
+    eig2, V2 = np.linalg.eig(A)
+    print(f"{eig2=}\n{V2=}")

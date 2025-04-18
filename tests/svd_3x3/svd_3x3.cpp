@@ -9,7 +9,8 @@ int main() {
 
     double U[9], sig[3], VT[9];
     // svd3x3_cubic(H, sig, U, VT);
-    svd3x3_givens(H, sig, U, VT);
+    // svd3x3_givens(H, sig, U, VT);
+    svd3x3_QR(H, sig, U, VT);
 
     printf("H:");
     printVec<double>(3, H);
