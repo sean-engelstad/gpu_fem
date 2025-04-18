@@ -1,12 +1,12 @@
-#include "assembler.h"
-#include "base/utils.h"
-#include "linalg/linalg.h"
+#include "utils.h"
+#include "linalg/_linalg.h"
 #include "mesh/TACSMeshLoader.h"
 #include "mesh/vtk_writer.h"
 
 // shell imports
-#include "shell/shell_elem_group.h"
-#include "shell/physics/isotropic_shell.h"
+#include "assembler.h"
+#include "element/shell/shell_elem_group.h"
+#include "element/shell/physics/isotropic_shell.h"
 
 int main() {
     using T = double;
@@ -95,7 +95,7 @@ int main() {
     assembler.apply_bcs(loads);
 
     // now do cusparse solve on linear static analysis
-    CUSPARSE::direct_LU_solve_old<T>(kmat, loads, soln, print);
+    CUSPARSE::direct_LU_solve<T>(kmat, loads, soln, print);
 
     // compute total direc derivative of analytic residual
 

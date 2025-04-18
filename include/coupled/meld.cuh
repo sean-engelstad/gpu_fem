@@ -187,10 +187,10 @@ __GLOBAL__ void transfer_disps_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
     H[4] += H_reg;
     H[8] += H_reg;
 
-    // if ((aero_ind == 522 || aero_ind == 521) && threadIdx.x == 0) {
-    //     printf("H[%d]: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", aero_ind, H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]);
-    //     // printVec<T>(3, loc_ua);
-    // }
+    if ((aero_ind == 522 || aero_ind == 521) && threadIdx.x == 0) {
+        printf("H[%d]: [%.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e]\n", aero_ind, H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]);
+        // printVec<T>(3, loc_ua);
+    }
 
     // after computing H, each thread is going to do the same thing
     // and we'll just average the result (same answer), but computations are cheap
@@ -198,13 +198,14 @@ __GLOBAL__ void transfer_disps_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
     // get SVD of H (call device function in svd_utils.h)
     T R[9];
     // bool print = (aero_ind == 522 || aero_ind == 521) && threadIdx.x == 0;
-    bool print = false;
+    bool print = (aero_ind == 521) && threadIdx.x == 0;
+    // bool print = false;
     computeRotation<T>(H, R, print);
 
-    // if (print) {
-    //     printf("R[%d]: %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n", aero_ind, R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7], R[8]);
-    //     // printVec<T>(3, loc_ua);
-    // }
+    if (print) {
+        printf("R[%d]: [%.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e]\n", aero_ind, R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7], R[8]);
+        // printVec<T>(3, loc_ua);
+    }
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];
