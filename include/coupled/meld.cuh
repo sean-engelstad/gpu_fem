@@ -202,10 +202,10 @@ __GLOBAL__ void transfer_disps_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
     // bool print = false;
     computeRotation<T>(H, R, print);
 
-    if (print) {
-        printf("R[%d]: [%.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e]\n", aero_ind, R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7], R[8]);
+    // if (print) {
+    // printf("R[%d]: [%.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e, %.4e]\n", aero_ind, R[0], R[1], R[2], R[3], R[4], R[5], R[6], R[7], R[8]);
         // printVec<T>(3, loc_ua);
-    }
+    // }
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];
@@ -385,6 +385,8 @@ __GLOBAL__ void transfer_loads_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
     // const bool print = global_struct_node == 217 and threadIdx.x == 0;
     const bool print = false;
     computeRotation<T2>(H2, R, print);
+
+    
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];

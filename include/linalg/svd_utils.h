@@ -283,25 +283,27 @@ __HOST_DEVICE__ void _QR_3x3_decomp(T B[9], T U[9]) {
         U[i] = 0.0;
     }
     for (int j = 0; j < 3; j++) {
-        U[j] = 1.0;
+        U[3*j+j] = 1.0;
     }
 
     for (int row = 0; row < 3; row++) {
         for (int col = 0; col < row; col++) {
-            aqq = B[3 * col + col];
-            apq = B[3 * row + col];
-            c = aqq / sqrt(aqq * aqq + apq * apq);
-            s = apq / sqrt(aqq * aqq + apq * apq);
+            T aqq = B[3 * col + col];
+            T apq = B[3 * row + col];
+            T c = aqq / sqrt(aqq * aqq + apq * apq);
+            T s = apq / sqrt(aqq * aqq + apq * apq);
 
             // construct givens rotation matrix
-            A2D::Mat<T,3,3> Q;
-            for (int i = 0; i < 3; i++) {
-                Q[i,i] = 1.0; // after overwrite one 1 on diag will remain
+            T Q[9];
+            for (int i = 0; i < 9; i++) {
+                Q[i] = 0.0;
+                int j = i % 3;
+                Q[3*j+j] = 1.0;
             }
-            Q[col,col] = c;
-            Q[row,row] = c;
-            Q[row,col] = s;
-            Q[col, row] = -s;
+            Q[3*row+row] = c;
+            Q[3*col+col] = c;
+            Q[3*row + col] = s;
+            Q[3*col + row] = -s;
 
             // update the U matrix
             T tmp[9];
@@ -332,7 +334,7 @@ __HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9],
     // now do QR decomposition on B = H * V to decomposite it B = QR similar to B=U*Sigma where U is Q
     T B[9];
     A2D::MatMatMultCore3x3<T, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, B);
-    _QR_3x3_decomp<T>(B, U)
+    _QR_3x3_decomp<T>(B, U);
 
     // reorder U and VT to have sigma, sigma2 orders the same?
 

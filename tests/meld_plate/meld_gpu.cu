@@ -36,7 +36,8 @@ int main() {
     // T beta = 3.0;
     int nn = 32;
     int sym = -1; // no symmetry yet I believe
-    double Hreg = 1e-4; // regularization for H
+    // double Hreg = 1e-1; // regularization for H
+    double Hreg = 0.0;
     auto meld = MELD<T>(d_xs0, d_xa0, beta, nn, sym, Hreg);
     meld.initialize();
 
