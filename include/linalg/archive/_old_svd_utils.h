@@ -368,3 +368,23 @@ __DEVICE__ void _solve15x15(T *M, T *y, T *x, int num_aero_nodes) {
         x[i] = y[i];
     }
 }
+
+// template <typename T>
+// __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9]) {
+//     T sigma[3], U[9], VT[9];
+//     // svd3x3_cubic<T>(H, sigma, U, VT);
+//     // svd3x3_givens<T>(H, sigma, U, VT);
+//     svd3x3_QR<T>(H, sigma, U, VT);
+
+//     // compute rotation matrix R = U * VT
+//     A2D::MatMatMultCore3x3<T>(U, VT, R);
+
+//     // compute symmetric matrix S = V * Sigma * VT
+//     T tmp[9];
+//     for (int i = 0; i < 3; i++) {
+//         A2D::VecScaleCore<T, 3>(sigma[i], &VT[3 * i], &tmp[3 * i]);
+//     }
+
+//     // S = V * tmp
+//     A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(VT, tmp, S);
+// }

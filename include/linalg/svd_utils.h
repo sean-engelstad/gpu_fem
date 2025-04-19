@@ -128,10 +128,11 @@ __HOST_DEVICE__ void condSwap(bool swap, T vec1[], T vec2[]) {
     }
 }
 
-template <typename T, int Niter>
+template <typename T, int Niter, bool smoothed = true>
 __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9]) {
     // https://pages.cs.wisc.edu/~sifakis/papers/SVD_TR1690.pdf
     T V[9], Q[9], tmp[9];
+    T rhoKS = 100;
 
     // initialize V to identify matrix
     for (int i = 0; i < 9; i++) {
@@ -141,6 +142,12 @@ __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9]) {
         V[3 * j + j] = 1.0;
     }
 
+    // printf("Ain: ");
+    // printVec<T>(9, A);
+
+    // printf("V: ");
+    // printVec<T>(9, V);
+
     // modify A in place using givens rotations each time
     for (int i = 0; i < Niter; i++) {
         // cycle through each pair of (i,j) where i neq j cycle 3
@@ -149,10 +156,31 @@ __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9]) {
             int i0 = cycle, i1 = (cycle + 1) % 3, i2 = (cycle + 2) % 3;
             T a11 = A[3 * i0 + i0], a12 = A[3 * i0 + i1],
               a22 = A[3 * i1 + i1];  // assumes A sym here
-            bool b = a12 * a12 < (a11 - a22) * (a11 - a22);
             T omega = 1.0 / sqrt(a12 * a12 + (a11 - a22) * (a11 - a22));
-            T s = b ? omega * a12 : sqrt(0.5);
-            T c = b ? omega * (a11 - a22) : sqrt(0.5);
+
+            T s, c;
+            bool b;
+            T a_sum = a12 * a12 + (a11 - a22) * (a11 - a22);
+            if constexpr (smoothed) {
+                T w1 = exp(rhoKS * a12 * a12 / a_sum);
+                T w2 = exp(rhoKS * (a11 - a22) * (a11 - a22) / a_sum);
+                T sum = w1 + w2;
+                s = (w2 * omega * a12 + w1 * sqrt(0.5)) / sum;
+                c = (w2 * omega * (a11 - a22) + w1 * sqrt(0.5)) / sum;
+
+                // b = a12 * a12 < (a11 - a22) * (a11 - a22);
+                // T s2 = b ? omega * a12 : sqrt(0.5);
+                // T c2 = b ? omega * (a11 - a22) : sqrt(0.5);
+                // printf("a12*a12 %.4e\n", a12 * a12);
+                // printf("(a11-a22)^2 %.4e\n", (a11 - a22) * (a11 - a22));
+                // printf("s %.4e, c %.4e, s2 %.4e, c2 %.4e\n", s, c, s2, c2);
+
+            } else {
+                b = a12 * a12 < (a11 - a22) * (a11 - a22);
+                s = b ? omega * a12 : sqrt(0.5);
+                c = b ? omega * (a11 - a22) : sqrt(0.5);
+            }
+
             // reset Q to zero
             for (int i = 0; i < 9; i++) {
                 Q[i] = 0.0;
@@ -162,6 +190,10 @@ __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9]) {
             Q[3 * i1 + i0] = s;
             Q[3 * i1 + i1] = c;
             Q[3 * i2 + i2] = 1.0;
+
+            // printf("Q: ");
+            // printVec<T>(9, Q);
+            // if (cycle == 2) return;
 
             // update A and full V matrix
             // V = V * Q
@@ -204,13 +236,24 @@ __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9]) {
         for (int i0 = 0; i0 < 2; i0++) {
             int i1 = i0 + 1;
             // now compare sigma[i0] to sigma[i1] with ? operator (for fast GPU performance)
-            bool swap = sigma[i0] < sigma[i1];  // since want descending eigvals
-            condSwap<T, 3>(swap, &VT[3 * i0], &VT[3 * i1]);
+            if constexpr (smoothed) {
+                T sig_sum = sigma[i0] + sigma[i1];
+                T w1 = exp(rhoKS * sigma[i1] / sig_sum);
+                T w2 = exp(rhoKS * sigma[i0] / sig_sum);
+                T w_sum = w1 + w2;
+                T tmp2 = sigma[i0];
+                sigma[i0] = (w1 * sigma[i1] + w2 * sigma[i0]) / w_sum;
+                sigma[i1] = (w1 * tmp2 + w2 * sigma[i1]) / w_sum;
 
-            // now also cond swap on sigma
-            T tmp2 = sigma[i0];
-            sigma[i0] = swap ? sigma[i1] : sigma[i0];
-            sigma[i1] = swap ? tmp2 : sigma[i1];
+            } else {
+                bool swap = sigma[i0] < sigma[i1];  // since want descending eigvals
+                condSwap<T, 3>(swap, &VT[3 * i0], &VT[3 * i1]);
+
+                // now also cond swap on sigma
+                T tmp2 = sigma[i0];
+                sigma[i0] = swap ? sigma[i1] : sigma[i0];
+                sigma[i1] = swap ? tmp2 : sigma[i1];
+            }
         }
     }
 }
@@ -283,7 +326,7 @@ __HOST_DEVICE__ void _QR_3x3_decomp(T B[9], T U[9]) {
         U[i] = 0.0;
     }
     for (int j = 0; j < 3; j++) {
-        U[3*j+j] = 1.0;
+        U[3 * j + j] = 1.0;
     }
 
     for (int row = 0; row < 3; row++) {
@@ -298,12 +341,12 @@ __HOST_DEVICE__ void _QR_3x3_decomp(T B[9], T U[9]) {
             for (int i = 0; i < 9; i++) {
                 Q[i] = 0.0;
                 int j = i % 3;
-                Q[3*j+j] = 1.0;
+                Q[3 * j + j] = 1.0;
             }
-            Q[3*row+row] = c;
-            Q[3*col+col] = c;
-            Q[3*row + col] = s;
-            Q[3*col + row] = -s;
+            Q[3 * row + row] = c;
+            Q[3 * col + col] = c;
+            Q[3 * row + col] = s;
+            Q[3 * col + row] = -s;
 
             // update the U matrix
             T tmp[9];
@@ -318,12 +361,11 @@ __HOST_DEVICE__ void _QR_3x3_decomp(T B[9], T U[9]) {
             A2D::MatMatMultCore3x3<T>(tmp, Q, U);
         }
     }
-
 }
 
 template <typename T>
 __HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9],
-                                   const bool print = false) {
+                               const bool print = false) {
     // so are given H a 3x3 matrix and we wish to find H = U * Sigma * V^T
 
     // now call the 3x3 eigenvalue problem on A = H^T H = V * Sigma^2 * V^T
@@ -331,7 +373,8 @@ __HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9],
     A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(H, H, A);
     eig3x3_givens<T, 45>(A, sigma, VT);  // use 15 iterations of convergence
 
-    // now do QR decomposition on B = H * V to decomposite it B = QR similar to B=U*Sigma where U is Q
+    // now do QR decomposition on B = H * V to decomposite it B = QR similar to B=U*Sigma where U is
+    // Q
     T B[9];
     A2D::MatMatMultCore3x3<T, A2D::MatOp::NORMAL, A2D::MatOp::TRANSPOSE>(H, VT, B);
     _QR_3x3_decomp<T>(B, U);
@@ -346,8 +389,6 @@ __HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9],
     // now we have completed the SVD
 }
 
-
-
 template <typename T>
 __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = false) {
     T sigma[3], U[9], VT[9];
@@ -357,24 +398,4 @@ __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = fa
 
     // compute rotation matrix R = U * VT
     A2D::MatMatMultCore3x3<T>(U, VT, R);
-}
-
-template <typename T>
-__HOST_DEVICE__ void computeRotation(const T H[9], T R[9], T S[9]) {
-    T sigma[3], U[9], VT[9];
-    // svd3x3_cubic<T>(H, sigma, U, VT);
-    // svd3x3_givens<T>(H, sigma, U, VT);
-    svd3x3_QR<T>(H, sigma, U, VT);
-
-    // compute rotation matrix R = U * VT
-    A2D::MatMatMultCore3x3<T>(U, VT, R);
-
-    // compute symmetric matrix S = V * Sigma * VT
-    T tmp[9];
-    for (int i = 0; i < 3; i++) {
-        A2D::VecScaleCore<T, 3>(sigma[i], &VT[3 * i], &tmp[3 * i]);
-    }
-
-    // S = V * tmp
-    A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(VT, tmp, S);
 }

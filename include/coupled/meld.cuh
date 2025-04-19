@@ -351,14 +351,17 @@ __GLOBAL__ void transfer_loads_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
     T2 this_us[3];
     for (int i = 0; i < 3; i++) {
         this_us[i].value = loc_us[3 * inode + i];
+        this_us[i].deriv[0] = 0.0;
     }
     this_us[idim].deriv[0] = 1.0; // only one spatial dim deriv per thread
+
 
     // now dot(uS) => dot(xS_bar), only single node nonzero dot so easy computation
     // atomicAdd(&xs_bar[idim], loc_w[inode] * loc_xs[i]);
     T2 xs_bar2[3];
     for (int i = 0; i < 3; i++) {
         xs_bar2[i].value = xs_bar[i]; // copy forward analysis       
+        xs_bar2[i].deriv[0] = 0.0; // don't know why but apparently I need this here
     }
     xs_bar2[idim].deriv[0] = loc_w[inode];
 
@@ -374,7 +377,7 @@ __GLOBAL__ void transfer_loads_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
         // compute forward AD part
         T2 temp = loc_w[inode] * (loc_xs0[3 * inode + idim] + this_us[idim] - xs_bar2[idim]) * 
         (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
-        H2[3 * idim + jdim].deriv[0] = temp.deriv[0] + idim == jdim ? H_reg : 0.0;
+        H2[3 * idim + jdim].deriv[0] = temp.deriv[0] + (idim == jdim) ? H_reg : 0.0;
     }
 
     // now forward AD types through the SVD and final uA disp calculation
@@ -384,9 +387,7 @@ __GLOBAL__ void transfer_loads_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
     // constexpr bool print = aero_ind == 279 and global_struct_node == 71 and threadIdx.y == 0;
     // const bool print = global_struct_node == 217 and threadIdx.x == 0;
     const bool print = false;
-    computeRotation<T2>(H2, R, print);
-
-    
+    computeRotation<T2>(H2, R, print);    
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];
@@ -418,55 +419,31 @@ __GLOBAL__ void transfer_loads_kernel(int nn, T H_reg, DeviceVec<int> aerostruct
 
     int my_ind = 3 * global_struct_node + idim;
 
-    // // if (global_struct_node == 71 and aero_ind == 279 and threadIdx.y == 0) {
-    // if (global_struct_node == 217 and aero_ind == 653 and threadIdx.y == 0) {
-    //     printf("aero ind %d\n", aero_ind);
-    //     printf("loc_w:");
-    //     printVec<double>(32, loc_w);
-    //     // printf("loc_us:");
-    //     // printVec<double>(96, loc_us);
-    //     printf("xs0_bar:");
-    //     printVec<double>(3, xs0_bar);
-    //     printf("xs_bar:");
-    //     printVec<double>(3, xs_bar);
-    //     printf("xs_bar2:");
-    //     for (int i = 0; i < 3; i++) {
-    //         printf(" (%.4e,%.4e)", xs_bar2[i].value, xs_bar2[i].deriv[0]);
-    //     }
-    //     printf("\n");
-    //     printf("H2:");
-    //     for (int i = 0; i < 9; i++) {
-    //         printf(" (%.4e,%.4e)", H2[i].value, H2[i].deriv[0]);
-    //     }
-    //     printf("\n");
-    //     printf("R:");
-    //     for (int i = 0; i < 9; i++) {
-    //         printf(" (%.4e,%.4e)", R[i].value, R[i].deriv[0]);
-    //     }
-    //     printf("\n");
-    //     printf("r2:");
-    //     for (int i = 0; i < 3; i++) {
-    //         printf(" (%.4e,%.4e)", r2[i].value, r2[i].deriv[0]);
-    //     }
-    //     printf("\n");
-    //     printf("rho:");
-    //     for (int i = 0; i < 3; i++) {
-    //         printf(" (%.4e,%.4e)", rho[i].value, rho[i].deriv[0]);
-    //     }
-    //     printf("\n");
-    //     printf("loc_ua:");
-    //     for (int i = 0; i < 3; i++) {
-    //         printf(" (%.4e,%.4e)", loc_ua[i].value, loc_ua[i].deriv[0]);
-    //     }
-    //     printf("\n");
-    //     printf("fs[%d] contribution from aero_ind %d: %.4e\n", my_ind, aero_ind, fS_contribution);
-    // }
-    
-    // if (3 * global_node > fs.getSize()) {
-    //     printf("global_node %d, fs Size %d\n", global_node, fs.getSize());
-    // }
-    // return;
-    
+    // top corner node
+    int print_dim = 2; // z force
+    if (aero_ind == 899 && global_struct_node == 288 && threadIdx.y == print_dim) {
+        printf("this_us:");
+        printVec<T2>(3, this_us);
+        
+        printf("xs_bar2:");
+        printVec<T2>(3, xs_bar2);
+
+        printf("R in d%d:", threadIdx.y);
+        printVec<T2>(9, R);
+
+        printf("rho:");
+        printVec<T2>(3, rho);
+
+        printf("loc_xa:");
+        printVec<T2>(3, loc_xa);
+
+        printf("loc_ua:");
+        printVec<T2>(3, loc_ua);
+
+        printf("loc_fa:");
+        printVec<T>(3, loc_fa);
+    }
+
     atomicAdd(&fs[my_ind], fS_contribution);
     __syncthreads();
 
