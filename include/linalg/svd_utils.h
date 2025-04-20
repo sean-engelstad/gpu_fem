@@ -132,7 +132,8 @@ template <typename T, int Niter, bool smoothed = true>
 __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9]) {
     // https://pages.cs.wisc.edu/~sifakis/papers/SVD_TR1690.pdf
     T V[9], Q[9], tmp[9];
-    T rhoKS = 100;
+    T rhoKS = 10;
+    // T rhoKS = 5.0;
 
     // initialize V to identify matrix
     for (int i = 0; i < 9; i++) {

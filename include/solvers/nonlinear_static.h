@@ -49,7 +49,8 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
 
             // compute the residual (much cheaper computation on GPU)
             assembler.set_variables(vars);
-            // assembler.add_residual(res); // TODO : for some reason using this add_residual doesn't match add_jacobian res..
+            // assembler.add_residual(res); // TODO : for some reason using this add_residual
+            // doesn't match add_jacobian res..
             assembler.add_jacobian(res, kmat);
             assembler.apply_bcs(res);
             rhs.zeroValues();
@@ -65,7 +66,8 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             }
             // TODO : need residual check
             if (print) {
-                printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, full_resid_norm, soln_norm);
+                printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, full_resid_norm,
+                       soln_norm);
             }
 
             if (abs(full_resid_norm) < (abs_tol + rel_tol * init_res)) {
@@ -80,19 +82,19 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
         printToVTK<Assembler, HostVec<T>>(assembler, h_vars, outputFile.str());
 
         // temp debug
-        if (print) {
-            rhs.zeroValues();
-            CUBLAS::axpy(load_factor, loads, rhs);
-            auto h_vars2 = vars.createHostVec();
-            auto h_rhs = rhs.createHostVec();
-            int inode = 16; // 0-based, is 17 1-based
-            printf("end z nodal force = %.4e\n", h_rhs[6*inode + 2]);
-            printf("end z disp = %.4e\n", h_vars2[6*inode + 2]);
+        // if (print) {
+        //     rhs.zeroValues();
+        //     CUBLAS::axpy(load_factor, loads, rhs);
+        //     auto h_vars2 = vars.createHostVec();
+        //     auto h_rhs = rhs.createHostVec();
+        //     int inode = 16; // 0-based, is 17 1-based
+        //     printf("end z nodal force = %.4e\n", h_rhs[6*inode + 2]);
+        //     printf("end z disp = %.4e\n", h_vars2[6*inode + 2]);
 
-            inode = 33; // 0-based, is 17 1-based
-            printf("end z nodal force 2 = %.4e\n", h_rhs[6*inode + 2]);
-            printf("end z disp 2 = %.4e\n", h_vars2[6*inode + 2]);
-        }
+        //     inode = 33; // 0-based, is 17 1-based
+        //     printf("end z nodal force 2 = %.4e\n", h_rhs[6*inode + 2]);
+        //     printf("end z disp 2 = %.4e\n", h_vars2[6*inode + 2]);
+        // }
 
     }  // end of load factor loop
 }

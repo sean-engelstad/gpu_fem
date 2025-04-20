@@ -28,7 +28,12 @@ class BaseTacsStatic {
     }
 
     int get_num_nodes() { return assembler.get_num_nodes(); }
-    Vec getStructDisps() { return soln.removeRotationalDOF(); }
+    Vec getStructDisps() { return vars.removeRotationalDOF(); }
+    Assembler &getAssembler() { return assembler; }
+    void resetSoln() {
+        vars.zeroValues();
+        assembler.set_variables(vars);
+    }
 
     // void solve(Vec &struct_loads);  // virtual
 
@@ -47,12 +52,13 @@ class TacsLinearStatic : public BaseTacsStatic<T, Assembler> {
     using Mat = typename Base::Mat;
     using LinearSolve = typename Base::LinearSolve;
 
-    TacsLinearStatic(Assembler &assembler, Mat &kmat, LinearSolve linear_solve)
+    TacsLinearStatic(Assembler &assembler, Mat &kmat, LinearSolve linear_solve, bool print = false)
         : BaseTacsStatic<T, Assembler>(assembler, kmat, linear_solve) {
         // compute the linear kmat on construction
         assembler.set_variables(this->vars);
         assembler.add_jacobian(this->res, this->kmat);
         assembler.apply_bcs(this->kmat);
+        this->print = print;
     }
 
     void solve(Vec &struct_loads) {
@@ -61,10 +67,21 @@ class TacsLinearStatic : public BaseTacsStatic<T, Assembler> {
         struct_loads.copyValuesTo(this->loads);
         this->assembler.apply_bcs(this->loads);
 
+        // assemble kmat again for debug
+        // TODO : can I preserve cusparse LU factorization? Maybe not..
+        this->assembler.set_variables(this->vars);
+        this->assembler.add_jacobian(this->res, this->kmat);
+        this->assembler.apply_bcs(this->kmat);
+
         // solve the linear system
         this->soln.zeroValues();
-        this->linear_solve(this->kmat, this->loads, this->soln);
+        this->linear_solve(this->kmat, this->loads, this->soln, this->print);
+        this->vars.zeroValues();
+        this->soln.copyValuesTo(this->vars);
     }
+
+   private:
+    bool print;
 };
 
 // TODO : later make separate classes or settings to use Newton solver vs. Riks solver here?
@@ -78,9 +95,9 @@ class TacsNonlinearStaticNewton : public BaseTacsStatic<T, Assembler> {
     using LinearSolve = typename Base::LinearSolve;
 
     TacsNonlinearStaticNewton(Assembler &assembler, Mat &kmat, LinearSolve linear_solve,
-                              int num_load_factors, int num_newton, T abs_tol = 1e-8,
-                              T rel_tol = 1e-6, std::string outputFilePrefix = "tacs_output",
-                              bool print = false)
+                              int num_load_factors, int num_newton, bool print = false,
+                              T abs_tol = 1e-8, T rel_tol = 1e-6,
+                              std::string outputFilePrefix = "tacs_output")
         : BaseTacsStatic<T, Assembler>(assembler, kmat, linear_solve) {
         // store the nonlinear newton solve settings
         this->num_load_factors = num_load_factors;
@@ -97,9 +114,14 @@ class TacsNonlinearStaticNewton : public BaseTacsStatic<T, Assembler> {
         struct_loads.copyValuesTo(this->loads);
         this->assembler.apply_bcs(this->loads);
 
+        // reset things:
+        this->soln.zeroValues();
+        this->res.zeroValues();
+        this->rhs.zeroValues();
+
         // TODO : add continuation strategy where min_load_factor is not zero each time, and looser
         // solves at start for now just full solve
-        T min_load_factor = 0.0;
+        T min_load_factor = 1.0 / num_load_factors;
         T max_load_factor = 1.0;
 
         // now do Newton solve

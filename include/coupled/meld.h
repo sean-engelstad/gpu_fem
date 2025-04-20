@@ -13,10 +13,14 @@
 // the source code is in the FUNtoFEM github,
 // https://github.com/smdogroup/funtofem/blob/master/src/MELD.cpp
 
-template <typename T>
+template <typename T, int NN_MAX_ = 256, bool linear_ = false>
 class MELD {
+    static constexpr int NN_MAX = NN_MAX_;  // want NN_MAX to be a multiple of 32
+    static constexpr bool linear = linear_;
+
    public:
-    MELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym, T H_reg)
+    MELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym, T H_reg,
+         bool print = false)
         : xs0(xs0), xa0(xa0), beta(beta), nn(num_nearest), sym(sym) {
         // assumes 3D so that xs0, xa0 are 3*nS, 3*nA sizes
         ns = xs0.getSize() / 3;
@@ -32,10 +36,33 @@ class MELD {
         fs = DeviceVec<T>(3 * ns);
 
         H_reg = H_reg;
+        this->print = print;
 
         // auto h_xs0 = xs0.createHostVec();
         // printf("h_xs0 constructor:");
         // printVec<double>(10, h_xs0.getPtr());
+    }
+
+    template <int N0 = 6, int NF = 3>
+    static HostVec<T> extractVarsVec(int nnodes, HostVec<T> vec) {
+        HostVec<T> vec2(NF * nnodes);
+        for (int inode = 0; inode < nnodes; inode++) {
+            for (int j = 0; j < NF; j++) {
+                vec2[NF * inode + j] = vec[N0 * inode + j];
+            }
+        }
+        return vec2;
+    }
+
+    template <int N0 = 3, int NF = 6>
+    static HostVec<T> expandVarsVec(int nnodes, HostVec<T> vec) {
+        HostVec<T> vec2(NF * nnodes);
+        for (int inode = 0; inode < nnodes; inode++) {
+            for (int j = 0; j < N0; j++) {
+                vec2[NF * inode + j] = vec[N0 * inode + j];
+            }
+        }
+        return vec2;
     }
 
     __HOST__ DeviceVec<T> &getStructDisps() { return us; }
@@ -43,21 +70,22 @@ class MELD {
     __HOST__ DeviceVec<T> &getStructDeformed() { return xs; }
 
     __HOST__ void initialize() {
-        printf("inside initialize\n");
+        if (print) printf("inside initialize\n");
 
         // was going to maybe compute aero struct connectivity (nearest neighbors)
         // using octree, but instead just going to reuse CPU code for this from F2F MELD
         computeAeroStructConn();
-        printf("\tfinished aero struct conn\n");
+        if (print) printf("\tfinished aero struct conn\n");
 
         // compute weights (assumes fixed here even) => reinitialize under shape change
         weights = DeviceVec<double>(nn * na);
-        dim3 block(32);
+        dim3 block(NN_MAX);
         dim3 grid(na);
 
-        compute_weights_kernel<T><<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, weights);
+        compute_weights_kernel<T, NN_MAX>
+            <<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, weights);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished weights kernel\n");
+        if (print) printf("\tfinished weights kernel\n");
 
         // auto h_weights = weights.createHostVec();
         // printVec<double>(h_weights.getSize(), h_weights.getPtr());
@@ -130,7 +158,7 @@ class MELD {
     }
 
     __HOST__ DeviceVec<T> &transferDisps(DeviceVec<T> &new_us) {
-        printf("inside transferDisps\n");
+        if (print) printf("inside transferDisps\n");
         new_us.copyValuesTo(us);
         xs.zeroValues();
 
@@ -141,33 +169,34 @@ class MELD {
         dim3 grid1(nblocks);
         vec_add_kernel<T><<<grid1, block1>>>(us, xs0, xs);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished vec_add_kernel\n");
+        if (print) printf("\tfinished vec_add_kernel\n");
 
         // zero out xa, ua before we change them
         xa.zeroValues();
         ua.zeroValues();
 
-        dim3 block2(32);
+        dim3 block2(NN_MAX);
         dim3 grid2(na);
         // dim3 block2(1);
         // dim3 grid2(1);
 
-        transfer_disps_kernel<T><<<grid2, block2>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, ua);
+        transfer_disps_kernel<T, NN_MAX>
+            <<<grid2, block2>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, ua);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished transfer_disps_kernel\n");
+        if (print) printf("\tfinished transfer_disps_kernel\n");
 
         dim3 block4(32);
         nblocks = (3 * na + block4.x - 1) / block4.x;
         dim3 grid4(nblocks);
         vec_add_kernel<T><<<grid4, block4>>>(ua, xa0, xa);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tfinished vec_add_kernel for ua\n");
+        if (print) printf("\tfinished vec_add_kernel for ua\n");
 
         return ua;
     }
 
     __HOST__ DeviceVec<T> transferLoads(DeviceVec<T> new_fa) {
-        printf("inside transferLoads\n");
+        if (print) printf("inside transferLoads\n");
         new_fa.copyValuesTo(fa);
         fs.zeroValues();
 
@@ -175,17 +204,17 @@ class MELD {
         // printf("fa:");
         // printVec<double>(h_fa.getSize(), h_fa.getPtr());
 
-        dim3 block(32, 3);  // one warp for parallelization by spatial_dim
+        dim3 block(NN_MAX, 3);  // one warp for parallelization by spatial_dim
         dim3 grid(na);
 
         // dim3 block(1, 1);
         // dim3 grid(1);
 
-        printf("launch transfer_loads_kernel\n");
-        transfer_loads_kernel<T>
+        if (print) printf("launch transfer_loads_kernel\n");
+        transfer_loads_kernel<T, NN_MAX, linear>
             <<<grid, block>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("\tdone with transfer_loads_kernel\n");
+        if (print) printf("\tdone with transfer_loads_kernel\n");
 
         return fs;
     }
@@ -200,4 +229,5 @@ class MELD {
     int sym, nn;
     int na, ns;
     T H_reg;
+    bool print;
 };

@@ -1,13 +1,15 @@
 #pragma once
-#include "assembler.h"
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <string>
 
+#include "assembler.h"
+
 template <class Assembler, class Vec>
 void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     // NOTE : better to use F5 binary for large cases, we will handle that
+
     // later
     using namespace std;
     string sp = " ";
@@ -31,14 +33,13 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     double *xpts_ptr = h_xpts.getPtr();
     for (int inode = 0; inode < num_nodes; inode++) {
         double *node_xpts = &xpts_ptr[3 * inode];
-        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2]
-               << "\n";
+        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2] << "\n";
     }
 
     // print all the cells
     int num_elems = assembler.get_num_elements();
     int nodes_per_elem = Assembler::vars_nodes_per_elem;
-    int num_elem_nodes = num_elems * (nodes_per_elem + 1); // repeats here
+    int num_elem_nodes = num_elems * (nodes_per_elem + 1);  // repeats here
     myfile << "CELLS " << num_elems << " " << num_elem_nodes << "\n";
 
     auto d_vars_conn = assembler.getConn();

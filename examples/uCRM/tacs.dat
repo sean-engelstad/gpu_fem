@@ -1,0 +1,60 @@
+ID CAPS generated Problem FOR TACS
+SOL 1
+CEND
+
+LINE=10000
+DISP (PRINT,PUNCH) = ALL
+STRE (PRINT,PUNCH) = ALL
+STRA (PRINT,PUNCH) = ALL
+SUBCASE 1
+	LABEL = Default
+	ANALYSIS = STATICS
+	SPC = 2
+
+BEGIN BULK
+$---1---|---2---|---3---|---4---|---5---|---6---|---7---|---8---|---9---|---10--|
+PARAM, POST, -1
+
+SPCADD*               2               1 
+SPC1*                 1             123             331 
+SPC1*                 1             123             332 
+SPC1*                 1             123             333 
+SPC1*                 1             123             334 
+SPC1*                 1             123             335 
+SPC1*                 1             123             336 
+SPC1*                 1             123             337 
+SPC1*                 1             123             338 
+SPC1*                 1             123             339 
+SPC1*                 1             123             696 
+SPC1*                 1             123             697 
+SPC1*                 1             123             698 
+SPC1*                 1             123             699 
+SPC1*                 1             123             700 
+SPC1*                 1             123             701 
+SPC1*                 1             123             702 
+SPC1*                 1             123             703 
+SPC1*                 1             123             704 
+MAT1*                 1    70000000000.                            0.35 *0      
+*0                2700.         2.31E-5                                 *1      
+*1           200000000.              0.      270000000. 
+MAT4*               101            237.            903.           2700. 
+$ Femap Property  : Wing
+PSHELL*               2               1           4.E-2               1 *0      
+*0                   1.               1 0.8333333333333 
+$ Femap Property  : wall
+PSHELL*               1               1           4.E-2               1 *0      
+*0                   1.               1 0.8333333333333 
+DESVAR*               1            Wing           2.E-2           1.E-2 *0      
+*0                4.E-2           2.E-3 
+DESVAR*               2            wall           2.E-2           1.E-2 *0      
+*0                4.E-2           2.E-3 
+DVPREL1*            100          PSHELL               2               T *0      
+*0                                                   0.                 *1      
+*1                    1              1. 
+DVPREL1*            200          PSHELL               1               T *0      
+*0                                                   0.                 *1      
+*1                    2              1. 
+
+INCLUDE 'tacs.bdf'
+
+ENDDATA

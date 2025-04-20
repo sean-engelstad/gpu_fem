@@ -34,11 +34,11 @@ int main() {
     // create MELD
     T beta = 10.0;
     // T beta = 3.0;
-    int nn = 32;
+    static constexpr int NN_MAX = 32; // choose a multiple of 32 if you can
     int sym = -1; // no symmetry yet I believe
     // double Hreg = 1e-1; // regularization for H
     double Hreg = 0.0;
-    auto meld = MELD<T>(d_xs0, d_xa0, beta, nn, sym, Hreg);
+    auto meld = MELD<T, NN_MAX>(d_xs0, d_xa0, beta, NN_MAX, sym, Hreg);
     meld.initialize();
 
     // transfer disps

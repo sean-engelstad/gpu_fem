@@ -45,9 +45,6 @@ int main(void) {
 
   std::ios::sync_with_stdio(false);  // always flush print immediately
 
-  TACSMeshLoader<T> mesh_loader{};
-  mesh_loader.scanBDFFile("Beam.bdf");
-
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
   using Basis = ShellQuadBasis<T, Quad, 2>;
@@ -66,7 +63,7 @@ int main(void) {
   // -----------------------------
   using StructSolver = TacsNonlinearStaticNewton<T, Assembler>;
   using AeroSolver = FixedAeroSolver<T, DeviceVec<T>>;
-  using Transfer = MELD<T>;
+  using Transfer = MELD<T, 32>;
   using CoupledDriver = FuntofemCoupledAnalysis<T, DeviceVec<T>, StructSolver, AeroSolver, Transfer>;
 
 
@@ -75,7 +72,20 @@ int main(void) {
 
   // material & thick properties
   double E = 1.2e6, nu = 0.0, thick = 0.1;
+
+  // make the coarse struct mesh (mesh generated with nex = 16 elems along length)
+  TACSMeshLoader<T> mesh_loader{};
+  mesh_loader.scanBDFFile("Beam.bdf");
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
+  auto xs0 = assembler.getXpts();
+  int ns = assembler.get_num_nodes();
+
+  // make the fine aero mesh (generated with nex = 37 elems along length)
+  TACSMeshLoader<T> mesh_loader2{};
+  mesh_loader2.scanBDFFile("Beam-fine.bdf");
+  auto assembler_aero = Assembler::createFromBDF(mesh_loader2, Data(E, nu, thick));
+  auto xa0 = assembler_aero.getXpts();
+  int na = assembler_aero.get_num_nodes();  
 
   // perform a factorization on the rowPtr, colPtr (before creating matrix)
   double fillin = 10.0;  // 10.0
@@ -87,9 +97,9 @@ int main(void) {
   double beam_tip_force = 4.0 * E * Izz / length / length;
 
   // compute loads
-  auto h_loads = getTipLoads<T>(assembler, length, beam_tip_force);
+  auto h_loads = getTipLoads<T>(assembler_aero, length, beam_tip_force);
   auto d_loads = h_loads.createDeviceVec();
-  assembler.apply_bcs(d_loads);
+  assembler_aero.apply_bcs(d_loads);
 
   // setup kmat
   auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
@@ -103,19 +113,17 @@ int main(void) {
   // make the struct linear solver
   // TacsLinearStatic struct_solver = TacsLinearStatic(assembler, kmat, linear_solve);  
 
-  int na_surf = assembler.get_num_nodes();
-  AeroSolver aero_solver = AeroSolver(na_surf, d_loads);
+  AeroSolver aero_solver = AeroSolver(na, d_loads);
 
-  auto d_xpts = assembler.getXpts(); // just use same mesh for aero and surf in this example
-  T beta = 10.0, Hreg = 1e-4;
-  int nn = 8, sym = -1;
-  Transfer transfer = Transfer(d_xpts, d_xpts, beta, nn, sym, Hreg);
+  T beta = 3.0, Hreg = 1e-4;
+  int sym = -1, nn = 32;
+  Transfer transfer = Transfer(xs0, xa0, beta, nn, sym, Hreg);
   transfer.initialize();
 
   // make coupled analysis object
   // ----------------------------
 
-  int num_coupled_steps = 2;
+  int num_coupled_steps = 10;
   CoupledDriver driver = CoupledDriver(struct_solver, aero_solver, transfer, num_coupled_steps);
   driver.solve_forward();
 

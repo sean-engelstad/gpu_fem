@@ -298,7 +298,18 @@ class DeviceVec : public BaseVec<T> {
         DeviceVec<T> new_vec(3 * num_nodes);
 
         int num_blocks = (new_vec.N + 32 - 1) / 32;
-        copyRotationalDOF<T, DeviceVec>
+        removeRotationalDOF_kernel<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
+        return new_vec;
+    }
+
+    __HOST__ DeviceVec<T> addRotationalDOF() {
+        // create new vec with only 3*num_nodes length
+        int num_nodes = this->N / 3;  // assumes 6 DOF per node here
+        DeviceVec<T> new_vec(6 * num_nodes);
+
+        int num_blocks = (this->N + 32 - 1) / 32;
+        addRotationalDOF_kernel<T, DeviceVec>
             <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
         return new_vec;
     }
