@@ -197,6 +197,16 @@ class DeviceVec : public BaseVec<T> {
     //     }
     // }
 
+    static void add_vec(DeviceVec<T> vec1, DeviceVec<T> vec2, DeviceVec<T> vec3) {
+        // add us to xs0
+        // use cublas or a custom kernel here for axpy?
+        dim3 block1(32);
+        int nblocks = (vec1.getSize() + block1.x - 1) / block1.x;
+        dim3 grid1(nblocks);
+        vec_add_kernel<T><<<grid1, block1>>>(vec1, vec2, vec3);
+        CHECK_CUDA(cudaDeviceSynchronize());
+    }
+
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
     __HOST__ HostVec<T> createHostVec() {
         HostVec<T> vec(this->N);
@@ -259,6 +269,19 @@ class DeviceVec : public BaseVec<T> {
         }
 
         for (int i = start; i < end; i += stride) {
+            shared_data[i] = this->data[global_start + i];
+        }
+        // make sure you call __syncthreads() at some point after this
+    }
+
+    __DEVICE__ void copyValuesToShared2(const bool active_thread, int start, int end, int stride,
+                                        int global_start, int global_end, T *shared_data) const {
+        // copies values to the shared element array on GPU (shared memory)
+        if (!active_thread) {
+            return;
+        }
+
+        for (int i = start; i < end && (global_start + i) < global_end; i += stride) {
             shared_data[i] = this->data[global_start + i];
         }
         // make sure you call __syncthreads() at some point after this

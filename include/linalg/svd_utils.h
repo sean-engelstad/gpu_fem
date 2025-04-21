@@ -129,11 +129,11 @@ __HOST_DEVICE__ void condSwap(bool swap, T vec1[], T vec2[]) {
 }
 
 template <typename T, int Niter, bool smoothed = true>
-__HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9]) {
+__HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9], double rhoKS = 100.0) {
     // https://pages.cs.wisc.edu/~sifakis/papers/SVD_TR1690.pdf
     T V[9], Q[9], tmp[9];
-    T rhoKS = 10;
-    // T rhoKS = 5.0;
+    // lower rhoKS more choppy load transfer
+    // best is around 100 usually
 
     // initialize V to identify matrix
     for (int i = 0; i < 9; i++) {
@@ -364,15 +364,15 @@ __HOST_DEVICE__ void _QR_3x3_decomp(T B[9], T U[9]) {
     }
 }
 
-template <typename T>
-__HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9],
-                               const bool print = false) {
+template <typename T, int N_iter = 15>
+__HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9], const bool print = false,
+                               double rhoKS = 100.0) {
     // so are given H a 3x3 matrix and we wish to find H = U * Sigma * V^T
 
     // now call the 3x3 eigenvalue problem on A = H^T H = V * Sigma^2 * V^T
     T A[9];
     A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(H, H, A);
-    eig3x3_givens<T, 45>(A, sigma, VT);  // use 15 iterations of convergence
+    eig3x3_givens<T, N_iter>(A, sigma, VT, rhoKS);  // use 15 iterations of convergence
 
     // now do QR decomposition on B = H * V to decomposite it B = QR similar to B=U*Sigma where U is
     // Q
@@ -395,7 +395,11 @@ __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = fa
     T sigma[3], U[9], VT[9];
     // svd3x3_cubic<T>(H, sigma, U, VT, print);
     // svd3x3_givens<T>(H, sigma, U, VT, print);
-    svd3x3_QR<T>(H, sigma, U, VT, print);
+
+    // it's actually quite sensitive to this..
+    constexpr int N_iter = 15;
+    double rhoKS = 100.0;
+    svd3x3_QR<T, N_iter>(H, sigma, U, VT, print, rhoKS);
 
     // compute rotation matrix R = U * VT
     A2D::MatMatMultCore3x3<T>(U, VT, R);

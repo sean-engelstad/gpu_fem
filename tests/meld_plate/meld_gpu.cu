@@ -38,15 +38,16 @@ int main() {
     int sym = -1; // no symmetry yet I believe
     // double Hreg = 1e-1; // regularization for H
     double Hreg = 0.0;
-    auto meld = MELD<T, NN_MAX>(d_xs0, d_xa0, beta, NN_MAX, sym, Hreg);
+    static constexpr bool oneshot = false;
+    auto meld = MELD<T, NN_MAX, false, oneshot>(d_xs0, d_xa0, beta, NN_MAX, sym, Hreg);
     meld.initialize();
 
     // transfer disps
     auto d_ua = meld.transferDisps(d_us);
     auto h_ua = d_ua.createHostVec();
 
-    printf("us:");
-    printVec<T>(10, h_us.getPtr());
+    // printf("us:");
+    // printVec<T>(10, h_us.getPtr());
     // printf("ua:");
     // printVec<T>(2700, h_ua.getPtr());
 

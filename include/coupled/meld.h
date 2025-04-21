@@ -1,5 +1,7 @@
 
 #pragma once
+#include <cassert>
+
 #include "cuda_utils.h"
 #include "linalg/vec.h"
 #include "locate_point.h"
@@ -13,10 +15,13 @@
 // the source code is in the FUNtoFEM github,
 // https://github.com/smdogroup/funtofem/blob/master/src/MELD.cpp
 
-template <typename T, int NN_MAX_ = 256, bool linear_ = false>
+template <typename T, int NN_PER_BLOCK_ = 32, bool linear_ = false, bool oneshot_ = false>
 class MELD {
-    static constexpr int NN_MAX = NN_MAX_;  // want NN_MAX to be a multiple of 32
+    static constexpr int NN_PER_BLOCK = NN_PER_BLOCK_;  // want NN_PER_BLOCK to be a multiple of 32
     static constexpr bool linear = linear_;
+    static constexpr bool oneshot =
+        oneshot_;  // whether load and disp transfer is in oneshot kernel or multiple kernels
+                   // (multiple usually faster)
 
    public:
     MELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym, T H_reg,
@@ -34,6 +39,12 @@ class MELD {
 
         fa = DeviceVec<T>(3 * na);
         fs = DeviceVec<T>(3 * ns);
+
+        if constexpr (!oneshot) {
+            xs0_bar = DeviceVec<T>(3 * na);
+            xs_bar = DeviceVec<T>(3 * na);
+            H = DeviceVec<T>(9 * na);
+        }
 
         H_reg = H_reg;
         this->print = print;
@@ -79,32 +90,57 @@ class MELD {
 
         // compute weights (assumes fixed here even) => reinitialize under shape change
         weights = DeviceVec<double>(nn * na);
-        dim3 block(NN_MAX);
-        dim3 grid(na);
 
-        compute_weights_kernel<T, NN_MAX>
-            <<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, weights);
-        CHECK_CUDA(cudaDeviceSynchronize());
-        if (print) printf("\tfinished weights kernel\n");
+        if (print) printf("checkpt2\n");
 
-        // auto h_weights = weights.createHostVec();
-        // printVec<double>(h_weights.getSize(), h_weights.getPtr());
+        if constexpr (oneshot) {
+            dim3 block(NN_PER_BLOCK);
+            dim3 grid(na);
+
+            if (print) printf("before oneshot true kernel\n");
+
+            compute_weights_oneshot_kernel<T, NN_PER_BLOCK>
+                <<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, weights);
+
+            CHECK_CUDA(cudaDeviceSynchronize());
+            if (print) printf("\tfinished weights kernel\n");
+        } else {
+            dim3 block(NN_PER_BLOCK);
+            int NN_MULT = (nn + block.x - 1) / block.x;
+            dim3 grid(na, NN_MULT);
+
+            if (print) printf("before oneshot false kernels\n");
+
+            avgdistsq = DeviceVec<T>(na);
+            sum_weights = DeviceVec<T>(na);
+
+            compute_avgdistsq_kernel<T, NN_PER_BLOCK>
+                <<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, avgdistsq);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            if (print) printf("finished avgdist kernel\n");
+
+            compute_sum_weights_kernel<T, NN_PER_BLOCK>
+                <<<grid, block>>>(nn, aerostruct_conn, xs0, xa0, beta, avgdistsq, sum_weights);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            if (print) printf("finished sum_weights kernel\n");
+
+            compute_weights_kernel<T, NN_PER_BLOCK><<<grid, block>>>(
+                nn, aerostruct_conn, xs0, xa0, beta, avgdistsq, sum_weights, weights);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            if (print) printf("finished weights kernel\n");
+        }
+        if (print) printf("skipped kernels?\n");
     }
 
     __HOST__ void computeAeroStructConn() {
         HostVec<int> conn(nn * na);
         // printf("inside aero struct conn\n");
         auto h_xa0 = xa0.createHostVec();
-
-        // TODO : later do sym case
         auto h_xs = xs0.createHostVec();
-        // printVec<double>(10, h_xs.getPtr());
-        // return;
 
         int min_bin_size = 10;
         int npts = h_xs.getSize() / 3;
         auto *locator = new LocatePoint<T>(h_xs.getPtr(), npts, min_bin_size);
-        // printf("created locate point\n");
 
         int *indx = new int[nn];
         T *dist = new T[nn];
@@ -118,26 +154,10 @@ class MELD {
             locator->locateKClosest(nn, indx, dist, loc_xa0);
 
             for (int k = 0; k < nn; k++) {
-                // not doing reflections for now
-                // if (indx[k] >= ns) {
-                //     int kk = indx[k] - ns;
-                //     conn[nn * i + k] = locate_to_reflected_index[kk];
-                // } else {
-                //     conn[nn * i + k] = indx[k];
-                // }
                 conn[nn * i + k] = indx[k];
             }
-
-            // if (i < 3) {
-            // printf("node %d conn:", i);
-            // printVec<int>(nn, &conn[nn * i]);
-            // }
         }
 
-        // cleanup
-        // if (Xs_dup) {
-        //     delete[] Xs_dup;
-        // }
         if (indx) {
             delete[] indx;
         }
@@ -146,51 +166,71 @@ class MELD {
         }
         delete locator;
 
-        // printf("conn:");
-        // printVec<int>(nn * na, conn.getPtr());
-
-        // then copy onto the device in
         aerostruct_conn = conn.createDeviceVec();
-
-        // auto h_conn = aerostruct_conn.createHostVec();
-        // printf("h_conn:");
-        // printVec<int>(nn * na, h_conn.getPtr());
     }
 
     __HOST__ DeviceVec<T> &transferDisps(DeviceVec<T> &new_us) {
         if (print) printf("inside transferDisps\n");
         new_us.copyValuesTo(us);
         xs.zeroValues();
-
-        // add us to xs0
-        // use cublas or a custom kernel here for axpy?
-        dim3 block1(32);
-        int nblocks = (3 * ns + block1.x - 1) / block1.x;
-        dim3 grid1(nblocks);
-        vec_add_kernel<T><<<grid1, block1>>>(us, xs0, xs);
-        CHECK_CUDA(cudaDeviceSynchronize());
-        if (print) printf("\tfinished vec_add_kernel\n");
-
-        // zero out xa, ua before we change them
         xa.zeroValues();
         ua.zeroValues();
 
-        dim3 block2(NN_MAX);
-        dim3 grid2(na);
-        // dim3 block2(1);
-        // dim3 grid2(1);
+        // add us to xs0 => xs
+        DeviceVec<T>::add_vec(us, xs0, xs);
 
-        transfer_disps_kernel<T, NN_MAX>
-            <<<grid2, block2>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, ua);
+        // transfer displacements
+        // ----------------------
+
+        if constexpr (oneshot) {
+            // for oneshot NN_PER_BLOCK needs to be equal to nn right now
+            dim3 block(NN_PER_BLOCK);
+            dim3 grid(na);
+
+            transfer_disps_oneshot_kernel<T, NN_PER_BLOCK>
+                <<<grid, block>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, ua);
+        } else {
+            // the not oneshot case should be faster than oneshot
+            dim3 reduction_block(NN_PER_BLOCK);
+            int NN_MULT = (nn + reduction_block.x - 1) / reduction_block.x;
+            dim3 reduction_grid(na, NN_MULT);
+
+            // we assume here that nn is an even multiple of NN_PER_BLOCK, so let's check it here
+            assert(nn % NN_PER_BLOCK == 0);
+
+            // reset aero node data arrays
+            xs0_bar.zeroValues();
+            xs_bar.zeroValues();
+            H.zeroValues();
+
+            // call kernel for xs0_bar, xs_bar centroid
+            compute_centroid_kernel<T, NN_PER_BLOCK><<<reduction_grid, reduction_block>>>(
+                nn, H_reg, aerostruct_conn, weights, xs0, xs, xs0_bar, xs_bar);
+
+            // call kernel for covariance matrix H
+            compute_covariance_kernel<T, NN_PER_BLOCK><<<reduction_grid, reduction_block>>>(
+                nn, H_reg, aerostruct_conn, weights, xs0, xs, xs0_bar, xs_bar, H);
+
+            // after reduction, now can parallelize over the aero nodes separately!
+            // take xs0_bar, xs_bar, H on each aero node and compute SVD rotation R
+            // and the final displacements from nonlinear MELD
+            constexpr int NA_PER_BLOCK = 32;
+            dim3 disp_block(NA_PER_BLOCK);
+            int nblocks = (na + disp_block.x - 1) / disp_block.x;
+            dim3 disp_grid(nblocks);
+
+            // call kernel that now computes the rotation with SVD from H and final disps
+            transfer_disps_kernel<T, NA_PER_BLOCK>
+                <<<disp_grid, disp_block>>>(xa0, xs0_bar, xs_bar, H, ua);
+        }
+
         CHECK_CUDA(cudaDeviceSynchronize());
         if (print) printf("\tfinished transfer_disps_kernel\n");
 
-        dim3 block4(32);
-        nblocks = (3 * na + block4.x - 1) / block4.x;
-        dim3 grid4(nblocks);
-        vec_add_kernel<T><<<grid4, block4>>>(ua, xa0, xa);
-        CHECK_CUDA(cudaDeviceSynchronize());
-        if (print) printf("\tfinished vec_add_kernel for ua\n");
+        // ----------------------
+
+        // post add ua to xa0 => xa
+        DeviceVec<T>::add_vec(ua, xa0, xa);
 
         return ua;
     }
@@ -200,19 +240,41 @@ class MELD {
         new_fa.copyValuesTo(fa);
         fs.zeroValues();
 
-        // auto h_fa = fa.createHostVec();
-        // printf("fa:");
-        // printVec<double>(h_fa.getSize(), h_fa.getPtr());
-
-        dim3 block(NN_MAX, 3);  // one warp for parallelization by spatial_dim
-        dim3 grid(na);
-
-        // dim3 block(1, 1);
-        // dim3 grid(1);
+        // transfer loads kernels
+        // ----------------------
 
         if (print) printf("launch transfer_loads_kernel\n");
-        transfer_loads_kernel<T, NN_MAX, linear>
-            <<<grid, block>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
+        if constexpr (oneshot) {
+            // for oneshot NN_PER_BLOCK needs to be equal to nn right now
+            dim3 block(NN_PER_BLOCK, 3);  // one warp for parallelization by spatial_dim
+            dim3 grid(na);
+
+            transfer_loads_oneshot_kernel<T, NN_PER_BLOCK, linear>
+                <<<grid, block>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
+        } else {
+            // the not oneshot case should be faster than oneshot
+            // also this one allows parallelizing to more than 64 nn (oneshot can only go up to 64
+            // without hitting thread limits since H is reduced on each block first)
+
+            // need to consider nearest neighbors for struct load coalescence, so have to
+            // parallelize over that unlike the transfer_disps_kernel which only needs nearest
+            // neighbors for centroid, H computations
+            // imoprtant for NN_PER_BLOCK to be 32, but allows larger NN this way by second grid dim
+            // and as H etc. precomputed
+            dim3 loads_block(NN_PER_BLOCK, 3);  // 3 is for x,y,z load component
+            int NN_mult = (nn + loads_block.x - 1) / loads_block.x;
+            dim3 loads_grid(na, NN_mult);  // parallelize over all nearest neighbors too
+
+            // we assume here that nn is an even multiple of NN_PER_BLOCK, so let's check it here
+            assert(nn % NN_PER_BLOCK == 0);
+
+            // call kernel that now computes the aero to struct load transfer
+            transfer_loads_kernel<T, NN_PER_BLOCK, linear><<<loads_grid, loads_block>>>(
+                nn, aerostruct_conn, weights, xs0, xs, xa0, xa, xs0_bar, xs_bar, H, fa, fs);
+        }
+
+        // ----------------------
+
         CHECK_CUDA(cudaDeviceSynchronize());
         if (print) printf("\tdone with transfer_loads_kernel\n");
 
@@ -224,6 +286,8 @@ class MELD {
     DeviceVec<T> xs, xa;
     DeviceVec<T> us, ua;
     DeviceVec<T> fs, fa;
+    DeviceVec<T> xs0_bar, xs_bar, H;
+    DeviceVec<T> avgdistsq, sum_weights;
     DeviceVec<int> aerostruct_conn;
     double beta;
     int sym, nn;
