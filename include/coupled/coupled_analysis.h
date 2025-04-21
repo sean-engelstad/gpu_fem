@@ -37,12 +37,12 @@ class FuntofemCoupledAnalysis {
             aero_solver.solve(ua);  // or iterate
             fa = aero_solver.getAeroLoads();
             fs = transfer.transferLoads(fa);
-            fs_ext = fs.addRotationalDOF();
+            fs.addRotationalDOF(fs_ext);
             // TODO : need some way to continue the struct soln better for coupled scheme
             // for now just reset the struct variables since I'm starting from scratch
             if (demo) struct_solver.resetSoln();
             struct_solver.solve(fs_ext);
-            us = struct_solver.getStructDisps();
+            struct_solver.getStructDisps(us);
 
             // if (demo) {
             //     // debug print
@@ -63,6 +63,14 @@ class FuntofemCoupledAnalysis {
             //     printVec<T>(10, h_us.getPtr());
             // }
         }
+    }
+
+    void free() {
+        us.free();
+        ua.free();
+        fs.free();
+        fa.free();
+        fs_ext.free();
     }
 
    private:

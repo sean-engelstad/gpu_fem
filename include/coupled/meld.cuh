@@ -541,25 +541,6 @@ __GLOBAL__ void transfer_disps_oneshot_kernel(int nn, T H_reg, DeviceVec<int> ae
     T loc_us[3];
     A2D::VecSumCore<T, 3>(1.0, xs_bar, -1.0, xs0_bar, loc_us);
 
-    if (aero_ind == 43 && threadIdx.x == 0) { // 10
-        printf("H:");
-        printVec<T>(9, H);
-        printf("R:");
-        printVec<T>(9, R);
-        printf("xs0_bar:");
-        printVec<T>(3, xs0_bar);
-        printf("xs_bar:");
-        printVec<T>(3, xs_bar);
-
-        // debug
-        T us[3];
-        A2D::VecSumCore<T, 3>(1.0, xs_bar, -1.0, xs0_bar, us);
-        printf("us:");
-        printVec<T>(3, us);
-        printf("loc_ua:");
-        printVec<T>(3, loc_ua);
-    }
-
     // update xa and u0 globally with add reduction by the blockDim.x
     // int nb = blockDim.x;
     // should probably do warp shuffle here among the threads to speed it up
@@ -844,20 +825,10 @@ __GLOBAL__ void transfer_loads_oneshot_kernel(int nn, T H_reg, DeviceVec<int> ae
         // compute forward AD part
         T2 temp = loc_w[inode] * (loc_xs0[3 * inode + idim] + this_us[idim] - xs_bar2[idim]) * 
         (loc_xs0[3 * inode + jdim] - xs0_bar[jdim]);
-        // if (global_struct_node == 32154 && aero_ind % 2 == 1 && threadIdx.x == 3 && threadIdx.y == 2) {
-        //     printf("this_us:");
-        //     printVec<T2>(3, this_us);
-        //     printf("temp[%d]:", jdim);
-        //     printVec<T2>(1, &temp);
-        // }
         if constexpr (!linear) {
             // only include svd jacobian terms if nonlinear MELD
             H2[3 * idim + jdim].deriv[0] = temp.deriv[0];
         }
-    }
-    if (global_struct_node == 32154 && aero_ind % 2 == 1 && threadIdx.x == 3 && threadIdx.y == 2) {
-        printf("H2:");
-        printVec<T2>(9, H2);
     }
 
     // now forward AD types through the SVD and final uA disp calculation
@@ -900,47 +871,4 @@ __GLOBAL__ void transfer_loads_oneshot_kernel(int nn, T H_reg, DeviceVec<int> ae
     int my_ind = 3 * global_struct_node + idim;
 
     atomicAdd(&fs[my_ind], fS_contribution);
-    __syncthreads();
-
-    // if (global_struct_node == 71 and aero_ind == 279 and threadIdx.y == 0) {
-    //     printf("fs[%d] = %.4e\n", my_ind, fs[my_ind]);
-    // }
-
-    // top corner node
-    // int print_dim = 1; // z force
-    // // && global_struct_node == 288
-    // int thread_ind = 41;
-    // // if (global_struct_node == 24060 && aero_ind % 2 == 0 && threadIdx.x == 3 && threadIdx.y == print_dim) {
-    // if (global_struct_node == 32154 && threadIdx.x == thread_ind && threadIdx.y == print_dim) {
-    //     printf("this_us:");
-    //     printVec<T2>(3, this_us);
-        
-    //     printf("xs_bar2:");
-    //     printVec<T2>(3, xs_bar2);
-
-    //     printf("H:");
-    //     printVec<T2>(9, H2);
-
-    //     printf("R in d%d on aero node %d:", threadIdx.y, aero_ind);
-    //     printVec<T2>(9, R);
-
-    //     printf("rho:");
-    //     printVec<T2>(3, rho);
-
-    //     printf("loc_xa:");
-    //     printVec<T2>(3, loc_xa);
-
-    //     printf("loc_ua:");
-    //     printVec<T2>(3, loc_ua);
-
-    //     printf("loc_fa:");
-    //     printVec<T>(3, loc_fa);
-
-    //     printf("fs_contribution:");
-    //     printVec<T>(1, &fS_contribution);
-
-    //     printf("fs:");
-    //     printVec<T>(3, &fs[3 * global_struct_node]);
-    // }
-
 }

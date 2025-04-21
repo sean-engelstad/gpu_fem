@@ -14,9 +14,13 @@ class FixedAeroSolver {
     }
 
     void solve(Vec &ua) {}
-    Vec getAeroLoads() { return fa; }
+    Vec& getAeroLoads() { return fa; }
 
     int get_num_surf_nodes() { return na_surf; }
+
+    void free() {
+        fa.free();
+    }
 
    private:
     int na_surf;
@@ -33,7 +37,11 @@ class Fun3dAeroSolver {
         // TODO put FUN3D wrapper analysis in here
         return;
     }
-    Vec getAeroLoads() { return fa; }
+    Vec& getAeroLoads() { return fa; }
+
+    void free() {
+        fa.free();
+    }
 
    private:
     int na_surf;

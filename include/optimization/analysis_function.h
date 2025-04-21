@@ -24,6 +24,11 @@ class AnalysisFunction {
         setup = true;
     }
 
+    void free() {
+        dv_sens.free();
+        xpt_sens.free();
+    }
+
     //    private:
     // should we make this hostvec later?
     Vec<T> dv_sens;

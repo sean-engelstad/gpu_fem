@@ -43,6 +43,11 @@ class ILUk_Preconditioner {
         // CUSPARSE::numeric_ilu0(precond_mat);
     }
 
+    void free() {
+        mat.free();
+        precond_mat.free();
+    }
+
     // __HOST__ void ~ILUk_Preconditioner() {
     //     delete mat;
     //     delete precond_mat;

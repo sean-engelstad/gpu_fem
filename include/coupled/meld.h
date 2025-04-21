@@ -167,6 +167,10 @@ class MELD {
         delete locator;
 
         aerostruct_conn = conn.createDeviceVec();
+
+        // free data
+        h_xa0.free();
+        h_xs.free();
     }
 
     __HOST__ DeviceVec<T> &transferDisps(DeviceVec<T> &new_us) {
@@ -279,6 +283,22 @@ class MELD {
         if (print) printf("\tdone with transfer_loads_kernel\n");
 
         return fs;
+    }
+
+    void free() {
+        xs0.free();
+        xs.free();
+        xa0.free();
+        xa.free();
+        weights.free();
+        fa.free();
+        fs.free();
+        xs0_bar.free();
+        xs_bar.free();
+        H.free();
+        avgdistsq.free();
+        sum_weights.free();
+        aerostruct_conn.free();
     }
 
    private:

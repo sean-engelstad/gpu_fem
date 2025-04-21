@@ -86,4 +86,15 @@ int main() {
   auto h_rhs = rhs.createHostVec();
   printf("rhs:");
   printVec<T>(10, h_rhs.getPtr());
+
+  // free data
+  assembler.free();
+  h_loads.free();
+  kmat.free();
+  soln.free();
+  res.free();
+  vars.free();
+  h_soln.free();
+  rhs.free();
+  h_rhs.free();
 };

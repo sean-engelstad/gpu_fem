@@ -346,6 +346,12 @@ class BsrMat {
     //     delete values;
     // }
 
+    void free() {
+        // use free not destructor as no pass by ref allowed in kernels and often leads to unintended destructor calls
+        // cannot free bsr_data
+        values.free();
+    }
+
    private:
     const BsrData bsr_data;
     Vec values;

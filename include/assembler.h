@@ -102,6 +102,17 @@ class ElementAssembler {
     // ------------------------
     // end of function declaration section
 
+    void free() {
+        geo_conn.free();
+        vars_conn.free();
+        bcs.free();
+        elem_components.free();
+        xpts.free();
+        vars.free();
+        physData.free();
+        bsr_data.free();
+    }
+
    private:
     int32_t num_geo_nodes;
     int32_t num_vars_nodes;

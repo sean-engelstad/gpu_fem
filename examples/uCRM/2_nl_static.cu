@@ -76,4 +76,15 @@ int main() {
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();
   printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/uCRM_nl.vtk");
+
+  // free data
+  assembler.free();
+  h_loads.free();
+  kmat.free();
+  soln.free();
+  res.free();
+  vars.free();
+  h_soln.free();
+  rhs.free();
+  h_rhs.free();
 };

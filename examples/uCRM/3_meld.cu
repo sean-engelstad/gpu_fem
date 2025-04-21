@@ -122,4 +122,15 @@ int main() {
   // visualization of fa and fs
   printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_fa_ext, "uCRM_fa.vtk");
   printToVTK<Assembler, HostVec<T>>(assembler, h_fs_ext, "uCRM_fs.vtk");
+
+  // free data
+  assembler.free();
+  meld.free();
+  h_xs0.free();
+  h_us.free();
+  h_xa0.free();
+  h_fa.free();
+  h_us_ext.free();
+  h_fa_ext.free();
+  h_fs_ext.free();
 };

@@ -61,7 +61,7 @@ int main(void) {
   // ----------------------------------------
 
   TACSMeshLoader<T> mesh_loader{};
-  mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
+  mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
   int ns = assembler.get_num_nodes();
   int ns_vars = assembler.get_num_vars();
@@ -127,9 +127,11 @@ int main(void) {
                                                 struct_print, abs_tol, rel_tol);
 
     // test coupled driver
-    // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    testCoupledDriverManual<T>(struct_solver, aero_solver, transfer, assembler,
-                               _assembler_aero);
+    testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
+    // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer, assembler,
+    //                            _assembler_aero);
+
+    struct_solver.free();
 
   } else {
     using StructSolver = TacsLinearStatic<T, Assembler>;
@@ -142,7 +144,16 @@ int main(void) {
     testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
     // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
     // assembler, _assembler_aero);
+
+    struct_solver.free();
   }
+
+  // free
+  assembler.free();
+  _assembler_aero.free();
+  d_loads.free();
+  aero_solver.free();
+  transfer.free();
 
   return 0;
 };

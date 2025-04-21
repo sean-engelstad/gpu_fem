@@ -91,6 +91,9 @@ class DenseMat {
     }
 
     // __HOST__ void ~DenseMat() { delete data; }
+    void free() {
+        data.free();
+    }
 
    private:
     int N, N2;

@@ -29,10 +29,19 @@ class BaseTacsStatic {
 
     int get_num_nodes() { return assembler.get_num_nodes(); }
     Vec getStructDisps() { return vars.removeRotationalDOF(); }
+    void getStructDisps(Vec &us_xyz) { vars.removeRotationalDOF(us_xyz); }
     Assembler &getAssembler() { return assembler; }
     void resetSoln() {
         vars.zeroValues();
         assembler.set_variables(vars);
+    }
+
+    void free() {
+        loads.free();
+        soln.free();
+        res.free();
+        vars.free();
+        rhs.free();
     }
 
     // void solve(Vec &struct_loads);  // virtual

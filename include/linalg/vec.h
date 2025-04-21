@@ -326,6 +326,13 @@ class DeviceVec : public BaseVec<T> {
         return new_vec;
     }
 
+    __HOST__ void removeRotationalDOF(DeviceVec<T> &new_vec) {
+
+        int num_blocks = (new_vec.N + 32 - 1) / 32;
+        removeRotationalDOF_kernel<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
+    }
+
     __HOST__ DeviceVec<T> addRotationalDOF() {
         // create new vec with only 3*num_nodes length
         int num_nodes = this->N / 3;  // assumes 6 DOF per node here
@@ -335,6 +342,12 @@ class DeviceVec : public BaseVec<T> {
         addRotationalDOF_kernel<T, DeviceVec>
             <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
         return new_vec;
+    }
+
+    __HOST__ void addRotationalDOF(DeviceVec<T> &new_vec) {
+        int num_blocks = (this->N + 32 - 1) / 32;
+        addRotationalDOF_kernel<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
     }
 
     __DEVICE__ void addElementValuesFromShared(const bool active_thread, const int start,
@@ -353,8 +366,14 @@ class DeviceVec : public BaseVec<T> {
             atomicAdd(&this->data[iglobal], shared_data[idof]);
         }
     }
+
+    void free() {
+        if (this->data) {
+            cudaFree(this->data);
+        }
+    }
 #endif  // USE_GPU
-};
+}; // end of DeviceVec
 
 template <typename T>
 class HostVec : public BaseVec<T> {
@@ -430,7 +449,13 @@ class HostVec : public BaseVec<T> {
     }
 
     __HOST__ HostVec<T> createHostVec() { return *this; }
-};
+
+    void free() {
+        if (this->data) {
+            delete[] this->data;
+        }
+    }
+}; // end of HostVec
 
 /*
 convertVec : converts vec to host or device vec depending on whether
