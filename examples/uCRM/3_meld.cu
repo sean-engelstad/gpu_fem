@@ -126,7 +126,7 @@ int main() {
   // -----------------------------
 
   // T beta = 1e-3, Hreg = 1e-8;
-  T beta = 1.0, Hreg = 1e-4;
+  T beta = 0.1, Hreg = 1e-4;
   int sym = -1, nn = 128;
   static constexpr int NN_PER_BLOCK = 32;
   bool meld_print = true;
