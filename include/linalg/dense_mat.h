@@ -14,7 +14,7 @@ class DenseMat {
     }
 
     __HOST_DEVICE__ int getSize() { return N2; }
-    __HOST_DEVICE__ void zeroValues() { data.zeroValues(); }
+    __HOST__ void zeroValues() { data.zeroValues(); }
     __HOST_DEVICE__ Vec getVec() { return data; }
     __HOST__ HostVec<T> createHostVec() { return data.createHostVec(); }
     __HOST_DEVICE__ T *getPtr() { return data.getPtr(); }
@@ -90,7 +90,10 @@ class DenseMat {
         return data[i];
     }
 
-    __HOST__ void ~DenseMat() { delete data; }
+    // __HOST__ void ~DenseMat() { delete data; }
+    void free() {
+        data.free();
+    }
 
    private:
     int N, N2;

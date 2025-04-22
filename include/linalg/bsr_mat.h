@@ -1,4 +1,5 @@
 #pragma once
+
 #include "bsr_utils.h"
 #include "vec.h"
 #ifdef USE_GPU
@@ -137,7 +138,6 @@ class BsrMat {
         apply_mat_bcs_cols_kernel<T, DeviceVec>
             <<<grid, block>>>(bcs, transpose_rowPtr, transpose_colPtr, transpose_block_map, perm,
                               nnodes, valPtr, blocks_per_elem, nnz_per_block, block_dim);
-
         CHECK_CUDA(cudaDeviceSynchronize());
 #endif  // USE_GPU
     }
@@ -155,7 +155,7 @@ class BsrMat {
         int *t_cols = mat.getColPtr();
         T *t_vals = mat.getPtr();
         int block_dim = bsr_data.block_dim;
-        // int block_dim2 = block_dim * block_dim;
+        int block_dim2 = block_dim * block_dim;
         int nnodes = bsr_data.nnodes;
 
 #ifndef USE_GPU
@@ -341,9 +341,15 @@ class BsrMat {
         return values[i];
     }
 
-    __HOST__ void ~BsrMat() {
-        delete bsr_data;
-        delete values;
+    // __HOST__ void ~BsrMat() {
+    //     delete bsr_data;
+    //     delete values;
+    // }
+
+    void free() {
+        // use free not destructor as no pass by ref allowed in kernels and often leads to unintended destructor calls
+        // cannot free bsr_data
+        values.free();
     }
 
    private:

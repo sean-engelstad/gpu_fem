@@ -4,9 +4,11 @@
 #include "TACSShellElementDefs.h"
 #include "TACSShellElementTransform.h"
 
-template <typename T> void printVec(const int N, const T *vec);
+template <typename T>
+void printVec(const int N, const T *vec);
 
-template <> void printVec<double>(const int N, const double *vec) {
+template <>
+void printVec<double>(const int N, const double *vec) {
     for (int i = 0; i < N; i++) {
         printf("%.5e,", vec[i]);
     }
@@ -33,7 +35,7 @@ int main() {
     TacsScalar E = 70.0e9;
     TacsScalar nu = 0.3;
     TacsScalar ys = 1e11;
-    TacsScalar cte = 10e-6; // double check this value
+    TacsScalar cte = 10e-6;  // double check this value
     TacsScalar kappa = 0.0;
     TACSMaterialProperties *mat =
         new TACSMaterialProperties(rho, specific_heat, E, nu, ys, cte, kappa);
@@ -68,6 +70,9 @@ int main() {
     if (nz_vars) {
         for (int ivar = 0; ivar < num_vars; ivar++) {
             vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
+#ifdef NLINEAR
+            vars[ivar] *= 1e6;
+#endif
         }
     }
 
@@ -80,34 +85,40 @@ int main() {
         p_vars2[ivar] = (-1.4543 * 1.024343 + 2.812 * -9.4323 * ivar);
     }
 
-    TacsScalar thick = 0.005; // shell thickness
+    TacsScalar thick = 0.005;  // shell thickness
     TACSIsoShellConstitutive *con = new TACSIsoShellConstitutive(mat, thick);
 
-    // now create the shell element object
+// now create the shell element object
+#ifdef NLINEAR
+    TACSQuad4NonlinearShell *elem = new TACSQuad4NonlinearShell(transform, con);
+#else
     TACSQuad4Shell *elem = new TACSQuad4Shell(transform, con);
+#endif
 
     // call compute energies on the one element
     int elemIndex = 0;
     double time = 0.0;
     // printf("TACS Ue 1 = %.8e\n", *Ue);
-    elem->addJacobian(elemIndex, time, 1.0, 0.0, 0.0, xpts, vars, dvars, ddvars,
-                      res, Kmat);
+    elem->addJacobian(elemIndex, time, 1.0, 0.0, 0.0, xpts, vars, dvars, ddvars, res, Kmat);
 
     // take a vec-mat-vec product on Kmat
     double jac_TD = 0.0;
+    double res_TD = 0.0;
     for (int i = 0; i < 24; i++) {
+        res_TD += p_vars[i] * res[i];
         for (int j = 0; j < 24; j++) {
             jac_TD += p_vars[i] * p_vars2[j] * Kmat[24 * i + j];
         }
     }
 
-    printf("Analytic jac\n");
+    printf("Analytic jacobian CPU\n");
+    printf("res TD = %.8e\n", res_TD);
     printf("jac TD = %.8e\n", jac_TD);
 
     printf("res: ");
     printVec<double>(24, res);
 
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 24; i++) {  // i < 2
         printf("kmat row %d: ", i);
         printVec<double>(num_vars, &Kmat[24 * i]);
     }

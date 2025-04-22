@@ -18,10 +18,11 @@
   http://www.apache.org/licenses/LICENSE-2.0
 */
 
-#include <cctype>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <cctype>
 
 /*!
   This is an interface for reading NASTRAN-style files.
@@ -98,21 +99,20 @@
 
 const int TacsMeshLoaderNumElementTypes = 10;
 
-const char *TacsMeshLoaderElementTypes[] = {
-    "CBAR",  "CQUADR",  "CQUAD4", "CQUAD8", "CQUAD9",
-    "CQUAD", "CHEXA27", "CHEXA",  "CTRIA3", "CTETRA"};
+const char *TacsMeshLoaderElementTypes[] = {"CBAR",  "CQUADR",  "CQUAD4", "CQUAD8", "CQUAD9",
+                                            "CQUAD", "CHEXA27", "CHEXA",  "CTRIA3", "CTETRA"};
 
 // Lower and upper limits for the number of nodes
-const int TacsMeshLoaderElementLimits[][2] = {{2, 2},   // CBAR
-                                              {4, 4},   // CQUADR
-                                              {4, 4},   // CQUAD4
-                                              {8, 8},   // CQUAD8
-                                              {9, 9},   // CQUAD9
-                                              {9, 9},   // CQUAD
-                                              {27, 27}, // CHEXA27
-                                              {8, 8},   // CHEXA
-                                              {3, 3},   // CTRIA3
-                                              {4, 10}}; // CTETRA
+const int TacsMeshLoaderElementLimits[][2] = {{2, 2},    // CBAR
+                                              {4, 4},    // CQUADR
+                                              {4, 4},    // CQUAD4
+                                              {8, 8},    // CQUAD8
+                                              {9, 9},    // CQUAD9
+                                              {9, 9},    // CQUAD
+                                              {27, 27},  // CHEXA27
+                                              {8, 8},    // CHEXA
+                                              {3, 3},    // CTRIA3
+                                              {4, 10}};  // CTETRA
 
 /*
   This class provides a limited capability to read in nodal and
@@ -135,8 +135,9 @@ const int TacsMeshLoaderElementLimits[][2] = {{2, 2},   // CBAR
 // #include "TACSCreator.h"
 // #include "TACSToFH5.h"
 
-template <typename T> class TACSMeshLoader {
-  public:
+template <typename T>
+class TACSMeshLoader {
+   public:
     TACSMeshLoader();
     ~TACSMeshLoader();
 
@@ -182,21 +183,19 @@ template <typename T> class TACSMeshLoader {
 
     // Get the connectivity and boundary conditions
     // --------------------------------------------
-    void getConnectivity(int *_num_nodes, int *_num_elements,
-                         const int **_elem_node_ptr,
-                         const int **_elem_node_conn,
-                         const int **_elem_component, const T **_Xpts);
-    void getBCs(int *_num_bcs, const int **_bc_nodes, const int **_bc_vars,
-                const int **_bc_ptr, const T **_bc_vals);
+    void getConnectivity(int *_num_nodes, int *_num_elements, const int **_elem_node_ptr,
+                         const int **_elem_node_conn, const int **_elem_component, const T **_Xpts);
+    void getBCs(int *_num_bcs, const int **_bc_nodes, const int **_bc_vars, const int **_bc_ptr,
+                const T **_bc_vals);
 
     // for element assembler only (all args except arg1 are basically in-out
     // that we set from here to the outer script))
-    void getAssemblerCreatorData(const int vars_per_node, int &my_num_nodes,
-                                 int &my_num_elements, int &my_num_bcs,
-                                 int *&my_elem_conn, int *&my_bcs,
-                                 T *&my_xpts) {
+    void getAssemblerCreatorData(const int vars_per_node, int &my_num_nodes, int &my_num_elements,
+                                 int &my_num_bcs, int &my_num_components, int *&my_elem_conn,
+                                 int *&my_bcs, int *&my_elem_components, T *&my_xpts) {
         my_num_nodes = num_nodes;
         my_num_elements = num_elements;
+        my_num_components = num_components;
 
         my_elem_conn = new int[elem_conn_size];
         // deep copy it
@@ -218,13 +217,19 @@ template <typename T> class TACSMeshLoader {
         }
 
         // deep copy
+        my_elem_components = new int[num_elements];
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            my_elem_components[ielem] = elem_component[ielem];
+        }
+
+        // deep copy
         my_xpts = new T[3 * num_nodes];
         for (int j = 0; j < 3 * num_nodes; j++) {
             my_xpts[j] = Xpts[j];
         }
     }
 
-  private:
+   private:
     // Communicator for all processors
     // MPI_Comm comm;
 
@@ -283,8 +288,8 @@ static int compare_arg_sort(const void *a, const void *b) {
 
   Given the line buffer 'line', and the size of the line buffer line_len
 */
-static int read_buffer_line(char *line, size_t line_len, size_t *loc,
-                            char *buffer, size_t buffer_len) {
+static int read_buffer_line(char *line, size_t line_len, size_t *loc, char *buffer,
+                            size_t buffer_len) {
     size_t i = 0;
     for (; (i < line_len) && (*loc < buffer_len); i++, (*loc)++) {
         if (buffer[*loc] == '\n') {
@@ -301,7 +306,7 @@ static int read_buffer_line(char *line, size_t line_len, size_t *loc,
         (*loc)++;
     }
 
-    (*loc)++; // Increment so that loc is at the next location
+    (*loc)++;  // Increment so that loc is at the next location
 
     return i;
 }
@@ -313,8 +318,7 @@ static int read_buffer_line(char *line, size_t line_len, size_t *loc,
 
   list[arg[k]] = var
 */
-static int find_index_arg_sorted(int var, int size, const int *list,
-                                 const int *args) {
+static int find_index_arg_sorted(int var, int size, const int *list, const int *args) {
     // Binary search an array to find k such that list[k] = var,
     // where the array list[args[k]] is sorted in ascending
     // order
@@ -416,8 +420,8 @@ static double bdf_atof(char *str) {
 
   This code ignores the coordinate info
 */
-static void parse_node_long_field(char *line, char *line2, int *node, double *x,
-                                  double *y, double *z) {
+static void parse_node_long_field(char *line, char *line2, int *node, double *x, double *y,
+                                  double *z) {
     char Node[32], X[32], Y[32], Z[32];
 
     strncpy(Node, &line[8], 16);
@@ -443,8 +447,7 @@ static void parse_node_long_field(char *line, char *line2, int *node, double *x,
   0 --- 8 --- 16 --- 24 --- 32 --- 40
   GRID  num   coord  x      y      z
 */
-static void parse_node_short_free_field(char *line, int *node, double *x,
-                                        double *y, double *z) {
+static void parse_node_short_free_field(char *line, int *node, double *x, double *y, double *z) {
     char field[5][32];
 
     // Look for a comma
@@ -462,14 +465,13 @@ static void parse_node_short_free_field(char *line, int *node, double *x,
         int end = 8;
         for (int i = 0; i < 5; i++) {
             start = end;
-            while (end < len && line[end] != ',')
-                end++;
+            while (end < len && line[end] != ',') end++;
             int flen = end - start;
             strncpy(field[i], &line[start], flen);
             field[i][flen] = '\0';
             end++;
         }
-    } else { // Short-format, fixed width
+    } else {  // Short-format, fixed width
         strncpy(field[0], &line[8], 8);
         field[0][8] = '\0';
         strncpy(field[2], &line[24], 8);
@@ -492,22 +494,19 @@ static void parse_node_short_free_field(char *line, int *node, double *x,
   The element entries are fixed-width. The first entry consists
   of an element type
 */
-static int parse_element_field(size_t *loc, char *buffer,
-                               const size_t buffer_len, const int entry_width,
-                               const int max_num_nodes, int *elem_num,
-                               int *component_num, int *node_nums,
-                               int *num_nodes) {
+static int parse_element_field(size_t *loc, char *buffer, const size_t buffer_len,
+                               const int entry_width, const int max_num_nodes, int *elem_num,
+                               int *component_num, int *node_nums, int *num_nodes) {
     int fail = 0;
     *num_nodes = -1;
-    char line[81]; // Space for the line read from the buffer
-    char node[17]; // Space for the node number
+    char line[81];  // Space for the line read from the buffer
+    char node[17];  // Space for the node number
 
     // Offset to find the first entry - always at position 8
     int entry = 8;
 
     size_t temp_loc = *loc;
-    int line_len =
-        read_buffer_line(line, sizeof(line), &temp_loc, buffer, buffer_len);
+    int line_len = read_buffer_line(line, sizeof(line), &temp_loc, buffer, buffer_len);
 
     // This is a hard failure - no element/component defined
     if (line_len <= 0) {
@@ -546,8 +545,7 @@ static int parse_element_field(size_t *loc, char *buffer,
     int n = 0;
 
     while (n < max_num_nodes) {
-        for (; (n < max_num_nodes) && (entry < line_len);
-             entry += entry_width) {
+        for (; (n < max_num_nodes) && (entry < line_len); entry += entry_width) {
             // Parse the fixed-width entry containing the node number
             strncpy(node, &line[entry], entry_width);
             node[entry_width] = '\0';
@@ -555,8 +553,7 @@ static int parse_element_field(size_t *loc, char *buffer,
             // Check if the entry is entirely blank. Skip the update if it
             // is completely blank
             int count = 0;
-            while (count < entry_width && isspace(node[count]))
-                count++;
+            while (count < entry_width && isspace(node[count])) count++;
             if (count < entry_width) {
                 int temp = atoi(node);
                 if (temp > 0) {
@@ -575,8 +572,7 @@ static int parse_element_field(size_t *loc, char *buffer,
         if ((n < max_num_nodes) && (entry >= line_len)) {
             // Try to read the next line of the file
             temp_loc = *loc;
-            line_len = read_buffer_line(line, sizeof(line), &temp_loc, buffer,
-                                        buffer_len);
+            line_len = read_buffer_line(line, sizeof(line), &temp_loc, buffer, buffer_len);
 
             // This is not a failure - element index/component defined, but
             // if either of these are true, then the next line does not
@@ -622,7 +618,8 @@ static int parse_element_field(size_t *loc, char *buffer,
   the root processor.
 */
 // TACSMeshLoader::TACSMeshLoader(MPI_Comm _comm) {
-template <typename T> TACSMeshLoader<T>::TACSMeshLoader() {
+template <typename T>
+TACSMeshLoader<T>::TACSMeshLoader() {
     // comm = _comm;
 
     // Initialize everything to zero
@@ -654,7 +651,8 @@ template <typename T> TACSMeshLoader<T>::TACSMeshLoader() {
   Note that most of this data will only be allocated on the root
   processor
 */
-template <typename T> TACSMeshLoader<T>::~TACSMeshLoader() {
+template <typename T>
+TACSMeshLoader<T>::~TACSMeshLoader() {
     if (elem_node_conn) {
         delete[] elem_node_conn;
     }
@@ -764,14 +762,13 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
     // int rank;
     // MPI_Comm_rank(comm, &rank);
     int fail = 0;
-    int rank = 0; // we are on host but no MPI in GPU version for now
+    int rank = 0;  // we are on host but no MPI in GPU version for now
 
     const int root = 0;
     if (rank == root) {
         FILE *fp = fopen(file_name, "r");
         if (!fp) {
-            fprintf(stderr, "TACSMeshLoader: Unable to open file %s\n",
-                    file_name);
+            fprintf(stderr, "TACSMeshLoader: Unable to open file %s\n", file_name);
             fail = 1;
             // MPI_Abort(comm, fail);
             return fail;
@@ -798,8 +795,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         // Allocate enough space to store the entire file
         char *buffer = new char[buffer_len];
         if (fread(buffer, 1, buffer_len, fp) != buffer_len) {
-            fprintf(stderr, "[%d] TACSMeshLoader: Problem reading file %s\n",
-                    rank, file_name);
+            fprintf(stderr, "[%d] TACSMeshLoader: Problem reading file %s\n", rank, file_name);
             // MPI_Abort(comm, 1);
             return 1;
         }
@@ -820,8 +816,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                 in_bulk = 1;
                 bulk_start = buffer_loc;
             }
-            read_buffer_line(line, sizeof(line), &buffer_loc, buffer,
-                             buffer_len);
+            read_buffer_line(line, sizeof(line), &buffer_loc, buffer, buffer_len);
         }
 
         // Treat the entire file as bulk data
@@ -839,20 +834,18 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         while (buffer_loc < buffer_len) {
             // Read the first line of the buffer
             size_t buffer_temp_loc = buffer_loc;
-            if (!read_buffer_line(line, sizeof(line), &buffer_temp_loc, buffer,
-                                  buffer_len)) {
+            if (!read_buffer_line(line, sizeof(line), &buffer_temp_loc, buffer, buffer_len)) {
                 fail = 1;
                 break;
             }
 
             if (line[0] != '$') {
-                if (in_bulk && (strncmp(line, "END BULK", 8) == 0 ||
-                                strncmp(line, "ENDDATA", 7) == 0)) {
+                if (in_bulk &&
+                    (strncmp(line, "END BULK", 8) == 0 || strncmp(line, "ENDDATA", 7) == 0)) {
                     buffer_temp_loc = buffer_len;
                 } else if (strncmp(line, "GRID*", 5) == 0) {
                     char line2[81];
-                    if (!read_buffer_line(line2, sizeof(line2),
-                                          &buffer_temp_loc, buffer,
+                    if (!read_buffer_line(line2, sizeof(line2), &buffer_temp_loc, buffer,
                                           buffer_len)) {
                         fail = 1;
                         break;
@@ -879,8 +872,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                     int index = -1;
                     for (int k = 0; k < TacsMeshLoaderNumElementTypes; k++) {
                         int len = strlen(TacsMeshLoaderElementTypes[k]);
-                        if (strncmp(line, TacsMeshLoaderElementTypes[k], len) ==
-                            0) {
+                        if (strncmp(line, TacsMeshLoaderElementTypes[k], len) == 0) {
                             max_num_conn = TacsMeshLoaderElementLimits[k][1];
                             index = k;
 
@@ -896,10 +888,9 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                         // Find the number of entries in the element
                         int elem_num, component_num, num_conn;
                         buffer_temp_loc = buffer_loc;
-                        int fail = parse_element_field(
-                            &buffer_temp_loc, buffer, buffer_len, entry_width,
-                            max_num_conn, &elem_num, &component_num, NULL,
-                            &num_conn);
+                        int fail = parse_element_field(&buffer_temp_loc, buffer, buffer_len,
+                                                       entry_width, max_num_conn, &elem_num,
+                                                       &component_num, NULL, &num_conn);
                         if (fail) {
                             break;
                         }
@@ -982,8 +973,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         while (buffer_loc < buffer_len) {
             // Read the first line of the buffer
             size_t buffer_temp_loc = buffer_loc;
-            if (!read_buffer_line(line, sizeof(line), &buffer_temp_loc, buffer,
-                                  buffer_len)) {
+            if (!read_buffer_line(line, sizeof(line), &buffer_temp_loc, buffer, buffer_len)) {
                 fail = 1;
                 break;
             }
@@ -1004,14 +994,13 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                     sscanf(comp, "%s", &component_descript[33 * comp_num]);
                 }
             }
-            if (line[0] != '$') { // A comment line
-                if (in_bulk && (strncmp(line, "END BULK", 8) == 0 ||
-                                strncmp(line, "ENDDATA", 7) == 0)) {
+            if (line[0] != '$') {  // A comment line
+                if (in_bulk &&
+                    (strncmp(line, "END BULK", 8) == 0 || strncmp(line, "ENDDATA", 7) == 0)) {
                     buffer_temp_loc = buffer_len;
                 } else if (strncmp(line, "GRID*", 5) == 0) {
                     char line2[81];
-                    if (!read_buffer_line(line2, sizeof(line2),
-                                          &buffer_temp_loc, buffer,
+                    if (!read_buffer_line(line2, sizeof(line2), &buffer_temp_loc, buffer,
                                           buffer_len)) {
                         fail = 1;
                         break;
@@ -1019,7 +1008,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                     int node;
                     double x, y, z;
                     parse_node_long_field(line, line2, &node, &x, &y, &z);
-                    file_node_nums[num_nodes] = node - 1; // Get the C ordering
+                    file_node_nums[num_nodes] = node - 1;  // Get the C ordering
                     file_Xpts[3 * num_nodes] = x;
                     file_Xpts[3 * num_nodes + 1] = y;
                     file_Xpts[3 * num_nodes + 2] = z;
@@ -1028,7 +1017,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                     int node;
                     double x, y, z;
                     parse_node_short_free_field(line, &node, &x, &y, &z);
-                    file_node_nums[num_nodes] = node - 1; // Get the C ordering
+                    file_node_nums[num_nodes] = node - 1;  // Get the C ordering
                     file_Xpts[3 * num_nodes] = x;
                     file_Xpts[3 * num_nodes + 1] = y;
                     file_Xpts[3 * num_nodes + 2] = z;
@@ -1110,8 +1099,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                     int index = -1;
                     for (int k = 0; k < TacsMeshLoaderNumElementTypes; k++) {
                         int len = strlen(TacsMeshLoaderElementTypes[k]);
-                        if (strncmp(line, TacsMeshLoaderElementTypes[k], len) ==
-                            0) {
+                        if (strncmp(line, TacsMeshLoaderElementTypes[k], len) == 0) {
                             max_num_conn = TacsMeshLoaderElementLimits[k][1];
                             index = k;
 
@@ -1127,16 +1115,14 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                         // Find the number of entries in the element
                         int elem_num, component_num, num_conn;
                         buffer_temp_loc = buffer_loc;
-                        int fail = parse_element_field(
-                            &buffer_temp_loc, buffer, buffer_len, entry_width,
-                            max_num_conn, &elem_num, &component_num, temp_nodes,
-                            &num_conn);
+                        int fail = parse_element_field(&buffer_temp_loc, buffer, buffer_len,
+                                                       entry_width, max_num_conn, &elem_num,
+                                                       &component_num, temp_nodes, &num_conn);
                         if (fail) {
                             break;
                         }
 
-                        if (strncmp(line, "CQUAD4", 6) == 0 ||
-                            strncmp(line, "CQUADR", 6) == 0) {
+                        if (strncmp(line, "CQUAD4", 6) == 0 || strncmp(line, "CQUADR", 6) == 0) {
                             file_conn[elem_conn_size] = temp_nodes[0] - 1;
                             file_conn[elem_conn_size + 1] = temp_nodes[1] - 1;
                             file_conn[elem_conn_size + 2] = temp_nodes[3] - 1;
@@ -1163,8 +1149,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                             file_conn[elem_conn_size + 7] = temp_nodes[6] - 1;
                         } else {
                             for (int k = 0; k < num_conn; k++) {
-                                file_conn[elem_conn_size + k] =
-                                    temp_nodes[k] - 1;
+                                file_conn[elem_conn_size + k] = temp_nodes[k] - 1;
                             }
                         }
 
@@ -1177,15 +1162,11 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                         num_elements++;
 
                         if (component_elems[9 * (component_num - 1)] == '\0') {
-                            if (strncmp(line, "CTETRA", 6) == 0 &&
-                                num_conn == 10) {
-                                strcpy(
-                                    &component_elems[9 * (component_num - 1)],
-                                    "CTETRA10");
+                            if (strncmp(line, "CTETRA", 6) == 0 && num_conn == 10) {
+                                strcpy(&component_elems[9 * (component_num - 1)], "CTETRA10");
                             } else {
-                                strcpy(
-                                    &component_elems[9 * (component_num - 1)],
-                                    TacsMeshLoaderElementTypes[index]);
+                                strcpy(&component_elems[9 * (component_num - 1)],
+                                       TacsMeshLoaderElementTypes[index]);
                             }
                         }
                     } else {
@@ -1243,8 +1224,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         delete[] file_Xpts;
 
         // Read in the connectivity array and store the information
-        printf("elem_conn_size = %d, num_elements = %d\n", elem_conn_size,
-               num_elements);
+        printf("elem_conn_size = %d, num_elements = %d\n", elem_conn_size, num_elements);
         elem_node_conn = new int[elem_conn_size];
         elem_node_ptr = new int[num_elements + 1];
         elem_component = new int[num_elements];
@@ -1259,8 +1239,8 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                 int node_num = file_conn[j];
 
                 // Find node_num in the list
-                int node = find_index_arg_sorted(
-                    node_num, num_nodes, file_node_nums, node_arg_sort_list);
+                int node =
+                    find_index_arg_sorted(node_num, num_nodes, file_node_nums, node_arg_sort_list);
                 if (node < 0) {
                     elem_node_conn[n] = -1;
                     fail = 1;
@@ -1275,8 +1255,8 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
 
         // Find the boundary condition nodes
         for (int k = 0; k < num_bcs; k++) {
-            int node = find_index_arg_sorted(
-                bc_nodes[k], num_nodes, file_node_nums, node_arg_sort_list);
+            int node =
+                find_index_arg_sorted(bc_nodes[k], num_nodes, file_node_nums, node_arg_sort_list);
             if (node < 0) {
                 fail = 1;
                 bc_nodes[k] = -1;

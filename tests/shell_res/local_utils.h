@@ -1,8 +1,9 @@
 #pragma once
 #include "assembler.h"
-#include "linalg/linalg.h"
+#include "linalg/_linalg.h"
 
-template <class Assembler> Assembler createOneElementAssembler(int num_bcs) {
+template <class Assembler>
+Assembler createOneElementAssembler(int num_bcs) {
     int num_elements = 1;
     int num_geo_nodes = 4;
     int num_vars_nodes = 4;
@@ -26,13 +27,16 @@ template <class Assembler> Assembler createOneElementAssembler(int num_bcs) {
         xpts[ixpt] = 1.0345452 + 2.23123432 * ixpt + 0.323 * ixpt * ixpt;
     }
 
-    double E = 70e9, nu = 0.3, t = 0.005; // aluminum plate
+    double E = 70e9, nu = 0.3, t = 0.005;  // aluminum plate
     using Data = typename Assembler::Data;
     HostVec<Data> physData(num_elements, Data(E, nu, t));
 
     // make the assembler
-    Assembler assembler(num_geo_nodes, num_vars_nodes, num_elements, geo_conn,
-                        vars_conn, xpts, bcs, physData);
+    Assembler assembler(num_geo_nodes, num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, bcs,
+                        physData);
+
+    // so that the bsr_data is on device (otherwise data on host)
+    assembler.symbolic_factorization(1.0, false);
 
     return assembler;
 }

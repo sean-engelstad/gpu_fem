@@ -2,8 +2,8 @@
 #include <complex>
 #include <cstring>
 
-#include "../base/utils.h"
 #include "../cuda_utils.h"
+#include "../utils.h"
 #include "chrono"
 #include "stdlib.h"
 
@@ -63,6 +63,18 @@ class BaseVec {
             data[idof] = 0.0;  // if non-dirichlet bcs handle later.. in TODO
         }
     }
+
+    //     __HOST_DEVICE__ void axpy(T a, Vec<T> x) {
+    //         // this vec is y
+    //         // compute y := a * x + y
+    // #ifdef USE_GPU
+    //         dim3 block(32);
+    //         int nblocks = (this->N + block.x - 1) / block.x;
+    //         dim3 grid(nblocks);
+
+    //         vec_axpy_kernel<T><<<grid, block>>>(this->N, a, x.getPtr(), this->data);
+    // #endif
+    //     }
 
     __HOST_DEVICE__ static int permuteDof(int _idof, int *myPerm, int myBlockDim) {
         int _inode = _idof / myBlockDim;
@@ -185,6 +197,16 @@ class DeviceVec : public BaseVec<T> {
     //     }
     // }
 
+    static void add_vec(DeviceVec<T> vec1, DeviceVec<T> vec2, DeviceVec<T> vec3) {
+        // add us to xs0
+        // use cublas or a custom kernel here for axpy?
+        dim3 block1(32);
+        int nblocks = (vec1.getSize() + block1.x - 1) / block1.x;
+        dim3 grid1(nblocks);
+        vec_add_kernel<T><<<grid1, block1>>>(vec1, vec2, vec3);
+        CHECK_CUDA(cudaDeviceSynchronize());
+    }
+
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
     __HOST__ HostVec<T> createHostVec() {
         HostVec<T> vec(this->N);
@@ -210,7 +232,9 @@ class DeviceVec : public BaseVec<T> {
     }
 
     __HOST__ void copyValuesTo(DeviceVec<T> dest) {
+#ifdef USE_GPU
         cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T), cudaMemcpyDeviceToDevice);
+#endif
     }
 
     __HOST__ DeviceVec<T> createDeviceVec() { return *this; }
@@ -250,6 +274,19 @@ class DeviceVec : public BaseVec<T> {
         // make sure you call __syncthreads() at some point after this
     }
 
+    __DEVICE__ void copyValuesToShared2(const bool active_thread, int start, int end, int stride,
+                                        int global_start, int global_end, T *shared_data) const {
+        // copies values to the shared element array on GPU (shared memory)
+        if (!active_thread) {
+            return;
+        }
+
+        for (int i = start; i < end && (global_start + i) < global_end; i += stride) {
+            shared_data[i] = this->data[global_start + i];
+        }
+        // make sure you call __syncthreads() at some point after this
+    }
+
     __DEVICE__ void copyValuesToShared_BCs(const bool active_thread, const int start,
                                            const int stride, const int dof_per_node,
                                            const int nodes_per_elem, const int32_t *elem_conn,
@@ -271,9 +308,46 @@ class DeviceVec : public BaseVec<T> {
     __DEVICE__ static void copyLocalToShared(const bool active_thread, const T scale, const int N,
                                              const T *local, T *shared) {
         for (int i = 0; i < N; i++) {
+            // shared[i] = scale * local[i];
+            // do some warp reduction across quad pts maybe
             atomicAdd(&shared[i], scale * local[i]);
         }
         __syncthreads();
+    }
+
+    __HOST__ DeviceVec<T> removeRotationalDOF() {
+        // create new vec with only 3*num_nodes length
+        int num_nodes = this->N / 6;  // assumes 6 DOF per node here
+        DeviceVec<T> new_vec(3 * num_nodes);
+
+        int num_blocks = (new_vec.N + 32 - 1) / 32;
+        removeRotationalDOF_kernel<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
+        return new_vec;
+    }
+
+    __HOST__ void removeRotationalDOF(DeviceVec<T> &new_vec) {
+
+        int num_blocks = (new_vec.N + 32 - 1) / 32;
+        removeRotationalDOF_kernel<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
+    }
+
+    __HOST__ DeviceVec<T> addRotationalDOF() {
+        // create new vec with only 3*num_nodes length
+        int num_nodes = this->N / 3;  // assumes 6 DOF per node here
+        DeviceVec<T> new_vec(6 * num_nodes);
+
+        int num_blocks = (this->N + 32 - 1) / 32;
+        addRotationalDOF_kernel<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
+        return new_vec;
+    }
+
+    __HOST__ void addRotationalDOF(DeviceVec<T> &new_vec) {
+        int num_blocks = (this->N + 32 - 1) / 32;
+        addRotationalDOF_kernel<T, DeviceVec>
+            <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
     }
 
     __DEVICE__ void addElementValuesFromShared(const bool active_thread, const int start,
@@ -292,8 +366,14 @@ class DeviceVec : public BaseVec<T> {
             atomicAdd(&this->data[iglobal], shared_data[idof]);
         }
     }
+
+    void free() {
+        if (this->data) {
+            cudaFree(this->data);
+        }
+    }
 #endif  // USE_GPU
-};
+}; // end of DeviceVec
 
 template <typename T>
 class HostVec : public BaseVec<T> {
@@ -369,7 +449,13 @@ class HostVec : public BaseVec<T> {
     }
 
     __HOST__ HostVec<T> createHostVec() { return *this; }
-};
+
+    void free() {
+        if (this->data) {
+            delete[] this->data;
+        }
+    }
+}; // end of HostVec
 
 /*
 convertVec : converts vec to host or device vec depending on whether

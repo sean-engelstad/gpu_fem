@@ -1,17 +1,18 @@
 include ../../Makefile.in
 
-default: gpu
+FILES := 1_linear_static 2_nl_static 3_meld 4_coupled
 
-gpu:
-	@echo "Building uCRM example for GPU"
-	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 linear_static.cu ${LINK}
-	# ${GPU_CXX} -g ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 linear_static.cu ${LINK}
+default: 1_linear_static
 
-run:
-	rm out.txt || echo "no out.txt"
-	rm a.out || echo "no a.out"
-	make gpu
-	./a.out >> out.txt
+nonlinear: 2_nl_static
 
-load_mesh:
-	${CXX} ${CC_FLAGS} ${INCLUDE_FLAGS} -std=c++17 load_mesh.cpp ${CPU_LINK}
+meld: 3_meld
+
+aeroelastic: 4_coupled
+
+clean:
+	rm *.out || echo "no *.out files to remove"
+	rm *.vtk || echo "no *.vtk files to remove"
+
+%: %.cu
+	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 $< -o $@.out ${LINK}

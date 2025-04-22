@@ -3,7 +3,7 @@
 #include <random>
 #include <vector>
 
-#include "../base/utils.h"
+#include "../utils.h"
 #include "chrono"
 #include "cuda_utils.h"
 #include "reordering_utils.h"
@@ -337,8 +337,8 @@ class BsrData {
         return nnzb * block_dim * block_dim;
     }
 
-    __HOST__ void ~BsrData() {
-        if (this->host) {
+    __HOST__ void free() {
+        if (!this->host) {
             if (this->rowPtr) {
                 cudaFree(this->rowPtr);
             }
