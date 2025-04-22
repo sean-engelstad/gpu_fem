@@ -36,10 +36,11 @@ int main() {
     // T beta = 3.0;
     static constexpr int NN_MAX = 32; // choose a multiple of 32 if you can
     int sym = -1; // no symmetry yet I believe
-    // double Hreg = 1e-1; // regularization for H
-    double Hreg = 0.0;
+    int nn = 32; // 32, 64, 256
+    double Hreg = 1e-4;
     static constexpr bool oneshot = false;
-    auto meld = MELD<T, NN_MAX, false, oneshot>(d_xs0, d_xa0, beta, NN_MAX, sym, Hreg);
+    constexpr bool exact_givens = true; // important to be True for good load transfer
+    auto meld = MELD<T, NN_MAX, false, oneshot, exact_givens>(d_xs0, d_xa0, beta, nn, sym, Hreg);
     meld.initialize();
 
     // transfer disps

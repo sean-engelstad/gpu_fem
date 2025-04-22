@@ -78,7 +78,7 @@ __GLOBAL__ void compute_sum_weights_kernel(int nn, DeviceVec<int> aerostruct_con
 
     // compute weights (un-normalized first)
     memset(sum, 0.0, 1 * sizeof(T));
-    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
+    for (int inode = threadIdx.x; inode < NN; inode += blockDim.x) {
         // first compute the distance squared
         T distsq = 0.0;
         for (int idim = 0; idim < 3; idim++) {
@@ -134,8 +134,8 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
     T sum = loc_sum[0];
 
     // compute weights (un-normalized first)
-    memset(loc_w, 0.0, nn * sizeof(T));
-    for (int inode = threadIdx.x; inode < nn; inode += blockDim.x) {
+    memset(loc_w, 0.0, NN * sizeof(T));
+    for (int inode = threadIdx.x; inode < NN; inode += blockDim.x) {
         // first compute the distance squared
         T distsq = 0.0;
         for (int idim = 0; idim < 3; idim++) {
@@ -145,6 +145,13 @@ __GLOBAL__ void compute_weights_kernel(int nn, DeviceVec<int> aerostruct_conn, D
 
         T new_weight = exp(-beta * distsq / avgdistsq);
         loc_w[inode] += new_weight / sum; // add in normalized weights
+    }
+    __syncthreads();
+
+    // debug local weight sum
+    T loc_wsum = 0.0;
+    for (int inode = 0; inode < NN; inode++) {
+        loc_wsum += loc_w[inode]; 
     }
 
     for (int inode = threadIdx.x; inode < NN; inode += blockDim.x) {
@@ -302,7 +309,7 @@ __GLOBAL__ void compute_covariance_kernel(int nn, T H_reg, DeviceVec<int> aerost
     __SHARED__ T loc_H[9];
 
     // copy data from global to shared
-    int glob_start = aero_ind * nn + blockDim.x * blockIdx.y;
+    int glob_start = aero_ind * nn + NN * blockIdx.y;
     bool active_thread = (glob_start + threadIdx.x) < na * nn;
     aerostruct_conn.copyValuesToShared(active_thread, threadIdx.x, NN, blockDim.x, glob_start,
                                        &loc_conn[0]);
@@ -354,12 +361,12 @@ __GLOBAL__ void compute_covariance_kernel(int nn, T H_reg, DeviceVec<int> aerost
     }
 }
 
-template <typename T>
+template <typename T, bool exact_givens = true>
 __HOST_DEVICE__ void compute_aero_disp(T xa0[3], T xs0_bar[3], T xs_bar[3], T H[9], T ua[3]) {
     // get SVD of H (call device function in svd_utils.h)
     T R[9];
     bool print = false;
-    computeRotation<T>(H, R, print);
+    computeRotation<T, exact_givens>(H, R, print);
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];
@@ -424,6 +431,15 @@ __GLOBAL__ void transfer_disps_kernel(DeviceVec<T> glob_xa0, DeviceVec<T> glob_x
         for (int i = 0; i < 3; i++) {
             loc_ua[3 * threadIdx.x + i] = ua[i];
         }
+
+        // if (aero_ind == 899) {
+        //     printf("xs0_bar:");
+        //     printVec<T>(3, xs0_bar);
+        //     printf("xs_bar:");
+        //     printVec<T>(3, xs_bar);
+        //     printf("H:");
+        //     printVec<T>(9, H);
+        // }
     } // end of active_thread check
 
     __syncthreads();
@@ -434,7 +450,7 @@ __GLOBAL__ void transfer_disps_kernel(DeviceVec<T> glob_xa0, DeviceVec<T> glob_x
     }
 }
 
-template <typename T, int NN>
+template <typename T, int NN, bool exact_givens = true>
 __GLOBAL__ void transfer_disps_oneshot_kernel(int nn, T H_reg, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
                                       DeviceVec<T> xs0, DeviceVec<T> xs, DeviceVec<T> xa0,
                                       DeviceVec<T> ua) {
@@ -519,7 +535,7 @@ __GLOBAL__ void transfer_disps_oneshot_kernel(int nn, T H_reg, DeviceVec<int> ae
     // bool print = (aero_ind == 522 || aero_ind == 521) && threadIdx.x == 0;
     bool print = (aero_ind == 521) && threadIdx.x == 0;
     // bool print = false;
-    computeRotation<T>(H, R, print);
+    computeRotation<T, exact_givens>(H, R, print);
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];
@@ -553,7 +569,7 @@ __GLOBAL__ void transfer_disps_oneshot_kernel(int nn, T H_reg, DeviceVec<int> ae
     }
 }
 
-template <typename T, typename T2, bool linear>
+template <typename T, typename T2, bool linear, bool exact_givens = true>
 __HOST_DEVICE__ void compute_virtual_work_load(
     int idim, T weight, T xs0[3], T xs[3], T xa0[3], T xa[3], 
     T xs0_bar[3], T xs_bar[3], T H[9], T fa[3], T *virtual_work_load) {
@@ -593,7 +609,7 @@ __HOST_DEVICE__ void compute_virtual_work_load(
     // AD version of rotation matrix
     T2 R[9];
     bool print = false;
-    computeRotation<T2>(H2, R, print);
+    computeRotation<T2, exact_givens>(H2, R, print);
 
     // compute disp offsets, r = xa0 - xs0_bar
     T2 r2[3];
@@ -622,7 +638,7 @@ __HOST_DEVICE__ void compute_virtual_work_load(
     *virtual_work_load = aero_dot.deriv[0];
 }
 
-template <typename T, int NN_PER_BLOCK, bool linear>
+template <typename T, int NN_PER_BLOCK, bool linear, bool exact_givens = true>
 __GLOBAL__ void transfer_loads_kernel(
     int nn, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
     DeviceVec<T> glob_xs0, DeviceVec<T> glob_xs,
@@ -635,7 +651,7 @@ __GLOBAL__ void transfer_loads_kernel(
     // each block of threads if just computing ua for one aero node
     // among all the nearest neighbor struct nodes
     int aero_ind = blockIdx.x;
-    int nn_block_start = blockIdx.y * gridDim.y;
+    int nn_block_start = blockIdx.y * NN_PER_BLOCK;
     int direc = threadIdx.y;
 
     int na = glob_xa0.getSize() / 3;
@@ -690,7 +706,7 @@ __GLOBAL__ void transfer_loads_kernel(
         }
 
         T fs_load;
-        compute_virtual_work_load<T, T2, linear>(
+        compute_virtual_work_load<T, T2, linear, exact_givens>(
             direc, weight, xs0, xs, xa0, xa,
             xs0_bar, xs_bar, H, fa, &fs_load 
         );
@@ -702,7 +718,7 @@ __GLOBAL__ void transfer_loads_kernel(
     } // end of active_thread check
 }
 
-template <typename T, int NN, bool linear>
+template <typename T, int NN, bool linear, bool exact_givens = true>
 __GLOBAL__ void transfer_loads_oneshot_kernel(int nn, T H_reg, DeviceVec<int> aerostruct_conn, DeviceVec<T> weights,
                                       DeviceVec<T> xs0, DeviceVec<T> xs, DeviceVec<T> xa0,
                                       DeviceVec<T> xa, DeviceVec<T> fa, DeviceVec<T> fs) {
@@ -838,7 +854,7 @@ __GLOBAL__ void transfer_loads_oneshot_kernel(int nn, T H_reg, DeviceVec<int> ae
     // constexpr bool print = aero_ind == 279 and global_struct_node == 71 and threadIdx.y == 0;
     // const bool print = global_struct_node == 217 and threadIdx.x == 0;
     const bool print = false;
-    computeRotation<T2>(H2, R, print);    
+    computeRotation<T2, exact_givens>(H2, R, print);    
 
     // compute disp offsets, r = xa0 - xs0_bar
     T r[3];

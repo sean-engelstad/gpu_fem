@@ -4,11 +4,55 @@
 #include "mesh/TACSMeshLoader.h"
 #include "mesh/vtk_writer.h"
 #include "solvers/_solvers.h"
+#include "_crm_utils.h"
 
 // shell imports
 #include "assembler.h"
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
+
+template <typename T>
+void verify_conservation(HostVec<T> h_us, HostVec<T> h_ua, HostVec<T> h_fs, HostVec<T> h_fa) {
+  // compute total aero forces
+  T fA_tot[3], fS_tot[3];
+  int na = h_fa.getSize() / 3;
+  int ns = h_fs.getSize() / 3;
+  memset(fA_tot, 0.0, 3 * sizeof(T));
+  memset(fS_tot, 0.0, 3 * sizeof(T));
+
+  for (int ia = 0; ia < na; ia++) {
+      for (int idim = 0; idim < 3; idim++) {
+          fA_tot[idim] += h_fa[3 * ia + idim];
+      }
+  }
+
+  for (int is = 0; is < ns; is++) {
+      for (int idim = 0; idim < 3; idim++) {
+          fS_tot[idim] += h_fs[3 * is + idim];
+      }
+  }
+
+  printf("fA_tot:");
+  printVec<double>(3, &fA_tot[0]);
+
+  printf("fS_tot:");
+  printVec<double>(3, &fS_tot[0]);
+
+  // compute total work done
+  T W_A = 0.0, W_S = 0.0;
+  for (int ia = 0; ia < na; ia++) {
+      for (int idim = 0; idim < 3; idim++) {
+          W_A += h_fa[3 * ia + idim] * h_ua[3 * ia + idim];
+      }
+  }
+  for (int is = 0; is < ns; is++) {
+      for (int idim = 0; idim < 3; idim++) {
+          W_S += h_fs[3 * is + idim] * h_us[3 * is + idim];
+      }
+  }
+
+  printf("W_A %.4e, W_S %.4e\n", W_A, W_S);
+}
 
 int main() {
   using T = double;
@@ -56,10 +100,12 @@ int main() {
   // load the coarse mesh for the aero surf
   // --------------------------------------
 
-  TACSMeshLoader<T> mesh_loader_aero{};
-  mesh_loader_aero.scanBDFFile("uCRM-135_wingbox_coarse.bdf");
-  auto _assembler_aero =
-      Assembler::createFromBDF(mesh_loader_aero, Data(E, nu, thick));
+//   TACSMeshLoader<T> mesh_loader_aero{};
+//   mesh_loader_aero.scanBDFFile("uCRM-135_wingbox_coarse.bdf");
+//   auto _assembler_aero =
+//       Assembler::createFromBDF(mesh_loader_aero, Data(E, nu, thick));
+  int nx = 51;  // 101
+  auto _assembler_aero = makeAeroSurfMesh<Assembler>(nx, nx);
   int na = _assembler_aero.get_num_nodes();
   int na_vars = _assembler_aero.get_num_vars();
 
@@ -80,11 +126,14 @@ int main() {
   // -----------------------------
 
   // T beta = 1e-3, Hreg = 1e-8;
-  T beta = 10.0, Hreg = 1e-3;
-  int sym = -1;
-  static constexpr int NN = 32;
+  T beta = 1.0, Hreg = 1e-4;
+  int sym = -1, nn = 128;
+  static constexpr int NN_PER_BLOCK = 32;
   bool meld_print = true;
-  auto meld = MELD<T, NN>(xs0, xa0, beta, NN, sym, Hreg, meld_print);
+  // need exact_givens true for good load transfer, oneshot meld false for higher nn count, linear_meld false for NZ SVD jacobian
+  constexpr bool linear_meld = false, oneshot_meld = false, exact_givens = true;
+  using TransferScheme = MELD<T, NN_PER_BLOCK, linear_meld, oneshot_meld, exact_givens>;
+  auto meld = TransferScheme(xs0, xa0, beta, nn, sym, Hreg, meld_print);
   meld.initialize();
 
   // disp transfer
@@ -122,6 +171,9 @@ int main() {
   // visualization of fa and fs
   printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_fa_ext, "uCRM_fa.vtk");
   printToVTK<Assembler, HostVec<T>>(assembler, h_fs_ext, "uCRM_fs.vtk");
+
+  // verify conservation of force and work
+  verify_conservation<T>(h_us, h_ua, h_fs, h_fa);
 
   // free data
   assembler.free();

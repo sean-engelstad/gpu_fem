@@ -15,13 +15,15 @@
 // the source code is in the FUNtoFEM github,
 // https://github.com/smdogroup/funtofem/blob/master/src/MELD.cpp
 
-template <typename T, int NN_PER_BLOCK_ = 32, bool linear_ = false, bool oneshot_ = false>
+template <typename T, int NN_PER_BLOCK_ = 32, bool linear_ = false, bool oneshot_ = false,
+          bool exact_givens_ = true>
 class MELD {
     static constexpr int NN_PER_BLOCK = NN_PER_BLOCK_;  // want NN_PER_BLOCK to be a multiple of 32
     static constexpr bool linear = linear_;
     static constexpr bool oneshot =
         oneshot_;  // whether load and disp transfer is in oneshot kernel or multiple kernels
                    // (multiple usually faster)
+    static constexpr bool exact_givens = exact_givens_;  // exact givens has improved SVD jacobian
 
    public:
     MELD(DeviceVec<T> &xs0, DeviceVec<T> &xa0, T beta, int num_nearest, int sym, T H_reg,
@@ -210,10 +212,12 @@ class MELD {
             // call kernel for xs0_bar, xs_bar centroid
             compute_centroid_kernel<T, NN_PER_BLOCK><<<reduction_grid, reduction_block>>>(
                 nn, H_reg, aerostruct_conn, weights, xs0, xs, xs0_bar, xs_bar);
+            CHECK_CUDA(cudaDeviceSynchronize());
 
             // call kernel for covariance matrix H
             compute_covariance_kernel<T, NN_PER_BLOCK><<<reduction_grid, reduction_block>>>(
                 nn, H_reg, aerostruct_conn, weights, xs0, xs, xs0_bar, xs_bar, H);
+            CHECK_CUDA(cudaDeviceSynchronize());
 
             // after reduction, now can parallelize over the aero nodes separately!
             // take xs0_bar, xs_bar, H on each aero node and compute SVD rotation R
@@ -253,7 +257,7 @@ class MELD {
             dim3 block(NN_PER_BLOCK, 3);  // one warp for parallelization by spatial_dim
             dim3 grid(na);
 
-            transfer_loads_oneshot_kernel<T, NN_PER_BLOCK, linear>
+            transfer_loads_oneshot_kernel<T, NN_PER_BLOCK, linear, exact_givens>
                 <<<grid, block>>>(nn, H_reg, aerostruct_conn, weights, xs0, xs, xa0, xa, fa, fs);
         } else {
             // the not oneshot case should be faster than oneshot
@@ -273,8 +277,9 @@ class MELD {
             assert(nn % NN_PER_BLOCK == 0);
 
             // call kernel that now computes the aero to struct load transfer
-            transfer_loads_kernel<T, NN_PER_BLOCK, linear><<<loads_grid, loads_block>>>(
-                nn, aerostruct_conn, weights, xs0, xs, xa0, xa, xs0_bar, xs_bar, H, fa, fs);
+            transfer_loads_kernel<T, NN_PER_BLOCK, linear, exact_givens>
+                <<<loads_grid, loads_block>>>(nn, aerostruct_conn, weights, xs0, xs, xa0, xa,
+                                              xs0_bar, xs_bar, H, fa, fs);
         }
 
         // ----------------------

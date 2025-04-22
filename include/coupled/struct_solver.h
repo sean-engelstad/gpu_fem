@@ -87,6 +87,11 @@ class TacsLinearStatic : public BaseTacsStatic<T, Assembler> {
         this->linear_solve(this->kmat, this->loads, this->soln, this->print);
         this->vars.zeroValues();
         this->soln.copyValuesTo(this->vars);
+
+        printf("loads in struct solver");
+        printVec<T>(20, this->loads.createHostVec().getPtr());
+        printf("vars in struct solver");
+        printVec<T>(20, this->vars.createHostVec().getPtr());
     }
 
    private:

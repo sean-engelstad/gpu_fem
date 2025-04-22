@@ -259,6 +259,103 @@ __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9], double rhoKS = 1
     }
 }
 
+template <typename T, int N_iter, bool smoothed = true>
+__HOST_DEVICE__ void eig3x3_exact_givens(T A[9], T sigma[3], T VT[9], double rhoKS = 100.0) {
+    // https://pages.cs.wisc.edu/~sifakis/papers/SVD_TR1690.pdf
+    T V[9], Q[9], tmp[9];
+    // lower rhoKS more choppy load transfer
+    // best is around 100 usually
+
+    // initialize V to identify matrix
+    for (int i = 0; i < 9; i++) {
+        V[i] = 0.0;
+    }
+    for (int j = 0; j < 3; j++) {
+        V[3 * j + j] = 1.0;
+    }
+
+    // printf("Ain: ");
+    // printVec<T>(9, A);
+
+    // printf("V: ");
+    // printVec<T>(9, V);
+
+    // modify A in place using givens rotations each time
+    for (int i = 0; i < N_iter; i++) {
+        // cycle through each pair of (i,j) where i neq j cycle 3
+        for (int cycle = 0; cycle < 3; cycle++) {
+            // compute the new Q givens matrix
+            int i0 = cycle, i1 = (cycle + 1) % 3, i2 = (cycle + 2) % 3;
+            T a11 = A[3 * i0 + i0], a12 = A[3 * i0 + i1],
+              a22 = A[3 * i1 + i1];  // assumes A sym here
+            T omega = 1.0 / sqrt(a12 * a12 + (a11 - a22) * (a11 - a22));
+
+            T th = 0.5 * atan(2.0 * a12 / (a11 - a22 + 1e-10));
+            T s = sin(th);
+            T c = cos(th);
+
+            // reset Q to zero
+            for (int i = 0; i < 9; i++) {
+                Q[i] = 0.0;
+            }
+            Q[3 * i0 + i0] = c;
+            Q[3 * i0 + i1] = -s;
+            Q[3 * i1 + i0] = s;
+            Q[3 * i1 + i1] = c;
+            Q[3 * i2 + i2] = 1.0;
+
+            // update A and full V matrix
+            // V = V * Q
+            for (int i = 0; i < 9; i++) {
+                tmp[i] = V[i];  // copy over to tmp
+            }
+            A2D::MatMatMultCore3x3<T>(tmp, Q, V);
+
+            // A = Q.T @ A @ Q
+            A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(Q, A, tmp);
+            A2D::MatMatMultCore3x3<T>(tmp, Q, A);
+        }
+    }
+
+    // then transpose V into output VT
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            VT[3 * i + j] = V[3 * j + i];
+        }
+    }
+
+    // also get the eigenvalues
+    for (int i = 0; i < 3; i++) {
+        sigma[i] = A[3 * i + i];
+    }
+
+    // now need a ? operator eigenvalue and eigvec sort in rows of VT
+    for (int iouter = 0; iouter < 2; iouter++) {
+        for (int i0 = 0; i0 < 2; i0++) {
+            int i1 = i0 + 1;
+            // now compare sigma[i0] to sigma[i1] with ? operator (for fast GPU performance)
+            if constexpr (smoothed) {
+                T sig_sum = sigma[i0] + sigma[i1];
+                T w1 = exp(rhoKS * sigma[i1] / sig_sum);
+                T w2 = exp(rhoKS * sigma[i0] / sig_sum);
+                T w_sum = w1 + w2;
+                T tmp2 = sigma[i0];
+                sigma[i0] = (w1 * sigma[i1] + w2 * sigma[i0]) / w_sum;
+                sigma[i1] = (w1 * tmp2 + w2 * sigma[i1]) / w_sum;
+
+            } else {
+                bool swap = sigma[i0] < sigma[i1];  // since want descending eigvals
+                condSwap<T, 3>(swap, &VT[3 * i0], &VT[3 * i1]);
+
+                // now also cond swap on sigma
+                T tmp2 = sigma[i0];
+                sigma[i0] = swap ? sigma[i1] : sigma[i0];
+                sigma[i1] = swap ? tmp2 : sigma[i1];
+            }
+        }
+    }
+}
+
 template <typename T>
 __HOST_DEVICE__ void svd3x3_cubic(const T H[9], T sigma[3], T U[9], T VT[9],
                                   const bool print = false) {
@@ -364,7 +461,7 @@ __HOST_DEVICE__ void _QR_3x3_decomp(T B[9], T U[9]) {
     }
 }
 
-template <typename T, int N_iter = 15>
+template <typename T, int N_iter = 15, bool exact_givens = true>
 __HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9], const bool print = false,
                                double rhoKS = 100.0) {
     // so are given H a 3x3 matrix and we wish to find H = U * Sigma * V^T
@@ -372,7 +469,11 @@ __HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9], const 
     // now call the 3x3 eigenvalue problem on A = H^T H = V * Sigma^2 * V^T
     T A[9];
     A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(H, H, A);
-    eig3x3_givens<T, N_iter>(A, sigma, VT, rhoKS);  // use 15 iterations of convergence
+    if constexpr (exact_givens) {
+        eig3x3_exact_givens<T, N_iter>(A, sigma, VT, rhoKS);
+    } else {
+        eig3x3_givens<T, N_iter>(A, sigma, VT, rhoKS);  // use 15 iterations of convergence
+    }
 
     // now do QR decomposition on B = H * V to decomposite it B = QR similar to B=U*Sigma where U is
     // Q
@@ -390,16 +491,18 @@ __HOST_DEVICE__ void svd3x3_QR(const T H[9], T sigma[3], T U[9], T VT[9], const 
     // now we have completed the SVD
 }
 
-template <typename T>
+template <typename T, bool exact_givens = true>
 __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = false) {
     T sigma[3], U[9], VT[9];
     // svd3x3_cubic<T>(H, sigma, U, VT, print);
     // svd3x3_givens<T>(H, sigma, U, VT, print);
 
     // it's actually quite sensitive to this..
-    constexpr int N_iter = 15;
     double rhoKS = 100.0;
-    svd3x3_QR<T, N_iter>(H, sigma, U, VT, print, rhoKS);
+    // exact rotation has much more stable SVD jacobian
+    constexpr int N_iter = exact_givens ? 1 : 15;
+
+    svd3x3_QR<T, N_iter, exact_givens>(H, sigma, U, VT, print, rhoKS);
 
     // compute rotation matrix R = U * VT
     A2D::MatMatMultCore3x3<T>(U, VT, R);

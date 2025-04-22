@@ -27,7 +27,11 @@ int main(void) {
   constexpr bool nonlinear_strain = true;
   constexpr bool linear_meld = false;
   static constexpr int MELD_NN_PER_BLOCK = 32;
-  constexpr bool meld_oneshot = true;  // faster without oneshot
+  constexpr bool meld_oneshot = false;  // faster without oneshot
+  constexpr bool exact_givens = true;
+
+  // nonlinear load settings
+  double load_mag = 3.0; // 1.0 (small)
 
   // type definitions
   // ----------------
@@ -47,7 +51,7 @@ int main(void) {
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
   using AeroSolver = FixedAeroSolver<T, DeviceVec<T>>;
-  using Transfer = MELD<T, MELD_NN_PER_BLOCK, linear_meld, meld_oneshot>;
+  using Transfer = MELD<T, MELD_NN_PER_BLOCK, linear_meld, meld_oneshot, exact_givens>;
   // nonlinear MELD has high loads on spars right now
 
   // build the Tacs prelim objects
@@ -89,7 +93,6 @@ int main(void) {
   assembler.symbolic_factorization(fillin, true);
 
   // compute loads
-  double load_mag = 1.0;
   auto d_loads = getSurfLoads<T>(_assembler_aero, load_mag);
 
   // setup kmat
@@ -103,11 +106,11 @@ int main(void) {
   // T beta = 1e-2, Hreg = 1e-2;
   // T beta = 10.0, Hreg = 1e-4;
 
-  T beta = 10.0, Hreg = 1e-4;
-  int sym = -1, nn = 512;
-  bool meld_print = true;
+  T beta = 0.1, Hreg = 1e-4;
+  int sym = -1, nn = 128;
+  bool meld_print = false;
   Transfer transfer =
-      Transfer(xs0, xa0, beta, MELD_NN_PER_BLOCK, sym, Hreg, meld_print);
+      Transfer(xs0, xa0, beta, nn, sym, Hreg, meld_print);
   transfer.initialize();
 
   // make the solvers and transfer scheme
@@ -118,8 +121,8 @@ int main(void) {
     // -----------------------------
     using StructSolver = TacsNonlinearStaticNewton<T, Assembler>;
 
-    int num_load_factors = 2, num_newton = 30;
-    double abs_tol = 1e-8, rel_tol = 1e-9;
+    int num_load_factors = 10, num_newton = 30;
+    double abs_tol = 1e-8, rel_tol = 1e-8;
     bool struct_print = true;
     TacsNonlinearStaticNewton<T, Assembler> struct_solver =
         TacsNonlinearStaticNewton<T, Assembler>(assembler, kmat, linear_solve,
@@ -127,9 +130,9 @@ int main(void) {
                                                 struct_print, abs_tol, rel_tol);
 
     // test coupled driver
-    testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer, assembler,
-    //                            _assembler_aero);
+    // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
+    testCoupledDriverManual<T>(struct_solver, aero_solver, transfer, assembler,
+                               _assembler_aero);
 
     struct_solver.free();
 

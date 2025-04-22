@@ -33,7 +33,7 @@ int main() {
   using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-  double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
+  double E = 70e9, nu = 0.3, thick = 0.02;  // material & thick properties
 
   // make the assembler from the uCRM mesh
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
@@ -47,7 +47,7 @@ int main() {
   int nvars = assembler.get_num_vars();
   int nnodes = assembler.get_num_nodes();
   HostVec<T> h_loads(nvars);
-  double load_mag = 10.0;
+  double load_mag = 3.0;
   double *h_loads_ptr = h_loads.getPtr();
   for (int inode = 0; inode < nnodes; inode++) {
     h_loads_ptr[6 * inode + 2] = load_mag;
@@ -63,8 +63,8 @@ int main() {
   auto vars = assembler.createVarsVec();
 
   // newton solve => go to 10x the 1m up disp from initial loads
-  int num_load_factors = 100, num_newton = 50;
-  T min_load_factor = 0.1, max_load_factor = 10.0, abs_tol = 1e-8,
+  int num_load_factors = 10, num_newton = 50;
+  T min_load_factor = 0.1, max_load_factor = 23.0, abs_tol = 1e-8,
     rel_tol = 1e-8;
   auto solve_func = CUSPARSE::direct_LU_solve<T>;
   std::string outputPrefix = "out/uCRM_";
@@ -74,8 +74,8 @@ int main() {
       rel_tol, outputPrefix, print);
 
   // print some of the data of host residual
-  auto h_soln = soln.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/uCRM_nl.vtk");
+  auto h_vars = vars.createHostVec();
+  printToVTK<Assembler, HostVec<T>>(assembler, h_vars, "out/uCRM_nl.vtk");
 
   // free data
   assembler.free();
@@ -84,7 +84,6 @@ int main() {
   soln.free();
   res.free();
   vars.free();
-  h_soln.free();
+  h_vars.free();
   rhs.free();
-  h_rhs.free();
 };
