@@ -24,8 +24,8 @@ def get_mat(prefix, nxe):
     print(f"{nxe=}")
     kmat_cpp = np.zeros((nnodes*6,nnodes*6))
 
-    if not os.path.exists(f"elems{num_elements}"):
-        os.mkdir(f"elems{num_elements}")
+    # if not os.path.exists(f"elems{num_elements}"):
+    #     os.mkdir(f"elems{num_elements}")
 
     for block_row in range(nnodes):
         istart = rowPtr[block_row]
@@ -54,7 +54,10 @@ def plot_mat(mat, filename):
     return
 
 if __name__=="__main__":
-    kmat,_,_,_ = get_mat("kmat", nxe=10)
-    plot_mat(kmat, "kmat.png")
-    precond,_,_,_ = get_mat("precond", nxe=10)
-    plot_mat(precond, "precond.png")
+    nxe = 10
+    kmat,_,_,_ = get_mat("kmat", nxe=nxe)
+    plot_mat(kmat, "img/kmat.png")
+    precond,_,_,_ = get_mat("precond", nxe=nxe)
+    plot_mat(precond, "img/precond_pre.png")
+    precond,_,_,_ = get_mat("precond2", nxe=nxe)
+    plot_mat(precond, "img/precond_LU.png")

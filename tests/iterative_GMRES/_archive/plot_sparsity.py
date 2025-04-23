@@ -7,6 +7,7 @@ def read_from_csv(filename):
     return np.loadtxt(filename, delimiter=",")
 
 def plot_sparse_matrix(name):
+    print(f"working on {name}")
     rowPtr = read_from_csv(f"csv/{name}_rowPtr.csv").astype(np.int32)
     colPtr = read_from_csv(f"csv/{name}_colPtr.csv").astype(np.int32)
 
@@ -21,8 +22,10 @@ def plot_sparse_matrix(name):
     # plt.show()
     plt.savefig(f"img/{name}.png", dpi=400)
     plt.close('all')
+    print(f"\tdone with {name}")
 
 if __name__ == "__main__":
-    plot_sparse_matrix("RCM")
-    plot_sparse_matrix("qorder")
+    # plot_sparse_matrix("orig")
+    # plot_sparse_matrix("RCM")
+    # plot_sparse_matrix("qorder")
     plot_sparse_matrix("ILU")
