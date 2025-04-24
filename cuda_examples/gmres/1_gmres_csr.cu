@@ -13,14 +13,14 @@ int main() {
     constexpr bool use_precond = true;
     constexpr bool test_precond = false;
     bool debug = false;
-    T abs_tol = 1e-8, rel_tol = 1e-8, atl_abs_tol = 1e-6;
+    T abs_tol = 1e-8, rel_tol = 1e-8;
 
     // initialize data
     // ---------------
     
     int *rowp, *cols;
-    int M = N;
-    T *vals, *rhs, *soln, *x;
+    // int M = N;
+    T *vals, *rhs, *x;
     int nz = 5 * N - 4 * (int)sqrt((double)N);
 
     // allocate rowp, cols on host
@@ -59,11 +59,9 @@ int main() {
     // create temp vec objects
     // -----------------------
 
-    double *d_resid, *d_tmp1, *d_tmp2, *d_tmp3, *d_w;
+    double *d_resid, *d_tmp, *d_w;
     CHECK_CUDA(cudaMalloc((void **)&d_resid, N * sizeof(T)));
-    CHECK_CUDA(cudaMalloc((void **)&d_tmp1, N * sizeof(T)));
-    CHECK_CUDA(cudaMalloc((void **)&d_tmp2, N * sizeof(T)));
-    CHECK_CUDA(cudaMalloc((void **)&d_tmp3, N * sizeof(T)));
+    CHECK_CUDA(cudaMalloc((void **)&d_tmp, N * sizeof(T)));
     CHECK_CUDA(cudaMalloc((void **)&d_w, N * sizeof(T)));
 
     // create initial cusparse and cublas objects
@@ -86,11 +84,9 @@ int main() {
     // wrap dense vectors into cusparse dense vector objects
     // -----------------------------------------------------
 
-    cusparseDnVecDescr_t vec_rhs, vec_t1, vec_t2, vec_t3, vec_w;
+    cusparseDnVecDescr_t vec_rhs, vec_tmp, vec_w;
     CHECK_CUSPARSE(cusparseCreateDnVec(&vec_rhs, N, d_rhs, CUDA_R_64F));
-    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_t1, N, d_tmp1, CUDA_R_64F));
-    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_t2, N, d_tmp2, CUDA_R_64F));
-    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_t3, N, d_tmp3, CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_tmp, N, d_tmp, CUDA_R_64F));
     CHECK_CUSPARSE(cusparseCreateDnVec(&vec_w, N, d_w, CUDA_R_64F));
     
     // create the matrix CSR objects
@@ -156,7 +152,7 @@ int main() {
     /* Allocate workspace for cuSPARSE */
     CHECK_CUSPARSE(cusparseSpMV_bufferSize(
         cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matA,
-        vec_t1, &floatzero, vec_t2, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
+        vec_tmp, &floatzero, vec_w, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
         &bufferSizeMV));
         CHECK_CUDA( cudaMalloc(&d_bufferMV, bufferSizeMV) );
 
@@ -166,13 +162,13 @@ int main() {
 
     CHECK_CUSPARSE( cusparseSpSV_createDescr(&spsvDescrL) );
     CHECK_CUSPARSE(cusparseSpSV_bufferSize(
-    cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matM_lower, vec_t1, vec_t2, CUDA_R_64F,
+    cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matM_lower, vec_tmp, vec_w, CUDA_R_64F,
     CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL, &bufferSizeL));
     CHECK_CUDA( cudaMalloc(&d_bufferL, bufferSizeL) );
 
     CHECK_CUSPARSE( cusparseSpSV_createDescr(&spsvDescrU) );
     CHECK_CUSPARSE( cusparseSpSV_bufferSize(
-        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matM_upper, vec_t1, vec_t2, CUDA_R_64F,
+        cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matM_upper, vec_tmp, vec_w, CUDA_R_64F,
         CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU, &bufferSizeU));
     CHECK_CUDA( cudaMalloc(&d_bufferU, bufferSizeU) );
 
@@ -194,14 +190,14 @@ int main() {
         // A * my_vec => tmp1
         CHECK_CUSPARSE(cusparseSpMV(
             cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matA,
-            vec_my_vec, &floatzero, vec_t1, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
+            vec_my_vec, &floatzero, vec_tmp, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
             d_bufferMV));
 
         // should get this result in tmp1
         // t1=array([  1,  -3,  -7, -11])
 
         // copy data back to host x vec (just a test of matmult here)
-        CHECK_CUDA(cudaMemcpy(x, d_tmp1, N * sizeof(T), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(x, d_tmp, N * sizeof(T), cudaMemcpyDeviceToHost));
         if (debug && N == 4) {
             printf("A*my_vec=");
             printVec<T>(4, x);
@@ -257,12 +253,12 @@ int main() {
         /* perform triangular solve analysis */
         CHECK_CUSPARSE(cusparseSpSV_analysis(
             cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
-            matM_lower, vec_t1, vec_t2, CUDA_R_64F,
+            matM_lower, vec_tmp, vec_w, CUDA_R_64F,
             CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL, d_bufferL));
 
         CHECK_CUSPARSE(cusparseSpSV_analysis(
             cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
-            matM_upper, vec_t1, vec_t2, CUDA_R_64F,
+            matM_upper, vec_tmp, vec_w, CUDA_R_64F,
             CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU, d_bufferU));
     }
 
@@ -296,19 +292,19 @@ int main() {
         // printf("init vec_rhs:");
         // printVec<T>(NPRINT, h_rhs);
 
-        // zero vec_t2
-        CHECK_CUDA(cudaMemset(d_tmp2, 0.0, N * sizeof(T)));
+        // zero vec_tmp
+        CHECK_CUDA(cudaMemset(d_tmp, 0.0, N * sizeof(T)));
         
         // preconditioner application: d_zm1 = U^-1 L^-1 d_r
         CHECK_CUSPARSE(cusparseSpSV_solve(cusparseHandle,
             CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
-            matM_lower, vec_rhs, vec_t2, CUDA_R_64F,
+            matM_lower, vec_rhs, vec_tmp, CUDA_R_64F,
             CUSPARSE_SPSV_ALG_DEFAULT,
             spsvDescrL) );
             
         CHECK_CUSPARSE(cusparseSpSV_solve(cusparseHandle,
             CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matM_upper,
-            vec_t2, vec_rhs,
+            vec_tmp, vec_rhs,
             CUDA_R_64F,
             CUSPARSE_SPSV_ALG_DEFAULT,
             spsvDescrU));
@@ -326,7 +322,7 @@ int main() {
     g[0] = beta;
 
     // set v0 = r0 / beta (unit vec)
-    T a = 1.0 / beta, b = 0.0;
+    T a = 1.0 / beta;
     CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_rhs, 1, &d_Vmat[0], 1));
 
     T *h_v0 = new T[N];
@@ -355,13 +351,13 @@ int main() {
             // preconditioner application: d_zm1 = U^-1 L^-1 d_r
             CHECK_CUSPARSE(cusparseSpSV_solve(cusparseHandle,
                 CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
-                matM_lower, vec_w, vec_t2, CUDA_R_64F,
+                matM_lower, vec_w, vec_tmp, CUDA_R_64F,
                 CUSPARSE_SPSV_ALG_DEFAULT,
                 spsvDescrL) );
                 
             CHECK_CUSPARSE(cusparseSpSV_solve(cusparseHandle,
                 CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matM_upper,
-                vec_t2, vec_w,
+                vec_tmp, vec_w,
                 CUDA_R_64F,
                 CUSPARSE_SPSV_ALG_DEFAULT,
                 spsvDescrU));
@@ -424,7 +420,7 @@ int main() {
             T *h_tmp = new T[N];
             // printf("checkpt3\n");
             CHECK_CUDA(cudaMemcpy(h_tmp, &d_Vmat[(j+1) * N], N * sizeof(T), cudaMemcpyDeviceToHost));
-            printf("next V:", j);
+            printf("next V:");
             printVec<T>(N, h_tmp);
 
             // if (j == 0) return 0;
@@ -453,14 +449,14 @@ int main() {
         H[n_iter * j + j] = cs[j] * H[n_iter * j + j] + ss[j] * H[n_iter * (j+1) + j];
         H[n_iter * (j+1) + j] = 0.0;
 
-        if (abs(g[j+1]) < (abs_tol + beta * rel_tol) && abs(g[j+1]) < (atl_abs_tol)) {
+        if (abs(g[j+1]) < (abs_tol + beta * rel_tol)) {
             printf("GMRES converged in %d iterations to %.4e resid\n", j+1, g[j+1]);
             jj = j;
             break;
         }
 
         // TODO : should I use givens rotations or nrm_w for convergence? I think givens rotations
-        // if (abs(nrm_w) < (abs_tol + beta * rel_tol) && abs(nrm_w) < (atl_abs_tol)) {
+        // if (abs(nrm_w) < (abs_tol + beta * rel_tol)) {
         //     printf("GMRES converged in %d iterations to %.4e resid\n", j+1, nrm_w);
         //     jj = j;
         //     break;
@@ -526,7 +522,7 @@ int main() {
     // resid = -1 * A * vj + 1 * w
     T float_neg_one = -1.0;
     CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &float_neg_one, matA,
-        vec_rhs, &floatone, vec_t1, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
+        vec_rhs, &floatone, vec_tmp, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
         d_bufferMV));
 
     // now copy solution back to host
