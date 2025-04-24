@@ -1,5 +1,75 @@
 import numpy as np
 import scipy.sparse.linalg as spla
+import scipy.sparse as spp
+
+def get_laplace_system(N):
+
+    n = np.int32(np.sqrt(N))
+    nz = 5 * N - 4 * n
+
+    rowp = np.zeros((N+1,), dtype=np.int32)
+    cols = np.zeros((nz,), dtype=np.int32)
+    vals = np.zeros((nz,))
+    b = np.zeros((N,))
+
+    # now define rowp, cols, vals
+
+    idx = 0
+    for i in range(N):
+        ix = i % n
+        iy = i // n
+
+        rowp[i] = idx
+        if iy > 0: # up
+            vals[idx] = 1.0
+            cols[idx] = i - n
+            idx += 1
+        else:
+            b[i] -= 1.0
+
+        if ix > 0: # left
+            vals[idx] = 1.0
+            cols[idx] = i - 1
+            idx += 1
+        else:
+            pass
+
+        # center
+        vals[idx] = -4.0
+        cols[idx] = i
+        idx += 1
+
+        if (ix < (n-1)):
+            vals[idx] = 1.0
+            cols[idx] = i + 1
+            idx += 1
+        else:
+            pass
+
+        if (iy < (n-1)):
+            vals[idx] = 1.0
+            cols[idx] = i + n
+            idx += 1
+
+    rowp[N] = idx
+
+    # print(f"{rowp=}\n{cols=}\n{vals=}")
+
+    rows = np.zeros((cols.shape[0],))
+    for i in range(cols.shape[0]):
+        if i==0:
+            rows[i] = 0
+        else:
+            inc = cols[i] > cols[i-1]
+            if inc:
+                rows[i] = rows[i-1]
+            else:
+                rows[i] = rows[i-1] + 1
+    # print(F"{rows=}")
+
+
+    A = spp.csr_matrix((vals, (rows, cols)), shape=(N, N))
+    return A, b
 
 def givens_rotation(a, b):
     """Compute the Givens rotation matrix parameters (c, s) such that:
@@ -78,7 +148,8 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
         # Start Arnoldi process
         V[:, 0] = r / beta
         g[0] = beta
-        print(f"{V[:,0]=}")
+        # print(f"{V[:,0]=}")
+        print(f"{g[0]=}")
 
         print(f"GMRES : outer iter {_} resid {beta=}")
 
@@ -86,21 +157,21 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
             w = A @ V[:, j]
             w = M_inv(w)  # Apply preconditioner if given
 
-            print(f"{j=} {w=}")
+            # print(f"{j=} {w=}")
 
             # check norms:
             if j == 0:
                 A_norm = np.linalg.norm(A @ V[:, j])
                 MA_norm = np.linalg.norm(M_inv(A @ V[:, j]))
-                print(f"{A_norm=} {MA_norm=}")
+                # print(f"{A_norm=} {MA_norm=}")
 
             # Gram-Schmidt with reorthogonalization
             for i in range(j + 1):
                 H[i, j] = np.dot(V[:, i], w)
                 w -= H[i, j] * V[:, i]
-                print(f"({i=},{j=}) {H[i,j]=}")
+                # print(f"({i=},{j=}) {H[i,j]=}")
 
-            print(f"post GS {w=}")
+            # print(f"post GS {w=}")
 
             # Reorthogonalization step (fixes numerical loss of orthogonality)
             # optional => can improve numerical stability
@@ -114,7 +185,7 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
                 break
             V[:, j+1] = w / H[j+1, j]
 
-            print(f"{V[:,j+1]=}")
+            # print(f"{V[:,j+1]=}")
 
             givens_option = 2
 
@@ -153,7 +224,7 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
                 g[j+1] = -ss[j] * g_temp
                 # print(f"{cs[j]=}")
                 # print(f"{g[j]=}")
-                print(f"{j=} {g[j]=} {g[j+1]=}")
+                # print(f"{j=} {g[j]=} {g[j+1]=}")
 
                 H[j,j] = cs[j] * H[j,j] + ss[j] * H[j+1,j]
                 H[j+1,j] = 0.0
@@ -175,13 +246,13 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
         # y = np.linalg.solve(H[:restart, :restart], g[:restart])
         # print(f"{H[-1,:j+1]=}")
         Hred = H[:j+1, :j+1]; gred = g[:j+1]
-        print(f"{Hred=} {gred=} {y=}")
-        import matplotlib.pyplot as plt
-        # print(f"{H[j,:j+1]=}")
-        # plt.imshow(H[:j+1, :j+1])
-        # print(f"{j+1=}")
-        plt.imshow(H)
-        plt.show()
+        # print(f"{Hred=} {gred=} {y=}")
+        # import matplotlib.pyplot as plt
+        # # print(f"{H[j,:j+1]=}")
+        # # plt.imshow(H[:j+1, :j+1])
+        # # print(f"{j+1=}")
+        # plt.imshow(H)
+        # plt.show()
 
 
         # Update solution

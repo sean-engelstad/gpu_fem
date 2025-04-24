@@ -1,54 +1,27 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from _gmres_util import gmres
+from _gmres_util import gmres, get_laplace_system
 import scipy.sparse as spp
 
 # N = 4 # 2 nodes
-N = 16
+N = 900 # 16, 900
 
-if (N == 4):
+A, b = get_laplace_system(N)
 
-    A = np.array([
-        [-4, 1, 1, 0],
-        [1, -4, 0, 1],
-        [1, 0, -4, 1],
-        [0, 1, 1, -4]
-    ])
-    b = np.array([-1, -1, 0, 0])
-    x = np.linalg.solve(A, b)
-    print(f"{x=}")
-    # soln should be:
-    # x=array([0.375, 0.375, 0.125, 0.125])
+use_precond = True
+precond_case = 2
 
-if N == 16:
-    rowp = np.array([0,3,7,11,14,18,23,28,32,36,41,46,50,53,57,61,64])
-    cols = np.array([0,1,4,0,1,2,5,1,2,3,6,2,3,7,0,4,5,8,1,4,5,6,9,2,5,6,7,10,3,6,7,11,4,8,9,12,5,8,9,10,13,6,9,10,11,14,7,10,11,15,8,12,13,9,12,13,14,10,13,14,15,11,14,15,])
-    rows = np.zeros((cols.shape[0],))
-    for i in range(cols.shape[0]):
-        if i==0:
-            rows[i] = 0
-        else:
-            inc = cols[i] > cols[i-1]
-            if inc:
-                rows[i] = rows[i-1]
-            else:
-                rows[i] = rows[i-1] + 1
-    print(F"{rows=}")
+# really nice ref on GMRES and python PGMRES (preconditioned)
+# https://relate.cs.illinois.edu/course/CS556-f16/file-version/38da5c7d14e22927a994eeba759f0974b2169fb2/demos/ILU%20preconditioning.html
+# algebraic multigrid solver is by far the fastest..
 
-    vals = np.array([-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,1.00000e+00,1.00000e+00,1.00000e+00,-4.00000e+00,])
-    b = np.array([-1.00000e+00,-1.00000e+00,-1.00000e+00,-1.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,0.00000e+00,])
+if precond_case == 1:
+    # ILU threshold preconditioner with scipy (not ILU(0))
+    M = spp.linalg.spilu(A) if use_precond else None
+elif precond_case == 2:
+    # almost ILU(0) through scipy
+    fill_factor = 1 # 1, 2, 3 ILU(k)
+    M = spp.linalg.spilu(A, drop_tol=1e-12, fill_factor=fill_factor) if use_precond else None
 
-    A = spp.csr_matrix((vals, (rows, cols)), shape=(N, N))
-    x = spp.linalg.spsolve(A, b)
-    print(f"{x=}")
-
-
-my_vec = np.array([1, 2, 3, 4])
-t1 = np.dot(A, my_vec)
-print(f"{t1=}")
-
-w = A @ b / np.linalg.norm(b)
-print(F"{w=}")
-
-x_gmres = gmres(A, b, restart=10)
-print(f"{x_gmres=}")
+x_gmres = gmres(A, b, M=M, restart=100, max_iter=100)
+if N < 100: print(f"{x_gmres=}")
