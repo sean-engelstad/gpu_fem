@@ -4,9 +4,14 @@ from _gmres_util import gmres, get_laplace_system
 import scipy.sparse as spp
 
 # N = 4 # 2 nodes
-N = 900 # 16, 900
+N = 16 # 16, 900
 
 A, b = get_laplace_system(N)
+
+Adense = A.toarray()
+plt.figure()
+plt.imshow(Adense)
+plt.savefig("Adense.png", dpi=400)
 
 use_precond = True
 precond_case = 2

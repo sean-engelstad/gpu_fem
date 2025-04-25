@@ -289,8 +289,10 @@ int main() {
         int NPRINT = N;
         T *h_rhs = new T[NPRINT];
         CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
-        // printf("init vec_rhs:");
-        // printVec<T>(NPRINT, h_rhs);
+        if (debug) {
+            printf("b:");
+            printVec<T>(NPRINT, h_rhs);
+        }
 
         // zero vec_tmp
         CHECK_CUDA(cudaMemset(d_tmp, 0.0, N * sizeof(T)));
@@ -301,6 +303,12 @@ int main() {
             matM_lower, vec_rhs, vec_tmp, CUDA_R_64F,
             CUSPARSE_SPSV_ALG_DEFAULT,
             spsvDescrL) );
+
+        if (debug) {
+            CHECK_CUDA(cudaMemcpy(h_rhs, d_tmp, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
+            printf("L^-1 * b:");
+            printVec<T>(NPRINT, h_rhs);
+        }
             
         CHECK_CUSPARSE(cusparseSpSV_solve(cusparseHandle,
             CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matM_upper,
@@ -309,9 +317,11 @@ int main() {
             CUSPARSE_SPSV_ALG_DEFAULT,
             spsvDescrU));
 
-        CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
-        // printf("precond vec_rhs:");
-        // printVec<T>(NPRINT, h_rhs);
+        if (debug) {
+            CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
+            printf("U^-1 * L^-1 * b:");
+            printVec<T>(NPRINT, h_rhs);
+        }
     }
 
     // GMRES initial residual
@@ -320,6 +330,8 @@ int main() {
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_rhs, 1, &beta));
     printf("GMRES init resid = %.5e\n", beta);
     g[0] = beta;
+
+    // return 0;
 
     // set v0 = r0 / beta (unit vec)
     T a = 1.0 / beta;

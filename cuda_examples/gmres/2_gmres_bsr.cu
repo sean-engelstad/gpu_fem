@@ -2,17 +2,19 @@
 #include "_mat_utils.h"
 
 int main() {
-    using T = double;
+    // double BSR mv routine doesn't work (see archive)
+    // so need to use float instead for BSR matrix
+    using T = float;
 
     // case inputs
     // -----------
 
-    constexpr bool test_mult = true;
-    constexpr bool check_mat_data = true;
-    int N = 4; // 16384
+    constexpr bool test_mult = false;
+    constexpr bool check_mat_data = false;
+    int N = 900; // 16384
     int n_iter = min(N, 200);
     constexpr bool use_precond = true;
-    constexpr bool test_precond = false;
+    constexpr bool print_precond = false;
     bool debug = false;
     T abs_tol = 1e-8, rel_tol = 1e-8;
 
@@ -21,15 +23,15 @@ int main() {
     // initialize data
     // ---------------
     
-    int *rowp, *cols;
+    int *csr_rowp, *csr_cols;
     // int M = N;
-    T *vals, *rhs, *x;
+    T *csr_vals, *rhs, *x;
     int nz = 5 * N - 4 * (int)sqrt((double)N);
 
     // allocate rowp, cols on host
-    rowp = (int*)malloc(sizeof(int) * (N + 1));
-    cols = (int*)malloc(sizeof(int) * nz);
-    vals = (T*)malloc(sizeof(T) * nz);
+    csr_rowp = (int*)malloc(sizeof(int) * (N + 1));
+    csr_cols = (int*)malloc(sizeof(int) * nz);
+    csr_vals = (T*)malloc(sizeof(T) * nz);
     x = (T*)malloc(sizeof(T) * N);
     rhs = (T*)malloc(sizeof(T) * N);
 
@@ -39,47 +41,65 @@ int main() {
     }
 
     // initialize data
-    genLaplaceCSR<T>(rowp, cols, vals, N, nz, rhs);
+    genLaplaceCSR<T>(csr_rowp, csr_cols, csr_vals, N, nz, rhs);
     // now rhs is not zero
+
+    // convert to BSR
+    int *rowp, *cols, nnzb;
+    T *vals;
+    int mb = N /2;
+    int block_dim = 2;
+    CSRtoBSR<T>(block_dim, N, csr_rowp, csr_cols, csr_vals, &rowp, &cols, &vals, &nnzb);
+
+    // printf("nnzb = %d\n", nnzb);
+    // printf("bsr_rowp:");
+    // printVec<int>(N/2+1, rowp);
+    // printf("bsr_cols:");
+    // printVec<int>(nnzb, cols);
+    // printf("bsr_vals:");
+    // printVec<T>(nnzb * 4, vals);
 
     // transfer data to the device
     int *d_rowp, *d_cols;
     T *d_vals, *d_x, *d_rhs, *d_vals_ILU0;
-    CHECK_CUDA(cudaMalloc((void **)&d_rowp, (N+1) * sizeof(int)));
-    CHECK_CUDA(cudaMalloc((void **)&d_cols, nz * sizeof(int)));
-    CHECK_CUDA(cudaMalloc((void **)&d_vals, nz * sizeof(T)));
-    CHECK_CUDA(cudaMalloc((void **)&d_vals_ILU0, nz * sizeof(T)));
+    CHECK_CUDA(cudaMalloc((void **)&d_rowp, (N/2+1) * sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&d_cols, nnzb * sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&d_vals, 4 * nnzb * sizeof(T)));
+    CHECK_CUDA(cudaMalloc((void **)&d_vals_ILU0, 4 * nnzb * sizeof(T)));
     CHECK_CUDA(cudaMalloc((void **)&d_x, N * sizeof(T)));
     CHECK_CUDA(cudaMalloc((void **)&d_rhs, N * sizeof(T)));
 
     // copy data for the matrix over to device
-    CHECK_CUDA(cudaMemcpy(d_rowp, rowp, (N+1) * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_cols, cols, nz * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_vals, vals, nz * sizeof(T), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_rowp, rowp, (N/2+1) * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_cols, cols, nnzb * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_vals, vals, 4 * nnzb * sizeof(T), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_x, x, N * sizeof(T), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_rhs, rhs, N * sizeof(T), cudaMemcpyHostToDevice));
 
     if constexpr (check_mat_data) {
         // also print out d_rowp, d_cols, d_vals to double check their values on host
-        int *h_rowp = new int[5];
-        int *h_cols = new int[12];
-        T *h_vals = new T[12];
+        int nr = N/2+1;
+        int *h_rowp = new int[nr];
+        int *h_cols = new int[nnzb];
+        T *h_vals = new T[4*nnzb];
+
+        printf("mb %d, nnzb %d, N %d, block_dim %d\n", mb, nnzb, N, block_dim);
         
-        CHECK_CUDA(cudaMemcpy(h_rowp, d_rowp, 5 * sizeof(int), cudaMemcpyDeviceToHost));
-        CHECK_CUDA(cudaMemcpy(h_cols, d_cols, 12 * sizeof(int), cudaMemcpyDeviceToHost));
-        CHECK_CUDA(cudaMemcpy(h_vals, d_vals, 12 * sizeof(T), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(h_rowp, d_rowp, nr * sizeof(int), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(h_cols, d_cols, nnzb * sizeof(int), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(h_vals, d_vals, (4 * nnzb) * sizeof(T), cudaMemcpyDeviceToHost));
         printf("d_rowp:");
-        printVec<int>(5, h_rowp);
+        printVec<int>(nr, h_rowp);
         printf("d_cols:");
-        printVec<int>(12, h_cols);
+        printVec<int>(nnzb, h_cols);
         printf("d_vals:");
-        printVec<T>(12, h_vals);
+        printVec<T>(4 * nnzb, h_vals);
     }
 
     // create temp vec objects
     // -----------------------
-
-    double *d_resid, *d_tmp, *d_w;
+    
+    T *d_resid, *d_tmp, *d_w;
     CHECK_CUDA(cudaMalloc((void **)&d_resid, N * sizeof(T)));
     CHECK_CUDA(cudaMalloc((void **)&d_tmp, N * sizeof(T)));
     CHECK_CUDA(cudaMalloc((void **)&d_w, N * sizeof(T)));
@@ -95,36 +115,27 @@ int main() {
     cusparseHandle_t cusparseHandle = NULL;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
+    // wrap dense vectors into cusparse dense vector objects
+    // -----------------------------------------------------
+
+    cusparseDnVecDescr_t vec_rhs, vec_tmp, vec_w;
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_rhs, N, d_rhs, CUDA_R_32F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_tmp, N, d_tmp, CUDA_R_32F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_w, N, d_w, CUDA_R_32F));
+    
+    // create the matrix BSR object
+    // -----------------------------
+
     /* Description of the A matrix */
     cusparseMatDescr_t descrA = 0;
     CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA));
     CHECK_CUSPARSE(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
     CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
 
-    // wrap dense vectors into cusparse dense vector objects
-    // -----------------------------------------------------
-
-    cusparseDnVecDescr_t vec_rhs, vec_tmp, vec_w;
-    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_rhs, N, d_rhs, CUDA_R_64F));
-    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_tmp, N, d_tmp, CUDA_R_64F));
-    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_w, N, d_w, CUDA_R_64F));
-    
-    // create the matrix BSR objects
-    // -----------------------------
-
-    // bsr data
-    int mb = N;
-    int block_dim = 1;
-    int nnzb = nz;
-
-
-    // create ILU(0) preconditioner
-    // ----------------------------
-
-
     // first test the matrix-vec product on GPU
     // ----------------------------------------
     
+    T a = 1.0, b = 0.0;
     if constexpr (test_mult) {
         assert(4 == N);
         T *my_vec = new T[4];
@@ -132,35 +143,15 @@ int main() {
             my_vec[i] = i+1;
         }
 
-        printf("mb = %d, nnzb = %d, block_dim = %d\n", mb, nnzb, block_dim);
-
         T *d_my_vec;
         CHECK_CUDA(cudaMalloc((void **)&d_my_vec, 4 * sizeof(T)));
         CHECK_CUDA(cudaMemcpy(d_my_vec, my_vec, 4 * sizeof(T), cudaMemcpyHostToDevice));
         cusparseDnVecDescr_t vec_my_vec = NULL;
-        CHECK_CUSPARSE(cusparseCreateDnVec(&vec_my_vec, N, d_my_vec, CUDA_R_64F));
-
-        printf("here1\n");
-
-        assert(block_dim > 0);
-        assert(mb > 0);
-        assert(nnzb > 0);
-        assert(d_vals != nullptr);
-        assert(d_rowp != nullptr);
-        assert(d_cols != nullptr);
-        assert(d_my_vec != nullptr);
-        assert(d_tmp != nullptr);       
-
-
-        printf("mb = %d, nnzb = %d, block_dim = %d\n", mb, nnzb, block_dim);
-        printf("d_vals = %p, d_rowp = %p, d_cols = %p, d_my_vec = %p, d_tmp = %p\n",
-            d_vals, d_rowp, d_cols, d_my_vec, d_tmp);
-
+        CHECK_CUSPARSE(cusparseCreateDnVec(&vec_my_vec, N, d_my_vec, CUDA_R_32F));    
 
         // A * my_vec => tmp1
-        // TODO: BSR MV here
-        T a = 1.0, b = 0.0;
-        CHECK_CUSPARSE(cusparseDbsrmv(
+        // BSR MV here
+        CHECK_CUSPARSE(cusparseSbsrmv(
             cusparseHandle, 
             CUSPARSE_DIRECTION_ROW,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -172,11 +163,9 @@ int main() {
             &b,
             d_tmp
         ));
-        
-        printf("here2\n");
 
         // should get this result in tmp1
-        // t1=array([  1,  -3,  -7, -11])
+        // t1=array([  1,  -3,  -7, -11]) [this works now with float!]
 
         // copy data back to host x vec (just a test of matmult here)
         CHECK_CUDA(cudaMemcpy(x, d_tmp, N * sizeof(T), cudaMemcpyDeviceToHost));
@@ -187,9 +176,125 @@ int main() {
 
         return 0;
     }
+    
+    // create ILU(0) preconditioner
+    // ----------------------------
 
+    // copy data over to preconditioner
+    CHECK_CUDA(cudaMemcpy(d_vals_ILU0, d_vals, 4 * nnzb * sizeof(T), cudaMemcpyDeviceToDevice));
 
-    // GMRES solve now with CSR matrix
+    cusparseMatDescr_t descr_M = 0, descr_L = 0, descr_U = 0;
+    bsrilu02Info_t info_M = 0;
+    bsrsv2Info_t info_L = 0, info_U = 0;
+    int pBufferSize_M, pBufferSize_L, pBufferSize_U, pBufferSize;
+    void *pBuffer = 0;
+    int structural_zero, numerical_zero;
+
+    // TODO : change to different solve policy later so parallelizes better
+    const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL, 
+        policy_L = CUSPARSE_SOLVE_POLICY_USE_LEVEL, policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE, trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
+
+    printf("here1\n");
+
+    // create M matrix objects (for full numeric fact)
+    cusparseCreateMatDescr(&descr_M);
+    cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO);
+    cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseCreateBsrilu02Info(&info_M);
+
+    // init L matrix objects (for triangular solve)
+    cusparseCreateMatDescr(&descr_L);
+    cusparseSetMatIndexBase(descr_L, CUSPARSE_INDEX_BASE_ZERO);
+    cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL); // need general for ilu
+    cusparseSetMatFillMode(descr_L, CUSPARSE_FILL_MODE_LOWER);
+    cusparseSetMatDiagType(descr_L, CUSPARSE_DIAG_TYPE_UNIT);
+    cusparseCreateBsrsv2Info(&info_L);
+    
+    // init U matrix objects (for triangular solve)
+    cusparseCreateMatDescr(&descr_U);
+    cusparseSetMatIndexBase(descr_U, CUSPARSE_INDEX_BASE_ZERO);
+    cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL); // need general for ilu
+    cusparseSetMatFillMode(descr_U, CUSPARSE_FILL_MODE_UPPER);
+    cusparseSetMatDiagType(descr_U, CUSPARSE_DIAG_TYPE_NON_UNIT);
+    cusparseCreateBsrsv2Info(&info_U);
+
+    // symbolic and numeric factorizations for the preconditioner
+
+    if constexpr (use_precond) {
+        // create buffers for efficient GPU analysis
+        CHECK_CUSPARSE(cusparseSbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M, 
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_M, &pBufferSize_M));
+        CHECK_CUSPARSE(cusparseSbsrsv2_bufferSize(cusparseHandle, dir, trans_L, mb, nnzb, descr_L,
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_L, &pBufferSize_L))
+        CHECK_CUSPARSE(cusparseSbsrsv2_bufferSize(cusparseHandle, dir, trans_U, mb, nnzb, descr_U,
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, &pBufferSize_U))
+        pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
+        CHECK_CUDA(cudaMalloc((void **)&pBuffer, pBufferSize));
+
+        // printf("here2-1\n");
+        // printf("mb %d, nnzb %d, block_dim %d, pBufferSize %d\n", mb, nnzb, block_dim, pBufferSize);
+        // T *h_vals_ILU0 = new T[4 * nnzb];
+        // CHECK_CUDA(cudaMemcpy(h_vals_ILU0, d_vals_ILU0, 4 * nnzb * sizeof(T), cudaMemcpyDeviceToHost));
+        // printf("h_vals_ILU0:");
+        // printVec<T>(4 * nnzb, h_vals_ILU0);
+        // int *h_rowp = new int[N/2+1];
+        // int *h_cols = new int[nnzb];
+        // CHECK_CUDA(cudaMemcpy(h_rowp, d_rowp, (N/2 + 1) * sizeof(int), cudaMemcpyDeviceToHost));
+        // CHECK_CUDA(cudaMemcpy(h_cols, d_cols, nnzb * sizeof(int), cudaMemcpyDeviceToHost));
+        // printf("h_rowp:");
+        // printVec<int>(N/2+1, h_rowp);
+        // printf("h_cols:");
+        // printVec<int>(nnzb, h_cols);
+
+        // perform ILU symbolic factorization on L
+        CHECK_CUSPARSE(cusparseSbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_M, 
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_M, policy_M, pBuffer));
+        // printf("here2-1-2\n");
+        cusparseStatus_t status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
+        if (status == CUSPARSE_STATUS_ZERO_PIVOT) {
+            printf("A(%d,%d) is missing\n", structural_zero);
+        }
+
+        // analyze sparsity pattern of L for efficient triangular solves
+        CHECK_CUSPARSE(cusparseSbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L, 
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_L, policy_L, pBuffer));
+
+        // analyze sparsity pattern of U for efficient triangular solves
+        CHECK_CUSPARSE(cusparseSbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U, 
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, policy_U, pBuffer));
+
+        // perform ILU numeric factorization (with M policy)
+        CHECK_CUSPARSE(cusparseSbsrilu02(cusparseHandle, dir, mb, nnzb, descr_L, 
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_M, policy_M, pBuffer));
+        status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
+        if (status == CUSPARSE_STATUS_ZERO_PIVOT) {
+            printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
+        }
+
+        // printf("pre device synchronize\n");
+        CHECK_CUDA(cudaDeviceSynchronize());
+    } // end of symbolic and numeric factorizations of the preconditioner (and buffers)    
+
+    // printf("here3\n");
+
+    if constexpr (print_precond && use_precond) {
+        // print A matrix values::
+        T *h_A = new T[4 * nnzb];
+        T *h_M = new T[4 * nnzb];
+        CHECK_CUDA(cudaMemcpy(h_A, d_vals, 4 * nnzb * sizeof(T), cudaMemcpyDeviceToHost));
+        CHECK_CUDA(cudaMemcpy(h_M, d_vals_ILU0, 4 * nnzb * sizeof(T), cudaMemcpyDeviceToHost));
+        
+        printf("h_A:");
+        printVec<T>(4 * nnzb, h_A);
+        printf("h_M:");
+        printVec<T>(4 * nnzb, h_M);
+
+        // test LU solve on each unit vector..
+    }
+
+    // GMRES solve now with BSR matrix
     // -------------------------------
 
     printf("checkpt\n");
@@ -205,33 +310,10 @@ int main() {
     CHECK_CUDA(cudaMalloc((void **)&d_V, N * sizeof(T)));
     // use single cusparseDnVecDescr_t of size N and just update it's values occasionally
     cusparseDnVecDescr_t vec_V;
-    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_V, N, d_V, CUDA_R_64F));
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_V, N, d_V, CUDA_R_32F));
     // other strategy is to make pointer array of cusparseDnVecDescr_t vecs
     // update with void *col_ptr = static_cast<void*>(&d_Vmat[k * N]);
     //             cusparseDnVecSetValues(vec_V, col_ptr)
-
-    // setup the ILU(0) preconditioner (if in use)
-    // -------------------------------------------
-
-    if constexpr (use_precond) {
-        // setup ILU(0) preconditioner here..
-    }
-
-    if constexpr (test_precond && use_precond) {
-        // print A matrix values::
-        T *h_A = new T[nz];
-        T *h_M = new T[nz];
-        CHECK_CUDA(cudaMemcpy(h_A, d_vals, nz * sizeof(T), cudaMemcpyDeviceToHost));
-        CHECK_CUDA(cudaMemcpy(h_M, d_vals_ILU0, nz * sizeof(T), cudaMemcpyDeviceToHost));
-        
-        printf("h_A:");
-        printVec<T>(nz, h_A);
-        printf("h_M:");
-        printVec<T>(nz, h_M);
-
-        // test LU solve on each unit vector..
-    }
-
 
     // GMRES algorithm
     // ----------------------------
@@ -243,14 +325,36 @@ int main() {
         // print part of initial vec_rhs
         int NPRINT = N;
         T *h_rhs = new T[NPRINT];
-        CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
-        // printf("init vec_rhs:");
-        // printVec<T>(NPRINT, h_rhs);
+        if (debug) {
+            CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
+            printf("b:");
+            printVec<T>(NPRINT, h_rhs);
+        }
 
         // zero vec_tmp
         CHECK_CUDA(cudaMemset(d_tmp, 0.0, N * sizeof(T)));
         
-        // TODO : ILU solve U^-1 L^-1 * b
+        // ILU solve U^-1 L^-1 * b
+        // L^-1 * b => tmp
+        a = 1.0;
+        CHECK_CUSPARSE(cusparseSbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_L, d_rhs, d_tmp, policy_L, pBuffer));
+
+        if (debug) {
+            CHECK_CUDA(cudaMemcpy(h_rhs, d_tmp, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
+            printf("L^-1 * b:");
+            printVec<T>(NPRINT, h_rhs);
+        }
+
+        // U^-1 * tmp => into rhs
+        CHECK_CUSPARSE(cusparseSbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
+            d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_tmp, d_rhs, policy_U, pBuffer));
+
+        if (debug) {
+            CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
+            printf("U^-1 * L^-1 * b:");
+            printVec<T>(NPRINT, h_rhs);
+        }
 
         // CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
         // printf("precond vec_rhs:");
@@ -260,13 +364,15 @@ int main() {
     // GMRES initial residual
     // assumes here d_X is 0 initially => so r0 = b - Ax = b
     T beta;
-    CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_rhs, 1, &beta));
+    CHECK_CUBLAS(cublasSnrm2(cublasHandle, N, d_rhs, 1, &beta));
     printf("GMRES init resid = %.5e\n", beta);
     g[0] = beta;
 
+    // return 0;
+
     // set v0 = r0 / beta (unit vec)
-    T a = 1.0 / beta;
-    CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_rhs, 1, &d_Vmat[0], 1));
+    a = 1.0 / beta;
+    CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, d_rhs, 1, &d_Vmat[0], 1));
 
     T *h_v0 = new T[N];
     CHECK_CUDA(cudaMemcpy(h_v0, d_Vmat, N * sizeof(T), cudaMemcpyDeviceToHost));
@@ -286,22 +392,29 @@ int main() {
         CHECK_CUSPARSE(cusparseDnVecSetValues(vec_V, vj_col));
 
         // w = A * vj + 0 * w
-        // TODO : BSR matrix multiply here MV
-        // CHECK_CUSPARSE(cusparseDbsrmv(
-        //     cusparseHandle, 
-        //     CUSPARSE_DIRECTION_ROW,
-        //     CUSPARSE_OPERATION_NON_TRANSPOSE,
-        //     mb, mb, nnzb,
-        //     &a, descrA,
-        //     kmat_vals, dk_rowp, dk_cols,
-        //     block_dim,
-        //     soln_ptr,
-        //     &b,
-        //     resid_ptr
-        // ));
+        // BSR matrix multiply here MV
+        a = 1.0, b = 0.0;
+        CHECK_CUSPARSE(cusparseSbsrmv(
+            cusparseHandle, 
+            CUSPARSE_DIRECTION_ROW,
+            CUSPARSE_OPERATION_NON_TRANSPOSE,
+            mb, mb, nnzb,
+            &a, descrA,
+            d_vals, d_rowp, d_cols,
+            block_dim,
+            &d_Vmat[j * N],
+            &b,
+            d_w
+        ));
 
         if constexpr (use_precond) {
-            // TODO : U^-1 L^-1 * w => w precond solve here
+            // U^-1 L^-1 * w => w precond solve here
+            a = 1.0;
+            CHECK_CUSPARSE(cusparseSbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
+                d_vals_ILU0, d_rowp, d_cols, block_dim, info_L, d_w, d_tmp, policy_L, pBuffer));
+            // U^-1 * tmp => into rhs
+            CHECK_CUSPARSE(cusparseSbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
+                d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_tmp, d_w, policy_U, pBuffer));
         }
 
         // double check and print the value of 
@@ -322,7 +435,7 @@ int main() {
             CHECK_CUSPARSE(cusparseDnVecSetValues(vec_V, vi_col));
 
             T w_vi_dot;
-            CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_w, 1, &d_Vmat[i * N], 1, &w_vi_dot));
+            CHECK_CUBLAS(cublasSdot(cublasHandle, N, d_w, 1, &d_Vmat[i * N], 1, &w_vi_dot));
 
             // H_ij = vi dot w
             H[n_iter * i + j] = w_vi_dot;
@@ -331,7 +444,7 @@ int main() {
             
             // w -= Hij * vi
             a = -H[n_iter * i + j];
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[i * N], 1, d_w, 1));
+            CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, &d_Vmat[i * N], 1, d_w, 1));
         }
 
         // double check and print the value of 
@@ -339,30 +452,30 @@ int main() {
             T *h_w = new T[N];
             // printf("checkpt3\n");
             CHECK_CUDA(cudaMemcpy(h_w, d_w, N * sizeof(T), cudaMemcpyDeviceToHost));
-            printf("h_w[%d] post GS:", j);
-            printVec<T>(N, h_w);
+            // printf("h_w[%d] post GS:", j);
+            // printVec<T>(N, h_w);
 
             // if (j == 0) return 0;
         }
 
         // norm of w
         T nrm_w;
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_w, 1, &nrm_w));
+        CHECK_CUBLAS(cublasSnrm2(cublasHandle, N, d_w, 1, &nrm_w));
 
         // H_{j+1,j}
         H[n_iter * (j+1) + j] = nrm_w;
 
         // v_{j+1} column unit vec = w / H_{j+1,j}
         a = 1.0 / H[n_iter * (j+1) + j];
-        CHECK_CUBLAS(cublasDcopy(cublasHandle, N, d_w, 1, &d_Vmat[(j+1) * N], 1));
-        CHECK_CUBLAS(cublasDscal(cublasHandle, N, &a, &d_Vmat[(j+1) * N], 1));
+        CHECK_CUBLAS(cublasScopy(cublasHandle, N, d_w, 1, &d_Vmat[(j+1) * N], 1));
+        CHECK_CUBLAS(cublasSscal(cublasHandle, N, &a, &d_Vmat[(j+1) * N], 1));
 
         if (debug && N <= 16) {
             T *h_tmp = new T[N];
             // printf("checkpt3\n");
             CHECK_CUDA(cudaMemcpy(h_tmp, &d_Vmat[(j+1) * N], N * sizeof(T), cudaMemcpyDeviceToHost));
-            printf("next V:");
-            printVec<T>(N, h_tmp);
+            // printf("next V:");
+            // printVec<T>(N, h_tmp);
 
             // if (j == 0) return 0;
         }
@@ -396,7 +509,7 @@ int main() {
             break;
         }
 
-        // TODO : should I use givens rotations or nrm_w for convergence? I think givens rotations
+        // should I use givens rotations or nrm_w for convergence? I think givens rotations
         // if (abs(nrm_w) < (abs_tol + beta * rel_tol)) {
         //     printf("GMRES converged in %d iterations to %.4e resid\n", j+1, nrm_w);
         //     jj = j;
@@ -438,7 +551,7 @@ int main() {
     // now solve Householder system H * y = g
     // T *d_y;
     // CHECK_CUDA(cudaMalloc(&d_y, (jj+1) * sizeof(T)));
-    CHECK_CUBLAS(cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, 
+    CHECK_CUBLAS(cublasStrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, 
         CUBLAS_DIAG_NON_UNIT, jj+1, d_Hred, jj+1, d_gred, 1));
     // writes g => y inplace
 
@@ -455,7 +568,7 @@ int main() {
     // zero solution (d_x is already zero)
     for (int j = 0; j < jj+1; j++) {
         a = h_y[j];
-        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[j * N], 1, d_x, 1));
+        CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, &d_Vmat[j * N], 1, d_x, 1));
     }
 
     // TODO : now compute the residual again
@@ -463,7 +576,7 @@ int main() {
     // resid = -1 * A * vj + 1 * w
     // T float_neg_one = -1.0;
     // CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &float_neg_one, matA,
-    //     vec_rhs, &floatone, vec_tmp, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
+    //     vec_rhs, &floatone, vec_tmp, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT,
     //     d_bufferMV));
 
     // now copy solution back to host

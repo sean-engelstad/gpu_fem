@@ -1,9 +1,11 @@
 #include <cmath> 
 #include <cassert>
 #include <cstdio>
+#include <vector>
+#include <algorithm>
 
 template <typename T>
-void genLaplaceCSR(int *rowp, int *cols, double *vals, int N, int nz, double *rhs) {
+void genLaplaceCSR(int *rowp, int *cols, T *vals, int N, int nz, T *rhs) {
     // second order laplace operator on a square domain with nxn nodes for n^2 = N dof
     // linear system based off CUDA samples github here.. created on host first
     // https://github.com/NVIDIA/cuda-samples/tree/master/Samples/4_CUDA_Libraries/conjugateGradientPrecond
@@ -86,9 +88,143 @@ void printVec<int>(const int N, const int *vec) {
 }
 
 template <>
+void printVec<float>(const int N, const float *vec) {
+    for (int i = 0; i < N; i++) {
+        printf("%.5e,", vec[i]);
+    }
+    printf("\n");
+}
+
+template <>
 void printVec<double>(const int N, const double *vec) {
     for (int i = 0; i < N; i++) {
         printf("%.5e,", vec[i]);
     }
     printf("\n");
+}
+
+template <typename T>
+void CSRtoBSR(int block_dim, int N, int *csr_rowp, int *csr_cols, T *csr_vals,
+    int **bsr_rowp, int **bsr_cols, T **bsr_vals, int *nnzb) {
+    assert(block_dim == 2); // for now
+    assert(N % block_dim == 0);
+    std::vector<int> rowp(0), cols;
+    std::vector<T> vals;
+    int block_dim2 = block_dim * block_dim;
+    int nvals = 0;
+    rowp.push_back(0);
+
+    for (int brow = 0; brow < N/2; brow++) {
+        // get list of nonzero block cols
+        std::vector<int> loc_bcols;
+        for (int inner_row = 0; inner_row < 2; inner_row++) {
+            int row = 2 * brow + inner_row;
+            for (int j = csr_rowp[row]; j < csr_rowp[row+1]; j++) {
+                // add any new loc_bcols
+                int col = csr_cols[j];
+                int bcol = col / 2;
+                loc_bcols.push_back(bcol);
+            }
+        }
+
+        // sort and uniquify the local block cols
+        std::sort(loc_bcols.begin(), loc_bcols.end());
+        auto last = std::unique(loc_bcols.begin(), loc_bcols.end());
+        loc_bcols.erase(last, loc_bcols.end());
+
+        // printf("pre sort and uniquify");
+        // printVec<int>(loc_bcols.size(), loc_bcols.data());
+        // printf("brow %d, loc bcols:", brow);
+        // printVec<int>(loc_bcols.size(), loc_bcols.data());
+        int nloc_bcols = loc_bcols.size();
+
+        // then allocate the block data for this row
+        int nbrow_vals = block_dim2*loc_bcols.size();
+        // printf("nbrow_vals = %d\n", nbrow_vals);
+        std::vector<T> loc_bvals(nbrow_vals);
+
+        // now fill in the loc block data values
+        for (int inner_row = 0; inner_row < 2; inner_row++) {
+            int row = 2 * brow + inner_row;
+            for (int j = csr_rowp[row]; j < csr_rowp[row+1]; j++) {
+                // add any new loc_bcols
+                int col = csr_cols[j];
+                int bcol = col / 2;
+                int inner_col = col % 2;
+
+                // find the matching loc_bcol ind
+                int loc_bcol_ind = -1;
+                for (int k = 0; k < nbrow_vals; k++) {
+                    if (bcol == loc_bcols[k]) {
+                        loc_bcol_ind = k;
+                        break;
+                    }
+                }
+
+                int bind = block_dim2 * loc_bcol_ind;
+                int ind = bind + 2 * inner_row + inner_col;
+                // printf("ind %d\n", ind);
+                loc_bvals[ind] = csr_vals[j];
+            }
+        }
+        // printf("done with ")
+
+        // printf("brow p2 %d, loc bdata:\n", brow);
+        // printVec<T>(loc_bvals.size(), loc_bvals.data());
+
+        // update rows, cols, vals now
+        nvals += loc_bcols.size();
+        rowp.push_back(nvals);
+        for (int i = 0; i < nloc_bcols; i++) {
+            cols.push_back(loc_bcols[i]);
+        }
+        for (int i = 0; i < loc_bvals.size(); i++) {
+            vals.push_back(loc_bvals[i]);
+        }
+        // printf("rowp:");
+        // printVec<int>(rowp.size(), rowp.data());
+        // printf("cols:");
+        // printVec<int>(cols.size(), cols.data());
+        // printf("vals:");
+        // printVec<T>(vals.size(), vals.data());
+        // if (brow == 2) return;
+    }
+
+    // printf("rowp:");
+    // printVec<int>(rowp.size(), rowp.data());
+    // printf("cols:");
+    // printVec<int>(cols.size(), cols.data());
+    // printf("vals:");
+    // printVec<T>(vals.size(), vals.data());
+
+    // TODO : copy the new BSR data to the pointers (deep copy out of vectors)
+    // so now on heap
+    // printf("here1\n");
+    *bsr_rowp = new int[rowp.size()];
+    *bsr_cols = new int[cols.size()];
+    *bsr_vals = new T[vals.size()];
+    // printf("here2\n");
+
+    for (int i = 0; i < rowp.size(); i++) {
+        (*bsr_rowp)[i] = rowp[i];
+    }
+    for (int i = 0; i < cols.size(); i++) {
+        (*bsr_cols)[i] = cols[i];
+    }
+    for (int i = 0; i < vals.size(); i++) {
+        (*bsr_vals)[i] = vals[i];
+    }
+    *nnzb = cols.size();
+
+    // printf("nnzb = %d\n", *nnzb);
+    // printf("rowp.size = %ld\n", rowp.size());
+    // printf("cols.size = %ld\n", cols.size());
+    // printf("vals.size = %ld\n", vals.size());
+
+    // printf("bsr_rowp 1:");
+    // printVec<int>(N/2+1, *bsr_rowp);
+    // printf("bsr_cols 1:");
+    // printVec<int>(*nnzb, *bsr_cols);
+    // printf("bsr_vals 1:");
+    // printVec<T>((*nnzb) * 4, *bsr_vals);
 }
