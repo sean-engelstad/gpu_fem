@@ -1,15 +1,20 @@
 
 CUDA_LINK := -lcublas -lcusparse -lcudart -lcusolver
 
-csr: 1_gmres_csr
+Dcsr: 1_gmres_Dcsr
 
-bsr: 2_gmres_bsr
+Sbsr: 2_gmres_Sbsr
 
-csr2: 
-	make csr && ./1_gmres_csr.out
+Dbsr: 3_gmres_Dbsr
 
-bsr2: 
-	make bsr && ./2_gmres_bsr.out
+test:
+	rm *.txt || echo "no *.txt files"
+	make Dcsr
+	make Sbsr
+	make Dbsr
+	./1_gmres_Dcsr.out >> out1.txt
+	./2_gmres_Sbsr.out >> out2.txt
+	./3_gmres_Dbsr.out >> out3.txt
 
 %: %.cu
 	nvcc -Xcompiler "-Wno-deprecated-declarations" $< -o $@.out ${CUDA_LINK}

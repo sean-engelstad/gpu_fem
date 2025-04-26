@@ -77,10 +77,10 @@ void genLaplaceCSR(int *rowp, int *cols, T *vals, int N, int nz, T *rhs) {
 }
 
 template <typename T>
-void printVec(const int N, const T *vec);
+void printVec(const int N, const T *vec, int nl_freq = 4);
 
 template <>
-void printVec<int>(const int N, const int *vec) {
+void printVec<int>(const int N, const int *vec, int nl_freq) {
     for (int i = 0; i < N; i++) {
         printf("%d,", vec[i]);
     }
@@ -88,17 +88,23 @@ void printVec<int>(const int N, const int *vec) {
 }
 
 template <>
-void printVec<float>(const int N, const float *vec) {
+void printVec<float>(const int N, const float *vec, int nl_freq) {
+    int ct = 0;
     for (int i = 0; i < N; i++) {
-        printf("%.5e,", vec[i]);
+        printf("%.9e,", vec[i]);
+        ct += 1;
+        if (ct % nl_freq == 0) printf("\n");
     }
     printf("\n");
 }
 
 template <>
-void printVec<double>(const int N, const double *vec) {
+void printVec<double>(const int N, const double *vec, int nl_freq) {
+    int ct = 0;
     for (int i = 0; i < N; i++) {
-        printf("%.5e,", vec[i]);
+        printf("%.9e,", vec[i]);
+        ct += 1;
+        if (ct % nl_freq == 0) printf("\n");
     }
     printf("\n");
 }
@@ -227,4 +233,56 @@ void CSRtoBSR(int block_dim, int N, int *csr_rowp, int *csr_cols, T *csr_vals,
     // printVec<int>(*nnzb, *bsr_cols);
     // printf("bsr_vals 1:");
     // printVec<T>((*nnzb) * 4, *bsr_vals);
+}
+
+template <typename T>
+void BSRtoCSR(int block_dim, int N, int nnzb, int *bsr_rowp, int *bsr_cols, T *bsr_vals,
+              int **csr_rowp, int **csr_cols, T **csr_vals, int *nz) {
+    
+    assert(N % 2 == 0);
+
+    std::vector<int> rowp, cols;
+    std::vector<T> vals;
+    rowp.push_back(0);
+    int nvals = 0;
+
+    for (int row = 0; row < N; row++) {
+        int brow = row / 2;
+        int inner_row = row % 2;
+
+        for (int j = bsr_rowp[brow]; j < bsr_rowp[brow+1]; j++) {
+            int bcol = bsr_cols[j];
+            for (int inner_col = 0; inner_col < 2; inner_col++) {
+                int col = 2 * bcol + inner_col;
+                cols.push_back(col);
+                int val_ind = 4 * j + 2 * inner_row + inner_col;
+                T val = bsr_vals[val_ind];
+                vals.push_back(val);
+                nvals += 1;
+            }
+        }
+
+        rowp.push_back(nvals);
+    }
+
+    // printf("csr2 rows:");
+    // printVec<int>(rowp.size(), rowp.data());
+    // printf("csr2 cols:");
+    // printVec<int>(cols.size(), cols.data());
+    // printf("csr2 vals:");
+    // printVec<T>(vals.size(), vals.data());
+
+    // now deep copy out of it
+    *nz = nvals;
+    *csr_rowp = new int[N + 1];
+    *csr_cols = new int[nvals];
+    *csr_vals = new T[nvals];
+
+    for (int i = 0; i < N+1; i++) {
+        (*csr_rowp)[i] = rowp[i];
+    }
+    for (int i = 0; i < nvals; i++) {
+        (*csr_cols)[i] = cols[i];
+        (*csr_vals)[i] = vals[i];
+    }
 }

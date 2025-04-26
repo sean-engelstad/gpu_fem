@@ -24,29 +24,29 @@ int main() {
     using T = double;
 
     // problem
-    // A = [1, 0; 0, 2]
-    // x = [3, 4]
-    // y = A * x = [3, 8] (Demonstrate with BSR mv operation)
+    // A = [1 * e1; 2 * e2; 3 * e3; 4 * e4]
+    // x = [1, 3, 4, 1]
+    // y = A * x = [1, 6, 12, 4]
 
     // initialize host data
-    int rowp[2] = {0, 1};
-    int cols[1] = {0};
-    T vals[4] = {1.0, 0.0, 0.0, 2.0};
-    T x[2] = {3, 4.0};
-    T *y = new T[2];
+    int rowp[3] = {0, 1, 2};
+    int cols[2] = {0, 1};
+    T vals[8] = {1.0, 0.0, 0.0, 2.0, 3.0, 0.0, 0.0, 4.0};
+    T x[4] = {1, 3, 4, 1};
+    T *y = new T[4];
 
     int *d_rowp, *d_cols;
     T *d_vals, *d_x, *d_y;
-    CHECK_CUDA(cudaMalloc((void **)&d_rowp, 2 * sizeof(int)));
-    CHECK_CUDA(cudaMalloc((void **)&d_cols, 1 * sizeof(int)));
-    CHECK_CUDA(cudaMalloc((void **)&d_vals, 4 * sizeof(T)));
-    CHECK_CUDA(cudaMalloc((void **)&d_x, 2 * sizeof(T)));
-    CHECK_CUDA(cudaMalloc((void **)&d_y, 2 * sizeof(T)));
+    CHECK_CUDA(cudaMalloc((void **)&d_rowp, 3 * sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&d_cols, 2 * sizeof(int)));
+    CHECK_CUDA(cudaMalloc((void **)&d_vals, 8 * sizeof(T)));
+    CHECK_CUDA(cudaMalloc((void **)&d_x, 4 * sizeof(T)));
+    CHECK_CUDA(cudaMalloc((void **)&d_y, 4 * sizeof(T)));
 
-    CHECK_CUDA(cudaMemcpy(d_rowp, rowp, 2 * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_cols, cols, 1 * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_vals, vals, 4 * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_x, x, 2 * sizeof(T), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_rowp, rowp, 3 * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_cols, cols, 2 * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_vals, vals, 8 * sizeof(T), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_x, x, 4 * sizeof(T), cudaMemcpyHostToDevice));
 
     /* Description of the A matrix */
     cusparseMatDescr_t descrA = 0;
@@ -58,10 +58,10 @@ int main() {
     cusparseHandle_t cusparseHandle = NULL;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    int mb = 1;
+    int mb = 2;
     int block_dim = 2;
     T a = 1.0, b = 0.0;
-    int nnzb = 1;
+    int nnzb = 2;
 
     CHECK_CUSPARSE(cusparseDbsrmv(
         cusparseHandle, 
@@ -77,10 +77,10 @@ int main() {
     ));
 
     // copy d_y back to host y vec
-    // T y_ref[2] = {3, 8};
-    CHECK_CUDA(cudaMemcpy(y, d_y, 2 * sizeof(T), cudaMemcpyDeviceToHost));
+    // T y_ref[2] = {1, 6, 12, 4};
+    CHECK_CUDA(cudaMemcpy(y, d_y, 4 * sizeof(T), cudaMemcpyDeviceToHost));
     printf("y:");
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 4; i++) {
         printf("%.4e,", y[i]);
     }
     printf("\n");

@@ -11,11 +11,11 @@ int main() {
 
     constexpr bool test_mult = false;
     constexpr bool check_mat_data = false;
-    int N = 900; // 16384
+    int N = 16; // 16384
     int n_iter = min(N, 200);
     constexpr bool use_precond = true;
-    constexpr bool print_precond = false;
-    bool debug = false;
+    constexpr bool debug = false;
+    int checkpoint = -1;
     T abs_tol = 1e-8, rel_tol = 1e-8;
 
     // NOTE : starting with BSR matrix of block size 1 (just to demonstrate the correct cusparse methods for BSR)
@@ -254,7 +254,7 @@ int main() {
         // printf("here2-1-2\n");
         cusparseStatus_t status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
         if (status == CUSPARSE_STATUS_ZERO_PIVOT) {
-            printf("A(%d,%d) is missing\n", structural_zero);
+            printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
         }
 
         // analyze sparsity pattern of L for efficient triangular solves
@@ -279,7 +279,7 @@ int main() {
 
     // printf("here3\n");
 
-    if constexpr (print_precond && use_precond) {
+    if constexpr (debug && use_precond) {
         // print A matrix values::
         T *h_A = new T[4 * nnzb];
         T *h_M = new T[4 * nnzb];
@@ -287,9 +287,39 @@ int main() {
         CHECK_CUDA(cudaMemcpy(h_M, d_vals_ILU0, 4 * nnzb * sizeof(T), cudaMemcpyDeviceToHost));
         
         printf("h_A:");
-        printVec<T>(4 * nnzb, h_A);
+        // print out data in 
+        int ct = 0;
+        for (int row = 0; row < N; row++) {
+            int brow = row / 2;
+            int inner_row = row % 2;
+            for (int j = rowp[brow]; j < rowp[brow+1]; j++) {
+                for (int inner_col = 0; inner_col < 2; inner_col++) {
+                    T val = h_A[4 * j + 2 * inner_row + inner_col];
+                    printf("%.9e,", val);
+                    ct += 1;
+                    if (ct % 4 == 0) printf("\n");
+                }
+            }
+        }
+        printf("\n");
         printf("h_M:");
-        printVec<T>(4 * nnzb, h_M);
+        ct = 0;
+        // print out data in 
+        for (int row = 0; row < N; row++) {
+            int brow = row / 2;
+            int inner_row = row % 2;
+            for (int j = rowp[brow]; j < rowp[brow+1]; j++) {
+                for (int inner_col = 0; inner_col < 2; inner_col++) {
+                    T val = h_M[4 * j + 2 * inner_row + inner_col];
+                    printf("%.9e,", val);
+                    ct += 1;
+                    if (ct % 4 == 0) printf("\n");
+                }
+            }
+        }
+        printf("\n");
+        // printf("h_M:");
+        // printVec<T>(4 * nnzb, h_M);
 
         // test LU solve on each unit vector..
     }
@@ -365,10 +395,10 @@ int main() {
     // assumes here d_X is 0 initially => so r0 = b - Ax = b
     T beta;
     CHECK_CUBLAS(cublasSnrm2(cublasHandle, N, d_rhs, 1, &beta));
-    printf("GMRES init resid = %.5e\n", beta);
+    printf("GMRES init resid = %.9e\n", beta);
     g[0] = beta;
 
-    // return 0;
+    if (debug && checkpoint == 1) return 0;
 
     // set v0 = r0 / beta (unit vec)
     a = 1.0 / beta;
@@ -407,6 +437,16 @@ int main() {
             d_w
         ));
 
+        if (debug && N <= 16) {
+            T *h_w = new T[N];
+            // printf("checkpt3\n");
+            CHECK_CUDA(cudaMemcpy(h_w, d_w, N * sizeof(T), cudaMemcpyDeviceToHost));
+            printf("w=A*v:");
+            printVec<T>(N, h_w);
+
+            // if (j == 0) return 0;
+        }
+
         if constexpr (use_precond) {
             // U^-1 L^-1 * w => w precond solve here
             a = 1.0;
@@ -428,6 +468,8 @@ int main() {
             // if (j == 0) return 0;
         }
 
+        if (debug && checkpoint == 2) return 0;
+
         // now update householder matrix
         for (int i = 0 ; i < j+1; i++) {
             // get vi column
@@ -440,7 +482,7 @@ int main() {
             // H_ij = vi dot w
             H[n_iter * i + j] = w_vi_dot;
 
-            if (debug) printf("H[%d,%d] = %.4e\n", i, j, H[n_iter * i + j]);
+            if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[n_iter * i + j]);
             
             // w -= Hij * vi
             a = -H[n_iter * i + j];
@@ -452,11 +494,13 @@ int main() {
             T *h_w = new T[N];
             // printf("checkpt3\n");
             CHECK_CUDA(cudaMemcpy(h_w, d_w, N * sizeof(T), cudaMemcpyDeviceToHost));
-            // printf("h_w[%d] post GS:", j);
-            // printVec<T>(N, h_w);
+            printf("h_w[%d] post GS:", j);
+            printVec<T>(N, h_w);
 
             // if (j == 0) return 0;
         }
+
+        if (debug && checkpoint == 3) return 0;
 
         // norm of w
         T nrm_w;
@@ -495,23 +539,23 @@ int main() {
         g[j] *= cs[j];
         g[j+1] = -ss[j] * g_temp;
 
-        // printf("GMRES iter %d : resid %.4e\n", j, nrm_w);
-        printf("GMRES iter %d : resid %.4e\n", j, abs(g[j+1]));
+        // printf("GMRES iter %d : resid %.9e\n", j, nrm_w);
+        printf("GMRES iter %d : resid %.9e\n", j, abs(g[j+1]));
 
-        if (debug) printf("j=%d, g[j]=%.4e, g[j+1]=%.4e\n", j, g[j], g[j+1]);
+        if (debug) printf("j=%d, g[j]=%.9e, g[j+1]=%.9e\n", j, g[j], g[j+1]);
 
         H[n_iter * j + j] = cs[j] * H[n_iter * j + j] + ss[j] * H[n_iter * (j+1) + j];
         H[n_iter * (j+1) + j] = 0.0;
 
         if (abs(g[j+1]) < (abs_tol + beta * rel_tol)) {
-            printf("GMRES converged in %d iterations to %.4e resid\n", j+1, g[j+1]);
+            printf("GMRES converged in %d iterations to %.9e resid\n", j+1, g[j+1]);
             jj = j;
             break;
         }
 
         // should I use givens rotations or nrm_w for convergence? I think givens rotations
         // if (abs(nrm_w) < (abs_tol + beta * rel_tol)) {
-        //     printf("GMRES converged in %d iterations to %.4e resid\n", j+1, nrm_w);
+        //     printf("GMRES converged in %d iterations to %.9e resid\n", j+1, nrm_w);
         //     jj = j;
         //     break;
         // }
@@ -599,7 +643,7 @@ int main() {
             abs_diff[i] = abs(ref[i] - x[i]);
             tot_abs_diff += abs_diff[i];
         }
-        printf("tot diff against truth = %.4e\n", tot_abs_diff);
+        printf("tot diff against truth = %.9e\n", tot_abs_diff);
     }
 
 };

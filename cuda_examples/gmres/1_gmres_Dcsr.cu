@@ -8,25 +8,26 @@ int main() {
     // -----------
 
     constexpr bool test_mult = false;
-    int N = 900; // 16384
+    int N = 16; // 16384
     int n_iter = min(N, 200);
     constexpr bool use_precond = true;
-    constexpr bool test_precond = false;
-    bool debug = false;
+    constexpr bool bsr_nz_pattern = true; // default is False
+    constexpr bool debug = false;
+    int checkpoint = -1; // -1
     T abs_tol = 1e-8, rel_tol = 1e-8;
 
     // initialize data
     // ---------------
     
-    int *rowp, *cols;
+    int *_rowp, *_cols;
     // int M = N;
-    T *vals, *rhs, *x;
-    int nz = 5 * N - 4 * (int)sqrt((double)N);
+    T *_vals, *rhs, *x;
+    int _nz = 5 * N - 4 * (int)sqrt((double)N);
 
     // allocate rowp, cols on host
-    rowp = (int*)malloc(sizeof(int) * (N + 1));
-    cols = (int*)malloc(sizeof(int) * nz);
-    vals = (T*)malloc(sizeof(T) * nz);
+    _rowp = (int*)malloc(sizeof(int) * (N + 1));
+    _cols = (int*)malloc(sizeof(int) * _nz);
+    _vals = (T*)malloc(sizeof(T) * _nz);
     x = (T*)malloc(sizeof(T) * N);
     rhs = (T*)malloc(sizeof(T) * N);
 
@@ -36,7 +37,31 @@ int main() {
     }
 
     // initialize data
-    genLaplaceCSR<T>(rowp, cols, vals, N, nz, rhs);
+    genLaplaceCSR<T>(_rowp, _cols, _vals, N, _nz, rhs);
+
+    int *rowp, *cols, nz;
+    T *vals;
+    if constexpr (bsr_nz_pattern) {
+        // convert CSR to BSR then back to CSR (so has same nz pattern)
+        int *bsr_rowp, *bsr_cols, nnzb, block_dim = 2;
+        T *bsr_vals;
+        CSRtoBSR<T>(block_dim, N, _rowp, _cols, _vals, &bsr_rowp, &bsr_cols, &bsr_vals, &nnzb);
+
+        // printf("nnzb %d\n", nnzb);
+        // printf("bsr_rowp:");
+        // printVec<int>(N/2+1, bsr_rowp);
+        // printf("bsr_cols:");
+        // printVec<int>(nnzb, bsr_cols);
+        // printf("bsr_vals:");
+        // printVec<T>(4 * nnzb, bsr_vals);
+
+        BSRtoCSR<T>(block_dim, N, nnzb, bsr_rowp, bsr_cols, bsr_vals, &rowp, &cols, &vals, &nz);
+    } else {
+        rowp = _rowp;
+        cols = _cols;
+        vals = _vals;
+        nz = _nz;
+    }
     // now rhs is not zero
 
     // transfer data to the device
@@ -262,7 +287,7 @@ int main() {
             CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU, d_bufferU));
     }
 
-    if constexpr (test_precond && use_precond) {
+    if constexpr (debug && use_precond) {
         // print A matrix values::
         T *h_A = new T[nz];
         T *h_M = new T[nz];
@@ -328,10 +353,10 @@ int main() {
     // assumes here d_X is 0 initially => so r0 = b - Ax = b
     T beta;
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_rhs, 1, &beta));
-    printf("GMRES init resid = %.5e\n", beta);
+    printf("GMRES init resid = %.9e\n", beta);
     g[0] = beta;
 
-    // return 0;
+    if (debug && checkpoint == 1) return 0;
 
     // set v0 = r0 / beta (unit vec)
     T a = 1.0 / beta;
@@ -358,6 +383,16 @@ int main() {
         CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matA,
             vec_V, &floatzero, vec_w, CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT,
             d_bufferMV));
+
+        if (debug && N <= 16) {
+            T *h_w = new T[N];
+            // printf("checkpt3\n");
+            CHECK_CUDA(cudaMemcpy(h_w, d_w, N * sizeof(T), cudaMemcpyDeviceToHost));
+            printf("w=A*v:");
+            printVec<T>(N, h_w);
+
+            // if (j == 0) return 0;
+        }
 
         if constexpr (use_precond) {
             // preconditioner application: d_zm1 = U^-1 L^-1 d_r
@@ -386,6 +421,8 @@ int main() {
             // if (j == 0) return 0;
         }
 
+        if (debug && checkpoint == 2) return 0;
+
         // now update householder matrix
         for (int i = 0 ; i < j+1; i++) {
             // get vi column
@@ -398,7 +435,7 @@ int main() {
             // H_ij = vi dot w
             H[n_iter * i + j] = w_vi_dot;
 
-            if (debug) printf("H[%d,%d] = %.4e\n", i, j, H[n_iter * i + j]);
+            if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[n_iter * i + j]);
             
             // w -= Hij * vi
             a = -H[n_iter * i + j];
@@ -415,6 +452,8 @@ int main() {
 
             // if (j == 0) return 0;
         }
+
+        if (debug && checkpoint == 3) return 0;
 
         // norm of w
         T nrm_w;
@@ -453,23 +492,23 @@ int main() {
         g[j] *= cs[j];
         g[j+1] = -ss[j] * g_temp;
 
-        // printf("GMRES iter %d : resid %.4e\n", j, nrm_w);
-        printf("GMRES iter %d : resid %.4e\n", j, abs(g[j+1]));
+        // printf("GMRES iter %d : resid %.9e\n", j, nrm_w);
+        printf("GMRES iter %d : resid %.9e\n", j, abs(g[j+1]));
 
-        if (debug) printf("j=%d, g[j]=%.4e, g[j+1]=%.4e\n", j, g[j], g[j+1]);
+        if (debug) printf("j=%d, g[j]=%.9e, g[j+1]=%.9e\n", j, g[j], g[j+1]);
 
         H[n_iter * j + j] = cs[j] * H[n_iter * j + j] + ss[j] * H[n_iter * (j+1) + j];
         H[n_iter * (j+1) + j] = 0.0;
 
         if (abs(g[j+1]) < (abs_tol + beta * rel_tol)) {
-            printf("GMRES converged in %d iterations to %.4e resid\n", j+1, g[j+1]);
+            printf("GMRES converged in %d iterations to %.9e resid\n", j+1, g[j+1]);
             jj = j;
             break;
         }
 
         // TODO : should I use givens rotations or nrm_w for convergence? I think givens rotations
         // if (abs(nrm_w) < (abs_tol + beta * rel_tol)) {
-        //     printf("GMRES converged in %d iterations to %.4e resid\n", j+1, nrm_w);
+        //     printf("GMRES converged in %d iterations to %.9e resid\n", j+1, nrm_w);
         //     jj = j;
         //     break;
         // }
@@ -557,7 +596,7 @@ int main() {
             abs_diff[i] = abs(ref[i] - x[i]);
             tot_abs_diff += abs_diff[i];
         }
-        printf("tot diff against truth = %.4e\n", tot_abs_diff);
+        printf("tot diff against truth = %.9e\n", tot_abs_diff);
     }
 
 };

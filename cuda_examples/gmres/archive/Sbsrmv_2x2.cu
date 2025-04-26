@@ -45,7 +45,7 @@ int main() {
 
     CHECK_CUDA(cudaMemcpy(d_rowp, rowp, 2 * sizeof(int), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_cols, cols, 1 * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(d_vals, vals, 4 * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA(cudaMemcpy(d_vals, vals, 4 * sizeof(T), cudaMemcpyHostToDevice));
     CHECK_CUDA(cudaMemcpy(d_x, x, 2 * sizeof(T), cudaMemcpyHostToDevice));
 
     /* Description of the A matrix */
