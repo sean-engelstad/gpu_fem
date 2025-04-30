@@ -204,6 +204,19 @@ template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
 void ElementAssembler<T, ElemGroup, Vec, Mat>::symbolic_factorization(double fillin, bool print) {
     bsr_data.symbolic_factorization(fillin, print);
+
+    printf("rowp:");
+    printVec<int>(bsr_data.nnodes+1, bsr_data.rowPtr);
+    printf("cols:");
+    printVec<int>(bsr_data.nnzb, bsr_data.colPtr);
+    printf("perm:");
+    printVec<int>(bsr_data.nnodes, bsr_data.perm);
+    printf("iperm:");
+    printVec<int>(bsr_data.nnodes, bsr_data.iperm);
+    printf("elem_ind_map:");
+    printVec<int>(bsr_data.nelems * bsr_data.nodes_per_elem * bsr_data.nodes_per_elem, 
+        bsr_data.elemIndMap);
+
 #ifdef USE_GPU
     this->bsr_data = bsr_data.createDeviceBsrData();
 #endif
