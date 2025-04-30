@@ -40,9 +40,8 @@ class ElementAssembler {
     ElementAssembler(int32_t num_geo_nodes_, int32_t num_vars_nodes_, int32_t num_elements_,
                      HostVec<int32_t> &geo_conn, HostVec<int32_t> &vars_conn, HostVec<T> &xpts,
                      HostVec<int> &bcs, HostVec<Data> &physData, int32_t num_components_ = 0,
-                     HostVec<int> elem_component = NULL);
-    void symbolic_factorization(double fillin = 100.0, bool print = false);
-    void bsrDataToDevice(double fillin = 100.0, bool print = false);
+                     HostVec<int> elem_component = HostVec<int>(0));
+    void moveBsrDataToDevice();
     static ElementAssembler createFromBDF(TACSMeshLoader<T> &mesh_loader, Data single_data);
     __HOST__ void apply_bcs(Vec<T> &vec, bool can_print = false);
     void apply_bcs(Mat &mat, bool can_print = false);
@@ -92,11 +91,19 @@ class ElementAssembler {
     T _compute_mass();
 
     void permuteVec(Vec<T> vec) {
-        if (bsr_data.perm) return vec.permuteData(bsr_data.block_dim, bsr_data.perm);
+        if (bsr_data.perm) {
+            vec.permuteData(bsr_data.block_dim, bsr_data.perm);
+        } else {
+            printf("bsr data has no iperm pointer\n");   
+        }
     }
 
     void invPermuteVec(Vec<T> vec) {
-        if (bsr_data.perm) return vec.permuteData(bsr_data.block_dim, bsr_data.iperm);
+        if (bsr_data.iperm) {
+            vec.permuteData(bsr_data.block_dim, bsr_data.iperm);
+        } else {
+            printf("bsr data has no iperm pointer\n");   
+        }   
     }
 
     // ------------------------
@@ -202,17 +209,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat> ElementAssembler<T, ElemGroup, Vec, Mat
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::symbolic_factorization(double fillin, bool print) {
-    bsr_data.symbolic_factorization(fillin, print);
-#ifdef USE_GPU
-    this->bsr_data = bsr_data.createDeviceBsrData();
-#endif
-}
-
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::bsrDataToDevice(double fillin, bool print) {
-    // move bsr data to device for single Kelem (for debugging)
+void ElementAssembler<T, ElemGroup, Vec, Mat>::moveBsrDataToDevice() {
 #ifdef USE_GPU
     this->bsr_data = bsr_data.createDeviceBsrData();
 #endif
@@ -564,6 +561,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
 
     CHECK_CUDA(cudaDeviceSynchronize());
 
+    printf("\ndone with add jacobian kernel\n");
+
 #else  // CPU data
     // maybe a way to call add_residual_kernel as same method on CPU
     // with elems_per_block = 1
@@ -574,6 +573,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     // inverse permute the residual
     // so can be added to non-permuted data
     this->invPermuteVec(res);
+    printf("\ndone with inv permute kernel\n");
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();

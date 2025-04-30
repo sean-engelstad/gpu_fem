@@ -1,5 +1,5 @@
 #pragma once
-#include "../linalg/bsr_mat.h"
+#include "../../linalg/bsr_mat.h"
 
 template <class Vec>
 Vec bsr_pre_solve(BsrMat<Vec> mat, Vec rhs, Vec soln) {

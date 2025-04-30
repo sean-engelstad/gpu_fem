@@ -5,7 +5,7 @@
 #include <sstream>
 #include <string>
 
-#include "_utils.h"
+#include "utils/_utils.h"
 #include "mesh/vtk_writer.h"
 
 template <class Mat, class Vec>

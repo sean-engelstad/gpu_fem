@@ -1,7 +1,6 @@
 #pragma once
 
-#include "_utils.h"
-// #include "linear_static_cpu.h"
+#include "utils/_utils.h"
 
 #ifdef USE_GPU
 #ifdef USE_CUSPARSE
