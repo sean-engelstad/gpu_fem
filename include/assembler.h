@@ -75,7 +75,7 @@ class ElementAssembler {
     void compute_stresses(DeviceVec<T> &stresses);
 
     // util functions
-    BsrData getBsrData() { return bsr_data; }
+    BsrData& getBsrData() { return bsr_data; }
     Vec<T> getXpts() { return xpts; }
     Vec<int> getBCs() { return bcs; }
     Vec<int> getConn() { return vars_conn; }

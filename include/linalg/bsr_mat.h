@@ -27,7 +27,7 @@ class BsrMat {
     __HOST__ void zeroValues() { values.zeroValues(); }
     __HOST_DEVICE__ BsrData getBsrData() const { return bsr_data; }
     __HOST_DEVICE__ int get_nnz() { return bsr_data.getNumValues(); }
-    __HOST__ Vec getVec() { return values; }
+    __HOST_DEVICE__ Vec getVec() { return values; }
     __HOST__ HostVec<T> createHostVec() { return values.createHostVec(); }
     __HOST_DEVICE__ T *getPtr() { return values.getPtr(); }
     __HOST_DEVICE__ const T *getPtr() const { return values.getPtr(); }
@@ -115,7 +115,8 @@ class BsrMat {
         int dof_per_elem = dof_per_node * nodes_per_elem, block_dim = bsr_data.block_dim, 
             blocks_per_elem = nodes_per_elem * nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
-        const index_t *elem_ind_map = bsr_data.elem_ind_map, *loc_elem_ind_map = &elem_ind_map[blocks_per_elem * ielem];
+        const index_t *elem_ind_map = bsr_data.elem_ind_map;
+        const index_t *loc_elem_ind_map = &elem_ind_map[blocks_per_elem * ielem];
         T *valPtr = values.getPtr();
 
         for (int elem_block = start; elem_block < blocks_per_elem; elem_block += stride) {

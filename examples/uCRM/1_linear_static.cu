@@ -39,7 +39,7 @@ int main() {
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
 
   // BSR factorization
-  auto bsr_data = assembler.getBsrData();
+  auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
   bool print = true;
   bsr_data.compute_full_LU_pattern(fillin, print);

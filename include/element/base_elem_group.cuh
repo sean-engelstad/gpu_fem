@@ -196,9 +196,29 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
 
+    // printf("in kernel\n");
+
     // if you want to precompute some things?
     // __SHARED__ T geo_data[elems_per_block][Geo::geo_data_size];
     // __SHARED__ T basis_data[elems_per_block][Geo::geo_data_size];
+
+    // // printout inputs
+    // printf("vars_num_nodes %d, num_elements %d\n", vars_num_nodes, num_elements);
+    // printf("geo_conn:");
+    // printVec<int>(geo_conn.getSize(), geo_conn.getPtr());
+    // printf("vars_conn:");
+    // printVec<int>(vars_conn.getSize(), vars_conn.getPtr());
+    // printf("xpts:");
+    // printVec<T>(xpts.getSize(), xpts.getPtr());
+    // printf("vars:");
+    // printVec<T>(vars.getSize(), vars.getPtr());
+    // printf("perm:");
+    // printVec<int>(16, perm);
+    // printf("res:");
+    // printVec<T>(res.getSize(), res.getPtr());
+    // // printf("mat:"); // this was fine
+    // // auto vec = mat.getVec();
+    // // printVec<T>(vec.getSize(), vec.getPtr());
 
     int local_elem = threadIdx.x;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
