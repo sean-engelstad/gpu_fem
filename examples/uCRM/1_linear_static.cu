@@ -75,7 +75,9 @@ int main() {
   printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "uCRM.vtk");
 
   // check the residual of the system
-  assembler.add_residual(res);  // internal residual
+  assembler.set_variables(soln);
+  // assembler.add_residual(res);  // internal residual
+  assembler.add_jacobian(res, kmat);
   auto rhs = assembler.createVarsVec();
   CUBLAS::axpy(1.0, loads, rhs);
   CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
