@@ -87,14 +87,17 @@ public:
             printf("\tnnzb = %d\n", nnzb);
         }
 
+        printf("before make sparseutils matrix\n");
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
             nnodes, nnodes, nnzb, rowp, cols, nullptr);
         // delete old rowp, cols
         if (rowp) delete[] rowp;
         if (cols) delete[] cols;
+        printf("before BSRMatReorderFactorSymbolic\n");
 
         auto su_mat2 =
             SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, iperm, fill_factor);
+        printf("done with BSRMatReorderFactorSymbolic\n");
 
         nnzb = su_mat2->nnz;
         rowp = su_mat2->rowp;
@@ -128,7 +131,6 @@ public:
         // compute fillin
         double fill_factor = 5.0;
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
-        int nnzb_old = nnzb;
         auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
 
         // TODO : not the most efficient since it includes factorization in above too (can fix later if need be)
