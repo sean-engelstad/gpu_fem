@@ -9,6 +9,10 @@
 
 // get jacobian directional derivative analytically on the CPU
 
+// make separate functions here for TACS CPU, GPU
+// get_kelem_gpu
+// get_kelem_cpu
+
 int main(void) {
     using T = double;
 

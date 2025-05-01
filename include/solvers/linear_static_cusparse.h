@@ -269,7 +269,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         // assumes here d_X is 0 initially => so r0 = b - Ax
         T beta;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &beta));
-        printf("GMRES init resid = %.9e\n", beta);
+        if (can_print) printf("GMRES init resid = %.9e\n", beta);
         g[0] = beta;
 
         // set v0 = r0 / beta (unit vec)
@@ -387,7 +387,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             g[j+1] = -ss[j] * g_temp;
 
             // printf("GMRES iter %d : resid %.9e\n", j, nrm_w);
-            printf("GMRES iter %d : resid %.9e\n", j, abs(g[j+1]));
+            if (can_print) printf("GMRES iter %d : resid %.9e\n", j, abs(g[j+1]));
 
             if (debug) printf("j=%d, g[j]=%.9e, g[j+1]=%.9e\n", j, g[j], g[j+1]);
 
@@ -395,7 +395,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             H[n_iter * (j+1) + j] = 0.0;
 
             if (abs(g[j+1]) < (abs_tol + beta * rel_tol)) {
-                printf("GMRES converged in %d iterations to %.9e resid\n", j+1, g[j+1]);
+                if (can_print) printf("GMRES converged in %d iterations to %.9e resid\n", j+1, g[j+1]);
                 jj = j;
                 break;
             }

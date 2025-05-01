@@ -4,7 +4,7 @@ from _gmres_util import gmres, get_laplace_system
 import scipy.sparse as spp
 
 # N = 4 # 2 nodes
-N = 16 # 16, 900
+N = 64 # 16, 900
 
 A, b = get_laplace_system(N)
 
@@ -30,3 +30,16 @@ elif precond_case == 2:
 
 x_gmres = gmres(A, b, M=M, restart=100, max_iter=100)
 if N < 100: print(f"{x_gmres=}")
+
+# visualize the loads
+plt.figure()
+n = np.int32(N**0.5)
+b_mat = b.reshape((n,n))
+plt.imshow(b_mat)
+print(f"{b_mat=}")
+plt.savefig("bmat.png", dpi=400)
+
+soln_mat = x_gmres.reshape((n,n))
+plt.imshow(soln_mat)
+print(f"{soln_mat=}")
+plt.savefig("soln_mat.png", dpi=400)

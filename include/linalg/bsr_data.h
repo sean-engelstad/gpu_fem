@@ -104,14 +104,11 @@ public:
             printf("begin full LU symbolic factorization::\n");
             printf("\tnnzb = %d\n", nnzb);
         }
-
-        printf("before make sparseutils matrix\n");
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
             nnodes, nnodes, nnzb, rowp, cols, nullptr);
         // delete old rowp, cols
         if (rowp) delete[] rowp;
         if (cols) delete[] cols;
-        printf("before BSRMatReorderFactorSymbolic\n");
 
         // fix perm slows down symbolic factorization significantly..
         // if I swap to perm now symbolic speedsup but solves wrong
@@ -137,7 +134,6 @@ public:
         auto su_mat2 = SparseUtils::BSRMatReorderSymbolicCUDA<double,1>(su_mat, fill_factor);
             // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill_factor);
             // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, iperm, fill_factor);
-        printf("done with BSRMatReorderFactorSymbolic\n");
 
         nnzb = su_mat2->nnz;
         rowp = su_mat2->rowp;

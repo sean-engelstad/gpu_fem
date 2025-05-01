@@ -1,13 +1,15 @@
-#include "_test_utils.h"
+
 #include "a2dcore.h"
 #include "adscalar.h"
 #include "linalg/svd_utils.h"
 #include "utils.h"
+#include "../test_commons.h"
 
 int main() {
     using T = double;
     T H[9] = {1.0813e-03,  1.9075e-04, 7.4367e-06,  1.9075e-04, 1.0813e-03,
               -7.4367e-06, 9.0287e-06, -9.0287e-06, 1.5622e-07};
+    bool print = false;
 
     // rescale H so finite difference approx better
     for (int i = 0; i < 9; i++) {
@@ -17,10 +19,12 @@ int main() {
     T R[9];
     computeRotation<T>(H, R);
 
-    printf("R:");
-    printVec<T>(3, R);
-    printVec<T>(3, &R[3]);
-    printVec<T>(3, &R[6]);
+    if (print) {
+        printf("R:");
+        printVec<T>(3, R);
+        printVec<T>(3, &R[3]);
+        printVec<T>(3, &R[6]);
+    }
 
     // check R jacobian dR/dH
     // forward AD version
@@ -53,32 +57,38 @@ int main() {
         finD_deriv += outv[i] * (Rp[i] - R[i]) / h;
     }
 
-    printf("R2 value:");
-    for (int col = 0; col < 3; col++) {
-        for (int row = 0; row < 3; row++) {
-            printf("%.4e,", R2[3 * row + col].value);
+    if (print) {
+        printf("R2 value:");
+        for (int col = 0; col < 3; col++) {
+            for (int row = 0; row < 3; row++) {
+                printf("%.4e,", R2[3 * row + col].value);
+            }
+            printf("\n");
         }
-        printf("\n");
+
+        printf("R2.deriv[0]:");
+        for (int col = 0; col < 3; col++) {
+            for (int row = 0; row < 3; row++) {
+                printf("%.4e,", R2[3 * row + col].deriv[0]);
+            }
+            printf("\n");
+        }
+
+        printf("Rp:");
+        for (int col = 0; col < 3; col++) {
+            for (int row = 0; row < 3; row++) {
+                T fd = (Rp[3 * row + col] - R[3 * row + col]) / h;
+                printf("%.4e,", fd);
+            }
+            printf("\n");
+        }
     }
 
-    printf("R2.deriv[0]:");
-    for (int col = 0; col < 3; col++) {
-        for (int row = 0; row < 3; row++) {
-            printf("%.4e,", R2[3 * row + col].deriv[0]);
-        }
-        printf("\n");
-    }
 
-    printf("Rp:");
-    for (int col = 0; col < 3; col++) {
-        for (int row = 0; row < 3; row++) {
-            T fd = (Rp[3 * row + col] - R[3 * row + col]) / h;
-            printf("%.4e,", fd);
-        }
-        printf("\n");
-    }
-
-    printf("fAD_deriv = %.4e, finD_deriv = %.4e\n", fAD_deriv, finD_deriv);
+    double rel_err = abs(fAD_deriv - finD_deriv) / abs(finD_deriv);
+    bool passed = rel_err < 0.01;
+    printTestReport("svd3x3 rot mat jacobian", passed, rel_err);
+    printf("\tfAD_deriv = %.4e, finD_deriv = %.4e\n", fAD_deriv, finD_deriv);
 
     return 0;
 }

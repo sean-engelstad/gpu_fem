@@ -1,15 +1,31 @@
-#include "_mat_utils.h"
+#include "utils/_laplace_utils.h"
 #include "linalg/_linalg.h"
 #include "solvers/linear_static_cusparse.h"
+#include "../test_commons.h"
 
 int main() {
     // double BSR mv routine doesn't work (see archive)
     // so need to use float instead for BSR matrix
     using T = double;
 
+    // true solution for N=64 from python solver
+    T true_soln[] = {0.48629073, 0.66913706, 0.74475527, 0.77346185, 0.77346185,
+        0.74475527, 0.66913706, 0.48629073, 0.27602587, 0.44550224,
+        0.53642216, 0.57563028, 0.57563028, 0.53642216, 0.44550224,
+        0.27602587, 0.17231052, 0.30042386, 0.37980085, 0.41700683,
+        0.41700683, 0.37980085, 0.30042386, 0.17231052, 0.11279234,
+        0.20408183, 0.26535057, 0.29558935, 0.29558935, 0.26535057,
+        0.20408183, 0.11279234, 0.07477702, 0.13776056, 0.18193023,
+        0.20441065, 0.20441065, 0.18193024, 0.13776056, 0.07477702,
+        0.04855519, 0.09025316, 0.12019915, 0.13571237, 0.13571237,
+        0.12019915, 0.09025316, 0.04855519, 0.02919055, 0.05449776,
+        0.07290081, 0.08252732, 0.08252732, 0.07290082, 0.05449776,
+        0.02919055, 0.01370927, 0.02564651, 0.03437903, 0.03896878,
+        0.03896878, 0.03437903, 0.02564651, 0.01370927};
+
     // case inputs
     // -----------
-    int N = 16384; // 16384
+    int N = 64; // 16384
     int n_iter = min(N, 200);
     int max_iter = 400;
     constexpr bool use_precond = true, debug = false;
@@ -87,4 +103,7 @@ int main() {
     CUSPARSE::GMRES_solve<T, use_precond, debug>(mat, rhs_vec, soln_vec, n_iter, max_iter, abs_tol, rel_tol);
 
     // now check soln error?
+    T max_rel_err = rel_err(soln_vec, true_soln);
+    bool passed = EXPECT_VEC_NEAR(soln_vec, true_soln);
+    printTestReport("GMRES N=16 Laplace test", passed, max_rel_err);
 }

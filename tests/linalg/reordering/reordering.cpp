@@ -1,4 +1,4 @@
-#include "../../examples/plate/_plate_utils.h"
+#include "../../../examples/plate/_plate_utils.h"
 #include "linalg/_linalg.h"
 #include "mesh/TACSMeshLoader.h"
 #include "mesh/vtk_writer.h"

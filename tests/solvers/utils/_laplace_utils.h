@@ -12,7 +12,7 @@ void genLaplaceCSR(int *rowp, int *cols, T *vals, int N, int nz, T *rhs) {
 
     int n = (int) sqrt((double)N);
     assert(n*n==N);
-    printf("laplace dimension = %d\n", n);
+    // printf("laplace dimension = %d\n", n);
     int idx = 0;
 
     // loop over the rows

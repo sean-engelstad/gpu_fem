@@ -8,7 +8,7 @@ int main() {
     // -----------
 
     constexpr bool test_mult = false;
-    int N = 16384; // 16384
+    int N = 10; // 16384
     int n_iter = min(N, 200);
     constexpr bool use_precond = true;
     constexpr bool bsr_nz_pattern = true; // default is False
