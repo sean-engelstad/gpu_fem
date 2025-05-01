@@ -12,7 +12,7 @@
 int main() {
   using T = double;
 
-  bool full_LU = true;
+  bool full_LU = false;
 
   auto start0 = std::chrono::high_resolution_clock::now();
 
@@ -50,10 +50,11 @@ int main() {
     bsr_data.compute_full_LU_pattern(fillin, print);
   } else {
     // TODO : see if reordering improves convergence on the uCRM stiffness matrix
+    // suspect that reordering is not being applied correctly and breaks convergence
     // bsr_data.RCM_reordering();
     bsr_data.qorder_reordering(1.0);
-    // bsr_data.compute_ILUk_pattern(5, fillin);
-    bsr_data.compute_full_LU_pattern(fillin, print);
+    bsr_data.compute_ILUk_pattern(5, fillin);
+    // bsr_data.compute_full_LU_pattern(fillin, print);
   }
   assembler.moveBsrDataToDevice();
 

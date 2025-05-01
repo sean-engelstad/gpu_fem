@@ -37,6 +37,24 @@ public:
         }
     }
 
+    __HOST__ BsrData(const int mb, const int block_dim, const int nnzb, index_t *rowp,
+        index_t *cols, int *perm = nullptr, int *iperm = nullptr, bool host = true)
+        : nnzb(nnzb), nnodes(mb), nodes_per_elem(nodes_per_elem), rowp(rowp), cols(cols),
+          elem_conn(nullptr), block_dim(block_dim), elem_ind_map(nullptr), tr_rowp(nullptr), tr_cols(nullptr),
+          tr_block_map(nullptr), host(host) {
+        if (!perm || !iperm) {
+            this->perm = new int32_t[nnodes];
+            this->iperm = new int32_t[nnodes];
+            for (int inode = 0; inode < nnodes; inode++) {
+                this->perm[inode] = inode;
+                this->iperm[inode] = inode;
+            }
+        } else {
+            this->perm = perm;
+            this->iperm = iperm;
+        }
+    }
+
     /* length of values array */
     __HOST_DEVICE__ int32_t getNumValues() const { return nnzb * block_dim * block_dim; }
 

@@ -5,9 +5,7 @@ template <class Mat, class Vec>
 Vec permute_rhs(Mat mat, Vec rhs) {
     int *perm = mat.getPerm();
     int block_dim = mat.getBlockDim();
-
-    Vec rhs_perm = rhs.createPermuteVec(block_dim, perm);
-    return rhs_perm;
+    return rhs.createPermuteVec(block_dim, perm);
 }
 
 template <class Mat, class Vec>

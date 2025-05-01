@@ -12,7 +12,7 @@
 
 int main() {
     // input ----------
-    bool full_LU = true;
+    bool full_LU = false;
     // ----------------
 
     using T = double;   
