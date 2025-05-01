@@ -95,8 +95,30 @@ public:
         if (cols) delete[] cols;
         printf("before BSRMatReorderFactorSymbolic\n");
 
-        auto su_mat2 =
-            SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, iperm, fill_factor);
+        // fix perm slows down symbolic factorization significantly..
+        // if I swap to perm now symbolic speedsup but solves wrong
+        // if I swap to iperm now symbolic slow, solves right
+        // I was messing with the permutations perm vs iperm in order to get the GMRES to solve correctly
+        // maybe I need to swap iperm and perm again.. swap it back? Does this break the GMRES though in the presence of reorderings?
+            // but the direct LU works with this though? double check this..
+
+        // swap perms here
+        // int *temp = perm;
+        // perm = iperm;
+        // iperm = temp;
+
+        // swapped
+        // copy vecs get deleted inside there
+        int *iperm_copy = HostVec<int>(nnodes, iperm).copyVec().getPtr();
+        int *perm_copy = HostVec<int>(nnodes, perm).copyVec().getPtr();
+        su_mat.perm = iperm_copy;
+        su_mat.iperm = perm_copy;
+        // su_mat.perm = perm_copy;
+        // su_mat.iperm = iperm_copy;
+
+        auto su_mat2 = SparseUtils::BSRMatReorderSymbolicCUDA<double,1>(su_mat, fill_factor);
+            // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill_factor);
+            // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, iperm, fill_factor);
         printf("done with BSRMatReorderFactorSymbolic\n");
 
         nnzb = su_mat2->nnz;
@@ -132,12 +154,13 @@ public:
         double fill_factor = 5.0;
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
         auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
+        printf("done with BSRMatAMDFactorSymbolicCUDA\n");
 
         // TODO : not the most efficient since it includes factorization in above too (can fix later if need be)
-        perm = su_mat2->perm;
-        iperm = su_mat2->iperm;
-        // perm = su_mat2->iperm; // my reordering definition is flipped from sparse utils
-        // iperm = su_mat2->perm;
+        // perm = su_mat2->perm;
+        // iperm = su_mat2->iperm;
+        perm = su_mat2->iperm; // my reordering definition is flipped from sparse utils
+        iperm = su_mat2->perm;
     }
 
     __HOST__ void RCM_reordering() {

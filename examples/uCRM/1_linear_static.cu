@@ -46,12 +46,14 @@ int main() {
   bool print = true;
   if (full_LU) {
     bsr_data.AMD_reordering();
+    // bsr_data.qorder_reordering(1.0);
     bsr_data.compute_full_LU_pattern(fillin, print);
   } else {
     // TODO : see if reordering improves convergence on the uCRM stiffness matrix
     // bsr_data.RCM_reordering();
     bsr_data.qorder_reordering(1.0);
-    bsr_data.compute_ILUk_pattern(5, fillin);
+    // bsr_data.compute_ILUk_pattern(5, fillin);
+    bsr_data.compute_full_LU_pattern(fillin, print);
   }
   assembler.moveBsrDataToDevice();
 
@@ -94,7 +96,9 @@ int main() {
   printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "uCRM.vtk");
 
   // check the residual of the system
+  assembler.set_variables(soln);
   assembler.add_residual(res);  // internal residual
+  // assembler.add_jacobian(res, kmat);
   auto rhs = assembler.createVarsVec();
   CUBLAS::axpy(1.0, loads, rhs);
   CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
@@ -103,8 +107,11 @@ int main() {
   printf("resid_norm = %.4e\n", resid_norm);
 
   auto h_rhs = rhs.createHostVec();
-  printf("rhs:");
-  printVec<T>(10, h_rhs.getPtr());
+  printToVTK<Assembler, HostVec<T>>(assembler, h_rhs, "uCRM-rhs.vtk");
+
+  // auto h_rhs = rhs.createHostVec();
+  // printf("rhs:");
+  // printVec<T>(10, h_rhs.getPtr());
 
   // free data
   assembler.free();
