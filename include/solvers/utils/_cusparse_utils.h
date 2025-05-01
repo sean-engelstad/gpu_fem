@@ -92,6 +92,8 @@ void perform_LU_factorization(
     if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
         printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
     }
+
+    CHECK_CUDA(cudaDeviceSynchronize());
 }
 
 };

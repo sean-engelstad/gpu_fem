@@ -12,6 +12,8 @@
 int main() {
   using T = double;
 
+  bool full_LU = true;
+
   auto start0 = std::chrono::high_resolution_clock::now();
 
   // uCRM mesh files can be found at:
@@ -42,7 +44,15 @@ int main() {
   auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
   bool print = true;
-  bsr_data.compute_full_LU_pattern(fillin, print);
+  if (full_LU) {
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
+  } else {
+    // TODO : see if reordering improves convergence on the uCRM stiffness matrix
+    // bsr_data.RCM_reordering();
+    bsr_data.qorder_reordering(1.0);
+    bsr_data.compute_ILUk_pattern(5, fillin);
+  }
   assembler.moveBsrDataToDevice();
 
   // get the loads
@@ -70,7 +80,14 @@ int main() {
   assembler.apply_bcs(kmat);
 
   // solve the linear system
-  CUSPARSE::direct_LU_solve(kmat, loads, soln);
+  if (full_LU) {
+      CUSPARSE::direct_LU_solve(kmat, loads, soln);
+  } else {
+      int n_iter = 200, max_iter = 400;
+      T abs_tol = 1e-7, rel_tol = 1e-8;
+      constexpr bool use_precond = true, debug = false;
+      CUSPARSE::GMRES_solve<T, use_precond, debug>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol);
+  }
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();

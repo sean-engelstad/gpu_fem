@@ -35,9 +35,6 @@ public:
             perm[inode] = inode;
             iperm[inode] = inode;
         }
-        
-        // also initialize the elem_ind_map and transpose block cols (need to compute again later though)
-        _compute_symbolic_maps();
     }
 
     /* length of values array */
@@ -51,49 +48,153 @@ public:
         cols = su_mat->cols;
     }
 
-    __HOST__ void compute_full_LU_pattern(double fill_factor = 10.0, const bool print = false) {
-        /* computes the sparsity pattern for a full LU for direct LU solve
-           with AMD reordering, consider making enum for reordering types here? */
+    __HOST__ static int getBandWidth(const int &nnodes, const int &nnzb, int *rowp, int *cols) {
+        /* compute bandwidth for reordering and sparsity pattern changes (esp. q-ordering) 
+            bandwidth = max_{a_ij neq 0} |i - j|   ( so max off-diagonal distance
+            within sparsity pattern) */ 
+        int bandwidth = 0;
+        for (int i = 0; i < nnodes; i++) {
+            for (int jp = rowp[i]; jp < rowp[i + 1]; jp++) {
+                int j = cols[jp];
+                int diff = abs(i - j);
+                if (diff > bandwidth) {
+                    bandwidth = diff;
+                }
+            }
+        }
+        return bandwidth;
+    }
+
+    __HOST__ void compute_nofill_pattern() {
+        /* compute the rowp, cols after a permutation or reordering with no fillin */
+        auto A = SparseUtils::BSRMat<double,1,1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
+        // auto A2 = SparseUtils::BSRMatApplyPerm<double,1>(A, perm, iperm);
+        auto A2 = SparseUtils::BSRMatApplyPerm<double,1>(A, iperm, perm);
+        if (rowp) delete[] rowp;
+        if (cols) delete[] cols;
+
+        // get permuted no-fill pattern for Kmat
+        nnzb = A2->rowp[nnodes];
+        rowp = A2->rowp;
+        cols = A2->cols;
+    }
+
+    __HOST__ void compute_full_LU_pattern(double fill_factor = 10.0, bool print = false) {
+        /* compute the full LU pattern with a permutation */
         auto start = std::chrono::high_resolution_clock::now();
         if (print) {
-            printf("begin symbolic factorization::\n");
+            printf("begin full LU symbolic factorization::\n");
             printf("\tnnzb = %d\n", nnzb);
         }
 
-        // compute fillin
-        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
-        int nnzb_old = nnzb;
-        auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
-        // TODO : add options for different reordering than AMD here
-
-        // delete previous pointers here
+        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
+            nnodes, nnodes, nnzb, rowp, cols, nullptr);
+        // delete old rowp, cols
         if (rowp) delete[] rowp;
         if (cols) delete[] cols;
-        if (perm) delete[] perm;
-        if (iperm) delete[] iperm;
 
-        // get full LU pattern and AMD reordering from sparse utils object
+        auto su_mat2 =
+            SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, iperm, fill_factor);
+
         nnzb = su_mat2->nnz;
         rowp = su_mat2->rowp;
         cols = su_mat2->cols;
-        perm = su_mat2->iperm; // my reordering definition is flipped from sparse utils
-        iperm = su_mat2->perm;
 
-        // now compute symbolic maps for fast GPU processing
-        _compute_symbolic_maps();
-
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+        double dt = duration.count() / 1e6;
         if (print) {
-            printf(
-                "\tsymbolic factorization with fill_factor %.2f from nnzb %d to "
-                "%d NZ\n",
-                fill_factor, nnzb_old, nnzb);
+            printf("\tfinished full LU symbolic factorization in %.4e sec\n", dt);
         }
     }
 
+    
+    __HOST__ void compute_ILUk_pattern(int levFill, double fill_factor = 10.0) {
+        /* compute the full ILU(k) fill pattern including reorderings, levFill is k.
+            TACS also returns a **_levs pointer (should we do that here too?) */
 
-    __HOST__ void _compute_symbolic_maps() {
+        compute_nofill_pattern();
+
+        int *levels;
+        computeILUk(nnodes, nnzb, rowp, cols, levFill, fill_factor, &levels);
+        nnzb = rowp[nnodes];
+        
+    }
+
+    __HOST__ void AMD_reordering() {
+        /* computes the sparsity pattern for a full LU for direct LU solve
+           with AMD reordering, consider making enum for reordering types here? */
+
+        // compute fillin
+        double fill_factor = 5.0;
+        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
+        int nnzb_old = nnzb;
+        auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
+
+        // TODO : not the most efficient since it includes factorization in above too (can fix later if need be)
+        perm = su_mat2->perm;
+        iperm = su_mat2->iperm;
+        // perm = su_mat2->iperm; // my reordering definition is flipped from sparse utils
+        // iperm = su_mat2->perm;
+    }
+
+    __HOST__ void RCM_reordering() {
+        /* reverse cuthill McKee reordering to reduce matrix bandwidth and 
+           # nz in the sparsity pattern */
+
+        int *_new_perm = new int[nnodes];
+        int num_rcm_iters = 1; // don't think we need to change this
+        int root_node = 0;
+        TacsComputeRCMOrder(nnodes, rowp, cols, _new_perm,
+                            root_node, num_rcm_iters);
+        // flip the new permutation
+        for (int k = 0; k < nnodes; k++) {
+            // perm[_new_perm[k]] = k; // flipped from TACS
+            // iperm[k] = _new_perm[k];
+            perm[k] = _new_perm[k];
+            iperm[perm[k]] = k;
+        }
+        if (_new_perm) delete[] _new_perm;
+    }
+
+    __HOST__ void qorder_reordering(double p_factor) {
+        /*  qordering combines RCM reordering to reduce bandwidth with random reordering
+                to reduce chain lengths in ILU factorization for more stable ILU decomp numerically
+                this also should improve GMRES convergence
+            #rows for random = 1/pfactor * bandwidth so lower pfactor is more random 
+        */
+
+        // first we perform RCM reordering to lower bandwidth
+        int bandwidth_0 = getBandWidth(nnodes, nnzb, rowp, cols);
+        RCM_reordering();
+        compute_nofill_pattern();
+        int bandwidth_1 = getBandWidth(nnodes, nnzb, rowp, cols);
+        printf("prelim RCM reordering reduces bandwidth from %d to %d\n", bandwidth_0, bandwidth_1);
+
+        // then we perform random reordering to reduce chain lengths
+        int prune_width = (int)1.0 / p_factor * bandwidth_1;
+        printf("qordering with init bandwidth %d and prune width %d\n", bandwidth_1, prune_width);
+        int num_prunes = (nnodes + prune_width - 1) / prune_width;
+        std::random_device rd; // random number generator
+        std::mt19937 g(rd());
+        // since iperm is used for sparsity change now, qperm modifies that
+        std::vector<int> q_perm(iperm, iperm + nnodes);
+        for (int iprune = 0; iprune < num_prunes; iprune++) {
+            int lower = prune_width * iprune;
+            int upper = std::min(lower + prune_width, nnodes);
+            std::shuffle(q_perm.begin() + lower, q_perm.begin() + upper, g);
+        }
+
+        // update final permutation and iperm (deep copy)
+        for (int i = 0; i < nnodes; i++) {
+            iperm[i] = q_perm[i];
+            perm[q_perm[i]] = i;
+        }
+    }
+
+    __HOST__ void _compute_symbolic_maps_for_gpu() {
         /* computes symbolic maps such as elem_ind_map and transpose mappings
-           for efficient kernel processing */
+           for efficient kernel processing on GPU */
 
         if (elem_ind_map) delete[] elem_ind_map;
         if (tr_rowp) delete[] tr_rowp;
@@ -188,6 +289,11 @@ public:
 
     __HOST__ BsrData createDeviceBsrData() {
         /* create new BsrData object with all host sparsity data copied to the device */
+
+        // before transferring to device, compute the symbolic maps for the GPU
+        // call here instead of at the end of each symbolic factorization change
+        _compute_symbolic_maps_for_gpu();
+
         BsrData new_bsr; // bypass main constructor so we don't end up making host data
         new_bsr.nnzb = this->nnzb;
         new_bsr.nodes_per_elem = this->nodes_per_elem;
@@ -216,6 +322,7 @@ public:
     __HOST__ void free() {
         /* cleanup / delete data after use*/
         if (!this->host) {
+            #ifdef USE_GPU
             // delete data on device
             if (rowp) cudaFree(rowp);
             if (cols) cudaFree(cols);
@@ -225,6 +332,7 @@ public:
             if (tr_rowp) cudaFree(tr_rowp);
             if (tr_cols) cudaFree(tr_cols);
             if (tr_block_map) cudaFree(tr_block_map);
+            #endif // USE_GPU
         } else {
             // delete data on host
             if (rowp) delete[] rowp;

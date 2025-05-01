@@ -8,7 +8,7 @@
 #include "mesh/TACSMeshLoader.h"
 
 // linear algebra formats
-#include "linalg/bsr_utils.h"
+#include "linalg/bsr_data.h"
 #include "linalg/vec.h"
 #include "optimization/analysis_function.h"
 

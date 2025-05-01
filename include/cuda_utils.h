@@ -51,7 +51,7 @@ class ExecParameters {
         cublasStatus_t status = (func);                                                \
         if (status != CUBLAS_STATUS_SUCCESS) {                                         \
             printf("CUBLAS API failed at line %d with error: %d\n", __LINE__, status); \
-            return EXIT_FAILURE;                                                       \
+            exit(EXIT_FAILURE);                                                 \
         }                                                                              \
     }
 

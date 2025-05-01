@@ -11,6 +11,10 @@
 #include "element/shell/physics/isotropic_shell.h"
 
 int main() {
+    // input ----------
+    bool full_LU = true;
+    // ----------------
+
     using T = double;   
 
     using Quad = QuadLinearQuadrature<T>;
@@ -27,7 +31,7 @@ int main() {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // int nxe = 3;
-    int nxe = 100;
+    int nxe = 300;
     // int nxe = 300;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
@@ -38,7 +42,25 @@ int main() {
     auto& bsr_data = assembler.getBsrData();
     double fillin = 10.0;  // 10.0
     bool print = true;
-    bsr_data.compute_full_LU_pattern(fillin, print);
+    if (full_LU) {
+        bsr_data.AMD_reordering();
+        bsr_data.compute_full_LU_pattern(fillin, print);
+    } else {
+        /*
+        RCM and reorderings actually hurt GMRES performance on the plate case
+        because the matrix already has a nice banded structure => RCM increases bandwidth (which means it just doesn't work well for this problem
+        as it's whole point is to decrease matrix bandwidth)
+        */
+
+        // bsr_data.AMD_reordering();
+        // bsr_data.RCM_reordering();
+        // bsr_data.qorder_reordering(1.0);
+        
+        bsr_data.compute_ILUk_pattern(6, fillin);
+        // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
+    }
+    // printf("perm:");
+    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
     assembler.moveBsrDataToDevice();
 
     // get the loads
@@ -60,7 +82,14 @@ int main() {
     assembler.apply_bcs(kmat);
 
     // solve the linear system
-    CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    if (full_LU) {
+        CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    } else {
+        int n_iter = 100, max_iter = 200;
+        T abs_tol = 1e-7, rel_tol = 1e-8;
+        constexpr bool use_precond = true, debug = false;
+        CUSPARSE::GMRES_solve<T, use_precond, debug>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol);
+    }
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bsr_utils.h"
+#include "bsr_data.h"
 #include "vec.h"
 #ifdef USE_GPU
 #include "../cuda_utils.h"

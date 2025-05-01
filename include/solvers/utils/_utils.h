@@ -1,8 +1,8 @@
 #pragma once
 #include "../../linalg/bsr_mat.h"
 
-template <class Vec>
-Vec bsr_pre_solve(BsrMat<Vec> mat, Vec rhs, Vec soln) {
+template <class Mat, class Vec>
+Vec permute_rhs(Mat mat, Vec rhs) {
     int *perm = mat.getPerm();
     int block_dim = mat.getBlockDim();
 
@@ -10,8 +10,8 @@ Vec bsr_pre_solve(BsrMat<Vec> mat, Vec rhs, Vec soln) {
     return rhs_perm;
 }
 
-template <class Vec>
-void bsr_post_solve(BsrMat<Vec> mat, Vec rhs, Vec soln) {
+template <class Mat, class Vec>
+void inv_permute_soln(Mat mat, Vec &soln) {
     int *iperm = mat.getIPerm();
     int block_dim = mat.getBlockDim();
     soln.permuteData(block_dim, iperm);

@@ -199,12 +199,16 @@ class DeviceVec : public BaseVec<T> {
 
     static void add_vec(DeviceVec<T> vec1, DeviceVec<T> vec2, DeviceVec<T> vec3) {
         // add us to xs0
+        #ifdef USE_GPU
         // use cublas or a custom kernel here for axpy?
         dim3 block1(32);
         int nblocks = (vec1.getSize() + block1.x - 1) / block1.x;
         dim3 grid1(nblocks);
         vec_add_kernel<T><<<grid1, block1>>>(vec1, vec2, vec3);
         CHECK_CUDA(cudaDeviceSynchronize());
+        #else
+        printf("add vector code only written for GPU now\n");
+        #endif
     }
 
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
