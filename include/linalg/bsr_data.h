@@ -168,7 +168,7 @@ public:
         double fill_factor = 5.0;
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
         auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
-        printf("done with BSRMatAMDFactorSymbolicCUDA\n");
+        // printf("done with BSRMatAMDFactorSymbolicCUDA\n");
 
         // TODO : not the most efficient since it includes factorization in above too (can fix later if need be)
         // perm = su_mat2->perm;

@@ -561,8 +561,6 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
 
     CHECK_CUDA(cudaDeviceSynchronize());
 
-    printf("\ndone with add jacobian kernel\n");
-
 #else  // CPU data
     // maybe a way to call add_residual_kernel as same method on CPU
     // with elems_per_block = 1
@@ -573,7 +571,6 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     // inverse permute the residual
     // so can be added to non-permuted data
     this->invPermuteVec(res);
-    printf("\ndone with inv permute kernel\n");
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();

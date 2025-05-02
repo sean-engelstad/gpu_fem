@@ -14,27 +14,49 @@
 #include "element/shell/physics/isotropic_shell.h"
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: ./program <reorder or none> <nxe>\n";
-        std::cerr << "Example: ./program reorder 10\n";
-        return 1;
-    }
-    using T = double;   
+    // prelim command line inputs
+    // --------------------------
+
     bool print = false;
 
-    bool reorder;
+    if (argc < 4) {
+        std::cerr << "Usage: ./program <ordering> <fill> [p_factor or k] <nxe>\n";
+        std::cerr << "Example: ./program qorder ILUk 3 100\n";
+        return 1;
+    }
+
+    std::string ordering = argv[1];  // "none", "RCM", or "qorder"
+    std::string fill_type = argv[2]; // "nofill", "ILUk", or "LU"
+
+    double p_factor = 0;
+    int k = 0;
     int nxe = 50;
-    std::string reorder_str = argv[1];
-    
-    if (print) printf("argc %d\n", argc);
-    if (argc <= 3) {
-        reorder = reorder_str == "reorder";
+
+    if (ordering == "qorder") {
+        if (argc < 5) {
+            std::cerr << "Error: qorder requires a p_factor\n";
+            return 1;
+        }
+        p_factor = std::stod(argv[3]);
     }
-    if (argc == 3) {
-        nxe = std::atoi(argv[2]); 
+
+    if (fill_type == "ILUk") {
+        if ((ordering != "qorder" && argc < 5) || (ordering == "qorder" && argc < 6)) {
+            std::cerr << "Error: ILUk requires a value for k\n";
+            return 1;
+        }
+        // ILUk's k value is argv[3] if ordering ≠ qorder, argv[4] if ordering = qorder
+        k = std::atoi(argv[ordering == "qorder" ? 4 : 3]);
+        nxe = std::atoi(argv[ordering == "qorder" ? 5 : 4]);
+    } else {
+        nxe = std::atoi(argv[3]);
     }
-    if (print) printf("reorder = %d, nxe = %d\n", (int)reorder, nxe);
-    
+
+    if (print) printf("nxe = %d\n", nxe);
+
+    // ----------------------------------
+
+    using T = double;   
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -56,7 +78,29 @@ int main(int argc, char* argv[]) {
     // must pass by ref to not corrupt pointers
     auto& bsr_data = assembler.getBsrData();
     double fillin = 10.0;  // 10.0
-    if (reorder) bsr_data.AMD_reordering();
+
+    if (ordering == "RCM") {
+        bsr_data.RCM_reordering();
+    } else if (ordering == "AMD") {
+        bsr_data.AMD_reordering();
+    } else if (ordering == "qorder") {
+        bsr_data.qorder_reordering(p_factor);
+    } else if (ordering != "none") {
+        std::cerr << "Unknown ordering: " << ordering << "\n";
+        return 1;
+    }
+
+    if (fill_type == "nofill") {
+        bsr_data.compute_nofill_pattern();
+    } else if (fill_type == "ILUk") {
+        bsr_data.compute_ILUk_pattern(k);
+    } else if (fill_type == "LU") {
+        bsr_data.compute_full_LU_pattern(fillin);
+    } else {
+        std::cerr << "Unknown fill type: " << fill_type << "\n";
+        return 1;
+    }
+
     bsr_data.compute_full_LU_pattern(fillin, print);
     assembler.moveBsrDataToDevice();
 
@@ -79,7 +123,10 @@ int main(int argc, char* argv[]) {
     assembler.apply_bcs(kmat);
 
     // solve the linear system
-    CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    int n_iter = 100, max_iter = 200;
+    T abs_tol = 1e-7, rel_tol = 1e-8;
+    constexpr bool use_precond = true, debug = false;
+    CUSPARSE::GMRES_solve<T, use_precond, debug>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol);
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
