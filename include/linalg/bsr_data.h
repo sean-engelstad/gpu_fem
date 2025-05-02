@@ -29,6 +29,7 @@ public:
         _get_row_col_ptrs_sparse();
 
         // make a nominal ordering (no permutation)
+        n_eim = nelems * nodes_per_elem * nodes_per_elem;
         perm = new int32_t[nnodes];
         iperm = new int32_t[nnodes];
         for (int inode = 0; inode < nnodes; inode++) {
@@ -239,6 +240,8 @@ public:
         if (tr_rowp) delete[] tr_rowp;
         if (tr_cols) delete[] tr_cols;
         if (tr_block_map) delete[] tr_block_map;
+
+        // printf("before elem ind map\n");
         
         // 1) compute the elem ind map -------------
         /* elem_ind_map is nelems x 4 x 4 array for nodes_per_elem = 4 
@@ -268,6 +271,9 @@ public:
                 }
             }
         }
+
+        // printf("elem_ind_map2:");
+        // printVec<int>(nelems * nodes_per_elem2, elem_ind_map);
 
         // 2) compute the transpose matrix maps --------------        
         /* difficult to apply bcs to cols BSR with column-major format, but easy to apply to rows
@@ -309,8 +315,13 @@ public:
         new_bsr.nnodes = this->nnodes;
         new_bsr.host = true;
 
+        int *h_elem_conn = nullptr;
+        #ifdef USE_GPU
+        h_elem_conn = new int[nodes_per_elem * nelems];
+        CHECK_CUDA(cudaMemcpy(h_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int), cudaMemcpyDeviceToHost));
+        #endif
+
         // create HostVec wrapper objects in CUDA, transfer to device and get ptr for new object
-        int n_eim = nelems * nodes_per_elem * nodes_per_elem;
         DeviceVec<int> d_rowp(nnodes+1, rowp), d_cols(nnzb, cols), d_perm(nnodes, perm), d_iperm(nnodes, iperm),
                     d_elem_ind_map(n_eim, elem_ind_map), d_tr_rowp(nnodes+1, tr_rowp), d_tr_cols(nnzb, tr_cols), 
                     d_tr_block_map(nnzb, tr_block_map);
@@ -322,6 +333,10 @@ public:
         new_bsr.tr_rowp = d_tr_rowp.createHostVec().getPtr();
         new_bsr.tr_cols = d_tr_cols.createHostVec().getPtr();
         new_bsr.tr_block_map = d_tr_block_map.createHostVec().getPtr();
+        new_bsr.elem_conn = h_elem_conn;
+        new_bsr.nelems = nelems;
+        new_bsr.nodes_per_elem = nodes_per_elem;
+        new_bsr.n_eim = n_eim;
 
         return new_bsr;
     }
@@ -333,6 +348,12 @@ public:
         // call here instead of at the end of each symbolic factorization change
         _compute_symbolic_maps_for_gpu();
 
+        int *d_elem_conn = nullptr;
+        #ifdef USE_GPU
+        CHECK_CUDA(cudaMalloc((void **)&d_elem_conn, nodes_per_elem * nelems * sizeof(int)));
+        CHECK_CUDA(cudaMemcpy(d_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int), cudaMemcpyHostToDevice));
+        #endif
+
         BsrData new_bsr; // bypass main constructor so we don't end up making host data
         new_bsr.nnzb = this->nnzb;
         new_bsr.nodes_per_elem = this->nodes_per_elem;
@@ -342,7 +363,6 @@ public:
         new_bsr.host = false;
 
         // create HostVec wrapper objects in CUDA, transfer to device and get ptr for new object
-        int n_eim = nelems * nodes_per_elem * nodes_per_elem;
         HostVec<int> h_rowp(nnodes+1, rowp), h_cols(nnzb, cols), h_perm(nnodes, perm), h_iperm(nnodes, iperm),
                     h_elem_ind_map(n_eim, elem_ind_map), h_tr_rowp(nnodes+1, tr_rowp), h_tr_cols(nnzb, tr_cols), 
                     h_tr_block_map(nnzb, tr_block_map);
@@ -354,6 +374,10 @@ public:
         new_bsr.tr_rowp = h_tr_rowp.createDeviceVec().getPtr();
         new_bsr.tr_cols = h_tr_cols.createDeviceVec().getPtr();
         new_bsr.tr_block_map = h_tr_block_map.createDeviceVec().getPtr();
+        new_bsr.elem_conn = d_elem_conn;
+        new_bsr.nelems = nelems;
+        new_bsr.nodes_per_elem = nodes_per_elem;
+        new_bsr.n_eim = n_eim;
 
         return new_bsr;
     }
@@ -387,7 +411,7 @@ public:
 
 
     // object data, kept public =---------------------------
-    int32_t nnzb, nelems, nnodes, nodes_per_elem, block_dim;
+    int32_t nnzb, nelems, nnodes, nodes_per_elem, block_dim, n_eim;
     const int32_t *elem_conn;
     int32_t *rowp, *cols, *elem_ind_map;
     int32_t *perm, *iperm;

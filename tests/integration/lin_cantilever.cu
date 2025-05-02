@@ -53,8 +53,8 @@ int main(void) {
   using Geo = Basis::Geo;
 
   constexpr bool has_ref_axis = false;
-  constexpr bool is_nonlinear = true;
-  // constexpr bool is_nonlinear = false;
+  // constexpr bool is_nonlinear = true;
+  constexpr bool is_nonlinear = false;
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
@@ -86,25 +86,20 @@ int main(void) {
   auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
   auto soln = assembler.createVarsVec();
   auto res = assembler.createVarsVec();
-  auto rhs = assembler.createVarsVec();
-  auto vars = assembler.createVarsVec();
 
-  // newton solve
-  int num_load_factors = 20, num_newton = 30;
-  T min_load_factor = 0.05, max_load_factor = 1.00, abs_tol = 1e-8,
-    rel_tol = 1e-7;
-  auto solve_func = CUSPARSE::direct_LU_solve<T>;
-  std::string outputPrefix = "out/beam_";
-  newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
-      solve_func, kmat, d_loads, soln, assembler, res, rhs, vars,
-      num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
-      rel_tol, outputPrefix, print);
+  // assemble no fill kmat
+  assembler.add_jacobian(res, kmat);
+  assembler.apply_bcs(res);
+  assembler.apply_bcs(kmat);
+
+  // linear solve
+  CUSPARSE::direct_LU_solve<T>(kmat, d_loads, soln);
 
   // get tip displacements
   int num_nodes = assembler.get_num_nodes();
   auto xpts = assembler.getXpts();
   auto h_xpts = xpts.createHostVec();
-  auto h_soln = vars.createHostVec();
+  auto h_soln = soln.createHostVec();
   T end_disp[3];
   for (int inode = 0; inode < num_nodes; inode++) {
     if (abs(h_xpts[3 * inode] - length) < 1e-6) {
@@ -118,13 +113,11 @@ int main(void) {
     }
   }
 
-//   thetaTip=1.125661077149547 XdispNorm=0.3315629142866051 ZdispNorm=0.6720677231202588
-  // T ref_end_disp[] = {-3.315629142866051, 0.0, 6.720677231202588}; // with geom nonlinear strain + quadratic rotation
-  T ref_end_disp[] = {-2.218, 0.0, 5.791}; // with geom nonlinear strain + linear rotation (matches what I'm doing here)
+  T ref_end_disp[3] = {0.0, 0.0, 13.32};
 
   T max_rel_err = rel_err(3, end_disp, ref_end_disp, 1e-8);
   bool passed = max_rel_err < 1e-2;
-  printTestReport("nonlinear cantilever tip disp", passed, max_rel_err);
+  printTestReport("linear cantilever tip disp", passed, max_rel_err);
   printf("\tin-plane\tGPU %.4e, CPU ref %.4e\n", end_disp[0], ref_end_disp[0]);
   printf("\tout-of-plane\tGPU %.4e, CPU ref %.4e\n", end_disp[2], ref_end_disp[2]);
 

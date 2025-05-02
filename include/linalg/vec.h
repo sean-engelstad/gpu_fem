@@ -6,6 +6,7 @@
 #include "../utils.h"
 #include "chrono"
 #include "stdlib.h"
+#include <string>
 
 #ifdef USE_GPU
 #include "../cuda_utils.h"
@@ -37,6 +38,11 @@ class BaseVec {
     // __HOST__ void zeroValues() {
     //     memset(this->data, 0.0, this->N * sizeof(T));
     // }
+
+    __HOST_DEVICE__ void print(const std::string name) {
+        printf("%s\n", name.c_str());
+        printVec<T>(this->getSize(), this->getPtr());
+    }
 
     __HOST__ void scale(T my_scale) {
         for (int i = 0; i < N; i++) {

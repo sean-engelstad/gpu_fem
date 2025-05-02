@@ -85,6 +85,7 @@ class ElementAssembler {
     int get_num_elements() { return num_elements; }
     int get_num_dvs() { return num_components * Phys::num_dvs; }
     HostVec<T> createVarsHostVec(T *data, bool randomize);
+    void setBsrData(BsrData new_bsr_data) { this->bsr_data = new_bsr_data; }
 
     // private functions
     T _compute_ks_failure(T rho_KS);
