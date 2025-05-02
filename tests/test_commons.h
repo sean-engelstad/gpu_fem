@@ -57,8 +57,7 @@ void printKernelTiming(long long microseconds) {
     const char* color_time = "\033[2m";   // dim gray/white
     const char* color_reset = "\033[0m";  // reset
 
-    printf("\ttook %s%d%s microseconds to run add residual\n", color_time, (int)microseconds,
-           color_reset);
+    printf("\ttook %s%d%s microseconds to run\n", color_time, (int)microseconds, color_reset);
 }
 
 template <typename T>

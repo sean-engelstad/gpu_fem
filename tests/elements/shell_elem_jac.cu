@@ -162,6 +162,19 @@ void test_kelem_gpu() {
     printf("\tabs err %.4e, max ref %.4e, norm err %.4e, max rel err %.4e\n", max_abs_err, max_ref, my_rel_err, max_rel_err);
   }
 
+  // temp debug
+  constexpr bool debug = false;
+  if constexpr (is_nonlinear && debug) {
+    for (int i = 0; i < 576; i++) {
+      double val1 = h_mat[i];
+      double val2 = cpu_kelem_ref_nl[i];
+      double my_rel_err = rel_err(val1, val2);
+      int row = i / 24;
+      int col = i % 24;
+      printf("row %d, col %d : GPU %.4e, CPU %.4e, rel_err %.4e\n", row, col, val1, val2, my_rel_err);
+    }
+  }
+
   printKernelTiming(duration.count());
 }
 

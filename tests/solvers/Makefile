@@ -2,6 +2,10 @@ include ../../Makefile.in
 
 default: gmres_laplace
 
+plate:
+	make gmres_plate
+	make LU_plate
+
 clean:
 	rm *.out || echo "no *.out files to remove"
 

@@ -281,6 +281,13 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
         active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], local_res, local_mat_col);
 
+    // if (threadIdx.y == 21) {
+    //     printf("quad %d\tlocal_mat_col[21][8] = %.6e\n", threadIdx.z, local_mat_col[8]);
+    // }
+    // if (threadIdx.y == 8) {
+    //     printf("quad %d\tlocal_mat_col[8][21] = %.6e\n", threadIdx.z, local_mat_col[21]);
+    // }
+
     // TODO : warp shuffle add among threads before into shared
     // this reduces number of atomic calls
 
@@ -297,6 +304,13 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
     //     printVec<double>(vars_per_elem2, &block_mat[local_elem][0]);
     // }
 
+    // if (threadIdx.y == 8 && iquad == 0) {
+    //     printf("block_mat[8,21] = %.6e\n", block_mat[local_elem][24 * threadIdx.y + 21]);
+    // }
+    // if (threadIdx.y == 21 && iquad == 0) {
+    //     printf("block_mat[21,8] = %.6e\n", block_mat[local_elem][24 * threadIdx.y + 8]);
+    // }
+
     // printf("blockMat:");
     // printVec<double>(576,block_mat[local_elem]);
 
@@ -307,6 +321,8 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
     mat.addElementMatrixValuesFromShared(active_thread, thread_yz, nthread_yz, 1.0, global_elem,
                                          Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
                                          &block_mat[local_elem][0]);
+
+    // printf("block_mat[512] = %.4e\n", block_mat[0][512]);
 
 }  // end of add_jacobian_gpu
 
