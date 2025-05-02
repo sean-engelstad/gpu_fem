@@ -6,12 +6,16 @@
 
 // this example is based off of examples/crm/crm.cpp in TACS
 
-int main() {
-    using T = double;   
+int main(int argc, char *argv[]) {
+    using T = double;
     // bool print = false;
 
-    std::string nonlinear_str = argv[1];
-    bool nonlinear = nonlinear_str == "nonlinear";
+    std::string nonlinear_str;
+    bool nonlinear = false;
+    if (argc == 2) {
+        nonlinear_str = argv[1];
+        nonlinear = nonlinear_str == "nonlinear";
+    }
 
     // make the MPI communicator
     MPI_Init(NULL, NULL);
@@ -63,9 +67,7 @@ int main() {
     if (nz_vars) {
         for (int ivar = 0; ivar < num_vars; ivar++) {
             vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
-#ifdef NLINEAR
-            vars[ivar] *= 1e6;
-#endif
+            if (nonlinear) vars[ivar] *= 1e6;
         }
     }
 
@@ -89,6 +91,7 @@ int main() {
         printf("nonlinear CPU shell\n");
         elem = new TACSQuad4NonlinearShell(transform, con);
     } else {
+        printf("linear CPU shell\n");
         elem = new TACSQuad4Shell(transform, con);
     }
     //

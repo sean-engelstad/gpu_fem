@@ -1,8 +1,7 @@
-
 # GPU_FEM include
 include ../../Makefile.in
 
-default: res-gpu
+default: nl_cantilever
 
 %: %.cu
 	${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 $< -o $@.out ${LINK}

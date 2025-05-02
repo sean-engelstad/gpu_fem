@@ -1,7 +1,7 @@
-#TACS_DIR := ${HOME}/git/archive/tacs
+TACS_DIR := ${HOME}/git/_archive/tacs
 
 # GPU_FEM include
-include ../../../Makefile.in
+# include ../../../Makefile.in
 
 # TACS include
 include ${TACS_DIR}/Makefile.in
@@ -9,10 +9,13 @@ include ${TACS_DIR}/TACS_Common.mk
 
 default: res-tacs
 
-%: %.cpp %.o
+res-tacs: res-tacs.o
 	${CXX} -o tacs-res.x res-tacs.o ${TACS_LD_FLAGS}
-	g++ ${INCLUDE_FLAGS} $< -o $@.out
 
+jac-tacs: jac-tacs.o
+	${CXX} -o tacs-jac.x jac-tacs.o ${TACS_LD_FLAGS}
+
+# res-tacs: res-tacs.o
 
 clean:
 	rm *.out || echo "no .out files"

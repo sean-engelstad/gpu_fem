@@ -1,8 +1,9 @@
 #pragma once
+#include <cassert>
+#include <string>
+
 #include "linalg/vec.h"
 #include "utils.h"
-#include <string>
-#include <cassert>
 
 template <typename T>
 bool EXPECT_NEAR(T val1, T val2, T tol = 1e-8, T min_tol = 1e-10) {
@@ -22,16 +23,42 @@ T rel_err(T val1, T val2, T min_tol = 1e-10) {
     }
 }
 
-
 template <typename T>
 T abs_err(T val1, T val2) {
     return abs(val1 - val2);
 }
 
+// uncolored test report printout
+// template <typename T>
+// void printTestReport(const std::string& test_name, bool passed, T max_rel_err) {
+//     std::string passed_str = passed ? "passed" : "failed";
+//     printf("%s %s with rel err %.4e\n", test_name.c_str(), passed_str.c_str(), max_rel_err);
+// }
+
+// colored test report printout
+
 template <typename T>
 void printTestReport(const std::string& test_name, bool passed, T max_rel_err) {
-    std::string passed_str = passed ? "passed" : "failed";
-    printf("%s %s with rel err %.4e\n", test_name.c_str(), passed_str.c_str(), max_rel_err);
+    // ANSI escape codes for text color
+    const char* color_passed = "\033[32m";  // green
+    const char* color_failed = "\033[31m";  // red
+    const char* color_error = "\033[34m";   // blue
+    const char* color_reset = "\033[0m";    // reset to default
+
+    const char* result_str = passed ? "passed" : "failed";
+    const char* result_color = passed ? color_passed : color_failed;
+
+    printf("%s %s%s%s with rel err %s%.4e%s\n", test_name.c_str(), result_color, result_str,
+           color_reset, color_error, max_rel_err, color_reset);
+}
+
+void printKernelTiming(long long microseconds) {
+    // const char* color_time = "\033[33m";  // yellow
+    const char* color_time = "\033[2m";   // dim gray/white
+    const char* color_reset = "\033[0m";  // reset
+
+    printf("\ttook %s%d%s microseconds to run add residual\n", color_time, (int)microseconds,
+           color_reset);
 }
 
 template <typename T>
@@ -64,12 +91,26 @@ T rel_err(int N, T vec1[], T vec2[], T min_tol = 1e-10) {
 }
 
 template <typename T>
+T abs_err(HostVec<T> h_vec1, T vec2[]) {
+    HostVec<T> h_vec2(h_vec1.getSize(), vec2);
+    return abs_err(h_vec1, h_vec2);
+}
+
+template <typename T>
 T abs_err(int N, T vec1[], T vec2[]) {
     HostVec<T> h_vec1(N, vec1);
     HostVec<T> h_vec2(N, vec2);
     return abs_err(h_vec1, h_vec2);
 }
 
+template <typename T>
+T max(int N, T vec[]) {
+    T max_val = 0.0;
+    for (int i = 0; i < N; i++) {
+        max_val = max(max_val, vec[i]);
+    }
+    return max_val;
+}
 
 template <typename T>
 T rel_err(HostVec<T> vec1, T vec2[], T min_tol = 1e-10) {
@@ -113,11 +154,11 @@ bool EXPECT_VEC_NEAR(DeviceVec<T> vec1, T vec2[], T tol = 1e-8, T min_tol = 1e-1
     HostVec<T> h_vec1 = vec1.createHostVec();
     HostVec<T> h_vec2(vec1.getSize(), vec2);
     return EXPECT_VEC_NEAR(h_vec1, h_vec2, tol, min_tol);
-}                    
+}
 
 template <typename T>
 bool EXPECT_VEC_NEAR(DeviceVec<T> vec1, DeviceVec<T> vec2, T tol = 1e-8, T min_tol = 1e-10) {
     HostVec<T> h_vec1 = vec1.createHostVec();
     HostVec<T> h_vec2 = vec2.createHostVec();
     return EXPECT_VEC_NEAR(h_vec1, h_vec2, tol, min_tol);
-}                    
+}

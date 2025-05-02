@@ -17,13 +17,20 @@ void printVec<double>(const int N, const double *vec) {
 
 // this example is based off of examples/crm/crm.cpp in TACS
 
-int main() {
+int main(int argc, char *argv[]) {
     // make the MPI communicator
     MPI_Init(NULL, NULL);
     MPI_Comm comm = MPI_COMM_WORLD;
 
     int rank;
     MPI_Comm_rank(comm, &rank);
+
+    std::string nonlinear_str;
+    bool nonlinear = false;
+    if (argc == 2) {
+        nonlinear_str = argv[1];
+        nonlinear = nonlinear_str == "nonlinear";
+    }
 
     using T = TacsScalar;
 
@@ -70,9 +77,7 @@ int main() {
     if (nz_vars) {
         for (int ivar = 0; ivar < num_vars; ivar++) {
             vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
-#ifdef NLINEAR
-            vars[ivar] *= 1e6;
-#endif
+            if (nonlinear) vars[ivar] *= 1e6;
         }
     }
 
@@ -88,12 +93,15 @@ int main() {
     TacsScalar thick = 0.005;  // shell thickness
     TACSIsoShellConstitutive *con = new TACSIsoShellConstitutive(mat, thick);
 
-// now create the shell element object
-#ifdef NLINEAR
-    TACSQuad4NonlinearShell *elem = new TACSQuad4NonlinearShell(transform, con);
-#else
-    TACSQuad4Shell *elem = new TACSQuad4Shell(transform, con);
-#endif
+    // now create the shell element object
+    TACSElement *elem;
+    if (nonlinear) {
+        printf("nonlinear CPU shell\n");
+        elem = new TACSQuad4NonlinearShell(transform, con);
+    } else {
+        printf("linear CPU shell\n");
+        elem = new TACSQuad4Shell(transform, con);
+    }
 
     // call compute energies on the one element
     int elemIndex = 0;
@@ -118,8 +126,9 @@ int main() {
     printf("res: ");
     printVec<double>(24, res);
 
+    printf("kmat:\n");
     for (int i = 0; i < 24; i++) {  // i < 2
-        printf("kmat row %d: ", i);
+        // printf("kmat row %d: ", i);
         printVec<double>(num_vars, &Kmat[24 * i]);
     }
 

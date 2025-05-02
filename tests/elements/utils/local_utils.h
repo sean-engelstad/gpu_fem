@@ -36,7 +36,7 @@ Assembler createOneElementAssembler(int num_bcs) {
                         physData);
 
     // so that the bsr_data is on device (otherwise data on host)
-    assembler.symbolic_factorization(1.0, false);
+    assembler.moveBsrDataToDevice();
 
     return assembler;
 }

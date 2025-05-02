@@ -1224,7 +1224,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         delete[] file_Xpts;
 
         // Read in the connectivity array and store the information
-        printf("elem_conn_size = %d, num_elements = %d\n", elem_conn_size, num_elements);
+        // printf("elem_conn_size = %d, num_elements = %d\n", elem_conn_size, num_elements);
         elem_node_conn = new int[elem_conn_size];
         elem_node_ptr = new int[num_elements + 1];
         elem_component = new int[num_elements];

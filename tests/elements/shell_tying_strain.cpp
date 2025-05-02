@@ -1,11 +1,11 @@
 #include "a2dcore.h"
 #include "a2ddefs.h"
-#include "base/utils.h"
-#include "shell/basis.h"
-#include "shell/director.h"
-#include "shell/physics/isotropic_shell.h"
-#include "shell/shell_elem_group.h"
-#include "shell/shell_utils.h"
+#include "element/shell/basis.h"
+#include "element/shell/director.h"
+#include "element/shell/physics/isotropic_shell.h"
+#include "element/shell/shell_elem_group.h"
+#include "element/shell/shell_utils.h"
+#include "utils.h"
 
 template <bool is_nonlinear = false>
 void testTyingStrainFwd() {
