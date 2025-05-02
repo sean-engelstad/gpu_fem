@@ -7,6 +7,12 @@
 // this example is based off of examples/crm/crm.cpp in TACS
 
 int main() {
+    using T = double;   
+    // bool print = false;
+
+    std::string nonlinear_str = argv[1];
+    bool nonlinear = nonlinear_str == "nonlinear";
+
     // make the MPI communicator
     MPI_Init(NULL, NULL);
     MPI_Comm comm = MPI_COMM_WORLD;
@@ -77,13 +83,14 @@ int main() {
     TacsScalar thick = 0.005;  // shell thickness
     TACSIsoShellConstitutive *con = new TACSIsoShellConstitutive(mat, thick);
 
-// now create the shell element object
-#ifdef NLINEAR
-    printf("nonlinear CPU shell\n");
-    TACSQuad4NonlinearShell *elem = new TACSQuad4NonlinearShell(transform, con);
-#else
-    TACSQuad4Shell *elem = new TACSQuad4Shell(transform, con);
-#endif
+    // now create the shell element object
+    TACSElement *elem;
+    if (nonlinear) {
+        printf("nonlinear CPU shell\n");
+        elem = new TACSQuad4NonlinearShell(transform, con);
+    } else {
+        elem = new TACSQuad4Shell(transform, con);
+    }
     //
 
     // call compute energies on the one element
