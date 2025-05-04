@@ -1,12 +1,12 @@
 #pragma once
 #include <complex>
 #include <cstring>
+#include <string>
 
 #include "../cuda_utils.h"
 #include "../utils.h"
 #include "chrono"
 #include "stdlib.h"
-#include <string>
 
 #ifdef USE_GPU
 #include "../cuda_utils.h"
@@ -204,17 +204,17 @@ class DeviceVec : public BaseVec<T> {
     // }
 
     static void add_vec(DeviceVec<T> vec1, DeviceVec<T> vec2, DeviceVec<T> vec3) {
-        // add us to xs0
-        #ifdef USE_GPU
+// add us to xs0
+#ifdef USE_GPU
         // use cublas or a custom kernel here for axpy?
         dim3 block1(32);
         int nblocks = (vec1.getSize() + block1.x - 1) / block1.x;
         dim3 grid1(nblocks);
         vec_add_kernel<T><<<grid1, block1>>>(vec1, vec2, vec3);
         CHECK_CUDA(cudaDeviceSynchronize());
-        #else
+#else
         printf("add vector code only written for GPU now\n");
-        #endif
+#endif
     }
 
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
@@ -337,7 +337,6 @@ class DeviceVec : public BaseVec<T> {
     }
 
     __HOST__ void removeRotationalDOF(DeviceVec<T> &new_vec) {
-
         int num_blocks = (new_vec.N + 32 - 1) / 32;
         removeRotationalDOF_kernel<T, DeviceVec>
             <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
@@ -383,7 +382,7 @@ class DeviceVec : public BaseVec<T> {
         }
     }
 #endif  // USE_GPU
-}; // end of DeviceVec
+};      // end of DeviceVec
 
 template <typename T>
 class HostVec : public BaseVec<T> {
@@ -465,7 +464,7 @@ class HostVec : public BaseVec<T> {
             delete[] this->data;
         }
     }
-}; // end of HostVec
+};  // end of HostVec
 
 /*
 convertVec : converts vec to host or device vec depending on whether

@@ -10,7 +10,7 @@
 #include "stdlib.h"
 #include "vec.h"
 
-typedef int index_t; // for sparse utils
+typedef int index_t;  // for sparse utils
 
 // dependency to smdogroup/sparse-utils repo
 #include "sparse_utils/sparse_symbolic.h"
@@ -18,14 +18,20 @@ typedef int index_t; // for sparse utils
 
 class BsrData {
     /* holds bsr sparsity pattern */
-public:
+   public:
     BsrData() = default;
     __HOST__ BsrData(const int nelems, const int nnodes, const int &nodes_per_elem,
-        const int &block_dim, const int32_t *conn)
-        : nelems(nelems), nnodes(nnodes), nodes_per_elem(nodes_per_elem), elem_conn(conn),
-          block_dim(block_dim), elem_ind_map(nullptr), tr_rowp(nullptr), tr_cols(nullptr),
-          tr_block_map(nullptr), host(true) {
-
+                     const int &block_dim, const int32_t *conn)
+        : nelems(nelems),
+          nnodes(nnodes),
+          nodes_per_elem(nodes_per_elem),
+          elem_conn(conn),
+          block_dim(block_dim),
+          elem_ind_map(nullptr),
+          tr_rowp(nullptr),
+          tr_cols(nullptr),
+          tr_block_map(nullptr),
+          host(true) {
         _get_row_col_ptrs_sparse();
 
         // make a nominal ordering (no permutation)
@@ -39,10 +45,19 @@ public:
     }
 
     __HOST__ BsrData(const int mb, const int block_dim, const int nnzb, index_t *rowp,
-        index_t *cols, int *perm = nullptr, int *iperm = nullptr, bool host = true)
-        : nnzb(nnzb), nnodes(mb), nodes_per_elem(nodes_per_elem), rowp(rowp), cols(cols),
-          elem_conn(nullptr), block_dim(block_dim), elem_ind_map(nullptr), tr_rowp(nullptr), tr_cols(nullptr),
-          tr_block_map(nullptr), host(host) {
+                     index_t *cols, int *perm = nullptr, int *iperm = nullptr, bool host = true)
+        : nnzb(nnzb),
+          nnodes(mb),
+          nodes_per_elem(nodes_per_elem),
+          rowp(rowp),
+          cols(cols),
+          elem_conn(nullptr),
+          block_dim(block_dim),
+          elem_ind_map(nullptr),
+          tr_rowp(nullptr),
+          tr_cols(nullptr),
+          tr_block_map(nullptr),
+          host(host) {
         if (!perm || !iperm) {
             this->perm = new int32_t[nnodes];
             this->iperm = new int32_t[nnodes];
@@ -61,16 +76,17 @@ public:
 
     __HOST__ void _get_row_col_ptrs_sparse() {
         /* get the rowp, cols from the element connectivity using sparse utils */
-        auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double, 1>(nelems, nnodes, nodes_per_elem, elem_conn);
+        auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double, 1>(nelems, nnodes,
+                                                                         nodes_per_elem, elem_conn);
         nnzb = su_mat->nnz;
         rowp = su_mat->rowp;
         cols = su_mat->cols;
     }
 
     __HOST__ static int getBandWidth(const int &nnodes, const int &nnzb, int *rowp, int *cols) {
-        /* compute bandwidth for reordering and sparsity pattern changes (esp. q-ordering) 
+        /* compute bandwidth for reordering and sparsity pattern changes (esp. q-ordering)
             bandwidth = max_{a_ij neq 0} |i - j|   ( so max off-diagonal distance
-            within sparsity pattern) */ 
+            within sparsity pattern) */
         int bandwidth = 0;
         for (int i = 0; i < nnodes; i++) {
             for (int jp = rowp[i]; jp < rowp[i + 1]; jp++) {
@@ -86,11 +102,22 @@ public:
 
     __HOST__ void compute_nofill_pattern() {
         /* compute the rowp, cols after a permutation or reordering with no fillin */
-        auto A = SparseUtils::BSRMat<double,1,1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
-        // auto A2 = SparseUtils::BSRMatApplyPerm<double,1>(A, perm, iperm);
-        auto A2 = SparseUtils::BSRMatApplyPerm<double,1>(A, iperm, perm);
-        if (rowp) delete[] rowp;
-        if (cols) delete[] cols;
+        auto A = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
+
+        // printf("here4\n");
+        // printf("iperm:\n");
+        // printVec<int>(nnodes, iperm);
+        // printf("perm:\n");
+        // printVec<int>(nnodes, perm);
+        // printf("rowp:\n");
+        // printVec<int>(nnodes + 1, rowp);
+        // printf("cols:\n");
+        // printVec<int>(nnzb, cols);
+
+        auto A2 = SparseUtils::BSRMatApplyPerm<double, 1>(A, perm, iperm);
+        // auto A2 = SparseUtils::BSRMatApplyPerm<double, 1>(A, iperm, perm);
+        // if (rowp) delete[] rowp;
+        // if (cols) delete[] cols;
 
         // get permuted no-fill pattern for Kmat
         nnzb = A2->rowp[nnodes];
@@ -105,8 +132,7 @@ public:
             printf("begin full LU symbolic factorization::\n");
             printf("\tnnzb = %d\n", nnzb);
         }
-        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
-            nnodes, nnodes, nnzb, rowp, cols, nullptr);
+        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
         // delete old rowp, cols
         if (rowp) delete[] rowp;
         if (cols) delete[] cols;
@@ -114,9 +140,10 @@ public:
         // fix perm slows down symbolic factorization significantly..
         // if I swap to perm now symbolic speedsup but solves wrong
         // if I swap to iperm now symbolic slow, solves right
-        // I was messing with the permutations perm vs iperm in order to get the GMRES to solve correctly
-        // maybe I need to swap iperm and perm again.. swap it back? Does this break the GMRES though in the presence of reorderings?
-            // but the direct LU works with this though? double check this..
+        // I was messing with the permutations perm vs iperm in order to get the GMRES to solve
+        // correctly maybe I need to swap iperm and perm again.. swap it back? Does this break the
+        // GMRES though in the presence of reorderings? but the direct LU works with this though?
+        // double check this..
 
         // swap perms here
         // int *temp = perm;
@@ -132,9 +159,9 @@ public:
         // su_mat.perm = perm_copy;
         // su_mat.iperm = iperm_copy;
 
-        auto su_mat2 = SparseUtils::BSRMatReorderSymbolicCUDA<double,1>(su_mat, fill_factor);
-            // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill_factor);
-            // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, iperm, fill_factor);
+        auto su_mat2 = SparseUtils::BSRMatReorderSymbolicCUDA<double, 1>(su_mat, fill_factor);
+        // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill_factor);
+        // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, iperm, fill_factor);
 
         nnzb = su_mat2->nnz;
         rowp = su_mat2->rowp;
@@ -148,7 +175,6 @@ public:
         }
     }
 
-    
     __HOST__ void compute_ILUk_pattern(int levFill, double fill_factor = 10.0) {
         /* compute the full ILU(k) fill pattern including reorderings, levFill is k.
             TACS also returns a **_levs pointer (should we do that here too?) */
@@ -158,7 +184,6 @@ public:
         int *levels;
         computeILUk(nnodes, nnzb, rowp, cols, levFill, fill_factor, &levels);
         nnzb = rowp[nnodes];
-        
     }
 
     __HOST__ void AMD_reordering() {
@@ -171,42 +196,52 @@ public:
         auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
         // printf("done with BSRMatAMDFactorSymbolicCUDA\n");
 
-        // TODO : not the most efficient since it includes factorization in above too (can fix later if need be)
-        // perm = su_mat2->perm;
-        // iperm = su_mat2->iperm;
-        perm = su_mat2->iperm; // my reordering definition is flipped from sparse utils
-        iperm = su_mat2->perm;
+        // TODO : not the most efficient since it includes factorization in above too (can fix later
+        // if need be) perm = su_mat2->perm; iperm = su_mat2->iperm;
+        perm = su_mat2->perm;
+        iperm = su_mat2->iperm;
+        // perm = su_mat2->iperm;  // my reordering definition is flipped from sparse utils
+        // iperm = su_mat2->perm;
     }
 
-    __HOST__ void RCM_reordering() {
-        /* reverse cuthill McKee reordering to reduce matrix bandwidth and 
+    __HOST__ void RCM_reordering(int num_rcm_iters = 1) {
+        /* reverse cuthill McKee reordering to reduce matrix bandwidth and
            # nz in the sparsity pattern */
 
         int *_new_perm = new int[nnodes];
-        int num_rcm_iters = 1; // don't think we need to change this
+        // int num_rcm_iters = 3;  // don't think we need to change this
         int root_node = 0;
-        TacsComputeRCMOrder(nnodes, rowp, cols, _new_perm,
-                            root_node, num_rcm_iters);
+        TacsComputeRCMOrder(nnodes, rowp, cols, _new_perm, root_node, num_rcm_iters);
         // flip the new permutation
         for (int k = 0; k < nnodes; k++) {
-            // perm[_new_perm[k]] = k; // flipped from TACS
-            // iperm[k] = _new_perm[k];
-            perm[k] = _new_perm[k];
-            iperm[perm[k]] = k;
+            perm[_new_perm[k]] = k;  // flipped from TACS
+            iperm[k] = _new_perm[k];
+            // perm[k] = _new_perm[k];
+            // iperm[perm[k]] = k;
         }
         if (_new_perm) delete[] _new_perm;
     }
 
-    __HOST__ void qorder_reordering(double p_factor) {
+    __HOST__ void qorder_reordering(double p_factor, int rcm_iters = 5) {
         /*  qordering combines RCM reordering to reduce bandwidth with random reordering
                 to reduce chain lengths in ILU factorization for more stable ILU decomp numerically
                 this also should improve GMRES convergence
-            #rows for random = 1/pfactor * bandwidth so lower pfactor is more random 
+            #rows for random = 1/pfactor * bandwidth so lower pfactor is more random
         */
+
+        // keep orig rowp, cols
+        int *orig_rowp = new int[nnodes + 1];
+        int *orig_cols = new int[nnzb];
+        for (int i = 0; i < nnodes + 1; i++) {
+            orig_rowp[i] = rowp[i];
+        }
+        for (int i = 0; i < nnzb; i++) {
+            orig_cols[i] = cols[i];
+        }
 
         // first we perform RCM reordering to lower bandwidth
         int bandwidth_0 = getBandWidth(nnodes, nnzb, rowp, cols);
-        RCM_reordering();
+        RCM_reordering(rcm_iters);
         compute_nofill_pattern();
         int bandwidth_1 = getBandWidth(nnodes, nnzb, rowp, cols);
         printf("prelim RCM reordering reduces bandwidth from %d to %d\n", bandwidth_0, bandwidth_1);
@@ -215,20 +250,29 @@ public:
         int prune_width = (int)1.0 / p_factor * bandwidth_1;
         printf("qordering with init bandwidth %d and prune width %d\n", bandwidth_1, prune_width);
         int num_prunes = (nnodes + prune_width - 1) / prune_width;
-        std::random_device rd; // random number generator
+        std::random_device rd;  // random number generator
         std::mt19937 g(rd());
         // since iperm is used for sparsity change now, qperm modifies that
-        std::vector<int> q_perm(iperm, iperm + nnodes);
+        std::vector<int> q_perm(perm, perm + nnodes);
         for (int iprune = 0; iprune < num_prunes; iprune++) {
             int lower = prune_width * iprune;
             int upper = std::min(lower + prune_width, nnodes);
             std::shuffle(q_perm.begin() + lower, q_perm.begin() + upper, g);
         }
 
+        // also reset the rowp, cols to original (was changed after reordering computation to check
+        // bandwidth)
+        if (rowp) delete[] rowp;
+        if (cols) delete[] cols;
+        rowp = orig_rowp;
+        cols = orig_cols;
+
         // update final permutation and iperm (deep copy)
         for (int i = 0; i < nnodes; i++) {
-            iperm[i] = q_perm[i];
-            perm[q_perm[i]] = i;
+            perm[i] = q_perm[i];
+            iperm[q_perm[i]] = i;
+            // iperm[i] = q_perm[i];
+            // perm[q_perm[i]] = i;
         }
     }
 
@@ -242,9 +286,9 @@ public:
         if (tr_block_map) delete[] tr_block_map;
 
         // printf("before elem ind map\n");
-        
+
         // 1) compute the elem ind map -------------
-        /* elem_ind_map is nelems x 4 x 4 array for nodes_per_elem = 4 
+        /* elem_ind_map is nelems x 4 x 4 array for nodes_per_elem = 4
            it's useful in telling how to add each block matrix to global*/
         int nodes_per_elem2 = nodes_per_elem * nodes_per_elem;
         elem_ind_map = new index_t[nelems * nodes_per_elem2]();
@@ -275,7 +319,7 @@ public:
         // printf("elem_ind_map2:");
         // printVec<int>(nelems * nodes_per_elem2, elem_ind_map);
 
-        // 2) compute the transpose matrix maps --------------        
+        // 2) compute the transpose matrix maps --------------
         /* difficult to apply bcs to cols BSR with column-major format, but easy to apply to rows
            so compute here the the sparsity maps of the transpose matrix */
 
@@ -297,7 +341,8 @@ public:
                 int32_t orig_val_ind = orig_block_ind;
                 int32_t transpose_val_ind =
                     tr_rowp[block_col] + temp_col_local_block_ind_ctr[block_col];
-                temp_col_local_block_ind_ctr[block_col]++; // increment number of block cols in this col
+                temp_col_local_block_ind_ctr[block_col]++;  // increment number of block cols in
+                                                            // this col
                 tr_block_map[transpose_val_ind] = orig_val_ind;
             }
         }
@@ -307,7 +352,7 @@ public:
 
     __HOST__ BsrData createHostBsrData() {
         /* create new BsrData object with all Device sparsity data copied to the Host */
-        BsrData new_bsr; // bypass main constructor so we don't end up making host data
+        BsrData new_bsr;  // bypass main constructor so we don't end up making host data
         new_bsr.nnzb = this->nnzb;
         new_bsr.nodes_per_elem = this->nodes_per_elem;
         new_bsr.block_dim = this->block_dim;
@@ -316,15 +361,17 @@ public:
         new_bsr.host = true;
 
         int *h_elem_conn = nullptr;
-        #ifdef USE_GPU
+#ifdef USE_GPU
         h_elem_conn = new int[nodes_per_elem * nelems];
-        CHECK_CUDA(cudaMemcpy(h_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int), cudaMemcpyDeviceToHost));
-        #endif
+        CHECK_CUDA(cudaMemcpy(h_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int),
+                              cudaMemcpyDeviceToHost));
+#endif
 
         // create HostVec wrapper objects in CUDA, transfer to device and get ptr for new object
-        DeviceVec<int> d_rowp(nnodes+1, rowp), d_cols(nnzb, cols), d_perm(nnodes, perm), d_iperm(nnodes, iperm),
-                    d_elem_ind_map(n_eim, elem_ind_map), d_tr_rowp(nnodes+1, tr_rowp), d_tr_cols(nnzb, tr_cols), 
-                    d_tr_block_map(nnzb, tr_block_map);
+        DeviceVec<int> d_rowp(nnodes + 1, rowp), d_cols(nnzb, cols), d_perm(nnodes, perm),
+            d_iperm(nnodes, iperm), d_elem_ind_map(n_eim, elem_ind_map),
+            d_tr_rowp(nnodes + 1, tr_rowp), d_tr_cols(nnzb, tr_cols),
+            d_tr_block_map(nnzb, tr_block_map);
         new_bsr.rowp = d_rowp.createHostVec().getPtr();
         new_bsr.cols = d_cols.createHostVec().getPtr();
         new_bsr.perm = d_perm.createHostVec().getPtr();
@@ -349,12 +396,13 @@ public:
         _compute_symbolic_maps_for_gpu();
 
         int *d_elem_conn = nullptr;
-        #ifdef USE_GPU
+#ifdef USE_GPU
         CHECK_CUDA(cudaMalloc((void **)&d_elem_conn, nodes_per_elem * nelems * sizeof(int)));
-        CHECK_CUDA(cudaMemcpy(d_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int), cudaMemcpyHostToDevice));
-        #endif
+        CHECK_CUDA(cudaMemcpy(d_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int),
+                              cudaMemcpyHostToDevice));
+#endif
 
-        BsrData new_bsr; // bypass main constructor so we don't end up making host data
+        BsrData new_bsr;  // bypass main constructor so we don't end up making host data
         new_bsr.nnzb = this->nnzb;
         new_bsr.nodes_per_elem = this->nodes_per_elem;
         new_bsr.block_dim = this->block_dim;
@@ -363,9 +411,10 @@ public:
         new_bsr.host = false;
 
         // create HostVec wrapper objects in CUDA, transfer to device and get ptr for new object
-        HostVec<int> h_rowp(nnodes+1, rowp), h_cols(nnzb, cols), h_perm(nnodes, perm), h_iperm(nnodes, iperm),
-                    h_elem_ind_map(n_eim, elem_ind_map), h_tr_rowp(nnodes+1, tr_rowp), h_tr_cols(nnzb, tr_cols), 
-                    h_tr_block_map(nnzb, tr_block_map);
+        HostVec<int> h_rowp(nnodes + 1, rowp), h_cols(nnzb, cols), h_perm(nnodes, perm),
+            h_iperm(nnodes, iperm), h_elem_ind_map(n_eim, elem_ind_map),
+            h_tr_rowp(nnodes + 1, tr_rowp), h_tr_cols(nnzb, tr_cols),
+            h_tr_block_map(nnzb, tr_block_map);
         new_bsr.rowp = h_rowp.createDeviceVec().getPtr();
         new_bsr.cols = h_cols.createDeviceVec().getPtr();
         new_bsr.perm = h_perm.createDeviceVec().getPtr();
@@ -385,7 +434,7 @@ public:
     __HOST__ void free() {
         /* cleanup / delete data after use*/
         if (!this->host) {
-            #ifdef USE_GPU
+#ifdef USE_GPU
             // delete data on device
             if (rowp) cudaFree(rowp);
             if (cols) cudaFree(cols);
@@ -395,7 +444,7 @@ public:
             if (tr_rowp) cudaFree(tr_rowp);
             if (tr_cols) cudaFree(tr_cols);
             if (tr_block_map) cudaFree(tr_block_map);
-            #endif // USE_GPU
+#endif  // USE_GPU
         } else {
             // delete data on host
             if (rowp) delete[] rowp;
@@ -408,7 +457,6 @@ public:
             if (tr_block_map) delete[] tr_block_map;
         }
     }
-
 
     // object data, kept public =---------------------------
     int32_t nnzb, nelems, nnodes, nodes_per_elem, block_dim, n_eim;

@@ -1,16 +1,16 @@
-#include "../../../examples/plate/_plate_utils.h"
+#include "../../examples/plate/_plate_utils.h"
 #include "linalg/_linalg.h"
 #include "mesh/TACSMeshLoader.h"
 #include "mesh/vtk_writer.h"
 
-
 // shell imports
-#include "assembler.h"
-#include "element/shell/shell_elem_group.h"
-#include "element/shell/physics/isotropic_shell.h"
+#include <cstdlib>  // for std::atoi, std::stod
 #include <iostream>
 #include <string>
-#include <cstdlib> // for std::atoi, std::stod
+
+#include "assembler.h"
+#include "element/shell/physics/isotropic_shell.h"
+#include "element/shell/shell_elem_group.h"
 
 /**
 
@@ -19,8 +19,8 @@
     # No ordering, no fill
     ./program none nofill
 
-    # RCM ordering with ILU(k=2)
-    ./program RCM ILUk 2
+    # RCM ordering with 5 RCM iters and ILU(k=2)
+    ./program RCM ILUk 5 2
 
     # Q-ordering with p_factor=4 and ILU(k=3)
     ./program qorder ILUk 4 3
@@ -37,9 +37,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::string ordering = argv[1];  // "none", "RCM", or "qorder"
-    std::string fill_type = argv[2]; // "nofill", "ILUk", or "LU"
+    std::string ordering = argv[1];   // "none", "RCM", or "qorder"
+    std::string fill_type = argv[2];  // "nofill", "ILUk", or "LU"
 
+    int rcm_iters = 5;
     double p_factor = 0;
     int k = 0;
 
@@ -50,6 +51,13 @@ int main(int argc, char* argv[]) {
         }
         p_factor = std::stod(argv[3]);
     }
+    if (ordering == "RCM") {
+        if (argc < 4) {
+            std::cerr << "Error: RCM requires a number of iterations\n";
+            return 1;
+        }
+        rcm_iters = std::atoi(argv[3]);
+    }
 
     if (fill_type == "ILUk") {
         if ((ordering != "qorder" && argc < 4) || (ordering == "qorder" && argc < 5)) {
@@ -57,7 +65,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         // ILUk's k value is argv[3] if ordering ≠ qorder, argv[4] if ordering = qorder
-        k = std::atoi(argv[ordering == "qorder" ? 4 : 3]);
+        bool multi_input_order = ordering == "RCM" || ordering == "qorder";
+        k = std::atoi(argv[multi_input_order ? 4 : 3]);
     }
 
     using T = double;
@@ -85,11 +94,11 @@ int main(int argc, char* argv[]) {
 
     // Apply reordering
     if (ordering == "RCM") {
-        bsr_data.RCM_reordering();
+        bsr_data.RCM_reordering(rcm_iters);
     } else if (ordering == "AMD") {
         bsr_data.AMD_reordering();
     } else if (ordering == "qorder") {
-        bsr_data.qorder_reordering(p_factor);
+        bsr_data.qorder_reordering(p_factor, rcm_iters);
     } else if (ordering != "none") {
         std::cerr << "Unknown ordering: " << ordering << "\n";
         return 1;
@@ -107,7 +116,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    write_to_csv<int>(bsr_data.nnodes+1, bsr_data.rowp, "csv/rowp.csv");
+    write_to_csv<int>(bsr_data.nnodes + 1, bsr_data.rowp, "csv/rowp.csv");
     write_to_csv<int>(bsr_data.nnzb, bsr_data.cols, "csv/cols.csv");
 
     return 0;
