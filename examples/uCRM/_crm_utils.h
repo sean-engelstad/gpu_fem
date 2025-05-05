@@ -109,7 +109,7 @@ void testCoupledDriverManual(StructSolver struct_solver, AeroSolver aero_solver,
 }
 
 template <class Assembler, bool narrow_outboard = true>
-Assembler makeAeroSurfMesh(int nx = 101, int ny = 101) {
+Assembler makeAeroSurfMesh(int nx = 101, int ny = 101, bool print = true) {
     // V1 is outside the wing, but much larger than it.. doesn't narrow down the same way
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
@@ -228,7 +228,7 @@ Assembler makeAeroSurfMesh(int nx = 101, int ny = 101) {
         bcs[ibc] = my_bcs.at(ibc);
     }
 
-    printf("num_nodes %d, num_elements %d\n", num_nodes, num_elements);
+    if (print) printf("num_nodes %d, num_elements %d\n", num_nodes, num_elements);
     // printf("xpts:");
     // printVec<T>(10, xa0.getPtr());
 
