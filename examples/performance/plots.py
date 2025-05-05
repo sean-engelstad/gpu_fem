@@ -41,8 +41,9 @@ for i, ordering in enumerate(["none", "AMD", "RCM", "qorder"]):
         if (solve == "GMRES"):
             mask = np.logical_and(mask, arr[:,3] == "  ILU(5)")
         x = np.array(arr[mask,1], dtype=np.double)
+        dof = x * 6
         y = np.array(arr[mask, -1], dtype=np.double)
-        plt.plot(x, y,  label=f"{ordering}-{solve}", linestyle="-" if solve == "LU" else "--", color=colors[i])
+        plt.plot(dof, y,  label=f"{ordering}-{solve}", linestyle="-" if solve == "LU" else "--", color=colors[i])
 
 plt.legend(loc='center left', bbox_to_anchor=(1.05, 0.5), fontsize='small')
 # plt.tight_layout()  # Adjust layout to prevent clipping

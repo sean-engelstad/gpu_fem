@@ -41,6 +41,8 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     auto& bsr_data = assembler.getBsrData();
     double fillin = 10.0;  // 10.0
 
+    if (debug) printf("before reordering\n");
+
     if (ordering == "RCM") {
         bsr_data.RCM_reordering(rcm_iters);
     } else if (ordering == "AMD") {
@@ -52,6 +54,7 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
         return;
     }
 
+    if (debug) printf("before fillin\n");
     if (fill_type == "nofill") {
         bsr_data.compute_nofill_pattern();
     } else if (fill_type == "ILUk") {
@@ -78,19 +81,22 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     auto vars = assembler.createVarsVec();
 
     // assemble the kmat
+    if (debug) printf("before assembly\n");
     assembler.add_jacobian(res, kmat);
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
 
     // solve the linear system
+    if (debug) printf("before solve\n");
     if (LU_solve) {
         CUSPARSE::direct_LU_solve(kmat, loads, soln);
     } else {
         int n_iter = 200, max_iter = 400;
         T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = false;
+        bool print = debug;
         CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
     }
+    if (debug) printf("done with solve\n");
 
     // print some of the data of host residual
     if (write_vtk) {
@@ -161,7 +167,12 @@ int main() {
     }
 
     // try to run some large cases with GMRES
-    // int ILU_k = 3;
-    // time_linear_static(640, "AMD", "ILUk", false, ILU_k);
-    // time_linear_static(1280, "AMD", "ILUk", false, ILU_k);
+    bool run_large_gmres = false;
+    if (run_large_gmres) {
+        int ILU_k = 3;
+        double p_order = 1.0;
+        bool print = true, write_vtk = false, debug = true;
+        time_linear_static(640, "AMD", "ILUk", false, ILU_k, p_order, print, write_vtk, debug);
+        // time_linear_static(1280, "AMD", "ILUk", false, ILU_k);
+    }
 };
