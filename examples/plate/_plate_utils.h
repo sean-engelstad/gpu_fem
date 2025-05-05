@@ -1,15 +1,15 @@
 #pragma once
-#include "assembler.h"
-#include "utils.h"
-#include "linalg/vec.h"
-#include "math.h"
 #include <fstream>
 #include <vector>
 
-template <class Assembler>
-Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
-                               double nu, double thick) {
+#include "assembler.h"
+#include "linalg/vec.h"
+#include "math.h"
+#include "utils.h"
 
+template <class Assembler>
+Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E, double nu,
+                               double thick) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -57,8 +57,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     for (int ix = 1; ix < nnx; ix++) {
         int iy = 0;
         int inode = nnx * iy + ix;
-        my_bcs.push_back(6 * inode + 1); // dof 2 for v
-        my_bcs.push_back(6 * inode + 2); // dof 3 for w
+        my_bcs.push_back(6 * inode + 1);  // dof 2 for v
+        my_bcs.push_back(6 * inode + 2);  // dof 3 for w
     }
     // neg and pos x1 edges with dof 13 and 3 resp.
     for (int iy = 1; iy < nny; iy++) {
@@ -71,14 +71,14 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         // pos x1 edge
         ix = nnx - 1;
         inode = nnx * iy + ix;
-        my_bcs.push_back(6 * inode + 2); // corresp dof 3 for w
+        my_bcs.push_back(6 * inode + 2);  // corresp dof 3 for w
     }
     // pos x2 edge
     for (int ix = 1; ix < nnx - 1; ix++) {
         int iy = nny - 1;
         int inode = nnx * iy + ix;
         // printf("new bc = %d\n", 6 * inode + 2);
-        my_bcs.push_back(6 * inode + 2); // corresp dof 3 for w
+        my_bcs.push_back(6 * inode + 2);  // corresp dof 3 for w
     }
 
     HostVec<int> bcs(my_bcs.size());
@@ -100,8 +100,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
             int ielem = nxe * iye + ixe;
             // TODO : issue with defining conn out of order like this, needs to
             // be sorted now?""
-            int nodes[] = {nnx * iye + ixe, nnx * iye + ixe + 1,
-                           nnx * (iye + 1) + ixe, nnx * (iye + 1) + ixe + 1};
+            int nodes[] = {nnx * iye + ixe, nnx * iye + ixe + 1, nnx * (iye + 1) + ixe,
+                           nnx * (iye + 1) + ixe + 1};
             for (int inode = 0; inode < Basis::num_nodes; inode++) {
                 elem_conn[Basis::num_nodes * ielem + inode] = nodes[inode];
             }
@@ -135,8 +135,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     // printf("checkpoint 5 - create physData\n");
 
     // make the assembler
-    Assembler assembler(num_nodes, num_nodes, num_elements, geo_conn, vars_conn,
-                        xpts, bcs, physData);
+    Assembler assembler(num_nodes, num_nodes, num_elements, geo_conn, vars_conn, xpts, bcs,
+                        physData);
 
     // printf("checkpoint 6 - create assembler\n");
 
@@ -145,7 +145,6 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
 
 template <typename T, class Phys>
 T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
-
     /*
     make a rectangular plate mesh of shell elements
     simply supported with transverse constrant distributed load
@@ -185,7 +184,6 @@ T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
 
 template <typename T, class Phys>
 T *getPlatePointLoad(int nxe, int nye, double Lx, double Ly, double load_mag) {
-
     /*
     make a rectangular plate mesh of shell elements
     simply supported with transverse constrant distributed load
@@ -211,8 +209,7 @@ T *getPlatePointLoad(int nxe, int nye, double Lx, double Ly, double load_mag) {
     return my_loads;
 }
 
-void write_to_binary(const double *array, size_t size,
-                     const std::string &filename) {
+void write_to_binary(const double *array, size_t size, const std::string &filename) {
     std::ofstream out(filename, std::ios::binary);
     if (!out) {
         throw std::ios_base::failure("Failed to open file for writing");
@@ -236,3 +233,143 @@ void write_to_binary(const double *array, size_t size,
 //     out << "\n";
 //     out.close();
 // }
+
+// for MELD:
+// ---------
+
+template <typename T>
+T convertNanToZero(T value) {
+    // return std::isnan(value) ? 0.0f : value;
+
+    // temporarily keep nans
+    return value;
+}
+
+template <typename T>
+void printGridToVTK(int nnx, int nny, HostVec<T> &x0, HostVec<T> &u, std::string filename) {
+    // NOTE : better to use F5 binary for large cases, we will handle that
+    // later
+    using namespace std;
+    string sp = " ";
+    string dataType = "double64";
+
+    ofstream myfile;
+    myfile.open(filename);
+    myfile << "# vtk DataFile Version 2.0\n";
+    myfile << "TACS GPU shell writer\n";
+    myfile << "ASCII\n";
+
+    // make an unstructured grid even though it is really structured
+    myfile << "DATASET UNSTRUCTURED_GRID\n";
+    int num_nodes = nnx * nny;
+    myfile << "POINTS " << num_nodes << sp << dataType << "\n";
+
+    // print all the xpts coordinates
+    double *xpts_ptr = x0.getPtr();
+    for (int inode = 0; inode < num_nodes; inode++) {
+        double *node_xpts = &xpts_ptr[3 * inode];
+        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2] << "\n";
+    }
+
+    // print all the cells
+    int nelems = (nnx - 1) * (nny - 1);
+    int nodes_per_elem = 4;
+    int num_elem_nodes = nelems * (nodes_per_elem + 1);
+    myfile << "CELLS " << nelems << " " << num_elem_nodes << "\n";
+
+    int nxe = nnx - 1, nye = nny - 1;
+    for (int iy = 0; iy < nye; iy++) {
+        for (int ix = 0; ix < nxe; ix++) {
+            int istart = iy * nnx + ix;
+            myfile << sp << 4;
+            myfile << sp << istart;
+            myfile << sp << istart + 1;
+            myfile << sp << istart + nnx + 1;
+            myfile << sp << istart + nnx;
+            myfile << "\n";
+        }
+    }
+
+    // cell type 9 is for CQUAD4 basically
+    myfile << "CELL_TYPES " << nelems << "\n";
+    for (int ielem = 0; ielem < nelems; ielem++) {
+        myfile << 9 << "\n";
+    }
+
+    // disp vector field now
+    myfile << "POINT_DATA " << num_nodes << "\n";
+    string scalarName = "disp";
+    myfile << "VECTORS " << scalarName << " double64\n";
+    for (int inode = 0; inode < num_nodes; inode++) {
+        myfile << convertNanToZero(u[3 * inode]) << sp;
+        myfile << convertNanToZero(u[3 * inode + 1]) << sp;
+        myfile << convertNanToZero(u[3 * inode + 2]) << "\n";
+    }
+
+    myfile.close();
+}
+
+template <typename T>
+HostVec<T> makeGridMesh(int nnx, int nny, T Lx, T Ly, T z0) {
+    int N = nnx * nny;
+    HostVec<T> x0(3 * N);
+    T pi = 3.14159265358979323846;
+    // printf("z0 = %.4e\n", z0);
+
+    T dx = Lx / (nnx - 1);
+    T dy = Ly / (nny - 1);
+    for (int iy = 0; iy < nny; iy++) {
+        T eta = iy * 1.0 / (nny - 1);
+        T yfac = sin(pi * eta);
+        for (int ix = 0; ix < nnx; ix++) {
+            T xi = ix * 1.0 / (nnx - 1);
+            T xfac = sin(pi * xi);
+
+            int ind = iy * nnx + ix;
+            x0[3 * ind] = ix * dx;
+            x0[3 * ind + 1] = iy * dy;
+            x0[3 * ind + 2] = z0 * xfac * yfac;
+            // printf("ix %d xi %.4e, iy %d eta %.4e\n", ix, xi, iy, eta);
+            // printf("zval = %.4e, xfac %.4e, yfac %.4e\n", x0[3*ind+2], xfac, yfac);
+        }
+    }
+
+    return x0;
+}
+
+template <typename T>
+HostVec<T> makeInPlaneShearDisp(HostVec<T> &x0, T angleDeg) {
+    int N = x0.getSize() / 3;
+    HostVec<T> u(3 * N);
+    T angleRad = angleDeg * 3.14159265 / 180.0;
+
+    for (int inode = 0; inode < N; inode++) {
+        T *xpt = &x0[3 * inode];
+        T *upt = &u[3 * inode];
+        upt[0] = tan(angleRad / 2.0) * xpt[1];
+        upt[1] = tan(angleRad / 2.0) * xpt[0];
+        upt[2] = 0.0;
+    }
+
+    return u;
+}
+
+template <typename T>
+HostVec<T> makeCustomDisp(HostVec<T> &x0, T scale) {
+    int N = x0.getSize() / 3;
+    HostVec<T> u(3 * N);
+    T pi = 3.14159265;
+
+    for (int inode = 0; inode < N; inode++) {
+        T *xpt = &x0[3 * inode];
+        T *upt = &u[3 * inode];
+        upt[0] = sin(4 * pi * xpt[0]) * cos(6 * pi * xpt[1]) + 0.5 * cos(7 * pi * xpt[0] * xpt[1]);
+        upt[1] = cos(5 * pi * xpt[0]) * sin(4 * pi * xpt[1]) + 0.3 * sin(6 * pi * xpt[0] * xpt[1]);
+        upt[2] = sin(3 * pi * xpt[0]) * cos(5 * pi * xpt[1]) + 0.4 * cos(6 * pi * xpt[0] * xpt[1]);
+        for (int i = 0; i < 3; i++) {
+            upt[i] *= scale;
+        }
+    }
+
+    return u;
+}
