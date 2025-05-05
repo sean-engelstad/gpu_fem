@@ -259,14 +259,14 @@ __HOST_DEVICE__ void eig3x3_givens(T A[9], T sigma[3], T VT[9], double rhoKS = 1
     }
 }
 
-template <typename T, int N_iter, bool smoothed = true>
+template <typename T, int N_iter, bool smoothed = true, bool can_swap = true>
 __HOST_DEVICE__ void eig3x3_exact_givens(T A[9], T sigma[3], T VT[9], double rhoKS = 100.0) {
     // https://pages.cs.wisc.edu/~sifakis/papers/SVD_TR1690.pdf
     T V[9], Q[9], tmp[9];
     // lower rhoKS more choppy load transfer
     // best is around 100 usually
 
-    // initialize V to identify matrix
+    // initialize V to identity matrix
     for (int i = 0; i < 9; i++) {
         V[i] = 0.0;
     }
@@ -330,27 +330,29 @@ __HOST_DEVICE__ void eig3x3_exact_givens(T A[9], T sigma[3], T VT[9], double rho
     }
 
     // now need a ? operator eigenvalue and eigvec sort in rows of VT
-    for (int iouter = 0; iouter < 2; iouter++) {
-        for (int i0 = 0; i0 < 2; i0++) {
-            int i1 = i0 + 1;
-            // now compare sigma[i0] to sigma[i1] with ? operator (for fast GPU performance)
-            if constexpr (smoothed) {
-                T sig_sum = sigma[i0] + sigma[i1];
-                T w1 = exp(rhoKS * sigma[i1] / sig_sum);
-                T w2 = exp(rhoKS * sigma[i0] / sig_sum);
-                T w_sum = w1 + w2;
-                T tmp2 = sigma[i0];
-                sigma[i0] = (w1 * sigma[i1] + w2 * sigma[i0]) / w_sum;
-                sigma[i1] = (w1 * tmp2 + w2 * sigma[i1]) / w_sum;
+    if (can_swap) {
+        for (int iouter = 0; iouter < 2; iouter++) {
+            for (int i0 = 0; i0 < 2; i0++) {
+                int i1 = i0 + 1;
+                // now compare sigma[i0] to sigma[i1] with ? operator (for fast GPU performance)
+                if constexpr (smoothed) {
+                    T sig_sum = sigma[i0] + sigma[i1];
+                    T w1 = exp(rhoKS * sigma[i1] / sig_sum);
+                    T w2 = exp(rhoKS * sigma[i0] / sig_sum);
+                    T w_sum = w1 + w2;
+                    T tmp2 = sigma[i0];
+                    sigma[i0] = (w1 * sigma[i1] + w2 * sigma[i0]) / w_sum;
+                    sigma[i1] = (w1 * tmp2 + w2 * sigma[i1]) / w_sum;
 
-            } else {
-                bool swap = sigma[i0] < sigma[i1];  // since want descending eigvals
-                condSwap<T, 3>(swap, &VT[3 * i0], &VT[3 * i1]);
+                } else {
+                    bool swap = sigma[i0] < sigma[i1];  // since want descending eigvals
+                    condSwap<T, 3>(swap, &VT[3 * i0], &VT[3 * i1]);
 
-                // now also cond swap on sigma
-                T tmp2 = sigma[i0];
-                sigma[i0] = swap ? sigma[i1] : sigma[i0];
-                sigma[i1] = swap ? tmp2 : sigma[i1];
+                    // now also cond swap on sigma
+                    T tmp2 = sigma[i0];
+                    sigma[i0] = swap ? sigma[i1] : sigma[i0];
+                    sigma[i1] = swap ? tmp2 : sigma[i1];
+                }
             }
         }
     }
@@ -501,6 +503,7 @@ __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = fa
     double rhoKS = 100.0;
     // exact rotation has much more stable SVD jacobian
     constexpr int N_iter = exact_givens ? 1 : 15;
+    // constexpr int N_iter = 45;
 
     svd3x3_QR<T, N_iter, exact_givens>(H, sigma, U, VT, print, rhoKS);
 

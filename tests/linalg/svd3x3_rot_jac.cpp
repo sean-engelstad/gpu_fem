@@ -1,12 +1,18 @@
 
+#include "../test_commons.h"
 #include "a2dcore.h"
 #include "adscalar.h"
 #include "linalg/svd_utils.h"
 #include "utils.h"
-#include "../test_commons.h"
 
 int main() {
     using T = double;
+
+    // inputs
+    // T h = 1e-8;
+    T h = 1e-6;
+    // T h = 1e-4;
+
     T H[9] = {1.0813e-03,  1.9075e-04, 7.4367e-06,  1.9075e-04, 1.0813e-03,
               -7.4367e-06, 9.0287e-06, -9.0287e-06, 1.5622e-07};
     bool print = false;
@@ -46,7 +52,6 @@ int main() {
 
     // finite difference
     T Hp[9], Rp[9];
-    T h = 1e-6;
     for (int i = 0; i < 9; i++) {
         Hp[i] = H[i] + h * H2[i].deriv[0];
     }
@@ -83,7 +88,6 @@ int main() {
             printf("\n");
         }
     }
-
 
     double rel_err = abs(fAD_deriv - finD_deriv) / abs(finD_deriv);
     bool passed = rel_err < 0.01;

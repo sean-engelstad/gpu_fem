@@ -1,4 +1,4 @@
-include ../../../Makefile.in
+include ../../Makefile.in
 
 default: svd3x3
 

@@ -51,7 +51,10 @@ void verify_conservation(HostVec<T> h_us, HostVec<T> h_ua, HostVec<T> h_fs, Host
       }
   }
 
-  printf("W_A %.4e, W_S %.4e\n", W_A, W_S);
+  // compute the relative error
+  T W_rel_err = abs(W_A - W_S) / abs(W_S);
+
+  printf("W_A %.6e, W_S %.6e, rel err %.6e\n", W_A, W_S, W_rel_err);
 }
 
 int main() {
