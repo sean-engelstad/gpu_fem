@@ -130,7 +130,7 @@ int main() {
     T ovr_rel_err = std::max(W_rel_err, F_rel_err);
     // need slightly more accurate SVD jacobian to get more work and force conservation precision
     bool passed = F_rel_err < 1e-3 && W_rel_err < 1e-3;
-    printTestReport<T>("MELD uCRM conservation test", passed, ovr_rel_err);
+    printTestReport<T>("MELD plate conservation test", passed, ovr_rel_err);
     printf("\tW rel err %.4e, F rel err %.4e\n", W_rel_err, F_rel_err);
 
     return 0;
