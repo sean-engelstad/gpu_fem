@@ -2,17 +2,19 @@
 #include "../../linalg/bsr_mat.h"
 
 template <class Mat, class Vec>
-Vec permute_rhs(Mat mat, Vec rhs) {
-    int *perm = mat.getPerm();
+Vec inv_permute_rhs(Mat mat, Vec rhs) {
+    // rhs orig => new rows with iperm map (see tests/reordering/README.md)
+    int *iperm = mat.getIPerm();
     int block_dim = mat.getBlockDim();
-    return rhs.createPermuteVec(block_dim, perm);
+    return rhs.createPermuteVec(block_dim, iperm);
 }
 
 template <class Mat, class Vec>
-void inv_permute_soln(Mat mat, Vec &soln) {
-    int *iperm = mat.getIPerm();
+void permute_soln(Mat mat, Vec &soln) {
+    // soln new => orig rows with perm map (see tests/reordering/README.md)
+    int *perm = mat.getPerm();
     int block_dim = mat.getBlockDim();
-    soln.permuteData(block_dim, iperm);
+    soln.permuteData(block_dim, perm);
     return;
 }
 

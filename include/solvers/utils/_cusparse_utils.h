@@ -2,29 +2,23 @@
 
 #include <cuda_runtime.h>
 #include <cusparse_v2.h>
-#include "cublas_v2.h"
+
 #include <algorithm>
+
+#include "cublas_v2.h"
 
 namespace CUSPARSE {
 
 template <typename T>
-void perform_LU_factorization(
-    cusparseHandle_t handle,
-    cusparseMatDescr_t &descr_L,
-    cusparseMatDescr_t &descr_U,
-    bsrsv2Info_t &info_L,
-    bsrsv2Info_t &info_U,
-    void **pBuffer,  // allows return of allocated pointer
-    int mb, int nnzb, int blockDim,
-    T *vals,
-    const int *rowp,
-    const int *cols,
-    const cusparseOperation_t trans_L,
-    const cusparseOperation_t trans_U,
-    const cusparseSolvePolicy_t policy_L,
-    const cusparseSolvePolicy_t policy_U,
-    const cusparseDirection_t dir
-) {
+void perform_LU_factorization(cusparseHandle_t handle, cusparseMatDescr_t &descr_L,
+                              cusparseMatDescr_t &descr_U, bsrsv2Info_t &info_L,
+                              bsrsv2Info_t &info_U,
+                              void **pBuffer,  // allows return of allocated pointer
+                              int mb, int nnzb, int blockDim, T *vals, const int *rowp,
+                              const int *cols, const cusparseOperation_t trans_L,
+                              const cusparseOperation_t trans_U,
+                              const cusparseSolvePolicy_t policy_L,
+                              const cusparseSolvePolicy_t policy_U, const cusparseDirection_t dir) {
     // performs symbolic and numeric LU or ILU factorization in CUSPARSE
 
     // temp objects for the factorization
@@ -58,46 +52,46 @@ void perform_LU_factorization(
     cusparseCreateBsrsv2Info(&info_U);
 
     // symbolic and numeric factorizations
-    CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(handle, dir, mb, nnzb, descr_M, 
-        vals, rowp, cols, blockDim, info_M, &pBufferSize_M));
-    CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(handle, dir, trans_L, mb, nnzb, descr_L, 
-        vals, rowp, cols, blockDim, info_L, &pBufferSize_L));
-    CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(handle, dir, trans_U, mb, nnzb, descr_U, 
-        vals, rowp, cols, blockDim, info_U, &pBufferSize_U));
+    CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(handle, dir, mb, nnzb, descr_M, vals, rowp, cols,
+                                                blockDim, info_M, &pBufferSize_M));
+    CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(handle, dir, trans_L, mb, nnzb, descr_L, vals, rowp,
+                                              cols, blockDim, info_L, &pBufferSize_L));
+    CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(handle, dir, trans_U, mb, nnzb, descr_U, vals, rowp,
+                                              cols, blockDim, info_U, &pBufferSize_U));
     pBufferSize = std::max({pBufferSize_M, pBufferSize_L, pBufferSize_U});
     // cudaMalloc((void **)&pBuffer, pBufferSize);
     cudaMalloc(pBuffer, pBufferSize);
 
     // perform ILU symbolic factorization on L
 
-    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, 
-        vals, rowp, cols, blockDim, info_M, policy_M, *pBuffer));
+    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, vals, rowp, cols,
+                                              blockDim, info_M, policy_M, *pBuffer));
     status = cusparseXbsrilu02_zeroPivot(handle, info_M, &structural_zero);
     if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
         printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
     }
 
     // analyze sparsity patern of L for efficient triangular solves
-    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(handle, dir, trans_L, mb, nnzb, descr_L, 
-        vals, rowp, cols, blockDim, info_L, policy_L, *pBuffer));
+    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(handle, dir, trans_L, mb, nnzb, descr_L, vals, rowp,
+                                            cols, blockDim, info_L, policy_L, *pBuffer));
+    CHECK_CUDA(cudaDeviceSynchronize());
 
     // analyze sparsity pattern of U for efficient triangular solves
-    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(handle, dir, trans_U, mb, nnzb, descr_U, 
-        vals, rowp, cols, blockDim, info_U, policy_U, *pBuffer));
+    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(handle, dir, trans_U, mb, nnzb, descr_U, vals, rowp,
+                                            cols, blockDim, info_U, policy_U, *pBuffer));
+    CHECK_CUDA(cudaDeviceSynchronize());
 
     // perform ILU numeric factorization (with M policy)
-    CHECK_CUSPARSE(cusparseDbsrilu02(handle, dir, mb, nnzb, descr_M, vals, 
-        rowp, cols, blockDim, info_M, policy_M, *pBuffer));
+    CHECK_CUSPARSE(cusparseDbsrilu02(handle, dir, mb, nnzb, descr_M, vals, rowp, cols, blockDim,
+                                     info_M, policy_M, *pBuffer));
+    CHECK_CUDA(cudaDeviceSynchronize());
     status = cusparseXbsrilu02_zeroPivot(handle, info_M, &numerical_zero);
     if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
         printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
     }
-
-    CHECK_CUDA(cudaDeviceSynchronize());
 }
 
-};
-
+};  // namespace CUSPARSE
 
 typedef struct VecStruct {
     cusparseDnVecDescr_t vec;
@@ -143,9 +137,9 @@ T get_resid(BsrMat<DeviceVec<T>> mat, DeviceVec<T> rhs, DeviceVec<T> soln) {
 
     // Step 1: Perform the matrix-vector product: d_temp = K * u
     double alpha = 1.0, beta = 0.0;
-    cusparse_status = cusparseDbsrmv(
-        cusparse_handle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
-        &alpha, descr, vals, rowp, cols, blockDim, d_soln, &beta, d_temp);
+    cusparse_status = cusparseDbsrmv(cusparse_handle, CUSPARSE_DIRECTION_ROW,
+                                     CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &alpha, descr,
+                                     vals, rowp, cols, blockDim, d_soln, &beta, d_temp);
 
     if (cusparse_status != CUSPARSE_STATUS_SUCCESS) {
         printf("CUSPARSE bsrmv failed!\n");

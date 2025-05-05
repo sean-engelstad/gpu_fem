@@ -361,7 +361,7 @@ class DeviceVec : public BaseVec<T> {
 
     __DEVICE__ void addElementValuesFromShared(const bool active_thread, const int start,
                                                const int stride, const int dof_per_node,
-                                               const int nodes_per_elem, const int32_t *perm,
+                                               const int nodes_per_elem, const int32_t *iperm,
                                                const int32_t *elem_conn, const T *shared_data) {
         // copies values to the shared element array on GPU (shared memory)
         if (!active_thread) return;
@@ -369,7 +369,8 @@ class DeviceVec : public BaseVec<T> {
         for (int idof = start; idof < dof_per_elem; idof += stride) {
             int local_inode = idof / dof_per_node;
             int _global_inode = elem_conn[local_inode];
-            int global_inode = perm[_global_inode];
+            // iperm : old to new entry (see tests/reordering/README.md)
+            int global_inode = iperm[_global_inode];
             int iglobal = global_inode * dof_per_node + (idof % dof_per_node);
 
             atomicAdd(&this->data[iglobal], shared_data[idof]);

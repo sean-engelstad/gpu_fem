@@ -100,20 +100,24 @@ class BsrData {
         return bandwidth;
     }
 
-    __HOST__ void compute_nofill_pattern() {
-        /* compute the rowp, cols after a permutation or reordering with no fillin */
+    SparseUtils::BSRMat<double, 1, 1> getSparseUtilsMat() {
+        // deep copy rowp, cols
+        int *c_rowp = HostVec<int>(nnodes + 1, rowp).copyVec().getPtr();
+        int *c_cols = HostVec<int>(nnzb, cols).copyVec().getPtr();
+
         auto A = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
 
-        // printf("here4\n");
-        // printf("iperm:\n");
-        // printVec<int>(nnodes, iperm);
-        // printf("perm:\n");
-        // printVec<int>(nnodes, perm);
-        // printf("rowp:\n");
-        // printVec<int>(nnodes + 1, rowp);
-        // printf("cols:\n");
-        // printVec<int>(nnzb, cols);
+        int *iperm_copy = HostVec<int>(nnodes, iperm).copyVec().getPtr();
+        int *perm_copy = HostVec<int>(nnodes, perm).copyVec().getPtr();
+        A.perm = perm_copy;  // don't swap
+        A.iperm = iperm_copy;
+        return A;
+    }
 
+    __HOST__ void compute_nofill_pattern() {
+        /* compute the rowp, cols after a permutation or reordering with no fillin */
+
+        auto A = getSparseUtilsMat();
         auto A2 = SparseUtils::BSRMatApplyPerm<double, 1>(A, perm, iperm);
         // auto A2 = SparseUtils::BSRMatApplyPerm<double, 1>(A, iperm, perm);
         // if (rowp) delete[] rowp;
@@ -132,32 +136,7 @@ class BsrData {
             printf("begin full LU symbolic factorization::\n");
             printf("\tnnzb = %d\n", nnzb);
         }
-        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
-        // delete old rowp, cols
-        if (rowp) delete[] rowp;
-        if (cols) delete[] cols;
-
-        // fix perm slows down symbolic factorization significantly..
-        // if I swap to perm now symbolic speedsup but solves wrong
-        // if I swap to iperm now symbolic slow, solves right
-        // I was messing with the permutations perm vs iperm in order to get the GMRES to solve
-        // correctly maybe I need to swap iperm and perm again.. swap it back? Does this break the
-        // GMRES though in the presence of reorderings? but the direct LU works with this though?
-        // double check this..
-
-        // swap perms here
-        // int *temp = perm;
-        // perm = iperm;
-        // iperm = temp;
-
-        // swapped
-        // copy vecs get deleted inside there
-        int *iperm_copy = HostVec<int>(nnodes, iperm).copyVec().getPtr();
-        int *perm_copy = HostVec<int>(nnodes, perm).copyVec().getPtr();
-        su_mat.perm = iperm_copy;
-        su_mat.iperm = perm_copy;
-        // su_mat.perm = perm_copy;
-        // su_mat.iperm = iperm_copy;
+        auto su_mat = getSparseUtilsMat();
 
         auto su_mat2 = SparseUtils::BSRMatReorderSymbolicCUDA<double, 1>(su_mat, fill_factor);
         // SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill_factor);
@@ -175,14 +154,14 @@ class BsrData {
         }
     }
 
-    __HOST__ void compute_ILUk_pattern(int levFill, double fill_factor = 10.0) {
+    __HOST__ void compute_ILUk_pattern(int levFill, double fill_factor = 10.0, bool print = true) {
         /* compute the full ILU(k) fill pattern including reorderings, levFill is k.
             TACS also returns a **_levs pointer (should we do that here too?) */
 
         compute_nofill_pattern();
 
         int *levels;
-        computeILUk(nnodes, nnzb, rowp, cols, levFill, fill_factor, &levels);
+        computeILUk(nnodes, nnzb, rowp, cols, levFill, fill_factor, &levels, print);
         nnzb = rowp[nnodes];
     }
 
@@ -216,13 +195,11 @@ class BsrData {
         for (int k = 0; k < nnodes; k++) {
             perm[_new_perm[k]] = k;  // flipped from TACS
             iperm[k] = _new_perm[k];
-            // perm[k] = _new_perm[k];
-            // iperm[perm[k]] = k;
         }
         if (_new_perm) delete[] _new_perm;
     }
 
-    __HOST__ void qorder_reordering(double p_factor, int rcm_iters = 5) {
+    __HOST__ void qorder_reordering(double p_factor, int rcm_iters = 5, bool print = true) {
         /*  qordering combines RCM reordering to reduce bandwidth with random reordering
                 to reduce chain lengths in ILU factorization for more stable ILU decomp numerically
                 this also should improve GMRES convergence
@@ -244,11 +221,15 @@ class BsrData {
         RCM_reordering(rcm_iters);
         compute_nofill_pattern();
         int bandwidth_1 = getBandWidth(nnodes, nnzb, rowp, cols);
-        printf("prelim RCM reordering reduces bandwidth from %d to %d\n", bandwidth_0, bandwidth_1);
+        if (print)
+            printf("prelim RCM reordering reduces bandwidth from %d to %d\n", bandwidth_0,
+                   bandwidth_1);
 
         // then we perform random reordering to reduce chain lengths
         int prune_width = (int)1.0 / p_factor * bandwidth_1;
-        printf("qordering with init bandwidth %d and prune width %d\n", bandwidth_1, prune_width);
+        if (print)
+            printf("qordering with init bandwidth %d and prune width %d\n", bandwidth_1,
+                   prune_width);
         int num_prunes = (nnodes + prune_width - 1) / prune_width;
         std::random_device rd;  // random number generator
         std::mt19937 g(rd());
@@ -271,6 +252,8 @@ class BsrData {
         for (int i = 0; i < nnodes; i++) {
             perm[i] = q_perm[i];
             iperm[q_perm[i]] = i;
+
+            // try swapping perm, iperm
             // iperm[i] = q_perm[i];
             // perm[q_perm[i]] = i;
         }
@@ -289,19 +272,26 @@ class BsrData {
 
         // 1) compute the elem ind map -------------
         /* elem_ind_map is nelems x 4 x 4 array for nodes_per_elem = 4
-           it's useful in telling how to add each block matrix to global*/
+           it's useful in telling how to add each block matrix to global
+
+           we use iperm map : old row => new row here since the connectivity is on
+           unreordered nodes and the rowp, cols are for a reordered matrix
+           for more details on reordering, see tests/reordering/README.md
+           */
         int nodes_per_elem2 = nodes_per_elem * nodes_per_elem;
         elem_ind_map = new index_t[nelems * nodes_per_elem2]();
         for (int ielem = 0; ielem < nelems; ielem++) {
             const int32_t *local_conn = &elem_conn[nodes_per_elem * ielem];
             for (int block_row = 0; block_row < nodes_per_elem; block_row++) {
                 int32_t _global_block_row = local_conn[block_row];
-                int32_t global_block_row = perm[_global_block_row];
+                // iperm map : old row to new row
+                int32_t global_block_row = iperm[_global_block_row];
                 int col_istart = rowp[global_block_row];
                 int col_iend = rowp[global_block_row + 1];
                 for (int block_col = 0; block_col < nodes_per_elem; block_col++) {
                     int32_t _global_block_col = local_conn[block_col];
-                    int32_t global_block_col = perm[_global_block_col];
+                    // iperm map : old col to new col
+                    int32_t global_block_col = iperm[_global_block_col];
                     // get matching ind in cols for the global_block_col
                     for (int i = col_istart; i < col_iend; i++) {
                         if (cols[i] == global_block_col) {

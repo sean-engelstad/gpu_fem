@@ -3,6 +3,7 @@
 template <typename T, template <typename> class Vec>
 __GLOBAL__ void apply_vec_bcs_kernel(Vec<int> bcs, T *data) {
     int nbcs = bcs.getSize();
+    // no need for perm here since this is called on unreordered state of vectors like res, loads, etc.
     int start = blockIdx.x * blockDim.x + threadIdx.x;
     for (int ibc = start; ibc < nbcs; ibc += blockDim.x) {
         int idof = bcs[ibc];

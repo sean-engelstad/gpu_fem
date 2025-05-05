@@ -6,35 +6,19 @@
 #include "../test_commons.h"
 #include <cassert>
 #include <string>
-
+#include <list>
 
 // shell imports
 #include "assembler.h"
 #include "element/shell/shell_elem_group.h"
 #include "element/shell/physics/isotropic_shell.h"
 
-int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: ./program <reorder or none> <nxe>\n";
-        std::cerr << "Example: ./program reorder 10\n";
-        return 1;
-    }
-    using T = double;   
-    bool print = false;
+void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
+    using T = double;  
 
-    bool reorder;
-    int nxe = 50;
-    std::string reorder_str = argv[1];
-    
-    if (print) printf("argc %d\n", argc);
-    if (argc <= 3) {
-        reorder = reorder_str == "reorder";
-    }
-    if (argc == 3) {
-        nxe = std::atoi(argv[2]); 
-    }
-    if (print) printf("reorder = %d, nxe = %d\n", (int)reorder, nxe);
-    
+    double fillin = 10.0;
+    int rcm_iters = 5;
+    double p_factor = 1.0;
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -55,8 +39,16 @@ int main(int argc, char* argv[]) {
     // BSR symbolic factorization
     // must pass by ref to not corrupt pointers
     auto& bsr_data = assembler.getBsrData();
-    double fillin = 10.0;  // 10.0
-    if (reorder) bsr_data.AMD_reordering();
+    if (ordering == "RCM") {
+        bsr_data.RCM_reordering(rcm_iters);
+    } else if (ordering == "AMD") {
+        bsr_data.AMD_reordering();
+    } else if (ordering == "qorder") {
+        bsr_data.qorder_reordering(p_factor, rcm_iters, print);
+    } else if (ordering != "none") {
+        std::cerr << "Unknown ordering: " << ordering << "\n";
+        return;
+    }
     bsr_data.compute_full_LU_pattern(fillin, print);
     assembler.moveBsrDataToDevice();
 
@@ -95,6 +87,29 @@ int main(int argc, char* argv[]) {
     double resid_norm = CUBLAS::get_vec_norm(rhs);
     if (print) printf("resid_norm = %.4e\n", resid_norm);
 
+    // test report
+    std::string testName = "direct LU plate solve, with ";
+    testName += ordering;
+
     bool passed = abs(resid_norm) < 1e-6;
-    printTestReport("direct LU plate solve", passed, resid_norm);
+    printTestReport(testName, passed, resid_norm);
+}
+
+int main(int argc, char* argv[]) {
+    bool test_all = true;
+
+    bool print = false;
+    int nxe = 20;
+    if (test_all) {
+        std::list<std::string> list1 = {"none", "RCM", "AMD", "qorder"};
+
+        for (auto it1 = list1.begin(); it1 != list1.end(); ++it1) {
+            test_LU_plate(*it1, print, nxe);
+        }
+    } else {
+        // test single failing test
+        reorder = true;
+        print = true;
+        test_LU_plate("RCM", print, nxe);
+    }  
 };

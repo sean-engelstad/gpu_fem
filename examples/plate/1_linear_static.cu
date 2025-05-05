@@ -12,7 +12,11 @@
 
 int main() {
     // input ----------
-    bool full_LU = false;
+    bool full_LU = true;
+
+    // for medium size problems like nxe = 100,
+    // the direct LU solve is much faster and has a better residual
+
     // ----------------
 
     using T = double;   
@@ -31,7 +35,7 @@ int main() {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // int nxe = 3;
-    int nxe = 300;
+    int nxe = 100;
     // int nxe = 300;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
@@ -54,9 +58,9 @@ int main() {
 
         // bsr_data.AMD_reordering();
         // bsr_data.RCM_reordering();
-        // bsr_data.qorder_reordering(1.0);
+        bsr_data.qorder_reordering(1.0);
         
-        bsr_data.compute_ILUk_pattern(6, fillin);
+        bsr_data.compute_ILUk_pattern(5, fillin);
         // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
     }
     // printf("perm:");
@@ -85,10 +89,10 @@ int main() {
     if (full_LU) {
         CUSPARSE::direct_LU_solve(kmat, loads, soln);
     } else {
-        int n_iter = 100, max_iter = 200;
-        T abs_tol = 1e-7, rel_tol = 1e-8;
-        constexpr bool use_precond = true, debug = false;
-        CUSPARSE::GMRES_solve<T, use_precond, debug>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol);
+        int n_iter = 200, max_iter = 400;
+        T abs_tol = 1e-11, rel_tol = 1e-14;
+        bool print = false;
+        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
     }
 
     // print some of the data of host residual

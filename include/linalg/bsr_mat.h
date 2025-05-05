@@ -40,12 +40,13 @@ class BsrMat {
     __HOST__ void apply_bcs(DeviceVec<int> bcs) {
         /* apply bcs to the matrix values (rows + cols) */
         int nbcs = bcs.getSize();
-        const index_t *rowPtr = bsr_data.rowp, *colPtr = bsr_data.cols, *perm = bsr_data.perm, 
-            *tr_rowp = bsr_data.tr_rowp, *tr_cols = bsr_data.tr_cols,
-            *tr_block_map = bsr_data.tr_block_map;
+        const index_t *rowPtr = bsr_data.rowp, *colPtr = bsr_data.cols, *iperm = bsr_data.iperm,
+                      *tr_rowp = bsr_data.tr_rowp, *tr_cols = bsr_data.tr_cols,
+                      *tr_block_map = bsr_data.tr_block_map;
         int nnodes = bsr_data.nnodes, nodes_per_elem = bsr_data.nodes_per_elem,
             block_dim = bsr_data.block_dim;
-        int nnz_per_block = block_dim * block_dim, blocks_per_elem = nodes_per_elem * nodes_per_elem;
+        int nnz_per_block = block_dim * block_dim,
+            blocks_per_elem = nodes_per_elem * nodes_per_elem;
         T *valPtr = values.getPtr();
 
 #ifdef USE_GPU
@@ -55,11 +56,11 @@ class BsrMat {
 
         // launch two kernels asynchronously
         apply_mat_bcs_rows_kernel<T, DeviceVec><<<grid, block>>>(
-            bcs, rowPtr, colPtr, perm, nnodes, valPtr, blocks_per_elem, nnz_per_block, block_dim);
+            bcs, rowPtr, colPtr, iperm, nnodes, valPtr, blocks_per_elem, nnz_per_block, block_dim);
 
-        apply_mat_bcs_cols_kernel<T, DeviceVec><<<grid, block>>>(
-            bcs, tr_rowp, tr_cols, tr_block_map, perm, nnodes, valPtr,
-            blocks_per_elem, nnz_per_block, block_dim);
+        apply_mat_bcs_cols_kernel<T, DeviceVec>
+            <<<grid, block>>>(bcs, tr_rowp, tr_cols, tr_block_map, iperm, nnodes, valPtr,
+                              blocks_per_elem, nnz_per_block, block_dim);
         CHECK_CUDA(cudaDeviceSynchronize());
 #endif  // USE_GPU
     }
@@ -112,7 +113,7 @@ class BsrMat {
                                           const int32_t *elem_conn, const T *shared_elem_mat) {
         /* add element stiffness matrices from shared memory to global data */
 
-        int dof_per_elem = dof_per_node * nodes_per_elem, block_dim = bsr_data.block_dim, 
+        int dof_per_elem = dof_per_node * nodes_per_elem, block_dim = bsr_data.block_dim,
             blocks_per_elem = nodes_per_elem * nodes_per_elem;
         int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
         const index_t *elem_ind_map = bsr_data.elem_ind_map;
@@ -149,15 +150,16 @@ class BsrMat {
     }
 
     void free() {
-        // use free not destructor as no pass by ref allowed in kernels and often leads to unintended destructor calls
-        // cannot free bsr_data
+        // use free not destructor as no pass by ref allowed in kernels and often leads to
+        // unintended destructor calls cannot free bsr_data
         values.free();
     }
 
     // host code
     __HOST__ void apply_bcs(HostVec<int> bcs);
-    __HOST_DEVICE__ void addElementMatrixValues(const T scale, const int ielem, const int dof_per_node,
-        const int nodes_per_elem, const int32_t *elem_conn, const T *elem_mat);
+    __HOST_DEVICE__ void addElementMatrixValues(const T scale, const int ielem,
+                                                const int dof_per_node, const int nodes_per_elem,
+                                                const int32_t *elem_conn, const T *elem_mat);
 
    private:
     const BsrData bsr_data;
@@ -242,10 +244,11 @@ __HOST__ void BsrMat<Vec>::apply_bcs(HostVec<int> bcs) {
 }
 
 template <class Vec>
-__HOST_DEVICE__
-void BsrMat<Vec>::addElementMatrixValues(const T scale, const int ielem, const int dof_per_node,
-                            const int nodes_per_elem, const int32_t *elem_conn,
-                            const T *elem_mat) {
+__HOST_DEVICE__ void BsrMat<Vec>::addElementMatrixValues(const T scale, const int ielem,
+                                                         const int dof_per_node,
+                                                         const int nodes_per_elem,
+                                                         const int32_t *elem_conn,
+                                                         const T *elem_mat) {
     // similar method to vec.h or Vec.addElementValues but here for matrix
     // and here for Bsr format
     int dof_per_elem = dof_per_node * nodes_per_elem;
