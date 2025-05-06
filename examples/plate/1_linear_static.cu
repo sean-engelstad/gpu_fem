@@ -12,7 +12,7 @@
 
 int main() {
     // input ----------
-    bool full_LU = true;
+    bool full_LU = false;
 
     // for medium size problems like nxe = 100,
     // the direct LU solve is much faster and has a better residual
@@ -56,9 +56,9 @@ int main() {
         as it's whole point is to decrease matrix bandwidth)
         */
 
-        // bsr_data.AMD_reordering();
+        bsr_data.AMD_reordering();
         // bsr_data.RCM_reordering();
-        bsr_data.qorder_reordering(1.0);
+        // bsr_data.qorder_reordering(1.0);
         
         bsr_data.compute_ILUk_pattern(5, fillin);
         // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
@@ -98,6 +98,9 @@ int main() {
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate.vtk");
+
+    printf("h_soln:");
+    printVec<T>(h_soln.getSize(), h_soln.getPtr());
 
     // check the residual of the system
     assembler.set_variables(soln);
