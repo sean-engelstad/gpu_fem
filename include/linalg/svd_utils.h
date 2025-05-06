@@ -288,11 +288,30 @@ __HOST_DEVICE__ void eig3x3_exact_givens(T A[9], T sigma[3], T VT[9], double rho
             int i0 = cycle, i1 = (cycle + 1) % 3, i2 = (cycle + 2) % 3;
             T a11 = A[3 * i0 + i0], a12 = A[3 * i0 + i1],
               a22 = A[3 * i1 + i1];  // assumes A sym here
-            T omega = 1.0 / sqrt(a12 * a12 + (a11 - a22) * (a11 - a22));
 
-            T th = 0.5 * atan(2.0 * a12 / (a11 - a22 + 1e-10));
+            // one strategy with atan (may suffer from numerical instability if a11 near a22)
+            // ------------------------
+            T th = 0.5 * atan(2.0 * a12 / (a11 - a22 + 1e-14));
             T s = sin(th);
             T c = cos(th);
+
+            // try smoothing th, didn't help much
+            // T d = sqrt((a11 - a22) * (a11 - a22) + T(4.0) * a12 * a12) /
+            //       sqrt(a11 * a11 + 2.0 * a12 * a12 + a22 * a22);
+            // T th_safe = T(0.25) * M_PI;
+            // T w = exp(-d * 1e4);
+            // th = w * th_safe + (T(1.0) - w) * th;
+
+            // second strategy that is more numerically stable
+            // ------------------------
+            // off-diag norm / total matrix norm (so normalized)
+            // T d = sqrt((a11 - a22) * (a11 - a22) + T(4.0) * a12 * a12) /
+            //       sqrt(a11 * a11 + 2.0 * a12 * a12 + a22 * a22);
+            // T th_good = T(0.5) * atan2(T(2.0) * a12, a11 - a22);
+            // T th_safe = T(0.25) * M_PI;  // arbitrary, e.g. 45 degrees
+            // T th = (d < 1e-4) ? th_safe : th_good;
+            // T c = cos(th);
+            // T s = sin(th);
 
             // reset Q to zero
             for (int i = 0; i < 9; i++) {

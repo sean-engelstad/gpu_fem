@@ -12,11 +12,9 @@
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
 
-int main() {
-  using T = double;
-  bool write_vtk = false;
-  bool print = false;
+void test_meld_ucrm(double beta, bool write_vtk = false, bool print = false) {
 
+  using T = double;
   auto start0 = std::chrono::high_resolution_clock::now();
 
   using Quad = QuadLinearQuadrature<T>;
@@ -86,7 +84,7 @@ int main() {
   // -----------------------------
 
   // T beta = 1e-3, Hreg = 1e-8;
-  T beta = 0.1, Hreg = 1e-4;
+  T Hreg = 1e-4;
   int sym = -1, nn = 128;
   static constexpr int NN_PER_BLOCK = 32;
   bool meld_print = false;
@@ -188,7 +186,8 @@ int main() {
   // -------------------
   T ovr_rel_err = std::max(W_rel_err, F_rel_err);
   bool passed = F_rel_err < 1e-4 && W_rel_err < 1e-4;
-  printTestReport<T>("MELD uCRM conservation test", passed, ovr_rel_err);
+  std::string testName = "MELD uCRM conservation test, beta " + std::to_string((int)beta);
+  printTestReport<T>(testName, passed, ovr_rel_err);
   printf("\tW rel err %.4e, F rel err %.4e\n", W_rel_err, F_rel_err);
 
 
@@ -202,4 +201,11 @@ int main() {
   h_us_ext.free();
   h_fa_ext.free();
   h_fs_ext.free();
+}
+
+int main() {
+  // test for different beta values
+  test_meld_ucrm(10.0);
+  test_meld_ucrm(1.0);
+  test_meld_ucrm(0.1);
 };

@@ -2,11 +2,8 @@
 #include "../../examples/plate/_plate_utils.h"
 #include "../test_commons.h"
 
-int main() {
-
+void test_meld_plate(double beta, bool write_vtk = false, bool print = false) {
     using T = double;
-    bool write_vtk = false;
-    bool print = false;
     
     // setup 
     T Lx = 1.0, Ly = 1.0;
@@ -35,8 +32,6 @@ int main() {
     // return 0;
     
     // create MELD
-    T beta = 0.1;
-    // T beta = 3.0;
     static constexpr int NN_MAX = 32; // choose a multiple of 32 if you can
     int sym = -1; // no symmetry yet I believe
     int nn = 128; // 32, 64, 256
@@ -130,8 +125,17 @@ int main() {
     T ovr_rel_err = std::max(W_rel_err, F_rel_err);
     // need slightly more accurate SVD jacobian to get more work and force conservation precision
     bool passed = F_rel_err < 1e-3 && W_rel_err < 1e-3;
-    printTestReport<T>("MELD plate conservation test", passed, ovr_rel_err);
+    std::string testName = "MELD plate conservation test, beta " + std::to_string((int)beta);
+  printTestReport<T>(testName, passed, ovr_rel_err);
     printf("\tW rel err %.4e, F rel err %.4e\n", W_rel_err, F_rel_err);
+}
+
+int main() {
+
+    // test meld plate for different beta values
+    test_meld_plate(10.0);
+    test_meld_plate(1.0);
+    test_meld_plate(0.1);
 
     return 0;
 };
