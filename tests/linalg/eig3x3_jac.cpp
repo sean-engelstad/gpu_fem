@@ -36,11 +36,16 @@ int main() {
     constexpr bool can_swap = false;
 
     T h = 1e-6;
+    T Hreg = 0.0;  // higher Hreg makes it worse?
 
     // ----------------------------
 
     T H[9] = {1.0813e-03,  1.9075e-04, 7.4367e-06,  1.9075e-04, 1.0813e-03,
               -7.4367e-06, 9.0287e-06, -9.0287e-06, 1.5622e-07};
+
+    H[0] += Hreg;
+    H[4] += Hreg;
+    H[8] += Hreg;
 
     double A[9];
     A2D::MatMatMultCore3x3<double, A2D::MatOp::TRANSPOSE, A2D::MatOp::NORMAL>(H, H, A);

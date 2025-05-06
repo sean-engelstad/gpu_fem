@@ -2,7 +2,7 @@
 #include "../../examples/plate/_plate_utils.h"
 #include "../test_commons.h"
 
-void test_meld_plate(double beta, bool write_vtk = false, bool print = false) {
+void test_meld_plate(double beta, double Hreg, bool write_vtk = false, bool print = false) {
     using T = double;
     
     // setup 
@@ -35,7 +35,6 @@ void test_meld_plate(double beta, bool write_vtk = false, bool print = false) {
     static constexpr int NN_MAX = 32; // choose a multiple of 32 if you can
     int sym = -1; // no symmetry yet I believe
     int nn = 128; // 32, 64, 256
-    double Hreg = 1e-4;
     static constexpr bool oneshot = false;
     constexpr bool exact_givens = true; // important to be True for good load transfer
     auto meld = MELD<T, NN_MAX, false, oneshot, exact_givens>(d_xs0, d_xa0, beta, nn, sym, Hreg);
@@ -125,17 +124,19 @@ void test_meld_plate(double beta, bool write_vtk = false, bool print = false) {
     T ovr_rel_err = std::max(W_rel_err, F_rel_err);
     // need slightly more accurate SVD jacobian to get more work and force conservation precision
     bool passed = F_rel_err < 1e-3 && W_rel_err < 1e-3;
-    std::string testName = "MELD plate conservation test, beta " + std::to_string((int)beta);
-  printTestReport<T>(testName, passed, ovr_rel_err);
+    int temp = (int) 10 * beta;
+    std::string testName = "MELD plate conservation test, beta " + std::to_string((int)beta) + "." + std::to_string(temp%10);
+    printTestReport<T>(testName, passed, ovr_rel_err);
     printf("\tW rel err %.4e, F rel err %.4e\n", W_rel_err, F_rel_err);
 }
 
 int main() {
 
     // test meld plate for different beta values
-    test_meld_plate(10.0);
-    test_meld_plate(1.0);
-    test_meld_plate(0.1);
+    double Hreg = 0.0; // 1e-4 (this doesn't really affect it)
+    test_meld_plate(10.0, Hreg);
+    test_meld_plate(1.0, Hreg);
+    test_meld_plate(0.1, Hreg);
 
     return 0;
 };

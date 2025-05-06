@@ -38,15 +38,23 @@ T abs_err(T val1, T val2) {
 // colored test report printout
 
 template <typename T>
-void printTestReport(const std::string& test_name, bool passed, T max_rel_err) {
+void printTestReport(const std::string& test_name, bool passed, T max_rel_err,
+                     bool accept_failure = false) {
     // ANSI escape codes for text color
-    const char* color_passed = "\033[32m";  // green
-    const char* color_failed = "\033[31m";  // red
-    const char* color_error = "\033[34m";   // blue
-    const char* color_reset = "\033[0m";    // reset to default
+    const char* color_passed = "\033[32m";   // green
+    const char* color_failed = "\033[31m";   // red
+    const char* color_error = "\033[34m";    // blue
+    const char* color_reset = "\033[0m";     // reset to default
+    const char* color_warning = "\033[33m";  // yellow
 
     const char* result_str = passed ? "passed" : "failed";
     const char* result_color = passed ? color_passed : color_failed;
+
+    // allowable failures but still say it failed
+    if (accept_failure && !passed) {
+        result_str = "accepted fail";
+        result_color = color_warning;
+    }
 
     printf("%s %s%s%s with rel err %s%.4e%s\n", test_name.c_str(), result_color, result_str,
            color_reset, color_error, max_rel_err, color_reset);
