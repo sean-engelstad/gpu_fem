@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 
+#include "mesh/vtk_writer.h"
+
 // supported classes
 // TacsLinearStatic
 // TacsNonlinearStaticNewton
@@ -34,6 +36,10 @@ class BaseTacsStatic {
     void resetSoln() {
         vars.zeroValues();
         assembler.set_variables(vars);
+    }
+    void writeSoln(std::string filename) {
+        auto h_vars = vars.createHostVec();
+        printToVTK<Assembler, HostVec<T>>(assembler, h_vars, filename);
     }
 
     void free() {
@@ -110,7 +116,7 @@ class TacsNonlinearStaticNewton : public BaseTacsStatic<T, Assembler> {
 
     TacsNonlinearStaticNewton(Assembler &assembler, Mat &kmat, LinearSolve linear_solve,
                               int num_load_factors, int num_newton, bool print = false,
-                              T abs_tol = 1e-8, T rel_tol = 1e-6,
+                              T abs_tol = 1e-8, T rel_tol = 1e-6, bool write_vtk = false,
                               std::string outputFilePrefix = "tacs_output")
         : BaseTacsStatic<T, Assembler>(assembler, kmat, linear_solve) {
         // store the nonlinear newton solve settings
@@ -120,6 +126,7 @@ class TacsNonlinearStaticNewton : public BaseTacsStatic<T, Assembler> {
         this->rel_tol = rel_tol;
         this->outputFilePrefix = outputFilePrefix;
         this->print = print;
+        this->write_vtk = write_vtk;
     }
 
     void solve(Vec &struct_loads) {
@@ -149,5 +156,5 @@ class TacsNonlinearStaticNewton : public BaseTacsStatic<T, Assembler> {
     int num_load_factors, num_newton;
     T abs_tol, rel_tol;
     std::string outputFilePrefix;
-    bool print;
+    bool print, write_vtk;
 };
