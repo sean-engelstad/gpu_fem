@@ -31,7 +31,7 @@ int main(void) {
   constexpr bool exact_givens = true;
 
   // nonlinear load settings
-  double load_mag = 3.0; // 1.0 (small)
+  double load_mag = 30.0; // 1.0 (small)
 
   // type definitions
   // ----------------
@@ -57,7 +57,7 @@ int main(void) {
   // build the Tacs prelim objects
   // -----------------------------
 
-  double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
+  double E = 70e9, nu = 0.3, thick = 0.02;  // material & thick properties
 
   // load the medium mesh for the struct mesh
   // uCRM mesh files can be found at:
@@ -144,9 +144,9 @@ int main(void) {
         assembler, kmat, linear_solve, struct_print);
 
     // test coupled driver
-    testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
-    // assembler, _assembler_aero);
+    // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
+    testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
+    assembler, _assembler_aero);
 
     struct_solver.free();
   }
