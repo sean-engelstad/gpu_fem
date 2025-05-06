@@ -42,6 +42,7 @@ int main() {
   auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
   bool print = true;
+  bsr_data.AMD_reordering();
   bsr_data.compute_full_LU_pattern(fillin, print);
   assembler.moveBsrDataToDevice();
 

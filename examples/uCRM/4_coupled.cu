@@ -24,7 +24,7 @@ int main(void) {
 
   // important user settings
   // -----------------------
-  constexpr bool nonlinear_strain = true;
+  constexpr bool nonlinear_strain = false;
   constexpr bool linear_meld = false;
   static constexpr int MELD_NN_PER_BLOCK = 32;
   constexpr bool meld_oneshot = false;  // faster without oneshot
@@ -92,6 +92,7 @@ int main(void) {
   auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
   bool print = true;
+  bsr_data.AMD_reordering();
   bsr_data.compute_full_LU_pattern(fillin, print);
   assembler.moveBsrDataToDevice();
 
@@ -124,7 +125,7 @@ int main(void) {
     // -----------------------------
     using StructSolver = TacsNonlinearStaticNewton<T, Assembler>;
 
-    int num_load_factors = 10, num_newton = 30;
+    int num_load_factors = 10, num_newton = 50;
     double abs_tol = 1e-8, rel_tol = 1e-8;
     bool struct_print = true;
     TacsNonlinearStaticNewton<T, Assembler> struct_solver =
@@ -147,9 +148,9 @@ int main(void) {
         assembler, kmat, linear_solve, struct_print);
 
     // test coupled driver
-    testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
-    // assembler, _assembler_aero);
+    // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
+    testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
+    assembler, _assembler_aero);
 
     struct_solver.free();
   }
