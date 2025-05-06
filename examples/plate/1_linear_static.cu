@@ -12,7 +12,7 @@
 
 int main() {
     // input ----------
-    bool full_LU = false;
+    bool full_LU = true;
 
     // for medium size problems like nxe = 100,
     // the direct LU solve is much faster and has a better residual
