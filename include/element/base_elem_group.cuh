@@ -15,7 +15,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                  const Vec<int32_t> vars_conn, const Vec<T> xpts, const Vec<T> vars,
-                                 Vec<Data> physData, const int32_t *iperm, Vec<T> res) {
+                                 Vec<Data> physData, Vec<T> res) {
     // note in the above : CPU code passes Vec<> objects by reference
     // GPU kernel code cannot do so for complex objects otherwise weird behavior
     // occurs
@@ -85,7 +85,7 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
                               &block_res[local_elem][0]);
 
     res.addElementValuesFromShared(active_thread, threadIdx.y, blockDim.y, Phys::vars_per_node,
-                                   Basis::num_nodes, iperm, vars_elem_conn,
+                                   Basis::num_nodes, vars_elem_conn,
                                    &block_res[local_elem][0]);
 }  // end of add_residual_gpu kernel
 
@@ -95,7 +95,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block,
           template <typename> class Vec, class Mat>
 __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
                                         Vec<int32_t> geo_conn, Vec<int32_t> vars_conn, Vec<T> xpts,
-                                        Vec<T> vars, Vec<Data> physData, const int32_t *iperm, Vec<T> res, Mat mat) {
+                                        Vec<T> vars, Vec<Data> physData, Vec<T> res, Mat mat) {
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
@@ -236,7 +236,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
     // printVec<double>(576,block_mat[local_elem]);
 
     res.addElementValuesFromShared(active_thread, thread_yz, nthread_yz, Phys::vars_per_node,
-                                   Basis::num_nodes, iperm, vars_elem_conn,
+                                   Basis::num_nodes, vars_elem_conn,
                                    &block_res[local_elem][0]);
 
     mat.addElementMatrixValuesFromShared(active_thread, thread_yz, nthread_yz, 1.0, global_elem,

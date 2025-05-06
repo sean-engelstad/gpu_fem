@@ -1,28 +1,23 @@
 
 #include "linalg/_linalg.h"
 #include "mesh/TACSMeshLoader.h"
-#include "mesh/vtk_writer.h"
 #include "solvers/_solvers.h"
 
 // shell imports
 #include "assembler.h"
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
+#include "../test_commons.h"
 
-int main() {
-  using T = double;
-
-  // problem inputs ----
-  bool full_LU = false;
-  // -------------------
+void test_ucrm(bool full_LU = true, bool print = false) {
+    using T = double;
 
   auto start0 = std::chrono::high_resolution_clock::now();
 
   // uCRM mesh files can be found at:
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
   TACSMeshLoader<T> mesh_loader{};
-  mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
-  // mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
+  mesh_loader.scanBDFFile("../../examples/uCRM/CRM_box_2nd.bdf");
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
@@ -45,17 +40,13 @@ int main() {
   // BSR factorization
   auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
-  bool print = true;
   if (full_LU) {
     bsr_data.AMD_reordering();
     // bsr_data.qorder_reordering(1.0);
     bsr_data.compute_full_LU_pattern(fillin, print);
   } else {
-    // bsr_data.RCM_reordering();
     bsr_data.AMD_reordering();
-    // bsr_data.qorder_reordering(1.0, 10); // qordering not working well for some reason..
-    bsr_data.compute_ILUk_pattern(10, fillin);
-    // bsr_data.compute_full_LU_pattern(fillin, print);
+    bsr_data.compute_ILUk_pattern(10, fillin, print);
   }
   assembler.moveBsrDataToDevice();
 
@@ -89,7 +80,6 @@ int main() {
   } else {
       int n_iter = 200, max_iter = 400;
       T abs_tol = 1e-11, rel_tol = 1e-15;
-      bool print = true;
       CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
   }
 
@@ -106,43 +96,18 @@ int main() {
   CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
   assembler.apply_bcs(rhs);
   double resid_norm = CUBLAS::get_vec_norm(rhs);
-  printf("resid_norm = %.4e\n", resid_norm);
-
-  int block_dim = bsr_data.block_dim;
-  int *iperm = bsr_data.iperm;
-  assembler.apply_bcs(res);
-  auto h_res = res.createPermuteVec(block_dim, iperm).createHostVec();
-  auto h_rhs = rhs.createPermuteVec(block_dim, iperm).createHostVec();
-  int NPRINT = 100;
-  printf("add_res\nr(u): ");
-  printVec<T>(NPRINT, h_res.getPtr());
-  printf("r(u)-b: ");
-  printVec<T>(NPRINT, h_rhs.getPtr());
-
-  // baseline norm (with zero soln, just loads essentially)
-  rhs.zeroValues();
-  CUBLAS::axpy(1.0, loads, rhs);
-  assembler.apply_bcs(rhs);
-  double init_norm = CUBLAS::get_vec_norm(rhs);
-  printf("init_norm = %.4e\n", init_norm);
-
-  auto h_rhs2 = rhs.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_rhs2, "uCRM-rhs.vtk");
-
+  
   // test get residual here
   assembler.add_jacobian(res, kmat);
   assembler.apply_bcs(kmat);
   T resid2 = get_resid<T>(kmat, loads, soln);
-  printf("cusparse resid norm = %.4e\n", resid2);
 
-  // debug: run GMRES again starting from scratch to see initial beta
-  int n_iter = 1, max_iter = 1;
-  T abs_tol = 1e-11, rel_tol = 1e-15;
-  CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
-
-  // auto h_rhs = rhs.createHostVec();
-  // printf("rhs:");
-  // printVec<T>(10, h_rhs.getPtr());
+  // test result, check r(u) = r_int(u) - f close to K*u-f
+  double err = rel_err(resid_norm, resid2);
+  std::string solve_str = full_LU ? "LU" : "GMRES";
+  bool passed = err < 1e-4;
+  printTestReport("uCRM linear resid equivalence with " + solve_str, passed, err);
+  printf("\t|r(u)| %.4e, |Ku-f| %.4e\n", resid_norm, resid2);
 
   // free data
   assembler.free();
@@ -153,5 +118,9 @@ int main() {
   vars.free();
   h_soln.free();
   rhs.free();
-  h_rhs.free();
+}
+
+int main() {
+  test_ucrm(true);
+  test_ucrm(false);
 };

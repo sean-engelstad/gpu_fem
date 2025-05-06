@@ -104,7 +104,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     /* GMRES iterative solve using a BsrMat on GPU with CUDA / CuSparse
         only supports T = double right now, may add float at some point (but float won't converge as
        deeply the residual, only about 1e-7) */
-    // TODO : add preconditioner, LU factorization, etc. use direct_LU_solve above as a baseline
     auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
 
     if (can_print) {
@@ -121,10 +120,14 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     int block_dim = bsr_data.block_dim;
     index_t *d_rowp = bsr_data.rowp;
     index_t *d_cols = bsr_data.cols;
+    int *iperm = bsr_data.iperm;
     int N = soln.getSize();
     int n_iter = min(_n_iter, bsr_data.nnodes);
     T *d_rhs = rhs_perm.getPtr();
     T *d_x = soln.getPtr();
+
+    // permute data in soln if guess is not zero
+    soln.permuteData(block_dim, iperm);
 
     // note this changes the mat data to be LU (but that's the whole point
     // of LU solve is for repeated linear solves we now just do triangular
@@ -219,6 +222,10 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
         CHECK_CUDA(cudaDeviceSynchronize());
 
+        T init_true_resid;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &init_true_resid));
+        CHECK_CUDA(cudaDeviceSynchronize());
+
         // now apply precond to the resid
         if constexpr (use_precond) {
             // zero vec_tmp
@@ -252,7 +259,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         T beta;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &beta));
         CHECK_CUDA(cudaDeviceSynchronize());
-        if (can_print) printf("GMRES init resid = %.9e\n", beta);
+        if (can_print)
+            printf("GMRES init resid = true %.9e, precond %.9e\n", init_true_resid, beta);
         g[0] = beta;
 
         // set v0 = r0 / beta (unit vec)
@@ -469,6 +477,17 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
 
     T final_resid;
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_resid));
+
+    // debugging
+    // int NPRINT = 100;
+    // printf("x: ");
+    // printVec<T>(NPRINT, soln.createHostVec().getPtr());
+    // printf("b: ");
+    // printVec<T>(NPRINT, rhs_perm.createHostVec().getPtr());
+    // printf("A*x: ");
+    // printVec<T>(NPRINT, DeviceVec<T>(N, d_tmp).createHostVec().getPtr());
+    // printf("Ax-b: ");
+    // printVec<T>(NPRINT, DeviceVec<T>(N, d_resid).createHostVec().getPtr());
 
     // now apply preconditioner to the residual
     if constexpr (use_precond) {

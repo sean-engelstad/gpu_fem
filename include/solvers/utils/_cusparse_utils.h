@@ -106,64 +106,77 @@ typedef struct VecStruct {
 
 template <typename T>
 T get_resid(BsrMat<DeviceVec<T>> mat, DeviceVec<T> rhs, DeviceVec<T> soln) {
+    auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
+
     BsrData bsr_data = mat.getBsrData();
     int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
-    int blockDim = bsr_data.block_dim;
-    index_t *rowp = bsr_data.rowp;
-    index_t *cols = bsr_data.cols;
-    T *d_rhs = rhs.getPtr();
-    T *d_soln = soln.getPtr();
-    DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
-    T *d_temp = temp.getPtr();
-    T *vals = mat.getPtr();
+    int block_dim = bsr_data.block_dim;
+    index_t *d_rowp = bsr_data.rowp;
+    index_t *d_cols = bsr_data.cols;
+    int *iperm = bsr_data.iperm;
+    int N = soln.getSize();
+    T *d_rhs = rhs_perm.getPtr();
+    T *d_x = soln.getPtr();
 
-    // init cublas handle, etc.
-    // cudaError_t cudaStat;
-    cublasStatus_t blas_stat;
-    cublasHandle_t cublas_handle;
-    blas_stat = cublasCreate(&cublas_handle);
+    // permute data in soln if guess is not zero
+    soln.permuteData(block_dim, iperm);
+    T *d_vals = mat.getPtr();
+    T *d_tmp = DeviceVec<T>(soln.getSize()).getPtr();
+    T *d_resid = DeviceVec<T>(soln.getSize()).getPtr();
 
-    // also make cusparse handle
-    cusparseHandle_t cusparse_handle;
-    cusparseCreate(&cusparse_handle);
-    cusparseStatus_t cusparse_status;
+    /* Create CUBLAS context */
+    cublasHandle_t cublasHandle = NULL;
+    CHECK_CUBLAS(cublasCreate(&cublasHandle));
 
-    // Descriptor for the BSR matrix
-    cusparseMatDescr_t descr;
-    cusparseCreateMatDescr(&descr);
-    cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
+    /* Create CUSPARSE context */
+    cusparseHandle_t cusparseHandle = NULL;
+    CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    // Step 1: Perform the matrix-vector product: d_temp = K * u
-    double alpha = 1.0, beta = 0.0;
-    cusparse_status = cusparseDbsrmv(cusparse_handle, CUSPARSE_DIRECTION_ROW,
-                                     CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &alpha, descr,
-                                     vals, rowp, cols, blockDim, d_soln, &beta, d_temp);
+    /* Description of the A matrix */
+    cusparseMatDescr_t descrA = 0;
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA));
+    CHECK_CUSPARSE(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
 
-    if (cusparse_status != CUSPARSE_STATUS_SUCCESS) {
-        printf("CUSPARSE bsrmv failed!\n");
-        return EXIT_FAILURE;
-    }
+    T a = 1.0, b = 0.0;
 
-    // Step 2: Compute the residual: d_temp = d_temp - f
-    double alpha2 = -1.0;
-    cublasDaxpy(cublas_handle, rhs.getSize(), &alpha2, d_rhs, 1, d_temp, 1);
+    // apply precond to rhs if in use
+    // copy b or rhs to resid
+    CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
 
-    // Step 3: Compute max residual
-    int maxIndex;
-    double maxResidual;
-    cublasIdamax(cublas_handle, rhs.getSize(), d_temp, 1, &maxIndex);
+    // then subtract Ax from b
+    a = 1.0, b = 0.0;
+    CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                  CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
+                                  d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
+    CHECK_CUDA(cudaDeviceSynchronize());
+    // resid -= A * x
+    a = -1.0;
+    CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
+    CHECK_CUDA(cudaDeviceSynchronize());
 
-    int zeroBasedIndex = maxIndex - 1;  // Idamax uses 1-based for some reason..
-    cudaMemcpy(&maxResidual, d_temp + zeroBasedIndex, sizeof(double), cudaMemcpyDeviceToHost);
+    T true_resid;
+    CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &true_resid));
+    CHECK_CUDA(cudaDeviceSynchronize());
 
-    // Optionally zero out the temp array
-    // cudaMemset(d_temp, 0, numRows * sizeof(float));
+    // debugging
+    // int NPRINT = 100;
+    // printf("x: ");
+    // printVec<T>(NPRINT, soln.createHostVec().getPtr());
+    // printf("b: ");
+    // printVec<T>(NPRINT, rhs_perm.createHostVec().getPtr());
+    // printf("Ax-b: ");
+    // printVec<T>(NPRINT, DeviceVec<T>(N, d_resid).createHostVec().getPtr());
+
+    // now also inverse permute the soln data
+    permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
 
     // Free resources
-    cudaFree(d_temp);
-    cusparseDestroyMatDescr(descr);
+    CHECK_CUDA(cudaFree(d_resid));
+    CHECK_CUDA(cudaFree(d_tmp));
+    cusparseDestroyMatDescr(descrA);
+    cusparseDestroy(cusparseHandle);
 
-    return maxResidual;
+    return true_resid;
 }

@@ -185,7 +185,14 @@ class DeviceVec : public BaseVec<T> {
         int nbcs = bcs.getSize();
         int nblocks = (nbcs + block.x - 1) / block.x;
         dim3 grid(nblocks);
+
+        // debug
         // printf("in deviceVec apply_bcs\n");
+        // int n_bcs = bcs.getSize();
+        // int *h_bcs = new int[n_bcs];
+        // CHECK_CUDA(cudaMemcpy(h_bcs, bcs.getPtr(), n_bcs * sizeof(int), cudaMemcpyDeviceToHost));
+        // printf("bcs:");
+        // printVec<int>(n_bcs, h_bcs);
 
         apply_vec_bcs_kernel<T, DeviceVec><<<grid, block>>>(bcs, this->data);
 
@@ -361,8 +368,8 @@ class DeviceVec : public BaseVec<T> {
 
     __DEVICE__ void addElementValuesFromShared(const bool active_thread, const int start,
                                                const int stride, const int dof_per_node,
-                                               const int nodes_per_elem, const int32_t *iperm,
-                                               const int32_t *elem_conn, const T *shared_data) {
+                                               const int nodes_per_elem, const int32_t *elem_conn,
+                                               const T *shared_data) {
         // copies values to the shared element array on GPU (shared memory)
         if (!active_thread) return;
         int dof_per_elem = dof_per_node * nodes_per_elem;
@@ -370,8 +377,8 @@ class DeviceVec : public BaseVec<T> {
             int local_inode = idof / dof_per_node;
             int _global_inode = elem_conn[local_inode];
             // iperm : old to new entry (see tests/reordering/README.md)
-            int global_inode = iperm[_global_inode];
-            int iglobal = global_inode * dof_per_node + (idof % dof_per_node);
+            // int global_inode = iperm[_global_inode];
+            int iglobal = _global_inode * dof_per_node + (idof % dof_per_node);
 
             atomicAdd(&this->data[iglobal], shared_data[idof]);
         }

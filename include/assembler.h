@@ -505,8 +505,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
 
-    add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, geo_conn, vars_conn, xpts, vars, physData, bsr_data.iperm, res);
+    add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 #else   // USE_GPU
@@ -515,7 +515,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
 #endif  // USE_GPU
 
     // permute residual (new => old rows see tests/reordering/README.md)
-    this->permuteVec(res);
+    // this->permuteVec(res);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
@@ -552,9 +552,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
 
-    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat>
-        <<<grid, block>>>(num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData,
-                          bsr_data.iperm, res, mat);
+    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -564,9 +563,6 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     ElemGroup::template add_jacobian_cpu<Data, Vec, Mat>(num_vars_nodes, num_elements, geo_conn,
                                                          vars_conn, xpts, vars, physData, res, mat);
 #endif
-
-    // permute residual (new => old rows see tests/reordering/README.md)
-    this->permuteVec(res);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
