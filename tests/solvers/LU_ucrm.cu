@@ -91,6 +91,7 @@ void test_ucrm(bool full_LU = true, bool print = false) {
   assembler.set_variables(soln);
   assembler.add_residual(res);  // internal residual
   // assembler.add_jacobian(res, kmat);
+  assembler.apply_bcs(res);
   auto rhs = assembler.createVarsVec();
   CUBLAS::axpy(1.0, loads, rhs);
   CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
@@ -99,8 +100,9 @@ void test_ucrm(bool full_LU = true, bool print = false) {
   
   // test get residual here
   assembler.add_jacobian(res, kmat);
+  assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
-  T resid2 = get_resid<T>(kmat, loads, soln);
+  T resid2 = CUSPARSE::get_resid<T>(kmat, loads, soln);
 
   // test result, check r(u) = r_int(u) - f close to K*u-f
   double err = rel_err(resid_norm, resid2);
@@ -108,6 +110,52 @@ void test_ucrm(bool full_LU = true, bool print = false) {
   bool passed = err < 1e-4;
   printTestReport("uCRM linear resid equivalence with " + solve_str, passed, err);
   printf("\t|r(u)| %.4e, |Ku-f| %.4e\n", resid_norm, resid2);
+
+  // also debug: check K*u vs res
+  auto res2 = assembler.createVarsVec();
+  auto tmp = assembler.createVarsVec();
+  assembler.add_jacobian(tmp, kmat);
+  assembler.apply_bcs(tmp);
+  assembler.apply_bcs(kmat);
+  CUSPARSE::mat_vec_mult<T>(kmat, soln, res2);
+  double res_norm0 = CUBLAS::get_vec_norm(res);
+  double res_norm = CUBLAS::get_vec_norm(tmp);
+  double res_norm2 = CUBLAS::get_vec_norm(res2);
+  // if (print) {
+    printf("\tresid norms |r(u)| v1 %.4e, |r(u)| %.4e, |K*u| %.4e\n", res_norm0, res_norm, res_norm2);
+  // }
+
+  // use pert vector and compare <p,r_int(u)> vs <p,K*u>
+  auto h_res = res.createHostVec();
+  auto h_res2 = res2.createHostVec();
+  auto h_pert = HostVec<T>(nvars);
+  for (int i = 0; i < nvars; i++) {
+    h_pert[i] = static_cast<double>(rand()) / RAND_MAX;
+    // printf("h_pert[%d] = %.4e\n", i, h_pert[i]);
+  }
+  T dot1 = 0.0, dot2 = 0.0;
+  for (int i = 0; i < nvars; i++) {
+    dot1 += h_res[i] * h_pert[i];
+    dot2 += h_res2[i] * h_pert[i];
+  }
+  T err2 = rel_err(dot1, dot2);
+  printf("\t<p,r_int(u)> %.4e, <p,K*u> %.4e, err %.4e\n", dot1, dot2, err2);
+
+  // and double check with |r_int(u)-f|
+  rhs.zeroValues();
+  CUBLAS::axpy(1.0, loads, rhs);
+  CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
+  assembler.apply_bcs(rhs);
+  double resid_norm1 = CUBLAS::get_vec_norm(rhs);
+  printf("\t|r_int(u)-F| = %.4e\n", resid_norm1);
+
+  // ok thes r(u) and K*u seem to match, does K*u-f manually here with CUBLAS match?
+  rhs.zeroValues();
+  CUBLAS::axpy(1.0, loads, rhs);
+  CUBLAS::axpy(-1.0, res2, rhs);  // rhs = loads - f_int
+  assembler.apply_bcs(rhs);
+  double resid_norm2 = CUBLAS::get_vec_norm(rhs);
+  printf("\t|K*u-F| = %.4e\n", resid_norm2);
 
   // free data
   assembler.free();

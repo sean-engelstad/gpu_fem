@@ -91,18 +91,53 @@ void perform_LU_factorization(cusparseHandle_t handle, cusparseMatDescr_t &descr
     }
 }
 
-};  // namespace CUSPARSE
+template <typename T>
+void mat_vec_mult(BsrMat<DeviceVec<T>> mat, DeviceVec<T> x, DeviceVec<T> y) {
+    BsrData bsr_data = mat.getBsrData();
+    int mb = bsr_data.nnodes;
+    int nnzb = bsr_data.nnzb;
+    int block_dim = bsr_data.block_dim;
+    index_t *d_rowp = bsr_data.rowp;
+    index_t *d_cols = bsr_data.cols;
+    int *iperm = bsr_data.iperm;
+    int N = x.getSize();
+    T *d_x = x.getPtr();
+    T *d_y = y.getPtr();
+    T *d_vals = mat.getPtr();
 
-typedef struct VecStruct {
-    cusparseDnVecDescr_t vec;
-    double *ptr;
-} Vec;
+    // permute data in soln if guess is not zero
+    x.permuteData(block_dim, iperm);
 
-#if defined(NDEBUG)
-#define PRINT_INFO(var)
-#else
-#define PRINT_INFO(var) printf("  " #var ": %f\n", var);
-#endif
+    /* Create CUBLAS context */
+    cublasHandle_t cublasHandle = NULL;
+    CHECK_CUBLAS(cublasCreate(&cublasHandle));
+
+    /* Create CUSPARSE context */
+    cusparseHandle_t cusparseHandle = NULL;
+    CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+
+    /* Description of the A matrix */
+    cusparseMatDescr_t descrA = 0;
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA));
+    CHECK_CUSPARSE(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
+
+    // here compute A*x => y
+    T a = 1.0, b = 0.0;
+    CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                  CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
+                                  d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_y));
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    // now also inverse permute the soln data
+    permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, x);  // permuted separately with new vec
+    permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, y);
+
+    // Free resources
+    cudaFree(d_x);  // since copy vector
+    cusparseDestroyMatDescr(descrA);
+    cusparseDestroy(cusparseHandle);
+}
 
 template <typename T>
 T get_resid(BsrMat<DeviceVec<T>> mat, DeviceVec<T> rhs, DeviceVec<T> soln) {
@@ -180,3 +215,16 @@ T get_resid(BsrMat<DeviceVec<T>> mat, DeviceVec<T> rhs, DeviceVec<T> soln) {
 
     return true_resid;
 }
+
+};  // namespace CUSPARSE
+
+typedef struct VecStruct {
+    cusparseDnVecDescr_t vec;
+    double *ptr;
+} Vec;
+
+#if defined(NDEBUG)
+#define PRINT_INFO(var)
+#else
+#define PRINT_INFO(var) printf("  " #var ": %f\n", var);
+#endif
