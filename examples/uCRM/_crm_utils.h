@@ -1,4 +1,8 @@
 #pragma once
+#include <fstream>
+#include <iostream>
+#include <vector>
+
 #include "coupled/_coupled.h"
 #include "linalg/_linalg.h"
 
@@ -45,9 +49,12 @@ void testCoupledDriver(StructSolver struct_solver, AeroSolver aero_solver, Trans
 
 template <typename T, class StructSolver, class AeroSolver, class Transfer, class Assembler>
 void testCoupledDriverManual(StructSolver struct_solver, AeroSolver aero_solver, Transfer transfer,
-                             Assembler assembler, Assembler _assembler_aero) {
+                             Assembler assembler, Assembler _assembler_aero,
+                             bool aero_point_data = false) {
     int ns = assembler.get_num_nodes();
     int na = _assembler_aero.get_num_nodes();
+
+    printf("here10\n");
 
     // break out the coupled loop manually for testing
     auto us = DeviceVec<T>(3 * ns);
@@ -55,17 +62,29 @@ void testCoupledDriverManual(StructSolver struct_solver, AeroSolver aero_solver,
     auto h_us_ext = MELD<T>::template expandVarsVec<3, 6>(ns, h_us);
     printToVTK<Assembler, HostVec<T>>(assembler, h_us_ext, "uCRM_us-0.vtk");  // zero, good
 
+    printf("1st transfer disps call\n");
     auto ua = transfer.transferDisps(us);
     auto h_ua = ua.createHostVec();
     auto h_ua_ext = MELD<T>::template expandVarsVec<3, 6>(na, h_ua);
-    printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_ua_ext,
-                                      "uCRM_ua-0.vtk");  // small, near zero good
+
+    if (aero_point_data) {
+        printToVTK_points<Assembler, HostVec<T>>(_assembler_aero, h_ua_ext,
+                                                 "uCRM_ua-0.vtk");  // small, near zero good
+    } else {
+        printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_ua_ext,
+                                          "uCRM_ua-0.vtk");  // small, near zero good
+    }
 
     auto fa = aero_solver.getAeroLoads();
     auto h_fa = fa.createHostVec();
     auto h_fa_ext = MELD<T>::template expandVarsVec<3, 6>(na, h_fa);
-    printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_fa_ext,
-                                      "uCRM_fa-0.vtk");  // Z force only, good
+    if (aero_point_data) {
+        printToVTK_points<Assembler, HostVec<T>>(_assembler_aero, h_fa_ext,
+                                                 "uCRM_fa-0.vtk");  // small, near zero good
+    } else {
+        printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_fa_ext,
+                                          "uCRM_fa-0.vtk");  // small, near zero good
+    }
 
     auto fs = transfer.transferLoads(fa);
     auto fs_ext = fs.addRotationalDOF();
@@ -82,15 +101,28 @@ void testCoupledDriverManual(StructSolver struct_solver, AeroSolver aero_solver,
                                       "uCRM_us-1.vtk");  // zero everywhere? weird, fix this..
 
     // second loop
+    printf("2nd transfer disps call\n");
     auto ua1 = transfer.transferDisps(us1);
     auto h_ua1 = ua1.createHostVec();
     auto h_ua1_ext = MELD<T>::template expandVarsVec<3, 6>(na, h_ua1);
-    printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_ua1_ext, "uCRM_ua-1.vtk");
+    if (aero_point_data) {
+        printToVTK_points<Assembler, HostVec<T>>(_assembler_aero, h_ua1_ext,
+                                                 "uCRM_ua-1.vtk");  // small, near zero good
+    } else {
+        printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_ua1_ext,
+                                          "uCRM_ua-1.vtk");  // small, near zero good
+    }
 
     auto fa1 = aero_solver.getAeroLoads();
     auto h_fa1 = fa1.createHostVec();
     auto h_fa1_ext = MELD<T>::template expandVarsVec<3, 6>(na, h_fa1);
-    printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_fa1_ext, "uCRM_fa-1.vtk");
+    if (aero_point_data) {
+        printToVTK_points<Assembler, HostVec<T>>(_assembler_aero, h_fa1_ext,
+                                                 "uCRM_fa-1.vtk");  // small, near zero good
+    } else {
+        printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_fa1_ext,
+                                          "uCRM_fa-1.vtk");  // small, near zero good
+    }
 
     auto fs1 = transfer.transferLoads(fa1);
     auto fs1_ext = fs1.addRotationalDOF();
@@ -214,6 +246,95 @@ Assembler makeAeroSurfMesh(int nx = 101, int ny = 101, bool print = true) {
 
     // printf("checkpoint 3 - post elem_conn\n");
 
+    HostVec<int32_t> geo_conn(N1, elem_conn);
+    HostVec<int32_t> vars_conn(N1, elem_conn);
+
+    T E = 1e7, nu = 0.3, thick = 0.1;
+    HostVec<Data> physData(num_elements, Data(E, nu, thick));
+
+    std::vector<int> my_bcs;
+    my_bcs.push_back(0);  // not actually using bcs here, don't really care
+    HostVec<int> bcs(my_bcs.size());
+    // deep copy here
+    for (int ibc = 0; ibc < my_bcs.size(); ibc++) {
+        bcs[ibc] = my_bcs.at(ibc);
+    }
+
+    if (print) printf("num_nodes %d, num_elements %d\n", num_nodes, num_elements);
+    // printf("xpts:");
+    // printVec<T>(10, xa0.getPtr());
+
+    int num_components = 0;
+    HostVec<int> elem_components(num_components);
+
+    Assembler assembler(num_nodes, num_nodes, num_elements, geo_conn, vars_conn, xa0, bcs, physData,
+                        num_components, elem_components);
+
+    return assembler;
+}
+
+struct ForceEntry {
+    double x, y, z;     // Coordinates
+    double fx, fy, fz;  // Forces
+};
+
+template <class Assembler>
+Assembler makeFun3dAeroSurfMeshFromDat(std::string filename, double **xyz_forces,
+                                       bool print = false) {
+    // V1 is outside the wing, but much larger than it.. doesn't narrow down the same way
+    using T = typename Assembler::T;
+    using Basis = typename Assembler::Basis;
+    using Geo = typename Assembler::Geo;
+    using Data = typename Assembler::Data;
+
+    // read FUN3D dat file "fun3d_forces.dat"
+    std::ifstream infile(filename);
+    if (!infile) {
+        std::cerr << "Error opening file\n";
+    }
+
+    printf("here1\n");
+
+    std::vector<ForceEntry> forceData;
+    ForceEntry entry;
+
+    while (infile >> entry.x >> entry.y >> entry.z >> entry.fx >> entry.fy >> entry.fz) {
+        forceData.push_back(entry);
+    }
+
+    infile.close();
+
+    printf("here2\n");
+
+    // now print entries to double check / debug
+    // for (size_t i = 0; i < std::min(forceData.size(), size_t(5)); ++i) {
+    //     std::cout << "Point: (" << forceData[i].x << ", " << forceData[i].y << ", "
+    //               << forceData[i].z << ") ";
+    //     std::cout << "Force: (" << forceData[i].fx << ", " << forceData[i].fy << ", "
+    //               << forceData[i].fz << ")\n";
+    // }
+
+    int num_nodes = forceData.size();
+    printf("num_nodes = %d\n", num_nodes);
+    HostVec<T> xa0(3 * num_nodes);
+    *xyz_forces = new T[3 * num_nodes];
+    for (int i = 0; i < num_nodes; i++) {
+        xa0[3 * i] = forceData[i].x;
+        xa0[3 * i + 1] = forceData[i].y;
+        xa0[3 * i + 2] = forceData[i].z;
+        (*xyz_forces)[3 * i] = forceData[i].fx;
+        (*xyz_forces)[3 * i + 1] = forceData[i].fy;
+        (*xyz_forces)[3 * i + 2] = forceData[i].fz;
+    }
+    printf("here3\n");
+
+    // printf("checkpoint 3 - post elem_conn\n");
+    // don't need elements for this, not doing struct solve
+    int N1 = 4, num_elements = 1;
+    int *elem_conn = new int[1];
+    for (int i = 0; i < 4; i++) {
+        elem_conn[i] = i;
+    }
     HostVec<int32_t> geo_conn(N1, elem_conn);
     HostVec<int32_t> vars_conn(N1, elem_conn);
 

@@ -132,7 +132,7 @@ int main() {
   // test get residual here
   assembler.add_jacobian(res, kmat);
   assembler.apply_bcs(kmat);
-  T resid2 = get_resid<T>(kmat, loads, soln);
+  T resid2 = CUSPARSE::get_resid<T>(kmat, loads, soln);
   printf("cusparse resid norm = %.4e\n", resid2);
 
   // debug: run GMRES again starting from scratch to see initial beta

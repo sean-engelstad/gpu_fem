@@ -505,9 +505,11 @@ __HOST_DEVICE__ void computeRotation(const T H[9], T R[9], const bool print = fa
     // it's actually quite sensitive to this..
     double rhoKS = 100.0;
     // exact rotation has much more stable SVD jacobian
-    constexpr int N_iter = exact_givens ? 1 : 15;
-    // constexpr int N_iter = 45;
+    // constexpr int N_iter = exact_givens ? 1 : 15;
+    constexpr int N_iter = 15;
+    // constexpr int N_iter = 5;
 
+    // svd3x3_QR<T>(H, sigma, U, VT, print, rhoKS);
     svd3x3_QR<T, N_iter, exact_givens>(H, sigma, U, VT, print, rhoKS);
 
     // compute rotation matrix R = U * VT

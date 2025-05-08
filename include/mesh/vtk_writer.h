@@ -74,3 +74,52 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
 
     myfile.close();
 }
+
+template <class Assembler, class Vec>
+void printToVTK_points(Assembler assembler, Vec soln, std::string filename) {
+    /* for point cloud data from FUN3D aero surf mesh */
+
+    // later
+    using namespace std;
+    string sp = " ";
+    string dataType = "double64";
+
+    ofstream myfile;
+    myfile.open(filename);
+    myfile << "# vtk DataFile Version 3.0\n";
+    myfile << "TACS GPU Point cloud writer\n";
+    myfile << "ASCII\n";
+
+    // make an unstructured grid even though it is really structured
+    myfile << "DATASET POLYDATA\n";
+    int num_nodes = assembler.get_num_nodes();
+    myfile << "POINTS " << num_nodes << sp << dataType << "\n";
+
+    // print all the xpts coordinates
+    auto d_xpts = assembler.getXpts();
+    auto h_xpts = d_xpts.createHostVec();
+
+    double *xpts_ptr = h_xpts.getPtr();
+    for (int inode = 0; inode < num_nodes; inode++) {
+        double *node_xpts = &xpts_ptr[3 * inode];
+        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2] << "\n";
+    }
+
+    // list each vertex as standalong point
+    myfile << "VERTICES " << num_nodes << " " << 2 * num_nodes << "\n";
+    for (int inode = 0; inode < num_nodes; inode++) {
+        myfile << "1 " << inode << "\n";
+    }
+
+    // disp vector field now
+    myfile << "POINT_DATA " << num_nodes << "\n";
+    string scalarName = "disp";
+    myfile << "VECTORS " << scalarName << " double64\n";
+    for (int inode = 0; inode < num_nodes; inode++) {
+        myfile << soln[6 * inode] << sp;
+        myfile << soln[6 * inode + 1] << sp;
+        myfile << soln[6 * inode + 2] << "\n";
+    }
+
+    myfile.close();
+}
