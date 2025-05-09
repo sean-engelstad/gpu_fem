@@ -4,26 +4,11 @@
 #include "TACSShellElementDefs.h"
 #include "TACSShellElementTransform.h"
 
-template <typename T>
-void printVec(const int N, const T *vec);
-
-template <>
-void printVec<double>(const int N, const double *vec) {
-    for (int i = 0; i < N; i++) {
-        printf("%.5e,", vec[i]);
-    }
-    printf("\n");
-}
-
 // this example is based off of examples/crm/crm.cpp in TACS
 
 int main(int argc, char *argv[]) {
-    // make the MPI communicator
-    MPI_Init(NULL, NULL);
-    MPI_Comm comm = MPI_COMM_WORLD;
-
-    int rank;
-    MPI_Comm_rank(comm, &rank);
+    // using T = double;
+    // bool print = false;
 
     std::string nonlinear_str;
     bool nonlinear = false;
@@ -31,6 +16,13 @@ int main(int argc, char *argv[]) {
         nonlinear_str = argv[1];
         nonlinear = nonlinear_str == "nonlinear";
     }
+
+    // make the MPI communicator
+    MPI_Init(NULL, NULL);
+    MPI_Comm comm = MPI_COMM_WORLD;
+
+    int rank;
+    MPI_Comm_rank(comm, &rank);
 
     using T = TacsScalar;
 
@@ -70,8 +62,6 @@ int main(int argc, char *argv[]) {
 
     T *res = new T[num_vars];
     memset(res, 0.0, num_vars * sizeof(T));
-    T *Kmat = new T[num_vars * num_vars];
-    memset(Kmat, 0.0, num_vars * num_vars * sizeof(T));
 
     bool nz_vars = true;
     if (nz_vars) {
@@ -83,12 +73,14 @@ int main(int argc, char *argv[]) {
 
     T *p_vars = new T[num_vars];
     memset(p_vars, 0.0, num_vars * sizeof(T));
-    T *p_vars2 = new T[num_vars];
-    memset(p_vars2, 0.0, num_vars * sizeof(T));
-    for (int ivar = 0; ivar < 24; ivar++) {
-        p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
-        p_vars2[ivar] = (-1.4543 * 1.024343 + 2.812 * -9.4323 * ivar);
-    }
+    for (int ivar = 0; ivar < 24; ivar++) p_vars[ivar] = (-1.4543 + 2.312 * 6.4323 * ivar);
+
+    // for (int i = 0; i < 12; i++) {
+    //   printf("xpts[%d] = %.8e\n", i, xpts[i]);
+    // }
+    // for (int i = 0; i < 24; i++) {
+    //   printf("vars[%d] = %.8e\n", i, vars[i]);
+    // }
 
     TacsScalar thick = 0.005;  // shell thickness
     TACSIsoShellConstitutive *con = new TACSIsoShellConstitutive(mat, thick);
@@ -102,38 +94,20 @@ int main(int argc, char *argv[]) {
         printf("linear CPU shell\n");
         elem = new TACSQuad4Shell(transform, con);
     }
+    //
 
     // call compute energies on the one element
     int elemIndex = 0;
     double time = 0.0;
     // printf("TACS Ue 1 = %.8e\n", *Ue);
-    elem->addJacobian(elemIndex, time, 1.0, 0.0, 0.0, xpts, vars, dvars, ddvars, res, Kmat);
+    T *Te = new T[1];
+    T *Pe = new T[1];
+    printf("start\n");
+    elem->computeEnergies(elemIndex, time, xpts, vars, dvars, Te, Pe);
+    printf("done\n");
 
-    // take a vec-mat-vec product on Kmat
-    double jac_TD = 0.0;
-    double res_TD = 0.0;
-    for (int i = 0; i < 24; i++) {
-        res_TD += p_vars[i] * res[i];
-        for (int j = 0; j < 24; j++) {
-            jac_TD += p_vars[i] * p_vars2[j] * Kmat[24 * i + j];
-        }
-    }
-
-    printf("Analytic jacobian CPU\n");
-    printf("res TD = %.8e\n", res_TD);
-    printf("jac TD = %.8e\n", jac_TD);
-
-    printf("res: ");
-    printVec<double>(24, res);
-
-    printf("kmat:\n");
-    for (int i = 0; i < 24; i++) {  // i < 2
-        // printf("kmat row %d: ", i);
-        for (int j = 0; j < 24; j++) {
-            printf("%.14e,", Kmat[24 * i + j]);
-        }
-        printf("\n");
-    }
+    printf("element strain energy\n");
+    printf("\tUelem = %.14e\n", *Pe);
 
     MPI_Finalize();
 

@@ -7,9 +7,74 @@
 // add_residual kernel
 // -----------------------
 
-template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1>
-__GLOBAL__ void add_energy_gpu(int32_t num_elements, int32_t *geo_conn, int32_t *vars_conn, T *xpts,
-                               T *vars, Data *physData, T *Uenergy) {}
+template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
+          template <typename> class Vec>
+__GLOBAL__ void add_energy_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn, 
+                               const Vec<int32_t> vars_conn, const Vec<T> xpts, const Vec<T> vars,
+                               Vec<Data> physData, T *glob_U) {
+
+    using Geo = typename ElemGroup::Geo;
+    using Basis = typename ElemGroup::Basis;
+    using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
+
+    int local_elem = threadIdx.x;
+    int global_elem = local_elem + blockDim.x * blockIdx.x;
+    bool active_thread = global_elem < num_elements;
+    int local_thread =
+        (blockDim.x * blockDim.y) * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+
+    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+
+    const int32_t *_geo_conn = geo_conn.getPtr();
+    const int32_t *_vars_conn = vars_conn.getPtr();
+    const Data *_phys_data = physData.getPtr();
+
+    __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
+    __SHARED__ T block_vars[elems_per_block][vars_per_elem];
+    __SHARED__ Data block_data[elems_per_block];
+
+    // load data into block shared mem using some subset of threads
+    const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
+    xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,
+                                Geo::num_nodes, geo_elem_conn, &block_xpts[local_elem][0]);
+
+    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
+    vars.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Phys::vars_per_node,
+                                Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
+
+    if (active_thread) {
+        if (local_thread < elems_per_block) {
+            int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
+            block_data[local_thread] = _phys_data[global_elem_thread];
+        }
+    }
+    __syncthreads();
+
+    T Uelem_quadpt = 0.0;
+    int iquad = threadIdx.y;
+    ElemGroup::template add_element_quadpt_energy<Data>(
+        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
+        block_data[local_elem], Uelem_quadpt);
+
+    __SHARED__ T block_sum;
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+        block_sum = 0.0;
+    }
+    __syncthreads();
+
+    // first add each U_quadpt contribution from thread to full block
+    if (active_thread) {
+        atomicAdd(&block_sum, Uelem_quadpt);
+    }
+    __syncthreads();
+
+    // then add atomicAdd once from block to global energy
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+        atomicAdd(glob_U, block_sum);
+    }
+}
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>

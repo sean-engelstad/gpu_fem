@@ -52,7 +52,7 @@ class ElementAssembler {
 #endif
 
     void set_variables(Vec<T> &newVars);
-    void add_energy(T &Uenergy, bool can_print = false);
+    void add_energy(T *glob_U, bool can_print = false);
     void add_residual(Vec<T> &res, bool can_print = false);
     void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false);
 
@@ -450,7 +450,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::set_variables(Vec<T> &newVars) {
 //  template <class ExecParameters>
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T &Uenergy, bool can_print) {
+void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T *glob_U, bool can_print) {
     auto start = std::chrono::high_resolution_clock::now();
     if (can_print) {
         printf("begin add_energy\n");
@@ -464,15 +464,14 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T &Uenergy, bool can_p
     dim3 block = ElemGroup::energy_block;
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+    constexpr int32_t elems_per_block = ElemGroup::energy_block.x;
 
-    add_energy_gpu<T, ElemGroup, Data, elems_per_block>
-        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, physData, Uenergy);
-
+    add_energy_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, glob_U);
     CHECK_CUDA(cudaDeviceSynchronize());
 #else   // USE_GPU
-    ElemGroup::template add_energy_cpu<Data>(num_elements, geo_conn, vars_conn, xpts, vars,
-                                             physData, Uenergy);
+    ElemGroup::template add_energy_cpu<Data, Vec>(num_elements, geo_conn, vars_conn, xpts, vars,
+                                                  physData, glob_U);
 #endif  // USE_GPU
 
     // print timing data

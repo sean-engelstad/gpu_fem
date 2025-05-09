@@ -75,14 +75,14 @@ class BaseElementGroup {
     template <class Data, template <typename> class Vec>
     static void add_energy_cpu(const int32_t num_elements, const Vec<int32_t> &geo_conn,
                                const Vec<int32_t> &vars_conn, const Vec<T> &xpts,
-                               const Vec<T> &vars, Vec<Data> &physData, T &Uenergy) {
+                               const Vec<T> &vars, Vec<Data> &physData, T *Uenergy) {
         const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
         const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
 
         const int32_t *_geo_conn = geo_conn.getPtr();
         const int32_t *_vars_conn = vars_conn.getPtr();
 
-        Uenergy = 0.0;
+        *Uenergy = 0.0;
 
         for (int ielem = 0; ielem < num_elements; ielem++) {
             Data elem_physData = physData[ielem];
@@ -101,7 +101,7 @@ class BaseElementGroup {
             // compute element residual
             for (int iquad = 0; iquad < Quadrature::num_quad_pts; iquad++) {
                 Derived::template add_element_quadpt_energy<Data>(true, iquad, elem_xpts, elem_vars,
-                                                                  elem_physData, Uenergy);
+                                                                  elem_physData, *Uenergy);
             }
 
         }  // num_elements for loop
@@ -157,6 +157,6 @@ class BaseElementGroup {
                                        vars_elem_conn, elem_mat);
 
         }  // end of num_elements for loop
-    }  // end of addJacobian_cpu method
+    }      // end of addJacobian_cpu method
 
 };  // end of ElementGroup class

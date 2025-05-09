@@ -248,6 +248,12 @@ class DeviceVec : public BaseVec<T> {
         return new_vec;
     }
 
+    __HOST__ void copyValuesTo(HostVec<T> dest) {
+#ifdef USE_GPU
+        cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T), cudaMemcpyDeviceToHost);
+#endif
+    }
+
     __HOST__ void copyValuesTo(DeviceVec<T> dest) {
 #ifdef USE_GPU
         cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T), cudaMemcpyDeviceToDevice);
@@ -432,6 +438,16 @@ class HostVec : public BaseVec<T> {
         HostVec<T> vec(this->N);
         memcpy(vec.getPtr(), this->data, this->N * sizeof(T));
         return vec;
+    }
+
+    __HOST__ void copyValuesTo(HostVec<T> dest) {
+        memcpy(dest.getPtr(), this->data, this->N * sizeof(T));
+    }
+
+    __HOST__ void copyValuesTo(DeviceVec<T> dest) {
+#ifdef USE_GPU
+        cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T), cudaMemcpyHostToDevice);
+#endif
     }
 
     __HOST__ HostVec<T> createPermuteVec(int block_dim, int *perm) {

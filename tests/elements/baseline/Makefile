@@ -9,6 +9,9 @@ include ${TACS_DIR}/TACS_Common.mk
 
 default: res-tacs
 
+energy-tacs: energy-tacs.o
+	${CXX} -o tacs-energy.x energy-tacs.o ${TACS_LD_FLAGS}
+
 res-tacs: res-tacs.o
 	${CXX} -o tacs-res.x res-tacs.o ${TACS_LD_FLAGS}
 

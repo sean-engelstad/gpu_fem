@@ -1,7 +1,7 @@
+#include "../test_commons.h"
 #include "chrono"
 #include "linalg/_linalg.h"
 #include "utils/local_utils.h"
-#include "../test_commons.h"
 
 // shell imports
 #include "assembler.h"
@@ -10,19 +10,27 @@
 
 template <bool is_nonlinear>
 void test_elemres_GPU() {
-    using T = double;
-    bool print = false;
+  using T = double;
+  bool print = false;
 
   // clang-format off
-    T cpu_NL_res[] = {5.76706e+15,6.00566e+15,6.24202e+15,-6.39142e+13,-1.56746e+12,6.08050e+13,
-        -6.47856e+15,-6.85395e+15,-7.22708e+15,-1.68776e+14,-3.75695e+12,1.61340e+14,-6.11549e+15,
-        -5.57984e+15,-5.05506e+15,-1.36488e+14,-2.70770e+12,1.31150e+14,6.82699e+15,6.42812e+15,
-        6.04012e+15,-3.16260e+13,-5.18197e+11,3.06153e+13};
+    T cpu_NL_res[] = {5.76705909465822e+15,6.00566313548771e+15,6.24201552862050e+15,
+        -6.39142354442196e+13,-1.56745622359615e+12,6.08050133696314e+13,
+        -6.47856025812250e+15,-6.85394554456327e+15,-7.22707918330733e+15,
+        -1.68776368878385e+14,-3.75694741528583e+12,1.61339545165627e+14,
+        -6.11549220955595e+15,-5.57983748464603e+15,-5.05506081441068e+15,
+        -1.36488359395817e+14,-2.70769511543578e+12,1.31150040282758e+14,
+        6.82699337302024e+15,6.42811989372159e+15,6.04012446909751e+15,
+        -3.16260015571479e+13,-5.18196637802530e+11,3.06152986541469e+13};
     // clang-format off
-    T cpu_LIN_res[] = {1.57657e+09,1.78364e+09,1.99466e+09,-4.48443e+05,1.89786e+05,8.53706e+05,
-        -1.95664e+09,-2.18565e+09,-2.41860e+09,-4.37137e+05,4.63284e+05,1.44078e+06,-2.01710e+09,
-        -2.18230e+09,-2.34974e+09,-5.43220e+05,3.28840e+05,1.27797e+06,2.39718e+09,2.58431e+09,
-        2.77368e+09,-5.54519e+05,5.53505e+04,6.90911e+05};
+    T cpu_LIN_res[] = {1.57656535218330e+09,1.78363791458271e+09,1.99465797439516e+09,
+        -4.48442873729651e+05,1.89786490155125e+05,8.53706226644056e+05,
+        -1.95663989406560e+09,-2.18564719983879e+09,-2.41860200302502e+09,
+        -4.37136740698410e+05,4.63283650028749e+05,1.44077515856866e+06,
+        -2.01710391245073e+09,-2.18230231174991e+09,-2.34973649239328e+09,
+        -5.43219852602934e+05,3.28840326976585e+05,1.27797162436941e+06,
+        2.39717845433303e+09,2.58431159700599e+09,2.77368052102314e+09,
+        -5.54519222196700e+05,5.53504530467806e+04,6.90910500894843e+05};
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -78,14 +86,14 @@ void test_elemres_GPU() {
         double max_ref = max(24, cpu_NL_res);
         double max_abs_err = abs_err(h_res, cpu_NL_res);
         double rel_err = max_abs_err / max_ref;
-        bool passed = rel_err < 1e-5;
+        bool passed = rel_err < 1e-10;
         printTestReport("shell elem-res geom nonlinear", passed, rel_err);
         printf("\tabs err %.4e, max ref %.4e, norm err %.4e\n", max_abs_err, max_ref, rel_err);
     } else {
         double max_ref = max(24, cpu_LIN_res);
         double max_abs_err = abs_err(h_res, cpu_LIN_res);
         double rel_err = max_abs_err / max_ref;
-        bool passed = rel_err < 1e-5;
+        bool passed = rel_err < 1e-10;
         printTestReport("shell elem-res linear", passed, rel_err);
         printf("\tabs err %.4e, max ref %.4e, norm err %.4e\n", max_abs_err, max_ref, rel_err);
     }

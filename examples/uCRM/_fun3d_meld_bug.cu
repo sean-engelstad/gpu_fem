@@ -26,7 +26,7 @@ int main(void) {
   // -----------------------
   // constexpr bool nonlinear_strain = false; // Kevin had nonlinear strain = false
   // but I only get the disp anomaly for nonlinear strain true
-  constexpr bool nonlinear_strain = true;
+  constexpr bool nonlinear_strain = false;
   static constexpr int MELD_NN_PER_BLOCK = 32;
 
   // type definitions
@@ -104,7 +104,7 @@ int main(void) {
   // make transfer scheme
   printf("here6\n");
   AeroSolver aero_solver = AeroSolver(na, d_loads);
-  T beta = 0.1, Hreg = 1e-4; // 1e-4, 0
+  T beta = 0.1, Hreg = 0.0; // 1e-4, 0
   int sym = -1, nn = 128;
   bool meld_print = false;
   Transfer transfer =

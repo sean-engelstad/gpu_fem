@@ -109,9 +109,9 @@ int main(int argc, char *argv[]) {
     }
     printf("res TD = %.8e\n", resTD);
 
-    printf("res: ");
+    printf("res: ");  // want high precision printout for high float comparison
     for (int i = 0; i < 24; i++) {
-        printf("%.5e,", res[i]);
+        printf("%.14e,", res[i]);
     }
     printf("\n");
 

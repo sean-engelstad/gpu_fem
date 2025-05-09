@@ -11,6 +11,8 @@
 template <class Mat, class Vec>
 using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool);
 
+#ifdef USE_GPU  // TODO : go back and make host compatible too with cublas
+
 // assume data is on the device
 template <typename T, class Mat, class Vec, class Assembler>
 void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads, Vec &soln,
@@ -85,3 +87,5 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
 
     }  // end of load factor loop
 }
+
+#endif  // USE_GPU
