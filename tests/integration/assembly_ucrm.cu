@@ -283,16 +283,17 @@ void test_resid_vs_kmat_FD(int N_CHECK, double h = 1e-6, bool reordering = false
     h_vars_pert.copyValuesTo(vars);
     assembler.set_variables(vars);
     assembler.add_residual(res);
+    res.copyValuesTo(h_res); // copy to host
 
     h_vars_pert[i] = h;
     h_vars_pert.copyValuesTo(vars);
     assembler.set_variables(vars);
     assembler.add_residual(res_pert);
+    res_pert.copyValuesTo(h_res_pert); // copy to host
 
-    // now copy to host
-    res.copyValuesTo(h_res);
-    res_pert.copyValuesTo(h_res_pert);
-
+    // reset
+    h_vars_pert[i] = 0.0;
+    
     // now loop over the sparsity
     for (int jp = h_bsr.rowp[i]; jp < h_bsr.rowp[i+1]; jp++) {
       int bcol = h_bsr.cols[jp];
@@ -351,8 +352,8 @@ int main() {
   reordering = false;
   print = true; // false
   int N_CHECK = 300;
-  // double h = 1e-6;
-  double h = 1e-8;
+  double h = 1e-6;
+  // double h = 1e-8; // too small for FD
   test_resid_vs_kmat_FD(N_CHECK, h, reordering, print);
 
   // compare Im{U(u+1j*ei*h)}/h vs <r(u),ei>
