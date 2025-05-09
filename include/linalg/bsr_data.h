@@ -298,6 +298,12 @@ class BsrData {
                             // add this component of block kelem matrix into
                             // elem_ind_map
                             int block_ind = nodes_per_elem * block_row + block_col;
+                            // if (i == 0) {
+                            //     printf(
+                            //         "elem %d, glob_ind %d, elem_block_ind %d, glob_block_row %d,
+                            //         " "glob_block_col %d\n", ielem, i, block_ind,
+                            //         global_block_row, global_block_col);
+                            // }
                             elem_ind_map[nodes_per_elem2 * ielem + block_ind] = i;
                             break;
                         }

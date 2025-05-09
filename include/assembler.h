@@ -191,7 +191,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat> ElementAssembler<T, ElemGroup, Vec, Mat
 
     int num_nodes, num_elements, num_bcs, num_components;
     int *elem_conn, *bcs, *elem_components;
-    double *xpts;
+    T *xpts;
 
     mesh_loader.getAssemblerCreatorData(vars_per_node, num_nodes, num_elements, num_bcs,
                                         num_components, elem_conn, bcs, elem_components, xpts);

@@ -122,7 +122,7 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
                                 Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
 
     if (active_thread) {
-        memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
+        if (threadIdx.y == 0) memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
 
         if (local_thread < elems_per_block) {
             int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
@@ -148,6 +148,7 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
 
     Vec<T>::copyLocalToShared(active_thread, 1.0, vars_per_elem, &local_res[0],
                               &block_res[local_elem][0]);
+    __syncthreads();
 
     res.addElementValuesFromShared(active_thread, threadIdx.y, blockDim.y, Phys::vars_per_node,
                                    Basis::num_nodes, vars_elem_conn,
@@ -208,6 +209,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
                                 Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
 
     if (active_thread) {
+        // memset may not work well on GPU
         memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
         memset(&block_mat[local_elem][0], 0.0, vars_per_elem2 * sizeof(T));
 
@@ -225,6 +227,10 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
     memset(local_res, 0.0, sizeof(T) * vars_per_elem);
     T local_mat_col[vars_per_elem];
     memset(local_mat_col, 0.0, sizeof(T) * vars_per_elem);
+    // for (int i = 0; i < vars_per_elem; i++) {
+    //     local_res[i] = T(0.0);
+    //     local_mat_col[i] = T(0.0);
+    // }
 
     // call the device function to get one column of the element stiffness
     // matrix at one quadrature point
@@ -232,70 +238,17 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
         active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], local_res, local_mat_col);
 
-    // if (threadIdx.y == 21) {
-    //     printf("quad %d\tlocal_mat_col[21][8] = %.6e\n", threadIdx.z, local_mat_col[8]);
-    // }
-    // if (threadIdx.y == 8) {
-    //     printf("quad %d\tlocal_mat_col[8][21] = %.6e\n", threadIdx.z, local_mat_col[21]);
-    // }
-
     // TODO : warp shuffle add among threads before into shared
     // this reduces number of atomic calls
 
     Vec<T>::copyLocalToShared(active_thread, 1.0 / blockDim.y, vars_per_elem, &local_res[0],
                               &block_res[local_elem][0]);
+    __syncthreads();
 
     // copies column into row of block_mat since sym kelem matrix (assumption)
     Vec<T>::copyLocalToShared(active_thread, 1.0, vars_per_elem, &local_mat_col[0],
                               &block_mat[local_elem][vars_per_elem * ideriv]);
     __syncthreads();
-
-    // if (local_thread == 0) {
-    //     printf("block_mat: ");
-    //     printVec<double>(vars_per_elem2, &block_mat[local_elem][0]);
-    // }
-
-    // if (threadIdx.y == 8 && iquad == 0) {
-    //     printf("block_mat[8,21] = %.6e\n", block_mat[local_elem][24 * threadIdx.y + 21]);
-    // }
-    // if (threadIdx.y == 21 && iquad == 0) {
-    //     printf("block_mat[21,8] = %.6e\n", block_mat[local_elem][24 * threadIdx.y + 8]);
-    // }
-
-    // if (local_thread == 0) {
-    //     printf("Kelem for elem %d:\n", global_elem);
-    //     for (int i = 0; i < 24; i++) {
-    //         T *vec = &block_mat[0][24*i];
-    //         printf("elem %d, col %d, %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e %.4e\n",
-    //             global_elem, i,
-    //             vec[0], vec[1], vec[2], vec[3], vec[4], vec[5],
-    //             vec[6], vec[7], vec[8], vec[9], vec[10], vec[11],
-    //             vec[12], vec[13], vec[14], vec[15], vec[16], vec[17],
-    //             vec[18], vec[19], vec[20], vec[21], vec[22], vec[23]);         
-    //     }
-    // }
-
-    // if (local_thread == 0) {
-    //     // printout the inner row,col couplings of 0 to 5 and 5 to 0 in each block of Kelem, see if any issues (should all be same)
-    //     for (int i = 0; i < 24; i++) {
-    //         int inner_row = i % 6;
-    //         int brow = i / 6;
-    //         int global_row = vars_elem_conn[brow];
-    //         for (int j = 0; j < 24; j++) {
-    //             int inner_col = j % 6;
-    //             int bcol = j / 6;
-    //             int global_col = vars_elem_conn[bcol];
-    //             int ind = 24 * i + j;
-
-    //             // for now just check entry 875 here's ref
-    //             // max rel err 2.0000e+00 at ind 875
-    //             // max rel err ind 875 occurs at brow 4, bcol 4, inner_row 1, inner_col 5
-    //             if (global_row == 4 && global_col == 4 && inner_row == 1 && inner_col == 5) {
-    //                 printf("elem %d, (row,col)=(%d,%d), inner (row,col)=(%d,%d), Kelem val %.5e\n", global_elem, i, j, inner_row, inner_col, block_mat[0][ind]);
-    //             }
-    //         }
-    //     }
-    // }
 
     // printf("blockMat:");
     // printVec<double>(576,block_mat[local_elem]);

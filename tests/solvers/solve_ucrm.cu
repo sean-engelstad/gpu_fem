@@ -46,7 +46,8 @@ void test_ucrm(bool full_LU = true, bool print = false) {
     bsr_data.compute_full_LU_pattern(fillin, print);
   } else {
     bsr_data.AMD_reordering();
-    bsr_data.compute_ILUk_pattern(10, fillin, print);
+    // had to use ILU(10) before with AMD, lower ILU(k) resulted in nan
+    bsr_data.compute_ILUk_pattern(3, fillin, print);
   }
   assembler.moveBsrDataToDevice();
 

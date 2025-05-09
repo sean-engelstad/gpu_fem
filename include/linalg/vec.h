@@ -427,6 +427,11 @@ class HostVec : public BaseVec<T> {
                 double my_double = maxVal.real() * static_cast<double>(rand()) / RAND_MAX;
                 this->data[i] = T(my_double, 0.0);
             }
+        } else if constexpr (std::is_same<T, A2D_complex_t<double>>::value) {
+            for (int i = 0; i < this->N; i++) {
+                double my_double = maxVal.real() * static_cast<double>(rand()) / RAND_MAX;
+                this->data[i] = T(my_double, 0.0);
+            }
         } else {  // int's
             for (int i = 0; i < this->N; i++) {
                 this->data[i] = rand() % maxVal;

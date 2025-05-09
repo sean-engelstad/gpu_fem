@@ -133,6 +133,7 @@ class BsrMat {
                 int local_col = inz % block_dim;
                 int erow = block_dim * elem_block_row + local_row;
                 int ecol = block_dim * elem_block_col + local_col;
+
                 atomicAdd(&val[inz], scale * shared_elem_mat[dof_per_elem * erow + ecol]);
             }
         }
@@ -249,6 +250,8 @@ __HOST_DEVICE__ void BsrMat<Vec>::addElementMatrixValues(const T scale, const in
                                                          const int nodes_per_elem,
                                                          const int32_t *elem_conn,
                                                          const T *elem_mat) {
+    /* only works for no reordering right now*/
+
     // similar method to vec.h or Vec.addElementValues but here for matrix
     // and here for Bsr format
     int dof_per_elem = dof_per_node * nodes_per_elem;

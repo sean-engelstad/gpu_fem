@@ -2,13 +2,18 @@
 #include "../../../cuda_utils.h"
 #include "a2dcore.h"
 
+struct ShellConstants {
+    static constexpr double transverseShearCorrectionFactor = 5.0 / 6.0;
+    static constexpr double drillingRegularization = 10.0;
+};
+
 // could be an internal class for each type of physics
 // but I would like physics to be linear vs nonlinear and this class has methods which get ABD, etc.
 template <typename T, bool has_ref_axis_ = true>
 class ShellIsotropicData {
    public:
-    static constexpr T transverseShearCorrectionFactor = 5.0 / 6.0;
-    static constexpr T drillingRegularization = 10.0;  // default drilling regularization
+    // static constexpr double transverseShearCorrectionFactor = 5.0 / 6.0;
+    // static constexpr double drillingRegularization = 10.0;  // default drilling regularization
 
     ShellIsotropicData() = default;
     static constexpr bool has_ref_axis = has_ref_axis_;
@@ -42,6 +47,9 @@ class ShellIsotropicData {
         T G = E_ / 2.0 / (1.0 + nu_);
         C[5] = G;
     }
+
+    __HOST_DEVICE__ static T getTransShearCorrFactor() { return T(5.0 / 6.0); }
+    __HOST_DEVICE__ static T getDrillingRegularization() { return T(10.0); }
 
     // TODO : add thickness offset (rarely used but to be complete.. can allow B matrix to be
     // nonzero)
