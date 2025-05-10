@@ -1,9 +1,14 @@
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
 #include "../../plate_demo/_plate_utils.h"
+========
+#include <iostream>
+
+#include "../plate_demo/_plate_utils.h"
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 #include "chrono"
 #include "linalg/linalg.h"
 #include "mesh/vtk_writer.h"
 #include "shell/shell.h"
-#include <iostream>
 
 /**
 Important links in cublas and cusparse:
@@ -17,9 +22,7 @@ cusparse: https://docs.nvidia.com/cuda/cusparse/
  solve on CPU with cusparse for debugging
  **/
 
-int main(void)
-{
-
+int main(void) {
     // problem size (computational size)
     // ---------------------
     int nxe = 100; // 10
@@ -29,6 +32,7 @@ int main(void)
 
     bool perform_rcm = true;
     bool perform_qordering = true;
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     double qorder_p = 0.5; // lower p value is more nnz : 0.5, 1.0, 2.0
     bool perform_ilu = true;
     int levFill = 3; // ILU(k) fill level 0,1,2,3,...
@@ -45,12 +49,22 @@ int main(void)
     // ---------------------
     int m = 100; // number of GMRES iterations
     double tolerance = 1e-14;
+========
+    double qorder_p = 2.0;  // lower p value is more nnz : 0.5, 1.0, 2.0
+    bool perform_ilu = true;
+    int levFill = 2;  // ILU(k) fill level 0,1,2,3,...
+
+    // GMRES inputs
+    // ---------------------
+    int m = 30;  // number of GMRES iterations
+    double tolerance = 1e-11;
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 
     // ----------------------
 
     using T = double;
 
-    std::ios::sync_with_stdio(false); // always flush print immediately
+    std::ios::sync_with_stdio(false);  // always flush print immediately
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -67,8 +81,7 @@ int main(void)
     // int nxe = 30; // 100
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
-    auto assembler =
-        createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
+    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
 
     // perform a factorization on the rowPtr, colPtr (before creating matrix)
     // bool perform_fillin = false;
@@ -80,7 +93,7 @@ int main(void)
 
     auto bsr_data = assembler.getBsrData();
     // move it back onto the host for these manipulations
-    // auto bsr_data = d_bsr_data.createHostBsrData(); 
+    // auto bsr_data = d_bsr_data.createHostBsrData();
     // // no longer needed only copies to device after symbolic factorization
     // auto bsr_data = d_bsr_data;
     int *orig_rowPtr = bsr_data.rowPtr;
@@ -97,20 +110,16 @@ int main(void)
     int *rowPtr, *colPtr;
     int *perm = new int[nnodes];
     double fill = 10.0;
-    
-    if (perform_rcm)
-    {
+
+    if (perform_rcm) {
         int *_new_perm = new int[nnodes];
         int root_node = 0;
         int num_rcm_iters = 1;
-        TacsComputeRCMOrder(nnodes, orig_rowPtr, orig_colPtr, _new_perm,
-                            root_node, num_rcm_iters);
+        TacsComputeRCMOrder(nnodes, orig_rowPtr, orig_colPtr, _new_perm, root_node, num_rcm_iters);
         // also do we need to reverse the order here? (see line 1585 of
         // TACSAssembler.cpp)
-        if (perm)
-        {
-            for (int k = 0; k < nnodes; k++)
-            {
+        if (perm) {
+            for (int k = 0; k < nnodes; k++) {
                 perm[_new_perm[k]] = k;
             }
         }
@@ -126,14 +135,13 @@ int main(void)
         // printVec<int>(nnodes, _new_perm);
 
         // then do the symbolic factorization
-        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
-            nnodes, nnodes, nnzb, orig_rowPtr, orig_colPtr, nullptr);
+        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, orig_rowPtr,
+                                                        orig_colPtr, nullptr);
         // su_mat.perm = perm;
         // printf("pre-reorder rowPtr: ");
         // printVec<int>(nnodes + 1, orig_rowPtr);
 
-        auto su_mat2 =
-            SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill);
+        auto su_mat2 = SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, perm, fill);
 
         nnzb = su_mat2->nnz;
         rowPtr = su_mat2->rowp;
@@ -163,16 +171,15 @@ int main(void)
     // printVec<int>(nnodes, perm);
 
     // bool perform_qordering = true;
-    int *qorder_perm; //, *qorder_iperm;
-    if (perform_qordering)
-    {
+    int *qorder_perm;  //, *qorder_iperm;
+    if (perform_qordering) {
         // compute bandwidth of RCM reordered sparsity
         int bandwidth = getBandWidth(nnodes, nnzb, rowPtr, colPtr);
 
         // choose a p factor (1/p * bandwidth => # rows for random reordering in
         // q-ordering)
         // double p = 1.0; // example values 2.0, 1.0, 0.5, 0.25 (lower values are
-                        // more random and higher bandwidth)
+        // more random and higher bandwidth)
         int prune_width = (int)1.0 / qorder_p * bandwidth;
 
         printf("bandwidth %d, prune_width %d\n", bandwidth, prune_width);
@@ -182,11 +189,9 @@ int main(void)
         std::mt19937 g(rd());
 
         // build new permutation of q-ordering from old permutation
-        std::vector<int> q_perm(
-            perm, perm + nnodes); // TODO : define it relative to perm
+        std::vector<int> q_perm(perm, perm + nnodes);  // TODO : define it relative to perm
         // perform random reordering on each prune_width size
-        for (int iprune = 0; iprune < num_prunes; iprune++)
-        {
+        for (int iprune = 0; iprune < num_prunes; iprune++) {
             // TODO : how to best apply extra permutation on top of current one?
             int lower = prune_width * iprune;
             int upper = std::min(lower + prune_width, nnodes);
@@ -201,11 +206,11 @@ int main(void)
 
         // now compute the new rowPtr, colPtr after fillin (this is full
         // fillin here) later we'll do ILU with it
-        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(
-            nnodes, nnodes, nnzb, orig_rowPtr, orig_colPtr, nullptr);
+        auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, orig_rowPtr,
+                                                        orig_colPtr, nullptr);
         // su_mat.perm = q_perm.data();
-        auto su_mat2 = SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(
-            su_mat, q_perm.data(), fill);
+        auto su_mat2 =
+            SparseUtils::BSRMatReorderFactorSymbolic<double, 1>(su_mat, q_perm.data(), fill);
 
         nnzb = su_mat2->nnz;
         rowPtr = su_mat2->rowp;
@@ -215,11 +220,8 @@ int main(void)
         qorder_perm = new int[nnodes];
         std::copy(q_perm.begin(), q_perm.end(), qorder_perm);
 
-        
-
         write_to_csv<int>(rowPtr, nnodes + 1, "csv/qorder_rowPtr.csv");
         write_to_csv<int>(colPtr, nnzb, "csv/qorder_colPtr.csv");
-
     }
 
     // if (perform_rcm || perform_qordering) {
@@ -234,7 +236,7 @@ int main(void)
     if (perform_qordering) {
         final_perm = qorder_perm;
     } else {
-        final_perm = perm; // assumes RCM fillin here
+        final_perm = perm;  // assumes RCM fillin here
     }
     final_iperm = new int[nnodes];
     for (int inode = 0; inode < nnodes; inode++) {
@@ -244,13 +246,14 @@ int main(void)
     // compute ILU(k)
     // bool perform_ilu = true;
     int *kmat_rowPtr, *kmat_colPtr, kmat_nnzb;
-    if (perform_ilu)
-    {
+    if (perform_ilu) {
         // use orig rowPtr, colPtr here so that you don't use full fillin
-        auto A = SparseUtils::BSRMat<double,1,1>(nnodes, nnodes, orig_nnzb, orig_rowPtr, orig_colPtr, nullptr);
+        auto A = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, orig_nnzb, orig_rowPtr,
+                                                   orig_colPtr, nullptr);
         // A.perm = final_perm;
-        // A.iperm = final_iperm; // this may delete perm here, may want to put in ApplyPerm directly
-        auto A2 = SparseUtils::BSRMatApplyPerm<double,1>(A, final_perm, final_iperm);
+        // A.iperm = final_iperm; // this may delete perm here, may want to put in ApplyPerm
+        // directly
+        auto A2 = SparseUtils::BSRMatApplyPerm<double, 1>(A, final_perm, final_iperm);
         // int levFill = 3;
         int *levels;
 
@@ -269,15 +272,15 @@ int main(void)
         // write out matrix sparsity to debug
         write_to_csv<int>(rowPtr, nnodes + 1, "csv/ILU_rowPtr.csv");
         write_to_csv<int>(colPtr, nnzb, "csv/ILU_colPtr.csv");
-
     }
 
     // check if perm was destroyed here..
     // printf("check perm: ");
     // printVec<int>(nnodes, final_perm);
 
-    // NOTE : flips the order of perm, iperm when storing in the kmat (because I use reverse convention in my code)
-    
+    // NOTE : flips the order of perm, iperm when storing in the kmat (because I use reverse
+    // convention in my code)
+
     // TODO : do I need to swap lperm, rperm? maybe to get correct answer
     int *my_perm, *my_iperm;
     // swap_perm is true gets the wrong kmat with only on diagonal mostly, and then solves easily because nearly diagonally dominant
@@ -324,7 +327,11 @@ int main(void)
     // also get soln and rhs vectors
     auto res = assembler.createVarsVec();
     auto soln = assembler.createVarsVec();
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     double Q = 1000.0; // load magnitude
+========
+    double Q = 1.0;  // load magnitude
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
     // sine distributed loads
     T *my_loads;
     if (!random_load) {
@@ -364,18 +371,18 @@ int main(void)
     // build the preconditioner with ILU(k) and reordered rowPtr, colPtr (qordering)
     auto precond = ILUk_Preconditioner<VecType<T>>(precond_mat, kmat);
     precond.copyValues();
-    
+
     // check whether kmat to preconditioner copying worked
 
     // print kmat
     auto h_kmat = kmat.getVec().createHostVec();
-    write_to_csv<int>(kmat_rowPtr, nnodes+1, "csv/kmat_rowp.csv");
+    write_to_csv<int>(kmat_rowPtr, nnodes + 1, "csv/kmat_rowp.csv");
     write_to_csv<int>(kmat_colPtr, kmat_nnzb, "csv/kmat_cols.csv");
     write_to_csv<double>(h_kmat.getPtr(), h_kmat.getSize(), "csv/kmat_vals.csv");
 
     // print preconditioner
     auto h_precond_mat = precond_mat.getVec().createHostVec();
-    write_to_csv<int>(rowPtr,nnodes+1, "csv/precond_rowp.csv");
+    write_to_csv<int>(rowPtr, nnodes + 1, "csv/precond_rowp.csv");
     write_to_csv<int>(colPtr, rowPtr[nnodes], "csv/precond_cols.csv");
     write_to_csv<double>(h_precond_mat.getPtr(), h_precond_mat.getSize(), "csv/precond_vals.csv");
 
@@ -386,7 +393,7 @@ int main(void)
     // cusparse solve section
     // -------------------------------------------------
 
-    // (1) compute the ILU(0) preconditioner on GPU 
+    // (1) compute the ILU(0) preconditioner on GPU
     // in the ILU(k) fill pattern (so equiv to ILU(k) preconditioner)
     // -------------------
 
@@ -394,7 +401,7 @@ int main(void)
     double *kmat_vals = kmat.getPtr();
     int mb = bsr_data.nnodes;
     int block_dim = 6;
-    
+
     // device row and col ptrs
     int *dp_rowp = d_precond_bsr_data.rowPtr;
     int *dp_cols = d_precond_bsr_data.colPtr;
@@ -431,11 +438,18 @@ int main(void)
     void *pBuffer = 0;
     int structural_zero, numerical_zero;
     // do this CUSPARSE_SOLVE_POLICY_USE_LEVEL so that it parallelizes the triangular solves better
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     // const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
     // const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL; // CUSPARSE_SOLVE_POLICY_NO_LEVEL, CUSPARSE_SOLVE_POLICY_USE_LEVEL
     // const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
 
     const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+========
+    const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
+    const cusparseSolvePolicy_t policy_L =
+        CUSPARSE_SOLVE_POLICY_NO_LEVEL;  // CUSPARSE_SOLVE_POLICY_NO_LEVEL,
+                                         // CUSPARSE_SOLVE_POLICY_USE_LEVEL
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
     const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
 
     
@@ -453,7 +467,7 @@ int main(void)
     cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL); // need general for ilu
     cusparseSetMatFillMode(descr_L, CUSPARSE_FILL_MODE_LOWER);
     cusparseSetMatDiagType(descr_L, CUSPARSE_DIAG_TYPE_UNIT);
-    
+
     cusparseCreateMatDescr(&descr_U);
     cusparseSetMatIndexBase(descr_U, CUSPARSE_INDEX_BASE_ZERO);
     cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL); // need general for ilu
@@ -469,13 +483,20 @@ int main(void)
 
     // step 3: query how much memory used in bsrilu02 and bsrsv2, and
     // allocate the buffer
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     // CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
     //                              dp_rowp, dp_cols, block_dim, info_M,
     //                              &pBufferSize_M))
+========
+    CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(cusparseHandle, dir, mb, nnzb, descr_M,
+                                                precond_vals, dp_rowp, dp_cols, block_dim, info_M,
+                                                &pBufferSize_M))
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
     CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_L, mb, nnzb, descr_L,
-        precond_vals, dp_rowp, dp_cols, block_dim,
-                               info_L, &pBufferSize_L))
+                                              precond_vals, dp_rowp, dp_cols, block_dim, info_L,
+                                              &pBufferSize_L))
     CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(cusparseHandle, dir, trans_U, mb, nnzb, descr_U,
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
         precond_vals, dp_rowp, dp_cols, block_dim,
                                info_U, &pBufferSize_U))
     // pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
@@ -495,6 +516,31 @@ int main(void)
     cusparseStatus_t status_U = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_U_fct, &structural_zero);
     if (status_U == CUSPARSE_STATUS_ZERO_PIVOT) {
         printf("U factor has a zero pivot at row %d\n", structural_zero);
+========
+                                              precond_vals, dp_rowp, dp_cols, block_dim, info_U,
+                                              &pBufferSize_U))
+    pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
+    // pBuffer returned by cudaMalloc is automatically aligned to 128 bytes.
+    cudaMalloc((void **)&pBuffer, pBufferSize);
+
+    // analyze ILU structure of M
+    CHECK_CUSPARSE(cusparseDbsrilu02_analysis(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals,
+                                              dp_rowp, dp_cols, block_dim, info_M, policy_M,
+                                              pBuffer))
+    cusparseStatus_t status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
+    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+        printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
+    }
+
+    // switched the order here.. so Dbsrilu02 is after L and U analyses
+    // perform ILU numerical factorization in M
+    CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M, precond_vals, dp_rowp,
+                                     dp_cols, block_dim, info_M, policy_M, pBuffer))
+    int numerical_zero;
+    status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
+    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+        printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
     }
 
     // Now perform the actual ILU factorization into L and U
@@ -516,6 +562,7 @@ int main(void)
     // cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_TRIANGULAR);
 
     // analyze sparsity pattern of L and U for later triangular solves
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L, 
         precond_vals, dp_rowp, dp_cols, block_dim, info_L,
          policy_L, pBuffer))
@@ -532,6 +579,14 @@ int main(void)
     write_to_csv<int>(colPtr, rowPtr[nnodes], "csv/precond2_cols.csv");
     write_to_csv<double>(h_precond_mat2.getPtr(), h_precond_mat2.getSize(), "csv/precond2_vals.csv");
     
+========
+    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, mb, nnzb, descr_L,
+                                            precond_vals, dp_rowp, dp_cols, block_dim, info_L,
+                                            policy_L, pBuffer))
+    CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_U, mb, nnzb, descr_U,
+                                            precond_vals, dp_rowp, dp_cols, block_dim, info_U,
+                                            policy_U, pBuffer))
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 
     // (2) implement GMRES solver
     // -------------------
@@ -548,33 +603,24 @@ int main(void)
     auto w = assembler.createVarsVec();
     int nvars = resid.getSize();
 
-    double* resid_ptr = resid.getPtr();
-    double* tmp1_ptr = tmp1.getPtr();
-    double* tmp2_ptr = tmp2.getPtr();
-    double* tmp3_ptr = tmp3.getPtr();
-    double* w_ptr = w.getPtr();
+    double *resid_ptr = resid.getPtr();
+    double *tmp1_ptr = tmp1.getPtr();
+    double *tmp2_ptr = tmp2.getPtr();
+    double *tmp3_ptr = tmp3.getPtr();
+    double *w_ptr = w.getPtr();
     double *soln_ptr = soln.getPtr();
 
     // double one = 1.0, zero = 0.0, minus_one = -1.0;
 
     // compute initial resid = b - A * x0
-    rhs.copyValuesTo(resid); // copies b into resid
+    rhs.copyValuesTo(resid);  // copies b into resid
 
     // compute resid = - A * x0 + resid
     double a = -1.0, b = 1.0;
     // computes y = a * A * x + b * y
-    CHECK_CUSPARSE(cusparseDbsrmv(
-        cusparseHandle, 
-        CUSPARSE_DIRECTION_ROW,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        mb, mb, nnzb,
-        &a, descrA,
-        kmat_vals, dk_rowp, dk_cols,
-        block_dim,
-        soln_ptr,
-        &b,
-        resid_ptr
-    ));
+    CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                  CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
+                                  kmat_vals, dk_rowp, dk_cols, block_dim, soln_ptr, &b, resid_ptr));
     // can't do cusparseSPMV because that only works for CSR matrices
     // can only do cusparseDbsrmv which they will soon deprecate :(
 
@@ -588,21 +634,21 @@ int main(void)
     a = 1.0;
     // printf("checkpt1\n");
     CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-        tmp1_ptr, tmp2_ptr, policy_L, pBuffer))
+                                         precond_vals, dp_rowp, dp_cols, block_dim, info_L,
+                                         tmp1_ptr, tmp2_ptr, policy_L, pBuffer))
 
     // printf("checkpt2\n");
 
     //    (b) U^-1 tmp2 => resid    (triangular solver)
     a = 1.0;
     CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-        tmp2_ptr, resid_ptr, policy_U, pBuffer))
+                                         precond_vals, dp_rowp, dp_cols, block_dim, info_U,
+                                         tmp2_ptr, resid_ptr, policy_U, pBuffer))
 
     // printf("checkpt3\n");
-    
+
     // we have now computed resid = M^-1* (resid - A * x0)
-    
+
     // now compute beta = || r_0 || the initial resid norm
     double nrm_R;
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, resid_ptr, 1, &nrm_R))
@@ -612,43 +658,44 @@ int main(void)
 
     // return 0;
 
-
     // setup initial dense matrix data for V the Arnoldi basis
-    std::vector<DeviceVec<T>> V; // create an nvars x m matrix
+    std::vector<DeviceVec<T>> V;  // create an nvars x m matrix
     for (int i = 0; i < m; i++) {
         V.push_back(DeviceVec<T>(nvars));
     }
 
     //  and H the householder matrix
-    std::vector<double> H((m+1)*m, 0.0); // Row-major storage of Hessenberg matrix
+    std::vector<double> H((m + 1) * m, 0.0);  // Row-major storage of Hessenberg matrix
 
     // define givens rotations
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     HostVec<T> g(m+1), cs(m), ss(m);
     std::vector<T> err;
+========
+    HostVec<T> g(m + 1), cs(m), ss(m);
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 
     // start Arnoldi process
     // --------------
 
     // set V[:,0] = r / beta
-    a = 1.0/beta, b = 0.0; // a * resid + b * tmp1 => into tmp1
+    a = 1.0 / beta, b = 0.0;  // a * resid + b * tmp1 => into tmp1
     CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, resid_ptr, 1, V[0].getPtr(), 1));
-    // then copy values from tmp1 into V[:,0] 
+    // then copy values from tmp1 into V[:,0]
     // (avoids needing cusparse matrix descriptors for V)
     // tmp1.copyValuesTo(V[0]);
 
     // set g[0] = beta (initial givens rotation)
-    g[0] = beta; 
+    g[0] = beta;
     double nrm_debug;
     int jj = m - 1; // j at checkout 
     err.push_back(abs(g[0]));
 
     // loop over GMRES iterations (later can implement restarts too)
     for (int j = 0; j < m; j++) {
-
         // zero out temporary vecs
         w.zeroValues();
 
-        
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, V[j].getPtr(), 1, &nrm_debug))
         if (j == 0 || j == (m - 1)) {
             printf("\t||v[%d]|| = %.4e\n", j, nrm_debug);
@@ -659,17 +706,8 @@ int main(void)
         // compute w_j = a * A * v_j + b * w_j (v_j is tmp1 into w_j as tmp2)
         a = 1.0, b = 0.0;
         CHECK_CUSPARSE(cusparseDbsrmv(
-            cusparseHandle, 
-            CUSPARSE_DIRECTION_ROW,
-            CUSPARSE_OPERATION_NON_TRANSPOSE,
-            mb, mb, nnzb,
-            &a, descrA,
-            kmat_vals, dk_rowp, dk_cols,
-            block_dim,
-            V[j].getPtr(),
-            &b,
-            w_ptr
-        ))
+            cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
+            &a, descrA, kmat_vals, dk_rowp, dk_cols, block_dim, V[j].getPtr(), &b, w_ptr))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
         if (j == 0 || j == (m - 1)) {
@@ -680,10 +718,10 @@ int main(void)
         // compute w_j = U^-1 L^-1 w_j
         // L^-1 * w => tmp1
         a = 1.0;
-        tmp1.zeroValues(); // must always zero out the output vec for triangular solve
+        tmp1.zeroValues();  // must always zero out the output vec for triangular solve
         CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
-            precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-            w_ptr, tmp1_ptr, policy_L, pBuffer))
+                                             precond_vals, dp_rowp, dp_cols, block_dim, info_L,
+                                             w_ptr, tmp1_ptr, policy_L, pBuffer))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, tmp1_ptr, 1, &nrm_debug))
         if (j == 0 || j == (m - 1)) {
@@ -696,10 +734,10 @@ int main(void)
 
         // U^-1 * tmp1 => w
         a = 1.0;
-        w.zeroValues(); // must always zero out the output vec for triangular solve
+        w.zeroValues();  // must always zero out the output vec for triangular solve
         CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
-            precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-            tmp1_ptr, w_ptr, policy_U, pBuffer))
+                                             precond_vals, dp_rowp, dp_cols, block_dim, info_U,
+                                             tmp1_ptr, w_ptr, policy_U, pBuffer))
 
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &nrm_debug))
         if (j == 0 || j == (m - 1)) {
@@ -713,21 +751,30 @@ int main(void)
         // auto h_precond_mat = precond_mat.getVec().createHostVec();
         // write_to_csv<int>(rowPtr,nnodes+1, "csv/precond_rowp.csv");
         // write_to_csv<int>(colPtr, rowPtr[nnodes], "csv/precond_cols.csv");
-        // write_to_csv<double>(h_precond_mat.getPtr(), h_precond_mat.getSize(), "csv/precond_vals.csv");
+        // write_to_csv<double>(h_precond_mat.getPtr(), h_precond_mat.getSize(),
+        // "csv/precond_vals.csv");
 
         // now we have found wj = M^-1 * A * vj with wj as tmp2
         // recall that v_j is still in temp1 or d_tmp1 from last iteration
-        
-        // modified Gram-Schmidt orthogonalization
-        for (int i = 0; i < j+1; i++) {
 
+        // modified Gram-Schmidt orthogonalization
+        for (int i = 0; i < j + 1; i++) {
             // Hij = dot(wj, vi), wj is tmp2 and vi is V[i]
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
             CHECK_CUBLAS(cublasDdot(cublasHandle, nvars, w_ptr, 1, V[i].getPtr(), 1, &H[i * m + j]));
             
             // compute wj = wj - H[i,j] * vi with vi as V[i] and wj as tmp2
             a = -H[i * m + j]; // a * tmp1 + b * tmp2 => into tmp2
             CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[i].getPtr(), 1, w_ptr, 1));
 
+========
+            CHECK_CUBLAS(cublasDdot(cublasHandle, m, w_ptr, 1, V[i].getPtr(), 1, &H[i * m + j]));
+
+            // compute wj = wj - H[i,j] * vi with vi as V[i] and wj as tmp2
+            a = -H[i * m + j];  // a * tmp1 + b * tmp2 => into tmp2
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[i].getPtr(), 1, w_ptr, 1));
+            ;
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
         }
 
         // now check orthogonality of w with previous V[i]
@@ -751,25 +798,35 @@ int main(void)
         // compute || wj || => into H[j+1,j] (with wj as tmp2)
         double norm_w;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, w_ptr, 1, &norm_w));
-        H[(j+1) * m + j] = norm_w;
+        H[(j + 1) * m + j] = norm_w;
 
         // now compute v_{j+1} still in tmp1 as v_{j+1} = wj / H[j+1,j] with wj as tmp2
-        a = 1.0/H[(j+1) * m + j], b = 0.0; // a * tmp2 => tmp2
+        a = 1.0 / H[(j + 1) * m + j], b = 0.0;  // a * tmp2 => tmp2
         CHECK_CUBLAS(cublasDscal(cublasHandle, nvars, &a, w_ptr, 1));
 
         // then copy tmp1 into V[j+1]
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
         V[j+1].zeroValues();
         w.copyValuesTo(V[j+1]);
+========
+        w.copyValuesTo(V[j + 1]);
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 
         // apply given's rotations
         for (int ii = 0; ii < j; ii++) {
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
             double _temp = cs[ii] * H[ii * m + j] + ss[ii] * H[(ii+1) * m + j];
             H[(ii+1) * m + j] = -ss[ii] * H[ii * m + j] + cs[ii] * H[(ii+1)*m + j];
             H[ii * m + j] = _temp;
+========
+            double _temp = cs[ii] * H[ii * m + k] + ss[ii] * H[(ii + 1) * m + k];
+            H[(ii + 1) * m + k] = -ss[ii] * H[ii * m + k] + cs[ii] * H[(ii + 1) * m + k];
+            H[ii * m + k] = _temp;
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
         }
 
         // compute new givens rotatios on H[j,j] and H[j+1,j] into cs[j], ss[j]
-        double _a = H[j * m + j], _b = H[(j+1) * m + j];
+        double _a = H[j * m + j], _b = H[(j + 1) * m + j];
 
         // from p. 162 of Saad
         double hyp = sqrt(_a * _a + _b * _b);
@@ -777,12 +834,13 @@ int main(void)
         ss[j] = _b / hyp;
 
         // update Hessenberg matrix with given's rotations
-        H[j * m + j] = cs[j] * H[j * m + j] + ss[j] * H[(j+1) * m + j];
-        H[(j+1) * m + j] = 0.0;
+        H[j * m + j] = cs[j] * H[j * m + j] + ss[j] * H[(j + 1) * m + j];
+        H[(j + 1) * m + j] = 0.0;
 
-        g[j+1] = -ss[j] * g[j];
+        g[j + 1] = -ss[j] * g[j];
         g[j] = cs[j] * g[j];
 
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
         printf("j = %d, g[%d] = %.4e\n", j, j+1, g[j+1]);
         // printf("\tpre zero H[%d,%d] = %.4e\n", j+1, j, _b);
         err.push_back(abs(g[j+1]));
@@ -790,6 +848,13 @@ int main(void)
         if (abs(g[j+1]) < tolerance) {
             printf("g[%d+1] = %.4e < %.4e so break\n", j, abs(g[j+1]), tolerance);
             jj = j;
+========
+        printf("j = %d, g[%d] = %.4e\n", j, j + 1, g[j + 1]);
+        printf("\tpre zero H[%d,%d] = %.4e\n", j + 1, j, _b);
+
+        if (abs(g[j + 1]) < tolerance) {
+            printf("g[%d+1] = %.4e so break\n", j, tolerance);
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
             break;
         }
     }
@@ -801,6 +866,13 @@ int main(void)
     // extract the (jj+1) x (jj+1) triangular part of H out of it on the host
     // to do this just use only the m^2 values since stored in row-major format
     // copy data onto the device now
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
+========
+    double *d_H;
+    cudaMalloc(&d_H, m * m * sizeof(double));
+    cudaMemcpy(d_H, H.data(), m * m * sizeof(double), cudaMemcpyHostToDevice);
+    // double check if this part is right by looking at the python GMRES code (H becomes m x m)?
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 
     // make a smaller Hred matrix of size jj+1 x jj+1 on the host
     std::vector<double> Hred((jj+1)*(jj+1), 0.0);
@@ -831,10 +903,17 @@ int main(void)
     // printVec<double>(jj+1, h_y_pre.getPtr());
 
     // solve the upper triangular system H * y = g
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     // since d_Hred is stored row-major but this is column major, I need CUBLAS_OP_N not CUBLAS_OP_T
     CHECK_CUBLAS(cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, 
         CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT, 
                 jj+1, d_Hred, jj+1, d_y.getPtr(), 1));
+========
+    // d_H was stored row-major use CUBLAS_OP_T to transpose it to column-major (the assumed
+    // storage)
+    cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, m, d_H, m,
+                d_y, 1);
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 
     auto h_y = d_y.createHostVec();
     // printf("H * y = g, answer y: ");
@@ -866,13 +945,17 @@ int main(void)
     // update the solution
     // soln = 1.0 * soln + V @ y (do V * y product manually since V stored in vectors)
 
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     // so now I update the solution vector with V * y in order for the solution update
     
     for (int j = 0; j < jj+1; j++) {
+========
+    for (int j = 0; j < m; j++) {
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
         // copy vj into tmp1
         // V[j].copyValuesTo(tmp1);
 
-        a = h_y[j]; // y[j] * tmp1 + d_soln => into d_soln
+        a = h_y[j];  // y[j] * tmp1 + d_soln => into d_soln
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, V[j].getPtr(), 1, soln_ptr, 1));
         
         // auto h_soln = soln.createHostVec();
@@ -882,43 +965,39 @@ int main(void)
     }
 
     // compute residual again
+<<<<<<<< HEAD:tests/archive/iterative_GMRES/gmres.cu
     rhs.copyValuesTo(resid); // copies b into resid
+========
+    loads.copyValuesTo(resid);  // copies b into resid
+>>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615:tests/iterative_GMRES/gmres.cu
 
     // compute resid = - A * x0 + resid
     a = -1.0, b = 1.0;
-    CHECK_CUSPARSE(cusparseDbsrmv(
-        cusparseHandle, 
-        CUSPARSE_DIRECTION_ROW,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        mb, mb, nnzb,
-        &a, descrA,
-        kmat_vals, dk_rowp, dk_cols,
-        block_dim,
-        soln_ptr,
-        &b,
-        resid_ptr
-    ));
+    CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                  CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
+                                  kmat_vals, dk_rowp, dk_cols, block_dim, soln_ptr, &b, resid_ptr));
 
     // L^-1 * resid => tmp2
     a = 1.0;
-    tmp2.zeroValues(); // must always zero out the output vec for triangular solve
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_L,
-        resid_ptr, tmp2_ptr, policy_L, pBuffer);
+    tmp2.zeroValues();  // must always zero out the output vec for triangular solve
+    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L, precond_vals,
+                          dp_rowp, dp_cols, block_dim, info_L, resid_ptr, tmp2_ptr, policy_L,
+                          pBuffer);
 
     // U^-1 * tmp2 => resid
     a = 1.0;
-    resid.zeroValues(); // must always zero out the output vec for triangular solve
-    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
-        precond_vals, dp_rowp, dp_cols, block_dim, info_U,
-        tmp2_ptr, resid_ptr, policy_U, pBuffer);
+    resid.zeroValues();  // must always zero out the output vec for triangular solve
+    cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U, precond_vals,
+                          dp_rowp, dp_cols, block_dim, info_U, tmp2_ptr, resid_ptr, policy_U,
+                          pBuffer);
 
     // compute new resid norm
     double final_nrm_R;
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, resid_ptr, 1, &final_nrm_R));
     printf("  Final Residual: Norm %e' threshold %e\n", final_nrm_R, threshold);
 
-    // now we can permute the solution back to get correct answer (so now soln is inv permuted again)
+    // now we can permute the solution back to get correct answer (so now soln is inv permuted
+    // again)
     bsr_post_solve<DeviceVec<T>>(kmat, rhs, soln);
 
     return 0;

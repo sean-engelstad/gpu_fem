@@ -1,4 +1,5 @@
 # GMRES example
+<<<<<<< HEAD
 
 * comparing GMRES convergence between CSR and BSR matrices
 * The CSR + float operations are most supported while BSR is being deprecated (though Kevin sent an email to them about that)
@@ -9,3 +10,6 @@
 * BSR float case => doesn't converge as well as CSR doesn't match
     * nz pattern different bc of CSR to BSR conversion => led to different LU decomp
     
+=======
+* TODO:
+>>>>>>> 3d8b9704f85882d7188003b5b85f7a195cd75615

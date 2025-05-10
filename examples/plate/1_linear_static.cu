@@ -99,9 +99,6 @@ int main() {
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate.vtk");
 
-    printf("h_soln:");
-    printVec<T>(h_soln.getSize(), h_soln.getPtr());
-
     // check the residual of the system
     assembler.set_variables(soln);
     assembler.add_residual(res); // internal residual
