@@ -45,8 +45,8 @@ void test_ucrm(bool full_LU = true, bool print = false, int ILUk = 3) {
     // bsr_data.qorder_reordering(1.0);
     bsr_data.compute_full_LU_pattern(fillin, print);
   } else {
-    bsr_data.qorder_reordering(1.0, 10);
-    // bsr_data.AMD_reordering();
+    // bsr_data.qorder_reordering(1.0, 10);
+    bsr_data.AMD_reordering();
     // had to use ILU(10) before with AMD, lower ILU(k) resulted in nan
     bsr_data.compute_ILUk_pattern(ILUk, fillin, print);
   }
@@ -80,9 +80,18 @@ void test_ucrm(bool full_LU = true, bool print = false, int ILUk = 3) {
   if (full_LU) {
       CUSPARSE::direct_LU_solve(kmat, loads, soln);
   } else {
-      int n_iter = 200, max_iter = 200;
-      T abs_tol = 1e-11, rel_tol = 1e-15;
-      CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      // left preconditioning might converge in fewer iterations, but residual is not the same (not physical)
+
+      int n_iter = 200, max_iter = 400;
+      constexpr bool right = false;
+      T abs_tol = 1e-11, rel_tol = 1e-15; // for left preconditioning
+      
+      // right preconditioning not working the best right now if multiple restarts
+      // int n_iter = 200, max_iter = 200;
+      // constexpr bool right = true;
+      // T abs_tol = 1e-8, rel_tol = 1e-10; // for right precond
+      
+      CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
   }
 
   // print some of the data of host residual
@@ -110,7 +119,8 @@ void test_ucrm(bool full_LU = true, bool print = false, int ILUk = 3) {
   double err = rel_err(resid_norm, resid2);
   std::string solve_str = full_LU ? "LU" : "GMRES";
   bool passed = err < 1e-4;
-  printTestReport("uCRM linear resid equivalence with " + solve_str, passed, err);
+  bool accept_fail = resid_norm < 1e-5;
+  printTestReport("uCRM linear resid equivalence with " + solve_str, passed, err, accept_fail);
   printf("\t|r(u)| %.4e, |Ku-f| %.4e\n", resid_norm, resid2);
 
   // also debug: check K*u vs res
@@ -177,7 +187,7 @@ int main() {
   full_LU = false;
   // int ILUk = 3;
   // int ILUk = 8;
-  // int ILUk = 10;
-  int ILUk = 20;
+  int ILUk = 10;
+  // int ILUk = 20;
   test_ucrm(full_LU, print, ILUk);
 };

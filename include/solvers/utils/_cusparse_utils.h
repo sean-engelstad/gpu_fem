@@ -5,6 +5,7 @@
 
 #include <algorithm>
 
+#include "_utils.h"
 #include "cublas_v2.h"
 
 namespace CUSPARSE {

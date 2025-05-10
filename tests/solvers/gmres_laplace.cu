@@ -27,9 +27,11 @@ int main() {
     // -----------
     int N = 64; // 16384
     int n_iter = min(N, 200);
-    int max_iter = 400;
+    int max_iter = 100;
     constexpr bool use_precond = true;
+    constexpr bool right = left; // right or left preconditioning
     T abs_tol = 1e-7, rel_tol = 1e-8;
+    bool print = true;
 
     // NOTE : starting with BSR matrix of block size 1 (just to demonstrate the correct cusparse methods for BSR)
 
@@ -100,7 +102,7 @@ int main() {
     auto soln_vec = DeviceVec<T>(N, d_x);
 
     // now call GMRES algorithm
-    CUSPARSE::GMRES_solve<T, use_precond>(mat, rhs_vec, soln_vec, n_iter, max_iter, abs_tol, rel_tol);
+    CUSPARSE::GMRES_solve<T, use_precond, right>(mat, rhs_vec, soln_vec, n_iter, max_iter, abs_tol, rel_tol, print);
 
     // now check soln error?
     T max_rel_err = rel_err(soln_vec, true_soln);
