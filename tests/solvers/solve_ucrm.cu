@@ -9,7 +9,7 @@
 #include "element/shell/shell_elem_group.h"
 #include "../test_commons.h"
 
-void test_ucrm(bool full_LU = true, bool print = false) {
+void test_ucrm(bool full_LU = true, bool print = false, int ILUk = 3) {
     using T = double;
 
   auto start0 = std::chrono::high_resolution_clock::now();
@@ -45,9 +45,10 @@ void test_ucrm(bool full_LU = true, bool print = false) {
     // bsr_data.qorder_reordering(1.0);
     bsr_data.compute_full_LU_pattern(fillin, print);
   } else {
-    bsr_data.AMD_reordering();
+    bsr_data.qorder_reordering(1.0, 10);
+    // bsr_data.AMD_reordering();
     // had to use ILU(10) before with AMD, lower ILU(k) resulted in nan
-    bsr_data.compute_ILUk_pattern(3, fillin, print);
+    bsr_data.compute_ILUk_pattern(ILUk, fillin, print);
   }
   assembler.moveBsrDataToDevice();
 
@@ -79,7 +80,7 @@ void test_ucrm(bool full_LU = true, bool print = false) {
   if (full_LU) {
       CUSPARSE::direct_LU_solve(kmat, loads, soln);
   } else {
-      int n_iter = 200, max_iter = 400;
+      int n_iter = 200, max_iter = 200;
       T abs_tol = 1e-11, rel_tol = 1e-15;
       CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
   }
@@ -170,6 +171,13 @@ void test_ucrm(bool full_LU = true, bool print = false) {
 }
 
 int main() {
-  test_ucrm(true);
-  test_ucrm(false);
+  bool print = true;
+  bool full_LU = true;
+  test_ucrm(full_LU);
+  full_LU = false;
+  // int ILUk = 3;
+  // int ILUk = 8;
+  // int ILUk = 10;
+  int ILUk = 20;
+  test_ucrm(full_LU, print, ILUk);
 };
