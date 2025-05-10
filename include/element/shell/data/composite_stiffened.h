@@ -2,6 +2,10 @@
 #include "../../../cuda_utils.h"
 #include "a2dcore.h"
 
+// TODO : need to add DVs and fix the
+// TODO : fix the transverseShearCorrectionFactor and drillingRegularization to match isotropic,
+// etc.
+
 // could be an internal class for each type of physics
 // but I would like physics to be linear vs nonlinear and this class has methods which get ABD, etc.
 template <typename T, bool has_ref_axis_ = true>
