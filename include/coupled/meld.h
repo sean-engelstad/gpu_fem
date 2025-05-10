@@ -48,7 +48,7 @@ class MELD {
             H = DeviceVec<T>(9 * na);
         }
 
-        H_reg = H_reg;
+        this->H_reg = H_reg;
         this->print = print;
 
         // auto h_xs0 = xs0.createHostVec();
@@ -200,6 +200,8 @@ class MELD {
             dim3 reduction_block(NN_PER_BLOCK);
             int NN_MULT = (nn + reduction_block.x - 1) / reduction_block.x;
             dim3 reduction_grid(na, NN_MULT);
+
+            printf("NN_MULT = %d\n", NN_MULT);
 
             // we assume here that nn is an even multiple of NN_PER_BLOCK, so let's check it here
             assert(nn % NN_PER_BLOCK == 0);

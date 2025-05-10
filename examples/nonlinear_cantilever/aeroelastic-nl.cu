@@ -88,8 +88,11 @@ int main(void) {
   int na = assembler_aero.get_num_nodes();  
 
   // perform a factorization on the rowPtr, colPtr (before creating matrix)
+  auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
-  assembler.symbolic_factorization(fillin, true);
+  bool print = true;
+  bsr_data.compute_full_LU_pattern(fillin, print);
+  assembler.moveBsrDataToDevice();
 
   // compute load magnitude of tip force
   double length = 10.0, width = 1.0;

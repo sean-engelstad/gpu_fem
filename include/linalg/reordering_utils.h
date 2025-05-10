@@ -287,3 +287,142 @@ int TacsComputeRCMOrder(const int nvars, const int *rowp, const int *cols, int *
     delete[] levset;
     return rvars;
 }
+
+__HOST__ void computeILUk(int nnodes, int nnzb, int *&rowPtr, int *&colPtr, int levFill,
+                          double fill, int **_levs, bool print = true) {
+    int nrows = nnodes;  // Record the number of rows/columns
+    int ncols = nnodes;
+
+    // Number of non-zeros in the original matrix
+    int mat_size = nnzb;
+    int size = 0;
+    int max_size = (int)(fill * mat_size);  // The maximum size - for now
+
+    int *cols = new int[max_size];
+    int *levs = new int[max_size];  // The level of fill of an entry
+    int *rowp = new int[nrows + 1];
+    int *diag = new int[nrows];
+
+    // Fill in the first entries
+    rowp[0] = 0;
+
+    // Allocate space for the temporary row info
+    int *rlevs = new int[ncols];
+    int *rcols = new int[ncols];
+
+    for (int i = 0; i < nrows; i++) {
+        int nr = 0;  // Number of entries in the current row
+
+        // Add the matrix elements to the current row of the matrix.
+        // These new elements are sorted.
+        int diag_flag = 0;
+        for (int j = rowPtr[i]; j < rowPtr[i + 1]; j++) {
+            if (colPtr[j] == i) {
+                diag_flag = 1;
+            }
+            rcols[nr] = colPtr[j];
+            rlevs[nr] = 0;
+            nr++;
+        }
+
+        // No diagonal element associated with row i, add one!
+        if (!diag_flag) {
+            nr = TacsMergeSortedArrays(nr, rcols, 1, &i);
+        }
+
+        // Now, perform the symbolic factorization -- this generates new entries
+        int j = 0;
+        for (; rcols[j] < i; j++) {  // For entries in this row, before the diagonal
+            int clev = rlevs[j];     // the level of fill for this entry
+
+            int p = j + 1;                   // The index into rcols
+            int k_end = rowp[rcols[j] + 1];  // the end of row number cols[j]
+
+            // Start with the first entry after the diagonal in row, cols[j]
+            // k is the index into cols for row cols[j]
+            for (int k = diag[rcols[j]] + 1; k < k_end; k++) {
+                // Increment p to an entry where we may have cols[k] == rcols[p]
+                while (p < nr && rcols[p] < cols[k]) {
+                    p++;
+                }
+
+                // The element already exists, check if it has a lower level of
+                // fill and update the fill level if necessary
+                if (p < nr && rcols[p] == cols[k]) {
+                    if (rlevs[p] > (clev + levs[k] + 1)) {
+                        rlevs[p] = clev + levs[k] + 1;
+                    }
+                } else if ((clev + levs[k] + 1) <= levFill) {
+                    // The element does not exist but should since the level of
+                    // fill is low enough. Insert the new entry into the list,
+                    // but keep the list sorted
+                    for (int n = nr; n > p; n--) {
+                        rlevs[n] = rlevs[n - 1];
+                        rcols[n] = rcols[n - 1];
+                    }
+
+                    rlevs[p] = clev + levs[k] + 1;
+                    rcols[p] = cols[k];
+                    nr++;
+                }
+            }
+        }
+
+        // Check if the size will be exceeded by adding the new elements
+        if (size + nr > max_size) {
+            int mat_ext = (int)((fill - 1.0) * mat_size);
+            if (nr > mat_ext) {
+                mat_ext = nr;
+            }
+            max_size = max_size + mat_ext;
+            TacsExtendArray(&cols, size, max_size);
+            TacsExtendArray(&levs, size, max_size);
+        }
+
+        // Now, put the new entries into the cols/levs arrays
+        for (int k = 0; k < nr; k++) {
+            cols[size] = rcols[k];
+            levs[size] = rlevs[k];
+            size++;
+        }
+
+        rowp[i + 1] = size;
+        diag[i] = j + rowp[i];
+    }
+
+    // Clip the cols array to the correct size
+    if (max_size > size) {
+        TacsExtendArray(&cols, size, size);
+    }
+
+    if (rowPtr[nrows] > 0) {
+        int rank = 0;
+        // MPI_Comm_rank(comm, &rank);
+        if (print) {
+            printf(
+                "[%d] BCSRMat: ILU(%d) Input fill ratio %4.2f, actual "
+                "fill ratio: %4.2f, nnz(ILU) = %d\n",
+                rank, levFill, fill, (1.0 * rowp[nrows]) / rowPtr[nrows], rowp[nrows]);
+        }
+    }
+
+    delete[] rcols;
+    delete[] rlevs;
+
+    int *old_rowp = rowPtr;
+    int *old_cols = colPtr;
+
+    // Store the rowp/cols and diag arrays
+    // data->rowp = rowp;
+    // data->cols = cols;
+    // data->diag = diag;
+    rowPtr = rowp;
+    colPtr = cols;
+    // need to store separate diag too? it's only integers, I don't think I need
+    // it here..
+
+    delete[] old_rowp;
+    delete[] old_cols;
+
+    *_levs = levs;
+}

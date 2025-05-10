@@ -138,7 +138,7 @@ const int TacsMeshLoaderElementLimits[][2] = {{2, 2},    // CBAR
 template <typename T>
 class TACSMeshLoader {
    public:
-    TACSMeshLoader();
+    TACSMeshLoader(bool print = true);
     ~TACSMeshLoader();
 
     // Read a BDF file for input
@@ -246,6 +246,7 @@ class TACSMeshLoader {
     int *node_arg_sort_list;
     int *file_elem_nums;
     int *elem_arg_sort_list;
+    bool print;
 
     // Reduced set of contiguous nodes
     T *Xpts;
@@ -619,8 +620,9 @@ static int parse_element_field(size_t *loc, char *buffer, const size_t buffer_le
 */
 // TACSMeshLoader::TACSMeshLoader(MPI_Comm _comm) {
 template <typename T>
-TACSMeshLoader<T>::TACSMeshLoader() {
+TACSMeshLoader<T>::TACSMeshLoader(bool print) {
     // comm = _comm;
+    this->print = print;
 
     // Initialize everything to zero
     num_nodes = num_elements = 0;
@@ -916,10 +918,12 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                             num_components = component_num;
                         }
                     } else {
-                        fprintf(stderr,
-                                "TACSMeshLoader: Element not recognized. "
-                                "Line\n %s\n",
-                                line);
+                        if (print) {
+                            fprintf(stderr,
+                                    "TACSMeshLoader: Element not recognized. "
+                                    "Line\n %s\n",
+                                    line);
+                        }
                     }
                 }
             }
@@ -1170,10 +1174,12 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
                             }
                         }
                     } else {
-                        fprintf(stderr,
-                                "TACSMeshLoader: Element not recognized. "
-                                "Line\n %s\n",
-                                line);
+                        if (print) {
+                            fprintf(stderr,
+                                    "TACSMeshLoader: Element not recognized. "
+                                    "Line\n %s\n",
+                                    line);
+                        }
                     }
                 }
             }
@@ -1224,7 +1230,7 @@ int TACSMeshLoader<T>::scanBDFFile(const char *file_name) {
         delete[] file_Xpts;
 
         // Read in the connectivity array and store the information
-        printf("elem_conn_size = %d, num_elements = %d\n", elem_conn_size, num_elements);
+        // printf("elem_conn_size = %d, num_elements = %d\n", elem_conn_size, num_elements);
         elem_node_conn = new int[elem_conn_size];
         elem_node_ptr = new int[num_elements + 1];
         elem_component = new int[num_elements];

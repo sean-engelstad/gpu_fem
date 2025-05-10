@@ -8,7 +8,7 @@
 #include "mesh/TACSMeshLoader.h"
 
 // linear algebra formats
-#include "linalg/bsr_utils.h"
+#include "linalg/bsr_data.h"
 #include "linalg/vec.h"
 #include "optimization/analysis_function.h"
 
@@ -40,9 +40,8 @@ class ElementAssembler {
     ElementAssembler(int32_t num_geo_nodes_, int32_t num_vars_nodes_, int32_t num_elements_,
                      HostVec<int32_t> &geo_conn, HostVec<int32_t> &vars_conn, HostVec<T> &xpts,
                      HostVec<int> &bcs, HostVec<Data> &physData, int32_t num_components_ = 0,
-                     HostVec<int> elem_component = NULL);
-    void symbolic_factorization(double fillin = 100.0, bool print = false);
-    void bsrDataToDevice(double fillin = 100.0, bool print = false);
+                     HostVec<int> elem_component = HostVec<int>(0));
+    void moveBsrDataToDevice();
     static ElementAssembler createFromBDF(TACSMeshLoader<T> &mesh_loader, Data single_data);
     __HOST__ void apply_bcs(Vec<T> &vec, bool can_print = false);
     void apply_bcs(Mat &mat, bool can_print = false);
@@ -53,7 +52,7 @@ class ElementAssembler {
 #endif
 
     void set_variables(Vec<T> &newVars);
-    void add_energy(T &Uenergy, bool can_print = false);
+    void add_energy(T *glob_U, bool can_print = false);
     void add_residual(Vec<T> &res, bool can_print = false);
     void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false);
 
@@ -76,7 +75,7 @@ class ElementAssembler {
     void compute_stresses(DeviceVec<T> &stresses);
 
     // util functions
-    BsrData getBsrData() { return bsr_data; }
+    BsrData &getBsrData() { return bsr_data; }
     Vec<T> getXpts() { return xpts; }
     Vec<int> getBCs() { return bcs; }
     Vec<int> getConn() { return vars_conn; }
@@ -86,17 +85,26 @@ class ElementAssembler {
     int get_num_elements() { return num_elements; }
     int get_num_dvs() { return num_components * Phys::num_dvs; }
     HostVec<T> createVarsHostVec(T *data, bool randomize);
+    void setBsrData(BsrData new_bsr_data) { this->bsr_data = new_bsr_data; }
 
     // private functions
     T _compute_ks_failure(T rho_KS);
     T _compute_mass();
 
     void permuteVec(Vec<T> vec) {
-        if (bsr_data.perm) return vec.permuteData(bsr_data.block_dim, bsr_data.perm);
+        if (bsr_data.perm) {
+            vec.permuteData(bsr_data.block_dim, bsr_data.perm);
+        } else {
+            printf("bsr data has no iperm pointer\n");
+        }
     }
 
     void invPermuteVec(Vec<T> vec) {
-        if (bsr_data.perm) return vec.permuteData(bsr_data.block_dim, bsr_data.iperm);
+        if (bsr_data.iperm) {
+            vec.permuteData(bsr_data.block_dim, bsr_data.iperm);
+        } else {
+            printf("bsr data has no iperm pointer\n");
+        }
     }
 
     // ------------------------
@@ -183,7 +191,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat> ElementAssembler<T, ElemGroup, Vec, Mat
 
     int num_nodes, num_elements, num_bcs, num_components;
     int *elem_conn, *bcs, *elem_components;
-    double *xpts;
+    T *xpts;
 
     mesh_loader.getAssemblerCreatorData(vars_per_node, num_nodes, num_elements, num_bcs,
                                         num_components, elem_conn, bcs, elem_components, xpts);
@@ -202,17 +210,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat> ElementAssembler<T, ElemGroup, Vec, Mat
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::symbolic_factorization(double fillin, bool print) {
-    bsr_data.symbolic_factorization(fillin, print);
-#ifdef USE_GPU
-    this->bsr_data = bsr_data.createDeviceBsrData();
-#endif
-}
-
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::bsrDataToDevice(double fillin, bool print) {
-    // move bsr data to device for single Kelem (for debugging)
+void ElementAssembler<T, ElemGroup, Vec, Mat>::moveBsrDataToDevice() {
 #ifdef USE_GPU
     this->bsr_data = bsr_data.createDeviceBsrData();
 #endif
@@ -445,17 +443,14 @@ HostVec<T> ElementAssembler<T, ElemGroup, Vec, Mat>::createVarsVec(T *data, bool
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
 void ElementAssembler<T, ElemGroup, Vec, Mat>::set_variables(Vec<T> &newVars) {
-    // vars is either device array on GPU or a host array if not USE_GPU
-    // should we not do deep copy here?
-    // this->vars.setData(newVars.getPtr(), bsr_data.perm, bsr_data.block_dim);
-    // auto permute_vec = newVars.createPermuteVec(bsr_data.block_dim, bsr_data.perm);
+    // vars is not reordered, permutations for Kmat, res only happen on assembly
     newVars.copyValuesTo(this->vars);
 }
 
 //  template <class ExecParameters>
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T &Uenergy, bool can_print) {
+void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T *glob_U, bool can_print) {
     auto start = std::chrono::high_resolution_clock::now();
     if (can_print) {
         printf("begin add_energy\n");
@@ -469,15 +464,14 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T &Uenergy, bool can_p
     dim3 block = ElemGroup::energy_block;
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+    constexpr int32_t elems_per_block = ElemGroup::energy_block.x;
 
-    add_energy_gpu<T, ElemGroup, Data, elems_per_block>
-        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, physData, Uenergy);
-
+    add_energy_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, glob_U);
     CHECK_CUDA(cudaDeviceSynchronize());
 #else   // USE_GPU
-    ElemGroup::template add_energy_cpu<Data>(num_elements, geo_conn, vars_conn, xpts, vars,
-                                             physData, Uenergy);
+    ElemGroup::template add_energy_cpu<Data, Vec>(num_elements, geo_conn, vars_conn, xpts, vars,
+                                                  physData, glob_U);
 #endif  // USE_GPU
 
     // print timing data
@@ -510,8 +504,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
 
-    add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, geo_conn, vars_conn, xpts, vars, physData, bsr_data.perm, res);
+    add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 #else   // USE_GPU
@@ -519,9 +513,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
                                                     physData, res);
 #endif  // USE_GPU
 
-    // inverse permute the residual
-    // so can be added to non-permuted data
-    this->invPermuteVec(res);
+    // permute residual (new => old rows see tests/reordering/README.md)
+    // this->permuteVec(res);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
@@ -558,9 +551,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
 
-    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat>
-        <<<grid, block>>>(num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData,
-                          bsr_data.perm, res, mat);
+    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -570,10 +562,6 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     ElemGroup::template add_jacobian_cpu<Data, Vec, Mat>(num_vars_nodes, num_elements, geo_conn,
                                                          vars_conn, xpts, vars, physData, res, mat);
 #endif
-
-    // inverse permute the residual
-    // so can be added to non-permuted data
-    this->invPermuteVec(res);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();

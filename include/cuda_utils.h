@@ -16,6 +16,9 @@
 #define __GLOBAL__
 #endif
 
+// A2D
+#include "a2ddefs.h"
+
 #ifdef USE_GPU
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
@@ -26,6 +29,11 @@ template <uint32_t xdim = 1, uint32_t ydim = 1, uint32_t zdim = 1,
 class ExecParameters {
    public:
 };
+
+__device__ inline void atomicAdd(A2D_complex_t<double>* addr, A2D_complex_t<double> val) {
+    atomicAdd(reinterpret_cast<double*>(addr), val.real());
+    atomicAdd(reinterpret_cast<double*>(addr) + 1, val.imag());
+}
 
 #ifdef USE_GPU
 #define CHECK_CUDA(call)                                                         \
@@ -51,7 +59,7 @@ class ExecParameters {
         cublasStatus_t status = (func);                                                \
         if (status != CUBLAS_STATUS_SUCCESS) {                                         \
             printf("CUBLAS API failed at line %d with error: %d\n", __LINE__, status); \
-            return EXIT_FAILURE;                                                       \
+            exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     }
 

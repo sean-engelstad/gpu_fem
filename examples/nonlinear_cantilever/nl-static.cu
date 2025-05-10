@@ -64,8 +64,12 @@ int main(void) {
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
 
   // perform a factorization on the rowPtr, colPtr (before creating matrix)
+  auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
-  assembler.symbolic_factorization(fillin, true);
+  bool print = true;
+  // bsr_data.AMD_ordering();
+  bsr_data.compute_full_LU_pattern(fillin, print);
+  assembler.moveBsrDataToDevice();
 
   // compute load magnitude of tip force
   double length = 10.0, width = 1.0;
@@ -90,7 +94,6 @@ int main(void) {
     rel_tol = 1e-7;
   auto solve_func = CUSPARSE::direct_LU_solve<T>;
   std::string outputPrefix = "out/beam_";
-  bool print = true;
   newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
       solve_func, kmat, d_loads, soln, assembler, res, rhs, vars,
       num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,

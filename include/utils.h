@@ -73,7 +73,7 @@ __HOST__ void make_unique_conn(int nstrides, int stride, int maxVal, int32_t *co
 }
 
 template <typename T>
-void write_to_csv(const T *array, size_t size, const std::string &filename) {
+void write_to_csv(size_t size, const T *array, const std::string &filename) {
     std::ofstream out(filename);
     if (!out) {
         throw std::ios_base::failure("Failed to open file for writing");

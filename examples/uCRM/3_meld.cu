@@ -51,7 +51,10 @@ void verify_conservation(HostVec<T> h_us, HostVec<T> h_ua, HostVec<T> h_fs, Host
       }
   }
 
-  printf("W_A %.4e, W_S %.4e\n", W_A, W_S);
+  // compute the relative error
+  T W_rel_err = abs(W_A - W_S) / abs(W_S);
+
+  printf("W_A %.6e, W_S %.6e, rel err %.6e\n", W_A, W_S, W_rel_err);
 }
 
 int main() {
@@ -90,10 +93,11 @@ int main() {
   // make struct disps
   auto h_us = HostVec<T>(3 * ns);
   double disp_mag = 1.0;
+  // double disp_mag = 0.0;
   auto h_xs0 = xs0.createHostVec();
   for (int i = 0; i < ns; i++) {
-    h_us[3 * i + 2] = disp_mag;
-    // h_us[3 * i + 2] = disp_mag * (std::sin(h_xs0[3*i]/50 * 3.1415 * 4.0));
+    // h_us[3 * i + 2] = disp_mag;
+    h_us[3 * i + 2] = disp_mag * (std::sin(h_xs0[3*i]/50 * 3.1415 * 4.0));
   }
   auto us = h_us.createDeviceVec();
 
@@ -130,9 +134,7 @@ int main() {
   int sym = -1, nn = 128;
   static constexpr int NN_PER_BLOCK = 32;
   bool meld_print = true;
-  // need exact_givens true for good load transfer, oneshot meld false for higher nn count, linear_meld false for NZ SVD jacobian
-  constexpr bool linear_meld = false, oneshot_meld = false, exact_givens = true;
-  using TransferScheme = MELD<T, NN_PER_BLOCK, linear_meld, oneshot_meld, exact_givens>;
+  using TransferScheme = MELD<T, NN_PER_BLOCK>;
   auto meld = TransferScheme(xs0, xa0, beta, nn, sym, Hreg, meld_print);
   meld.initialize();
 
