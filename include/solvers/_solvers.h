@@ -1,10 +1,9 @@
 #pragma once
 
-#include "utils/_utils.h"
-
 #ifdef USE_GPU
 #ifdef USE_CUSPARSE
 
+#include "linear_static/_utils.h"
 #include "linear_static/direct_LU.h"
 #include "linear_static/direct_chol.h"
 #include "linear_static/gmres.h"

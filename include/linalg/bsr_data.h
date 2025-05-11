@@ -73,6 +73,28 @@ class BsrData {
 
     /* length of values array */
     __HOST_DEVICE__ int32_t getNumValues() const { return nnzb * block_dim * block_dim; }
+    __HOST__ void set_new_sparsity(int new_nnzb, int *new_rowp, int *new_cols) {
+        nnzb = new_nnzb;
+        // remove old data
+        if (!this->host) {
+#ifdef USE_GPU
+            // delete data on device
+            if (rowp) cudaFree(rowp);
+            if (cols) cudaFree(cols);
+#endif  // USE_GPU
+        } else {
+            // delete data on host
+            if (rowp) delete[] rowp;
+            if (cols) delete[] cols;
+        }
+// need to deep copy here
+#ifdef USE_GPU
+        cudaMalloc(&rowp, sizeof(int) * (nnodes + 1));
+        cudaMemcpy(rowp, new_rowp, sizeof(int) * (nnodes + 1), cudaMemcpyDeviceToDevice);
+        cudaMalloc(&cols, sizeof(int) * nnzb);
+        cudaMemcpy(cols, new_cols, sizeof(int) * nnzb, cudaMemcpyDeviceToDevice);
+#endif  // USE_GPU
+    }
 
     __HOST__ void _get_row_col_ptrs_sparse() {
         /* get the rowp, cols from the element connectivity using sparse utils */
@@ -440,7 +462,7 @@ class BsrData {
             if (tr_rowp) cudaFree(tr_rowp);
             if (tr_cols) cudaFree(tr_cols);
             if (tr_block_map) cudaFree(tr_block_map);
-#endif  // USE_GPU
+#endif
         } else {
             // delete data on host
             if (rowp) delete[] rowp;

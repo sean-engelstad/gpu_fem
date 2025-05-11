@@ -13,7 +13,7 @@
 #include "element/shell/shell_elem_group.h"
 #include "element/shell/physics/isotropic_shell.h"
 
-void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
+void test_chol_plate(std::string ordering, bool print = false, int nxe = 50) {
     using T = double;  
 
     double fillin = 10.0;
@@ -70,8 +70,11 @@ void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
 
+    // switch sparsity and values to cholesky
+    kmat.switch_to_cholesky();
+
     // solve the linear system
-    CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    CUSPARSE::direct_cholesky_solve(kmat, loads, soln);
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
@@ -88,7 +91,7 @@ void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
     if (print) printf("resid_norm = %.4e\n", resid_norm);
 
     // test report
-    std::string testName = "direct LU plate solve, with ";
+    std::string testName = "direct Chol plate solve, with ";
     testName += ordering;
 
     bool passed = abs(resid_norm) < 1e-6;
@@ -104,12 +107,12 @@ int main(int argc, char* argv[]) {
         std::list<std::string> list1 = {"none", "RCM", "AMD", "qorder"};
 
         for (auto it1 = list1.begin(); it1 != list1.end(); ++it1) {
-            test_LU_plate(*it1, print, nxe);
+            test_chol_plate(*it1, print, nxe);
         }
     } else {
         // test single failing test
-        // reorder = true;
         print = true;
-        test_LU_plate("AMD", print, nxe);
+        nxe = 20;
+        test_chol_plate("AMD", print, nxe);
     }  
 };

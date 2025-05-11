@@ -6,11 +6,11 @@
 
 #include <iostream>
 
-#include "../cuda_utils.h"
+#include "../../cuda_utils.h"
+#include "_cusparse_utils.h"
+#include "_utils.h"
 #include "chrono"
 #include "cublas_v2.h"
-#include "utils/_cusparse_utils.h"
-#include "utils/_utils.h"
 
 namespace CUSPARSE {
 
@@ -108,9 +108,9 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     T a = 1.0, b = 0.0;
 
     // perform the symbolic and numeric factorization of LU on given sparsity pattern
-    CUSPARSE::perform_LU_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U, &pBuffer,
-                                       mb, nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
-                                       trans_U, policy_L, policy_U, dir);
+    CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U, &pBuffer,
+                                         mb, nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
+                                         trans_U, policy_L, policy_U, dir);
 
     // main GMRES solve
     // ----------------

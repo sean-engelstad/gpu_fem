@@ -37,6 +37,85 @@ class BsrMat {
     __HOST_DEVICE__ int *getRowPtr() { return bsr_data.rowp; }
     __HOST_DEVICE__ int *getColPtr() { return bsr_data.cols; }
 
+    __HOST__ void switch_to_cholesky() {
+        // switch from an LU pattern to a cholesky fill pattern
+        // that is we remove the upper triangular part (excluding diagonal) from rowp, cols, vals
+        // call this after assembly
+
+#ifndef USE_GPU
+        // TODO : need to write this one
+        printf("cholesky pattern switch not supported purely on host yet\n");
+#else  // USE_GPU is true now
+
+        // copy rowp, cols off of device
+        int *h_rowp = DeviceVec<int>(bsr_data.nnodes + 1, bsr_data.rowp).createHostVec().getPtr();
+        int *h_cols = DeviceVec<int>(bsr_data.nnzb, bsr_data.cols).createHostVec().getPtr();
+        int block_dim = bsr_data.block_dim;
+        int block_dim2 = block_dim * block_dim;
+        // TODO : could do this copy step on GPU later
+        T *h_vals = values.createHostVec().getPtr();
+
+        // first create new rowp, cols
+        int new_nnzb = 0;
+        std::vector<int> new_rowp, new_cols;
+        std::vector<T> new_vals;
+        new_rowp.push_back(0);
+        for (int i = 0; i < bsr_data.nnodes; i++) {
+            for (int jp = h_rowp[i]; jp < h_rowp[i + 1]; jp++) {
+                int j = h_cols[jp];
+                if (j <= i) {
+                    // equiv to block row <= block col
+                    new_cols.push_back(j);
+                    new_nnzb += 1;
+                    for (int inz = 0; inz < block_dim2; inz++) {
+                        int ii = inz / block_dim;
+                        int jj = inz % block_dim;
+                        int glob_row = block_dim * i + ii;
+                        int glob_col = block_dim * j + jj;
+                        bool not_upper = glob_col <= glob_row;
+                        T new_val = not_upper ? h_vals[block_dim2 * jp + inz] : 0.0;
+                        // T new_val = h_vals[block_dim2 * jp + inz];
+                        // if (i == 8)
+                        //     printf("glob_row %d, glob_col %d, old val %.4e, new_val %.4e\n",
+                        //            glob_row, glob_col, h_vals[block_dim2 * jp + inz], new_val);
+                        new_vals.push_back(new_val);
+                    }
+                }
+            }
+            new_rowp.push_back(new_nnzb);
+        }
+
+// Allocate device memory & deep copy
+#ifdef USE_GPU
+        int *d_rowp = nullptr;
+        int *d_cols = nullptr;
+
+        cudaMalloc(&d_rowp, sizeof(int) * (bsr_data.nnodes + 1));
+        cudaMemcpy(d_rowp, new_rowp.data(), sizeof(int) * (bsr_data.nnodes + 1),
+                   cudaMemcpyHostToDevice);
+
+        cudaMalloc(&d_cols, sizeof(int) * new_nnzb);
+        cudaMemcpy(d_cols, new_cols.data(), sizeof(int) * new_nnzb, cudaMemcpyHostToDevice);
+
+        T *d_vals = nullptr;
+        int nvals = new_nnzb * block_dim2;
+        cudaMalloc(&d_vals, sizeof(T) * nvals);
+        cudaMemcpy(d_vals, new_vals.data(), sizeof(T) * nvals, cudaMemcpyHostToDevice);
+        values = DeviceVec<T>(nvals, d_vals);
+
+// deep copy values
+#endif
+
+        bsr_data.set_new_sparsity(new_nnzb, d_rowp, d_cols);
+
+        // // now check values
+        // auto h_vals2 = values.createHostVec();
+        // printf("h_vals:");
+        // printVec<T>(h_vals2.getSize(), h_vals2.getPtr());
+
+#endif  // USE_GPU
+    }
+
     __HOST__ void apply_bcs(DeviceVec<int> bcs) {
         /* apply bcs to the matrix values (rows + cols) */
         int nbcs = bcs.getSize();
@@ -163,7 +242,7 @@ class BsrMat {
                                                 const int32_t *elem_conn, const T *elem_mat);
 
    private:
-    const BsrData bsr_data;
+    BsrData bsr_data;  // was const before
     Vec values;
 };
 
