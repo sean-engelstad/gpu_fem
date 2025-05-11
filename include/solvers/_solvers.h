@@ -4,7 +4,11 @@
 
 #ifdef USE_GPU
 #ifdef USE_CUSPARSE
-#include "linear_static_cusparse.h"
+
+#include "linear_static/direct_LU.h"
+#include "linear_static/direct_chol.h"
+#include "linear_static/gmres.h"
+
 #endif  // CUSPARSE
 #endif  // USE_GPU
 
