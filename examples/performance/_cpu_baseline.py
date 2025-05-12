@@ -126,5 +126,5 @@ f5.writeToFile("plate.f5")
 
 tot_time = nz_time + assembly_time + solve_time
 dof = (args.nxe+1)**2 * 6
-if comm.rank == 0:
+if tacs_comm.rank == 0:
     print(f"{tacs_comm.size}, {args.nxe}, {dof}, {nz_time:.4e}, {assembly_time:.4e}, {solve_time:.4e}, {tot_time:.4e}\n")
