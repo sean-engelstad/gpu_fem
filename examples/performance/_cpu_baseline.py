@@ -77,7 +77,7 @@ nz_start = time.time()
 mat = tacs.createSchurMat()
 # ILUk = 3
 # ILUk = 8
-ILUk = 10
+ILUk = 1000
 pc = TACS.Pc(mat, lev_fill=ILUk) # for ILU(3), default is full LU or ILU(1000) if not set
 # subspace = 100
 subspace = 200
@@ -123,7 +123,7 @@ f5 = TACS.ToFH5(tacs, TACS.BEAM_OR_SHELL_ELEMENT, flag)
 f5.writeToFile("plate.f5")
 
 # write out runtimes to csv
-print("nxe, ndof, nz_time(s), assembly_time(s), solve_time(s), tot_time(s)\n")
+print("nprocs, nxe, ndof, nz_time(s), assembly_time(s), solve_time(s), tot_time(s)\n")
 tot_time = nz_time + assembly_time + solve_time
-dof = (nxe+1)**2 * 6
-print(f"{nxe}, {dof}, {nz_time:.4e}, {assembly_time:.4e}, {solve_time:.4e}, {tot_time:.4e}\n")
+dof = (args.nxe+1)**2 * 6
+print(f"{comm.size}, {args.nxe}, {dof}, {nz_time:.4e}, {assembly_time:.4e}, {solve_time:.4e}, {tot_time:.4e}\n")
