@@ -123,7 +123,8 @@ f5 = TACS.ToFH5(tacs, TACS.BEAM_OR_SHELL_ELEMENT, flag)
 f5.writeToFile("plate.f5")
 
 # write out runtimes to csv
-print("nprocs, nxe, ndof, nz_time(s), assembly_time(s), solve_time(s), tot_time(s)\n")
+
 tot_time = nz_time + assembly_time + solve_time
 dof = (args.nxe+1)**2 * 6
-print(f"{comm.size}, {args.nxe}, {dof}, {nz_time:.4e}, {assembly_time:.4e}, {solve_time:.4e}, {tot_time:.4e}\n")
+if comm.rank == 0:
+    print(f"{tacs_comm.size}, {args.nxe}, {dof}, {nz_time:.4e}, {assembly_time:.4e}, {solve_time:.4e}, {tot_time:.4e}\n")
