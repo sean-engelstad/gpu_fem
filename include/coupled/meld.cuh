@@ -334,12 +334,13 @@ __GLOBAL__ void compute_covariance_kernel(int nn, T H_reg, DeviceVec<int> aerost
 
     // compute covariance H (reduction step across threads)
     memset(&loc_H[0], 0.0, 9 * sizeof(T));
-    if (threadIdx.x == 0) {
+    if (threadIdx.x == 0 && blockIdx.y == 0) {
         // regularization of H for stability
         loc_H[0] += H_reg;
         loc_H[4] += H_reg;
         loc_H[8] += H_reg;
     }
+    __syncthreads();
     for (int i = threadIdx.x; i < 9 * NN; i += blockDim.x) {
         int inode = i / 9;
         int i9 = i % 9;
@@ -431,15 +432,6 @@ __GLOBAL__ void transfer_disps_kernel(DeviceVec<T> glob_xa0, DeviceVec<T> glob_x
         for (int i = 0; i < 3; i++) {
             loc_ua[3 * threadIdx.x + i] = ua[i];
         }
-
-        // if (aero_ind == 899) {
-        //     printf("xs0_bar:");
-        //     printVec<T>(3, xs0_bar);
-        //     printf("xs_bar:");
-        //     printVec<T>(3, xs_bar);
-        //     printf("H:");
-        //     printVec<T>(9, H);
-        // }
     } // end of active_thread check
 
     __syncthreads();

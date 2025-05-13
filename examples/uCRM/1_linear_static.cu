@@ -12,6 +12,10 @@
 int main() {
   using T = double;
 
+  // problem inputs ----
+  bool full_LU = false;
+  // -------------------
+
   auto start0 = std::chrono::high_resolution_clock::now();
 
   // uCRM mesh files can be found at:
@@ -39,9 +43,21 @@ int main() {
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
 
   // BSR factorization
+  auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
   bool print = true;
-  assembler.symbolic_factorization(fillin, print);
+  if (full_LU) {
+    bsr_data.AMD_reordering();
+    // bsr_data.qorder_reordering(1.0);
+    bsr_data.compute_full_LU_pattern(fillin, print);
+  } else {
+    // bsr_data.RCM_reordering();
+    bsr_data.AMD_reordering();
+    // bsr_data.qorder_reordering(1.0, 10); // qordering not working well for some reason..
+    bsr_data.compute_ILUk_pattern(10, fillin);
+    // bsr_data.compute_full_LU_pattern(fillin, print);
+  }
+  assembler.moveBsrDataToDevice();
 
   // get the loads
   int nvars = assembler.get_num_vars();
@@ -68,14 +84,23 @@ int main() {
   assembler.apply_bcs(kmat);
 
   // solve the linear system
-  CUSPARSE::direct_LU_solve(kmat, loads, soln);
+  if (full_LU) {
+      CUSPARSE::direct_LU_solve(kmat, loads, soln);
+  } else {
+      int n_iter = 200, max_iter = 400;
+      T abs_tol = 1e-11, rel_tol = 1e-15;
+      bool print = true;
+      CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+  }
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();
   printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "uCRM.vtk");
 
   // check the residual of the system
+  assembler.set_variables(soln);
   assembler.add_residual(res);  // internal residual
+  // assembler.add_jacobian(res, kmat);
   auto rhs = assembler.createVarsVec();
   CUBLAS::axpy(1.0, loads, rhs);
   CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
@@ -83,9 +108,41 @@ int main() {
   double resid_norm = CUBLAS::get_vec_norm(rhs);
   printf("resid_norm = %.4e\n", resid_norm);
 
-  auto h_rhs = rhs.createHostVec();
-  printf("rhs:");
-  printVec<T>(10, h_rhs.getPtr());
+  int block_dim = bsr_data.block_dim;
+  int *iperm = bsr_data.iperm;
+  assembler.apply_bcs(res);
+  auto h_res = res.createPermuteVec(block_dim, iperm).createHostVec();
+  auto h_rhs = rhs.createPermuteVec(block_dim, iperm).createHostVec();
+  int NPRINT = 100;
+  printf("add_res\nr(u): ");
+  printVec<T>(NPRINT, h_res.getPtr());
+  printf("r(u)-b: ");
+  printVec<T>(NPRINT, h_rhs.getPtr());
+
+  // baseline norm (with zero soln, just loads essentially)
+  rhs.zeroValues();
+  CUBLAS::axpy(1.0, loads, rhs);
+  assembler.apply_bcs(rhs);
+  double init_norm = CUBLAS::get_vec_norm(rhs);
+  printf("init_norm = %.4e\n", init_norm);
+
+  auto h_rhs2 = rhs.createHostVec();
+  printToVTK<Assembler, HostVec<T>>(assembler, h_rhs2, "uCRM-rhs.vtk");
+
+  // test get residual here
+  assembler.add_jacobian(res, kmat);
+  assembler.apply_bcs(kmat);
+  T resid2 = CUSPARSE::get_resid<T>(kmat, loads, soln);
+  printf("cusparse resid norm = %.4e\n", resid2);
+
+  // debug: run GMRES again starting from scratch to see initial beta
+  int n_iter = 1, max_iter = 1;
+  T abs_tol = 1e-11, rel_tol = 1e-15;
+  CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+
+  // auto h_rhs = rhs.createHostVec();
+  // printf("rhs:");
+  // printVec<T>(10, h_rhs.getPtr());
 
   // free data
   assembler.free();

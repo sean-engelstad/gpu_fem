@@ -3,17 +3,7 @@ A2D_INCLUDE := -I${A2D_DIR}/include
 
 GPU_FEM_DIR = ${HOME}/git/gpu_fem
 GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
-
-TACS_DIR = ${HOME}/git/tacs
-
-# whether to use suitesparse
-# SSPARSE_INCLUDE =
-# SSPARSE_LINK = 
-
-SUITE_SPARSE := 1
-SSPARSE_INCLUDE = -I/usr/include/suitesparse
-SSPARSE_LIB = /usr/lib
-SSPARSE_LINK = -L${SSPARSE_LIB} -lsuitesparseconfig -lcholmod
+TACS_DIR = ${HOME}/git/_archive/tacs
 
 # USE_GPU := 1
 USE_GPU := 0
@@ -21,7 +11,8 @@ GPU_CXX = nvcc
 CXX = g++
 CC_FLAGS = -Wno-deprecated-declarations
 CUSPARSE_LINK = -lcublas -lcusparse -lcudart -lcusolver
-GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_86 #-w
+GPU_CC_FLAGS := -O2 -arch=sm_86
+# GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_86 #-w
 DEBUG_GPU_CC_FLAGS := -g ${GPU_CC_FLAGS}
 
 # --relocatable-device-code=false -flto 
@@ -29,10 +20,15 @@ DEBUG_GPU_CC_FLAGS := -g ${GPU_CC_FLAGS}
 # GPU_CC_FLAGS := ${GPU_CC_FLAGS} -Xptxas -dlcm=ca -Xptxas -O3
 
 # sparse-utils repo (smdogroup) and lapack, metis, etc.
-METIS_INCLUDE := -I${HOME}/packages/metis/include/
-LAPACK_LINK := -llapacke -llapack -lblas
+SPARSE_UTILS_INCLUDE = -I${HOME}/git/_archive/sparse-utils/include/
 
-INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE} ${METIS_INCLUDE}
-# ${SSPARSE_LINK}
+METIS_INCLUDE := -I${HOME}/packages/metis/include/
+
+LAPACK_DIR := ${HOME}/git/archive/lapack
+LAPACK_INCLUDE := -I${LAPACK_DIR}/build/include/
+LAPACK_LIB := -L${LAPACK_DIR}/build/lib/
+LAPACK_LINK := ${LAPACK_LIB} -llapacke -llapack -lblas
+
+INCLUDE_FLAGS = ${A2D_INCLUDE} ${GPU_FEM_INCLUDE} ${METIS_INCLUDE} ${SPARSE_UTILS_INCLUDE} ${LAPACK_INCLUDE}
 CPU_LINK = ${LAPACK_LINK}
 LINK = ${LAPACK_LINK} ${CUSPARSE_LINK}

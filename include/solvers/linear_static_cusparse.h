@@ -7,17 +7,21 @@
 #include <iostream>
 
 #include "../cuda_utils.h"
-#include "_utils.h"
 #include "chrono"
 #include "cublas_v2.h"
+#include "utils/_cusparse_utils.h"
+#include "utils/_utils.h"
 
 namespace CUSPARSE {
 
 template <typename T>
 void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                      bool can_print = false) {
-    // uses old CUSPARSE style because new CUSPARSE spMat objects don't support BSR
-    DeviceVec<T> rhs_perm = bsr_pre_solve<DeviceVec<T>>(mat, rhs, soln);
+    /* direct LU solve => performs LU factorization then L and U triangular solves.
+        Best for solving with same matrix and multiple rhs vectors such as aeroelastic + linear
+       structures Although need to check LU factorization held in place correctly and boolean to not
+       refactorize maybe */
+    auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
 
     if (can_print) {
         printf("begin cusparse direct LU solve\n");
@@ -30,9 +34,9 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     BsrData bsr_data = mat.getBsrData();
     int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
-    int blockDim = bsr_data.block_dim;
-    index_t *d_bsrRowPtr = bsr_data.rowPtr;
-    index_t *d_bsrColPtr = bsr_data.colPtr;
+    int block_dim = bsr_data.block_dim;
+    index_t *d_rowp = bsr_data.rowp;
+    index_t *d_cols = bsr_data.cols;
     T *d_rhs = rhs_perm.getPtr();
     T *d_soln = soln.getPtr();
     DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
@@ -41,136 +45,48 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     // note this changes the mat data to be LU (but that's the whole point
     // of LU solve is for repeated linear solves we now just do triangular
     // solves)
-    T *d_bsrVal = mat.getPtr();
+    T *d_vals = mat.getPtr();
 
     // Initialize the cuda cusparse handle
     cusparseHandle_t handle;
     cusparseCreate(&handle);
-    cusparseStatus_t status;
 
-    // Constant scalar coefficienct
-    const double alpha = 1.0;
-
-    cusparseMatDescr_t descr_M = 0;
-    cusparseMatDescr_t descr_L = 0;
-    cusparseMatDescr_t descr_U = 0;
-    bsrilu02Info_t info_M = 0;
-    bsrsv2Info_t info_L = 0;
-    bsrsv2Info_t info_U = 0;
-    int pBufferSize_M;
-    int pBufferSize_L;
-    int pBufferSize_U;
-    int pBufferSize;
+    // init objects for LU factorization and LU solve
+    cusparseMatDescr_t descr_L = 0, descr_U = 0;
+    bsrsv2Info_t info_L = 0, info_U = 0;
     void *pBuffer = 0;
-    int structural_zero;
-    int numerical_zero;
-    const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
-    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
-    const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
-    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE;
-    const cusparseOperation_t trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
+                                policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
 
-    // step 1: create a descriptor which contains
-    cusparseCreateMatDescr(&descr_M);
-    cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseCreateMatDescr(&descr_L);
-    cusparseSetMatIndexBase(descr_L, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatFillMode(descr_L, CUSPARSE_FILL_MODE_LOWER);
-    cusparseSetMatDiagType(descr_L, CUSPARSE_DIAG_TYPE_UNIT);
-    cusparseCreateMatDescr(&descr_U);
-    cusparseSetMatIndexBase(descr_U, CUSPARSE_INDEX_BASE_ZERO);
-    cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatFillMode(descr_U, CUSPARSE_FILL_MODE_UPPER);
-    cusparseSetMatDiagType(descr_U, CUSPARSE_DIAG_TYPE_NON_UNIT);
+    // perform the symbolic and numeric factorization of LU on given sparsity pattern
+    CUSPARSE::perform_LU_factorization(handle, descr_L, descr_U, info_L, info_U, &pBuffer, mb, nnzb,
+                                       block_dim, d_vals, d_rowp, d_cols, trans_L, trans_U,
+                                       policy_L, policy_U, dir);
 
-    // step 2: create a empty info structure
-    // we need one info for bsrilu02 and two info's for bsrsv2
-    cusparseCreateBsrilu02Info(&info_M);
-    cusparseCreateBsrsv2Info(&info_L);
-    cusparseCreateBsrsv2Info(&info_U);
+    // triangular solve L*z = x
+    const double alpha = 1.0;
+    CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_vals,
+                                         d_rowp, d_cols, block_dim, info_L, d_rhs, d_temp, policy_L,
+                                         pBuffer));
 
-    // step 3: query how much memory used in bsrilu02 and bsrsv2, and
-    // allocate the buffer
-    cusparseDbsrilu02_bufferSize(handle, dir, mb, nnzb, descr_M, d_bsrVal, d_bsrRowPtr, d_bsrColPtr,
-                                 blockDim, info_M, &pBufferSize_M);
-    cusparseDbsrsv2_bufferSize(handle, dir, trans_L, mb, nnzb, descr_L, d_bsrVal, d_bsrRowPtr,
-                               d_bsrColPtr, blockDim, info_L, &pBufferSize_L);
-    cusparseDbsrsv2_bufferSize(handle, dir, trans_U, mb, nnzb, descr_U, d_bsrVal, d_bsrRowPtr,
-                               d_bsrColPtr, blockDim, info_U, &pBufferSize_U);
-    pBufferSize = max(pBufferSize_M, max(pBufferSize_L, pBufferSize_U));
-    // pBuffer returned by cudaMalloc is automatically aligned to 128 bytes.
-    cudaMalloc((void **)&pBuffer, pBufferSize);
+    // triangular solve U*y = z
+    CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_vals,
+                                         d_rowp, d_cols, block_dim, info_U, d_temp, d_soln,
+                                         policy_U, pBuffer));
 
-    // step 4: perform analysis of incomplete LU factorization on M
-    //     perform analysis of triangular solve on L
-    //     perform analysis of triangular solve on U
-    //     The lower(upper) triangular part of M has the same sparsity
-    //     pattern as L(U), we can do analysis of bsrilu0 and bsrsv2
-    //     simultaneously.
-    //
-    // Notes:
-    // bsrilu02_analysis() ->
-    //   Executes the 0 fill-in ILU with no pivoting
-    //
-    // cusparseXbsrilu02_zeroPivot() ->
-    //   is a blocking call. It calls
-    //   cudaDeviceSynchronize() to make sure all previous kernels are done.
-    //
-    // cusparseDbsrsv2_analysis() ->
-    //   output is the info structure filled with information collected
-    //   during he analysis phase (that should be passed to the solve phase
-    //   unchanged).
-    //
-    // The variable "info" contains the structural zero or numerical zero
-
-    cusparseDbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, d_bsrVal, d_bsrRowPtr, d_bsrColPtr,
-                               blockDim, info_M, policy_M, pBuffer);
-    status = cusparseXbsrilu02_zeroPivot(handle, info_M, &structural_zero);
-    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
-        printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
-    }
-
-    // online forum suggested moving the L and U sparsity analysis
-    // to after the M computation (tried it but didn't make a difference)
-    cusparseDbsrsv2_analysis(handle, dir, trans_L, mb, nnzb, descr_L, d_bsrVal, d_bsrRowPtr,
-                             d_bsrColPtr, blockDim, info_L, policy_L, pBuffer);
-    cusparseDbsrsv2_analysis(handle, dir, trans_U, mb, nnzb, descr_U, d_bsrVal, d_bsrRowPtr,
-                             d_bsrColPtr, blockDim, info_U, policy_U, pBuffer);
-
-    // step 5: M = L * U
-    cusparseDbsrilu02(handle, dir, mb, nnzb, descr_M, d_bsrVal, d_bsrRowPtr, d_bsrColPtr, blockDim,
-                      info_M, policy_M, pBuffer);
-    status = cusparseXbsrilu02_zeroPivot(handle, info_M, &numerical_zero);
-    if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
-        printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
-    }
-
-    // step 6: solve L*z = x
-    cusparseDbsrsv2_solve(handle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_bsrVal, d_bsrRowPtr,
-                          d_bsrColPtr, blockDim, info_L, d_rhs, d_temp, policy_L, pBuffer);
-
-    // step 7: solve U*y = z
-    cusparseDbsrsv2_solve(handle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_bsrVal, d_bsrRowPtr,
-                          d_bsrColPtr, blockDim, info_U, d_temp, d_soln, policy_U, pBuffer);
-
-    // print out d_soln
-    // cudaMemcpy
-
-    // step 8: free resources
+    // free resources
     cudaFree(pBuffer);
-    cusparseDestroyMatDescr(descr_M);
     cusparseDestroyMatDescr(descr_L);
     cusparseDestroyMatDescr(descr_U);
-    cusparseDestroyBsrilu02Info(info_M);
     cusparseDestroyBsrsv2Info(info_L);
     cusparseDestroyBsrsv2Info(info_U);
     cusparseDestroy(handle);
 
     // now also inverse permute the soln data
-    bsr_post_solve<DeviceVec<T>>(mat, rhs, soln);
+    permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
@@ -181,78 +97,531 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     }
 }
 
-typedef struct VecStruct {
-    cusparseDnVecDescr_t vec;
-    double *ptr;
-} Vec;
+template <typename T, bool use_precond = true, bool right = false>
+void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
+                 int _n_iter = 100, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
+                 bool can_print = false, bool debug = false, int print_freq = 10) {
+    /* GMRES iterative solve using a BsrMat on GPU with CUDA / CuSparse
+        only supports T = double right now, may add float at some point (but float won't converge as
+       deeply the residual, only about 1e-7) */
+    auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
 
-#if defined(NDEBUG)
-#define PRINT_INFO(var)
-#else
-#define PRINT_INFO(var) printf("  " #var ": %f\n", var);
-#endif
+    // which type of preconditioners
+    constexpr bool left_precond = use_precond && !right;
+    constexpr bool right_precond = use_precond && right;
 
-template <typename T>
-T get_resid(BsrMat<DeviceVec<T>> mat, DeviceVec<T> rhs, DeviceVec<T> soln) {
+    // if (can_print) {
+    //     printf("begin cusparse GMRES solve\n");
+    // }
+    auto start = std::chrono::high_resolution_clock::now();
+
+    // copy important inputs for Bsr structure out of BsrMat
+    // TODO : was trying to make some of these const but didn't accept it in
+    // final solve
     BsrData bsr_data = mat.getBsrData();
     int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
-    int blockDim = bsr_data.block_dim;
-    index_t *d_bsrRowPtr = bsr_data.rowPtr;
-    index_t *d_bsrColPtr = bsr_data.colPtr;
-    T *d_rhs = rhs.getPtr();
-    T *d_soln = soln.getPtr();
-    DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
-    T *d_temp = temp.getPtr();
-    T *d_bsrVal = mat.getPtr();
+    int block_dim = bsr_data.block_dim;
+    index_t *d_rowp = bsr_data.rowp;
+    index_t *d_cols = bsr_data.cols;
+    int *iperm = bsr_data.iperm;
+    int N = soln.getSize();
+    int n_iter = min(_n_iter, bsr_data.nnodes);
+    T *d_rhs = rhs_perm.getPtr();
+    T *d_x = soln.getPtr();
 
-    // init cublas handle, etc.
-    // cudaError_t cudaStat;
-    cublasStatus_t blas_stat;
-    cublasHandle_t cublas_handle;
-    blas_stat = cublasCreate(&cublas_handle);
+    // permute data in soln if guess is not zero
+    soln.permuteData(block_dim, iperm);
 
-    // also make cusparse handle
-    cusparseHandle_t cusparse_handle;
-    cusparseCreate(&cusparse_handle);
-    cusparseStatus_t cusparse_status;
+    // note this changes the mat data to be LU (but that's the whole point
+    // of LU solve is for repeated linear solves we now just do triangular
+    // solves)
+    T *d_vals = mat.getPtr();
 
-    // Descriptor for the BSR matrix
-    cusparseMatDescr_t descr;
-    cusparseCreateMatDescr(&descr);
-    cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
-    cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
+    // also make a temporary array for the preconditioner values
+    T *d_vals_ILU0 = DeviceVec<T>(mat.get_nnz()).getPtr();
+    // ILU0 equiv to ILU(k) if sparsity pattern has ILU(k)
+    CHECK_CUDA(cudaMalloc((void **)&d_vals_ILU0, mat.get_nnz() * sizeof(T)));
+    CHECK_CUDA(
+        cudaMemcpy(d_vals_ILU0, d_vals, mat.get_nnz() * sizeof(T), cudaMemcpyDeviceToDevice));
 
-    // Step 1: Perform the matrix-vector product: d_temp = K * u
-    double alpha = 1.0, beta = 0.0;
-    cusparse_status = cusparseDbsrmv(
-        cusparse_handle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
-        &alpha, descr, d_bsrVal, d_bsrRowPtr, d_bsrColPtr, blockDim, d_soln, &beta, d_temp);
+    // make temp vecs
+    T *d_tmp = DeviceVec<T>(soln.getSize()).getPtr();
+    T *d_tmp2 = DeviceVec<T>(soln.getSize()).getPtr();
+    T *d_resid = DeviceVec<T>(soln.getSize()).getPtr();
+    T *d_w = DeviceVec<T>(soln.getSize()).getPtr();
+    T *d_xR = DeviceVec<T>(soln.getSize()).getPtr();  // for right preconditioning
 
-    if (cusparse_status != CUSPARSE_STATUS_SUCCESS) {
-        printf("CUSPARSE bsrmv failed!\n");
-        return EXIT_FAILURE;
+    // create initial cusparse and cublas handles --------------
+
+    /* Create CUBLAS context */
+    cublasHandle_t cublasHandle = NULL;
+    CHECK_CUBLAS(cublasCreate(&cublasHandle));
+
+    /* Create CUSPARSE context */
+    cusparseHandle_t cusparseHandle = NULL;
+    CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+
+    // create the matrix BSR object
+    // -----------------------------
+
+    /* Description of the A matrix */
+    cusparseMatDescr_t descrA = 0;
+    CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA));
+    CHECK_CUSPARSE(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
+
+    // create ILU(0) preconditioner
+    // -----------------------------
+    // [equiv to ILU(k) precondioner if ILU(k) sparsity pattern used in BsrData object]
+
+    // init objects for LU factorization and LU solve
+    cusparseMatDescr_t descr_L = 0, descr_U = 0;
+    bsrsv2Info_t info_L = 0, info_U = 0;
+    void *pBuffer = 0;
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
+                                policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    // tried changing both policy L and U to be USE_LEVEL not really a change
+    // policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
+    // policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
+
+    T a = 1.0, b = 0.0;
+
+    // perform the symbolic and numeric factorization of LU on given sparsity pattern
+    CUSPARSE::perform_LU_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U, &pBuffer,
+                                       mb, nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
+                                       trans_U, policy_L, policy_U, dir);
+
+    // main GMRES solve
+    // ----------------
+
+    // initialize GMRES data, some on host, some on GPU
+    // host GMRES data
+    T g[n_iter + 1], cs[n_iter], ss[n_iter];
+    T H[(n_iter + 1) * (n_iter)];
+
+    // GMRES device data
+    T *d_Vmat, *d_V;
+    CHECK_CUDA(cudaMalloc((void **)&d_Vmat, (n_iter + 1) * N * sizeof(T)));
+    CHECK_CUDA(cudaMalloc((void **)&d_V, N * sizeof(T)));
+    cusparseDnVecDescr_t vec_V;
+    CHECK_CUSPARSE(cusparseCreateDnVec(&vec_V, N, d_V, CUDA_R_64F));
+
+    bool converged = false;
+    int total_iter = 0;
+
+    for (int iouter = 0; iouter < max_iter / n_iter; iouter++) {
+        int jj = n_iter - 1;
+
+        // apply precond to rhs if in use
+        // copy b or rhs to resid
+        CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
+        a = 1.0, b = 0.0;
+
+        if constexpr (right_precond) {
+            // compute xR0 = M * x0, so we can update y later
+            // first U * x0 => tmp
+            CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
+                nnzb, &a, descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            // then L * tmp => xR0
+            CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
+                nnzb, &a, descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim, d_tmp, &b, d_xR));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            // then for right precond instead of A*M^-1*xR0
+            // this is equal to A*x0, so we leave it at b - A*x0 here
+        }
+
+        // then subtract Ax from rhs
+
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
+                                      d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
+        CHECK_CUDA(cudaDeviceSynchronize());
+        // resid -= A * x
+        a = -1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        T init_true_resid;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &init_true_resid));
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        // now apply precond to the resid
+        if constexpr (left_precond) {
+            // zero vec_tmp
+            CHECK_CUDA(cudaMemset(d_tmp, 0.0, N * sizeof(T)));
+
+            // ILU solve U^-1 L^-1 * b
+            // L^-1 * b => tmp
+            a = 1.0;
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
+                                                 descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_L, d_resid, d_tmp, policy_L, pBuffer));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            // U^-1 * tmp => into rhs
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
+                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_U, d_tmp, d_resid, policy_U, pBuffer));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // temp debug
+        // if (debug) {
+        //     CHECK_CUDA(cudaMemcpy(d_x, d_resid, N * sizeof(T), cudaMemcpyDeviceToHost));
+        //     // now also inverse permute the soln data
+        //     permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
+        //     return;
+        // }
+
+        // GMRES initial residual
+        // assumes here d_X is 0 initially => so r0 = b - Ax
+        T beta;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &beta));
+        CHECK_CUDA(cudaDeviceSynchronize());
+        if (can_print)
+            printf("GMRES init resid = true %.9e, precond %.9e\n", init_true_resid, beta);
+        g[0] = beta;
+
+        // set v0 = r0 / beta (unit vec)
+        a = 1.0 / beta;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_resid, 1, &d_Vmat[0], 1));
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        T *h_v0 = new T[N];
+        CHECK_CUDA(cudaMemcpy(h_v0, d_Vmat, N * sizeof(T), cudaMemcpyDeviceToHost));
+        // print vec
+        if (debug) {
+            printf("r0:");
+            printVec<T>(4, h_v0);
+        }
+
+        // then begin main GMRES iteration loop!
+        for (int j = 0; j < n_iter; j++, total_iter++) {
+            // zero this vec
+            // CHECK_CUDA(cudaMemset(&d_Vmat[j * N], 0.0, N * sizeof(T)));
+
+            // get vj and copy it into the cusparseDnVec_t
+            void *vj_col = static_cast<void *>(&d_Vmat[j * N]);
+            CHECK_CUSPARSE(cusparseDnVecSetValues(vec_V, vj_col));
+
+            if constexpr (right_precond) {
+                // U^-1 L^-1 * vj => vj precond solve here
+                a = 1.0;
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_L, &d_Vmat[j * N], d_tmp, policy_L, pBuffer));
+                CHECK_CUDA(cudaDeviceSynchronize());
+                // U^-1 * tmp => into vj
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_U, d_tmp, d_tmp2, policy_U, pBuffer));
+                CHECK_CUDA(cudaDeviceSynchronize());
+
+                // w = A * vj + 0 * w
+                // BSR matrix multiply here MV
+                a = 1.0, b = 0.0;
+                CHECK_CUSPARSE(cusparseDbsrmv(
+                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb,
+                    mb, nnzb, &a, descrA, d_vals, d_rowp, d_cols, block_dim, d_tmp2, &b, d_w));
+                CHECK_CUDA(cudaDeviceSynchronize());
+            }
+
+            if constexpr (left_precond) {
+                // w = A * vj + 0 * w
+                // BSR matrix multiply here MV
+                a = 1.0, b = 0.0;
+                CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                              CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a,
+                                              descrA, d_vals, d_rowp, d_cols, block_dim,
+                                              &d_Vmat[j * N], &b, d_w));
+                CHECK_CUDA(cudaDeviceSynchronize());
+
+                // U^-1 L^-1 * w => w precond solve here
+                a = 1.0;
+                // first L^-1 * w => tmp
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_L, d_w, d_tmp, policy_L, pBuffer));
+                CHECK_CUDA(cudaDeviceSynchronize());
+                // U^-1 * tmp => into w
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_U, d_tmp, d_w, policy_U, pBuffer));
+                CHECK_CUDA(cudaDeviceSynchronize());
+            }
+
+            // now update householder matrix
+            for (int i = 0; i < j + 1; i++) {
+                // get vi column
+                void *vi_col = static_cast<void *>(&d_Vmat[i * N]);
+                CHECK_CUSPARSE(cusparseDnVecSetValues(vec_V, vi_col));
+
+                T w_vi_dot;
+                CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_w, 1, &d_Vmat[i * N], 1, &w_vi_dot));
+                CHECK_CUDA(cudaDeviceSynchronize());
+
+                // H_ij = vi dot w
+                H[n_iter * i + j] = w_vi_dot;
+
+                if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[n_iter * i + j]);
+
+                // w -= Hij * vi
+                a = -H[n_iter * i + j];
+                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[i * N], 1, d_w, 1));
+                CHECK_CUDA(cudaDeviceSynchronize());
+            }
+
+            // double check and print the value of
+            if (debug && N <= 16) {
+                T *h_w = new T[N];
+                // printf("checkpt3\n");
+                CHECK_CUDA(cudaMemcpy(h_w, d_w, N * sizeof(T), cudaMemcpyDeviceToHost));
+                printf("h_w[%d] post GS:", j);
+                printVec<T>(N, h_w);
+
+                // if (j == 0) return 0;
+            }
+
+            // norm of w
+            T nrm_w;
+            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_w, 1, &nrm_w));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            // H_{j+1,j}
+            H[n_iter * (j + 1) + j] = nrm_w;
+
+            // v_{j+1} column unit vec = w / H_{j+1,j}
+            a = 1.0 / H[n_iter * (j + 1) + j];
+            CHECK_CUBLAS(cublasDcopy(cublasHandle, N, d_w, 1, &d_Vmat[(j + 1) * N], 1));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            CHECK_CUBLAS(cublasDscal(cublasHandle, N, &a, &d_Vmat[(j + 1) * N], 1));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            if (debug && N <= 16) {
+                T *h_tmp = new T[N];
+                // printf("checkpt3\n");
+                CHECK_CUDA(
+                    cudaMemcpy(h_tmp, &d_Vmat[(j + 1) * N], N * sizeof(T), cudaMemcpyDeviceToHost));
+                // printf("next V:");
+                // printVec<T>(N, h_tmp);
+
+                // if (j == 0) return 0;
+            }
+
+            // then givens rotations to elim householder matrix
+            for (int i = 0; i < j; i++) {
+                T temp = H[i * n_iter + j];
+                H[n_iter * i + j] = cs[i] * H[n_iter * i + j] + ss[i] * H[n_iter * (i + 1) + j];
+                H[n_iter * (i + 1) + j] = -ss[i] * temp + cs[i] * H[n_iter * (i + 1) + j];
+            }
+
+            T Hjj = H[n_iter * j + j], Hj1j = H[n_iter * (j + 1) + j];
+            cs[j] = Hjj / sqrt(Hjj * Hjj + Hj1j * Hj1j);
+            ss[j] = cs[j] * Hj1j / Hjj;
+
+            T g_temp = g[j];
+            g[j] *= cs[j];
+            g[j + 1] = -ss[j] * g_temp;
+
+            // printf("GMRES iter %d : resid %.9e\n", j, nrm_w);
+            if (can_print && (j % print_freq == 0))
+                printf("GMRES iter %d : resid %.9e\n", j, abs(g[j + 1]));
+
+            if (debug) printf("j=%d, g[j]=%.9e, g[j+1]=%.9e\n", j, g[j], g[j + 1]);
+
+            H[n_iter * j + j] = cs[j] * H[n_iter * j + j] + ss[j] * H[n_iter * (j + 1) + j];
+            H[n_iter * (j + 1) + j] = 0.0;
+
+            if (abs(g[j + 1]) < (abs_tol + beta * rel_tol)) {
+                if (can_print)
+                    printf("GMRES converged in %d iterations to %.9e resid\n", j + 1, g[j + 1]);
+                jj = j;
+                converged = true;
+                break;
+            }
+        }  // end of inner loop
+
+        // now solve Householder triangular system
+        // only up to size jj+1 x jj+1 where we exited on iteration jj
+        T *Hred = new T[(jj + 1) * (jj + 1)];
+        for (int i = 0; i < jj + 1; i++) {
+            for (int j = 0; j < jj + 1; j++) {
+                // in-place transpose to be compatible with column-major cublasDtrsv later on
+                Hred[(jj + 1) * i + j] = H[n_iter * j + i];
+
+                // Hred[(jj+1) * i + j] = H[n_iter * i + j];
+            }
+        }
+
+        // now print out Hred
+        if (debug) {
+            printf("Hred:");
+            printVec<T>((jj + 1) * (jj + 1), Hred);
+            printf("gred:");
+            printVec<T>((jj + 1), g);
+        }
+
+        // now copy data from Hred host to device
+        T *d_Hred;
+        CHECK_CUDA(cudaMalloc(&d_Hred, (jj + 1) * (jj + 1) * sizeof(T)));
+        CHECK_CUDA(
+            cudaMemcpy(d_Hred, Hred, (jj + 1) * (jj + 1) * sizeof(T), cudaMemcpyHostToDevice));
+
+        // also create gred vector on the device
+        T *d_gred;
+        CHECK_CUDA(cudaMalloc(&d_gred, (jj + 1) * sizeof(T)));
+        CHECK_CUDA(cudaMemcpy(d_gred, g, (jj + 1) * sizeof(T), cudaMemcpyHostToDevice));
+
+        // now solve Householder system H * y = g
+        // T *d_y;
+        // CHECK_CUDA(cudaMalloc(&d_y, (jj+1) * sizeof(T)));
+        CHECK_CUBLAS(cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N,
+                                 CUBLAS_DIAG_NON_UNIT, jj + 1, d_Hred, jj + 1, d_gred, 1));
+        CHECK_CUDA(cudaDeviceSynchronize());
+        // writes g => y inplace
+
+        // now copy back to the host
+        T *h_y = new T[jj + 1];
+        CHECK_CUDA(cudaMemcpy(h_y, d_gred, (jj + 1) * sizeof(T), cudaMemcpyDeviceToHost));
+
+        if (debug && N <= 16) {
+            printf("yred:");
+            printVec<T>((jj + 1), h_y);
+        }
+
+        if constexpr (left_precond) {
+            // now compute the matrix product soln = V * y one column at a time
+            // zero solution (d_x is already zero)
+            for (int j = 0; j < jj + 1; j++) {
+                a = h_y[j];
+                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[j * N], 1, d_x, 1));
+            }
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        if constexpr (right_precond) {
+            // now compute matrix product xR = V * y (the preconditioned solution first)
+            for (int j = 0; j < jj + 1; j++) {
+                a = h_y[j];
+                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[j * N], 1, d_xR, 1));
+            }
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            // then compute the solution from the preconditioned one x = M^-1 * xR
+            // U^-1 L^-1 * xR => x precond solve here
+            a = 1.0;
+            // first L^-1 * w => tmp
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
+                                                 descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_L, d_xR, d_tmp, policy_L, pBuffer));
+            CHECK_CUDA(cudaDeviceSynchronize());
+            // U^-1 * tmp => into w
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
+                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_U, d_tmp, d_x, policy_U, pBuffer));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        if (converged) break;
+
+    }  // end of outer iterations
+
+    // check final residual
+    // --------------------
+
+    // copy rhs into resid again
+    CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
+
+    // then subtract Ax from b
+    a = 1.0, b = 0.0;
+    CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                  CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
+                                  d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
+    CHECK_CUDA(cudaDeviceSynchronize());
+    // resid -= A * x
+    a = -1.0;
+    CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    T final_resid;
+    CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_resid));
+
+    // debugging
+    // int NPRINT = 100;
+    // printf("x: ");
+    // printVec<T>(NPRINT, soln.createHostVec().getPtr());
+    // printf("b: ");
+    // printVec<T>(NPRINT, rhs_perm.createHostVec().getPtr());
+    // printf("A*x: ");
+    // printVec<T>(NPRINT, DeviceVec<T>(N, d_tmp).createHostVec().getPtr());
+    // printf("Ax-b: ");
+    // printVec<T>(NPRINT, DeviceVec<T>(N, d_resid).createHostVec().getPtr());
+
+    // now apply preconditioner to the residual
+    if constexpr (left_precond) {
+        // zero vec_tmp
+        CHECK_CUDA(cudaMemset(d_tmp, 0.0, N * sizeof(T)));
+
+        // ILU solve U^-1 L^-1 * b
+        // L^-1 * b => tmp
+        a = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
+                                             d_vals_ILU0, d_rowp, d_cols, block_dim, info_L,
+                                             d_resid, d_tmp, policy_L, pBuffer));
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        // U^-1 * tmp => into rhs
+        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
+                                             d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_tmp,
+                                             d_resid, policy_U, pBuffer));
+        CHECK_CUDA(cudaDeviceSynchronize());
     }
 
-    // Step 2: Compute the residual: d_temp = d_temp - f
-    double alpha2 = -1.0;
-    cublasDaxpy(cublas_handle, rhs.getSize(), &alpha2, d_rhs, 1, d_temp, 1);
+    T final_precond_resid;
+    CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_precond_resid));
+    CHECK_CUDA(cudaDeviceSynchronize());
 
-    // Step 3: Compute max residual
-    int maxIndex;
-    double maxResidual;
-    cublasIdamax(cublas_handle, rhs.getSize(), d_temp, 1, &maxIndex);
+    if (can_print)
+        printf("GMRES converged to %.4e resid, %.4e precond resid in %d iterations\n", final_resid,
+               final_precond_resid, total_iter);
 
-    int zeroBasedIndex = maxIndex - 1;  // Idamax uses 1-based for some reason..
-    cudaMemcpy(&maxResidual, d_temp + zeroBasedIndex, sizeof(double), cudaMemcpyDeviceToHost);
+    // cleanup and inverse permute the solution for exit
+    // -------------------------------------------------
 
-    // Optionally zero out the temp array
-    // cudaMemset(d_temp, 0, numRows * sizeof(float));
+    // now also inverse permute the soln data
+    permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
 
-    // Free resources
-    cudaFree(d_temp);
-    cusparseDestroyMatDescr(descr);
+    // free resources
+    cudaFree(pBuffer);
+    cusparseDestroyMatDescr(descr_L);
+    cusparseDestroyMatDescr(descr_U);
+    cusparseDestroyBsrsv2Info(info_L);
+    cusparseDestroyBsrsv2Info(info_U);
+    cusparseDestroy(cusparseHandle);
 
-    return maxResidual;
+    // TODO : still missing a few free / delete[] statements
+
+    CHECK_CUDA(cudaFree(d_resid));
+    CHECK_CUDA(cudaFree(d_w));
+    CHECK_CUDA(cudaFree(d_tmp));
+
+    // print timing data
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+    double dt = duration.count() / 1e6;
+    if (can_print) {
+        printf("\tfinished in %.4e sec\n", dt);
+    }
 }
+
 };  // namespace CUSPARSE

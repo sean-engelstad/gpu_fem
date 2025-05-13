@@ -16,6 +16,9 @@
 #define __GLOBAL__
 #endif
 
+// A2D
+#include "a2ddefs.h"
+
 #ifdef USE_GPU
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
@@ -28,6 +31,13 @@ class ExecParameters {
 };
 
 #ifdef USE_GPU
+
+// an atomic add for complex numbers, so we can do complex-step tests on GPU calls for unittests
+__device__ inline void atomicAdd(A2D_complex_t<double>* addr, A2D_complex_t<double> val) {
+    atomicAdd(reinterpret_cast<double*>(addr), val.real());
+    atomicAdd(reinterpret_cast<double*>(addr) + 1, val.imag());
+}
+
 #define CHECK_CUDA(call)                                                         \
     {                                                                            \
         cudaError_t err = call;                                                  \
@@ -51,7 +61,7 @@ class ExecParameters {
         cublasStatus_t status = (func);                                                \
         if (status != CUBLAS_STATUS_SUCCESS) {                                         \
             printf("CUBLAS API failed at line %d with error: %d\n", __LINE__, status); \
-            return EXIT_FAILURE;                                                       \
+            exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     }
 

@@ -155,16 +155,16 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             pt, physData.refAxis, xpts, vars, fn, u0x.bvalue().get_data(), u1x.bvalue().get_data(),
             e0ty.bvalue(), res, d_bar.get_data(), ety_bar.get_data());
 
-        // drill strain sens
-        ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
-            pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
-
         // backprop tying strain sens ety_bar to d_bar and res
         computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), res,
                                                d_bar.get_data());
 
         // directors back to residuals
         Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(), res);
+
+        // drill strain sens
+        ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
+            pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
 
         // TODO : rotation constraint sens for some director classes (zero for
         // linear rotation)
@@ -266,7 +266,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             A2D::Vec<T, 3 * num_nodes> d_hat;                  // zeroes out on init
             ShellComputeDispGradHrev<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, u0x.hvalue().get_data(),
-                u1x.hvalue().get_data(), e0ty.hvalue(), res, d_hat.get_data(), ety_hat.get_data());
+                u1x.hvalue().get_data(), e0ty.hvalue(), matCol, d_hat.get_data(),
+                ety_hat.get_data());
 
             computeTyingStrainHrev<T, Phys, Basis>(xpts, fn, vars, d, p_vars.get_data(), p_d,
                                                    ety_bar.get_data(), ety_hat.get_data(), matCol,
@@ -278,8 +279,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             ShellComputeDrillStrainHrev<T, vars_per_node, Data, Basis, Director>(
                 pt, physData.refAxis, xpts, vars, fn, et.hvalue().get_data(), matCol);
         }  // end of hreverse scope (2nd order derivs)
-
-    }  // add_element_quadpt_jacobian_col
+    }      // add_element_quadpt_jacobian_col
 
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_gmat_col(

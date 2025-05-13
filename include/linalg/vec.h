@@ -1,6 +1,7 @@
 #pragma once
 #include <complex>
 #include <cstring>
+#include <string>
 
 #include "../cuda_utils.h"
 #include "../utils.h"
@@ -37,6 +38,11 @@ class BaseVec {
     // __HOST__ void zeroValues() {
     //     memset(this->data, 0.0, this->N * sizeof(T));
     // }
+
+    __HOST_DEVICE__ void print(const std::string name) {
+        printf("%s\n", name.c_str());
+        printVec<T>(this->getSize(), this->getPtr());
+    }
 
     __HOST__ void scale(T my_scale) {
         for (int i = 0; i < N; i++) {
@@ -179,7 +185,14 @@ class DeviceVec : public BaseVec<T> {
         int nbcs = bcs.getSize();
         int nblocks = (nbcs + block.x - 1) / block.x;
         dim3 grid(nblocks);
+
+        // debug
         // printf("in deviceVec apply_bcs\n");
+        // int n_bcs = bcs.getSize();
+        // int *h_bcs = new int[n_bcs];
+        // CHECK_CUDA(cudaMemcpy(h_bcs, bcs.getPtr(), n_bcs * sizeof(int), cudaMemcpyDeviceToHost));
+        // printf("bcs:");
+        // printVec<int>(n_bcs, h_bcs);
 
         apply_vec_bcs_kernel<T, DeviceVec><<<grid, block>>>(bcs, this->data);
 
@@ -198,13 +211,17 @@ class DeviceVec : public BaseVec<T> {
     // }
 
     static void add_vec(DeviceVec<T> vec1, DeviceVec<T> vec2, DeviceVec<T> vec3) {
-        // add us to xs0
+// add us to xs0
+#ifdef USE_GPU
         // use cublas or a custom kernel here for axpy?
         dim3 block1(32);
         int nblocks = (vec1.getSize() + block1.x - 1) / block1.x;
         dim3 grid1(nblocks);
         vec_add_kernel<T><<<grid1, block1>>>(vec1, vec2, vec3);
         CHECK_CUDA(cudaDeviceSynchronize());
+#else
+        printf("add vector code only written for GPU now\n");
+#endif
     }
 
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
@@ -229,6 +246,12 @@ class DeviceVec : public BaseVec<T> {
         auto new_vec = copyVec();
         new_vec.permuteData(block_dim, perm);
         return new_vec;
+    }
+
+    __HOST__ void copyValuesTo(HostVec<T> dest) {
+#ifdef USE_GPU
+        cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T), cudaMemcpyDeviceToHost);
+#endif
     }
 
     __HOST__ void copyValuesTo(DeviceVec<T> dest) {
@@ -327,7 +350,6 @@ class DeviceVec : public BaseVec<T> {
     }
 
     __HOST__ void removeRotationalDOF(DeviceVec<T> &new_vec) {
-
         int num_blocks = (new_vec.N + 32 - 1) / 32;
         removeRotationalDOF_kernel<T, DeviceVec>
             <<<num_blocks, 32>>>(this->N, new_vec.N, this->data, new_vec.data);
@@ -352,16 +374,17 @@ class DeviceVec : public BaseVec<T> {
 
     __DEVICE__ void addElementValuesFromShared(const bool active_thread, const int start,
                                                const int stride, const int dof_per_node,
-                                               const int nodes_per_elem, const int32_t *perm,
-                                               const int32_t *elem_conn, const T *shared_data) {
+                                               const int nodes_per_elem, const int32_t *elem_conn,
+                                               const T *shared_data) {
         // copies values to the shared element array on GPU (shared memory)
         if (!active_thread) return;
         int dof_per_elem = dof_per_node * nodes_per_elem;
         for (int idof = start; idof < dof_per_elem; idof += stride) {
             int local_inode = idof / dof_per_node;
             int _global_inode = elem_conn[local_inode];
-            int global_inode = perm[_global_inode];
-            int iglobal = global_inode * dof_per_node + (idof % dof_per_node);
+            // iperm : old to new entry (see tests/reordering/README.md)
+            // int global_inode = iperm[_global_inode];
+            int iglobal = _global_inode * dof_per_node + (idof % dof_per_node);
 
             atomicAdd(&this->data[iglobal], shared_data[idof]);
         }
@@ -373,7 +396,7 @@ class DeviceVec : public BaseVec<T> {
         }
     }
 #endif  // USE_GPU
-}; // end of DeviceVec
+};      // end of DeviceVec
 
 template <typename T>
 class HostVec : public BaseVec<T> {
@@ -404,6 +427,11 @@ class HostVec : public BaseVec<T> {
                 double my_double = maxVal.real() * static_cast<double>(rand()) / RAND_MAX;
                 this->data[i] = T(my_double, 0.0);
             }
+        } else if constexpr (std::is_same<T, A2D_complex_t<double>>::value) {
+            for (int i = 0; i < this->N; i++) {
+                double my_double = maxVal.real() * static_cast<double>(rand()) / RAND_MAX;
+                this->data[i] = T(my_double, 0.0);
+            }
         } else {  // int's
             for (int i = 0; i < this->N; i++) {
                 this->data[i] = rand() % maxVal;
@@ -415,6 +443,16 @@ class HostVec : public BaseVec<T> {
         HostVec<T> vec(this->N);
         memcpy(vec.getPtr(), this->data, this->N * sizeof(T));
         return vec;
+    }
+
+    __HOST__ void copyValuesTo(HostVec<T> dest) {
+        memcpy(dest.getPtr(), this->data, this->N * sizeof(T));
+    }
+
+    __HOST__ void copyValuesTo(DeviceVec<T> dest) {
+#ifdef USE_GPU
+        cudaMemcpy(dest.getPtr(), this->data, this->N * sizeof(T), cudaMemcpyHostToDevice);
+#endif
     }
 
     __HOST__ HostVec<T> createPermuteVec(int block_dim, int *perm) {
@@ -455,7 +493,7 @@ class HostVec : public BaseVec<T> {
             delete[] this->data;
         }
     }
-}; // end of HostVec
+};  // end of HostVec
 
 /*
 convertVec : converts vec to host or device vec depending on whether

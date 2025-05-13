@@ -32,9 +32,11 @@ int main() {
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
 
     // BSR factorization
-    double fillin = 10.0; // 10.0
+    auto& bsr_data = assembler.getBsrData();
+    double fillin = 10.0;  // 10.0
     bool print = true;
-    assembler.symbolic_factorization(fillin, print);
+    bsr_data.compute_full_LU_pattern(fillin, print);
+    assembler.moveBsrDataToDevice();
 
     // get the loads
     double Q = 1e6; // load magnitude

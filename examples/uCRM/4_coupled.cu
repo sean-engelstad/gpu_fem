@@ -25,12 +25,7 @@ int main(void) {
   // important user settings
   // -----------------------
   constexpr bool nonlinear_strain = true;
-  constexpr bool linear_meld = false;
   static constexpr int MELD_NN_PER_BLOCK = 32;
-  constexpr bool meld_oneshot = false;  // faster without oneshot
-  constexpr bool exact_givens = true;
-
-  // nonlinear load settings
   double load_mag = 30.0; // 1.0 (small)
 
   // type definitions
@@ -51,7 +46,7 @@ int main(void) {
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
   using AeroSolver = FixedAeroSolver<T, DeviceVec<T>>;
-  using Transfer = MELD<T, MELD_NN_PER_BLOCK, linear_meld, meld_oneshot, exact_givens>;
+  using Transfer = MELD<T, MELD_NN_PER_BLOCK>;
   // nonlinear MELD has high loads on spars right now
 
   // build the Tacs prelim objects
@@ -79,18 +74,15 @@ int main(void) {
   auto _assembler_aero = makeAeroSurfMesh<Assembler>(nx, nx);
   auto xa0 = _assembler_aero.getXpts();
   int na = _assembler_aero.get_num_nodes();
-
   auto h_xa0 = xa0.createHostVec();
-  // printf("h_xa0 of len %d:", h_xa0.getSize());
-  // printVec<T>(h_xa0.getSize(), h_xa0.getPtr());
-  // auto d_conn = _assembler_aero.getConn();
-  // auto h_conn = d_conn.createHostVec();
-  // printf("host aero conn of len %d:", h_conn.getSize());
-  // printVec<int>(h_conn.getSize(), h_conn.getPtr());
 
   // perform a factorization on the rowPtr, colPtr (before creating matrix)
+  auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
-  assembler.symbolic_factorization(fillin, true);
+  bool print = true;
+  bsr_data.AMD_reordering();
+  bsr_data.compute_full_LU_pattern(fillin, print);
+  assembler.moveBsrDataToDevice();
 
   // compute loads
   auto d_loads = getSurfLoads<T>(_assembler_aero, load_mag);
@@ -101,11 +93,6 @@ int main(void) {
 
   // make transfer scheme
   AeroSolver aero_solver = AeroSolver(na, d_loads);
-
-  // T beta = 1e-1, Hreg = 1e-4;
-  // T beta = 1e-2, Hreg = 1e-2;
-  // T beta = 10.0, Hreg = 1e-4;
-
   T beta = 0.1, Hreg = 1e-4;
   int sym = -1, nn = 128;
   bool meld_print = false;
@@ -124,15 +111,18 @@ int main(void) {
     int num_load_factors = 10, num_newton = 30;
     double abs_tol = 1e-8, rel_tol = 1e-8;
     bool struct_print = true;
+    bool write_intermediate_vtk = false;
     TacsNonlinearStaticNewton<T, Assembler> struct_solver =
         TacsNonlinearStaticNewton<T, Assembler>(assembler, kmat, linear_solve,
                                                 num_load_factors, num_newton,
-                                                struct_print, abs_tol, rel_tol);
+                                                struct_print, abs_tol, rel_tol, write_intermediate_vtk);
 
     // test coupled driver
-    // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    testCoupledDriverManual<T>(struct_solver, aero_solver, transfer, assembler,
-                               _assembler_aero);
+    testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
+    // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer, assembler,
+    //                            _assembler_aero);
+
+    struct_solver.writeSoln("out/uCRM_coupled_us.vtk");
 
     struct_solver.free();
 
@@ -147,6 +137,8 @@ int main(void) {
     // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
     testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
     assembler, _assembler_aero);
+
+    struct_solver.writeSoln("out/uCRM_coupled_us.vtk");
 
     struct_solver.free();
   }

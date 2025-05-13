@@ -11,6 +11,14 @@
 #include "element/shell/physics/isotropic_shell.h"
 
 int main() {
+    // input ----------
+    bool full_LU = true;
+
+    // for medium size problems like nxe = 100,
+    // the direct LU solve is much faster and has a better residual
+
+    // ----------------
+
     using T = double;   
 
     using Quad = QuadLinearQuadrature<T>;
@@ -26,15 +34,38 @@ int main() {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    int nxe = 300; // 100
+    // int nxe = 3;
+    int nxe = 100;
+    // int nxe = 300;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
 
-    // BSR factorization
-    double fillin = 10.0; // 10.0
+    // BSR symbolic factorization
+    // must pass by ref to not corrupt pointers
+    auto& bsr_data = assembler.getBsrData();
+    double fillin = 10.0;  // 10.0
     bool print = true;
-    assembler.symbolic_factorization(fillin, print);
+    if (full_LU) {
+        bsr_data.AMD_reordering();
+        bsr_data.compute_full_LU_pattern(fillin, print);
+    } else {
+        /*
+        RCM and reorderings actually hurt GMRES performance on the plate case
+        because the matrix already has a nice banded structure => RCM increases bandwidth (which means it just doesn't work well for this problem
+        as it's whole point is to decrease matrix bandwidth)
+        */
+
+        bsr_data.AMD_reordering();
+        // bsr_data.RCM_reordering();
+        // bsr_data.qorder_reordering(1.0);
+        
+        bsr_data.compute_ILUk_pattern(5, fillin);
+        // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
+    }
+    // printf("perm:");
+    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
+    assembler.moveBsrDataToDevice();
 
     // get the loads
     double Q = 1.0; // load magnitude
@@ -55,7 +86,14 @@ int main() {
     assembler.apply_bcs(kmat);
 
     // solve the linear system
-    CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    if (full_LU) {
+        CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    } else {
+        int n_iter = 200, max_iter = 400;
+        T abs_tol = 1e-11, rel_tol = 1e-14;
+        bool print = false;
+        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+    }
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
