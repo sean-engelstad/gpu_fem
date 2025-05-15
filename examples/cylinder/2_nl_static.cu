@@ -30,15 +30,18 @@ int main() {
     double L = 1.0;
     double Lr = 3.0;
     double rt = 100.0; // r/t the cylinder slenderness
+    
     double R = L / Lr;
     double thick = R / rt;
 
     // imperfection
     bool imperfection = true;
+    // int imp_x = 9, imp_hoop = 10;
+    int imp_x = 10, imp_hoop = 40;
 
     // mesh settings
     int nxe_0 = 10, nhe_0 = 10;
-    int refinement = 10;
+    int refinement = 30;
     // int refinement = 30;
     int nxe = nxe_0 * refinement, nhe = nhe_0 * refinement;
 
@@ -46,7 +49,7 @@ int main() {
     double E = 70e9, nu = 0.3;
 
     // make the cylinder
-    auto assembler = createCylinderAssembler<Assembler>(nxe, nhe, L, R, E, nu, thick, imperfection);
+    auto assembler = createCylinderAssembler<Assembler>(nxe, nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
 
     // BSR factorization
     auto& bsr_data = assembler.getBsrData();
