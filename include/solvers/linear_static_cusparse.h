@@ -244,10 +244,17 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
 
         // then subtract Ax from rhs
 
+        auto start_mult = std::chrono::high_resolution_clock::now();
         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
                                       CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
                                       d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
         CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_mult = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> spmv_time = end_mult - start_mult;
+        if (can_print) {
+            printf("SpMV on GPU in %.4e sec\n", spmv_time.count());
+        }
+
         // resid -= A * x
         a = -1.0;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));

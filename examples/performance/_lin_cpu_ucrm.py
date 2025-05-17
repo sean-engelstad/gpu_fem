@@ -117,12 +117,17 @@ gmres.solve(forces, ans)
 
 triang_time = time.time() - start_triang
 
+start_mult = time.time()
+mat.mult(res, ans)
+mult_time = time.time() - start_mult
+
 tacs_comm.Barrier()
 end_time = time.time()
 if tacs_comm.rank == 0:
     print(f"uCRM solved with {tacs_comm.size=} procs\n")
-    print(f"\thardware,count,nz_time,res_time,jac_time,fact_time,triang_time\n")
-    print(f"\tCPU,{tacs_comm.size},{nz_time:.4e},{res_time:.4e},{jac_time:.4e},{fact_time:.4e},{triang_time:.4e}")
+    print(f"\thardware,count,nz_time,res_time,jac_time,fact_time,triang_time,mult_time\n")
+    print(f"\tCPU,{tacs_comm.size},{nz_time:.4e},{res_time:.4e},{jac_time:.4e},{fact_time:.4e},{triang_time:.4e},{mult_time:.4e}")
+    # print(f"\tSpMV in {mult_time:.4e} sec")
     
 tacs.setVariables(ans)
 

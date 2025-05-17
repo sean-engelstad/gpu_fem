@@ -37,11 +37,11 @@ int main() {
     // imperfection
     bool imperfection = true;
     // int imp_x = 9, imp_hoop = 10;
-    int imp_x = 10, imp_hoop = 40;
+    int imp_x = 10, imp_hoop = 10;
 
     // mesh settings
     int nxe_0 = 10, nhe_0 = 10;
-    int refinement = 30;
+    int refinement = 10;
     // int refinement = 30;
     int nxe = nxe_0 * refinement, nhe = nhe_0 * refinement;
 

@@ -79,14 +79,18 @@ int main() {
   assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
 
-  // newton solve => go to 10x the 1m up disp from initial loads
   auto start2 = std::chrono::high_resolution_clock::now();
-  CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
 
-  // int n_iter = 100, max_iter = 100;
-  // constexpr bool right = true;
-  // T abs_tol = 1e-6, rel_tol = 1e-6; // for left preconditioning
-  // CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+  // newton solve => go to 10x the 1m up disp from initial loads
+  bool LU_solve = false;
+  if (LU_solve) {
+    CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
+  } else {
+    int n_iter = 100, max_iter = 100;
+    constexpr bool right = false;
+    T abs_tol = 1e-6, rel_tol = 1e-6; // for left preconditioning
+    CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+  }
 
   auto end2 = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> lin_solve_time = end2 - start2;
