@@ -150,7 +150,7 @@ class BsrData {
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
         if (print) {
-            printf("\tfinished full LU symbolic factorization in %.4e sec\n", dt);
+            printf("\ttook %.4e sec to fillin nnzb %d\n", dt, nnzb);
         }
     }
 
@@ -193,6 +193,10 @@ class BsrData {
         TacsComputeRCMOrder(nnodes, rowp, cols, _new_perm, root_node, num_rcm_iters);
         // flip the new permutation
         for (int k = 0; k < nnodes; k++) {
+            // perm[k] = _new_perm[k];  // not flipped from TACS
+            // iperm[_new_perm[k]] = k;
+
+            // this one actually lowers bandwidth
             perm[_new_perm[k]] = k;  // flipped from TACS
             iperm[k] = _new_perm[k];
         }

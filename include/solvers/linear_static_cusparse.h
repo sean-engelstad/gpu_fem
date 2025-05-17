@@ -4,10 +4,10 @@
 #include <cuda_runtime.h>
 #include <cusparse_v2.h>
 
+#include <chrono>
 #include <iostream>
 
 #include "../cuda_utils.h"
-#include "chrono"
 #include "cublas_v2.h"
 #include "utils/_cusparse_utils.h"
 #include "utils/_utils.h"
@@ -26,7 +26,6 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     if (can_print) {
         printf("begin cusparse direct LU solve\n");
     }
-    auto start = std::chrono::high_resolution_clock::now();
 
     // copy important inputs for Bsr structure out of BsrMat
     // TODO : was trying to make some of these const but didn't accept it in
@@ -62,12 +61,15 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
 
     // perform the symbolic and numeric factorization of LU on given sparsity pattern
+    auto start_fact = std::chrono::high_resolution_clock::now();
     CUSPARSE::perform_LU_factorization(handle, descr_L, descr_U, info_L, info_U, &pBuffer, mb, nnzb,
                                        block_dim, d_vals, d_rowp, d_cols, trans_L, trans_U,
                                        policy_L, policy_U, dir);
+    auto end_fact = std::chrono::high_resolution_clock::now();
 
     // triangular solve L*z = x
     const double alpha = 1.0;
+    auto start_triangular = std::chrono::high_resolution_clock::now();
     CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_vals,
                                          d_rowp, d_cols, block_dim, info_L, d_rhs, d_temp, policy_L,
                                          pBuffer));
@@ -76,6 +78,7 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_vals,
                                          d_rowp, d_cols, block_dim, info_U, d_temp, d_soln,
                                          policy_U, pBuffer));
+    auto end_triangular = std::chrono::high_resolution_clock::now();
 
     // free resources
     cudaFree(pBuffer);
@@ -89,11 +92,11 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
 
     // print timing data
-    auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-    double dt = duration.count() / 1e6;
+    std::chrono::duration<double> fact_time = end_fact - start_fact,
+                                  triang_solve_time = end_triangular - start_triangular;
     if (can_print) {
-        printf("\tfinished in %.4e sec\n", dt);
+        printf("\tLU factorization in %.4e sec, triang solve in %.4e sec\n", fact_time.count(),
+               triang_solve_time.count());
     }
 }
 

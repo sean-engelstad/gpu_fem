@@ -518,10 +518,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-    double dt = duration.count() / 1e6;
+    std::chrono::duration<double> add_resid_time = stop - start;
     if (can_print) {
-        printf("\tfinished assembly in %.4e\n", dt);
+        printf("\tfinished add_residual in %.4e\n", add_resid_time.count());
     }
 };
 
@@ -565,10 +564,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-    double dt = duration.count() / 1e6;
+    std::chrono::duration<double> add_jac_time = stop - start;
     if (can_print) {
-        printf("\tfinished assembly in %.4e sec\n", dt);
+        printf("\tfinished add_jacobian in %.4e sec\n", add_jac_time.count());
     }
 };
 
