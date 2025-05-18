@@ -83,7 +83,7 @@ int main() {
   // ----------------------------------------
 
   TACSMeshLoader<T> mesh_loader{};
-  mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
+  mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
   int ns = assembler.get_num_nodes();
   int ns_vars = assembler.get_num_vars();
@@ -105,34 +105,30 @@ int main() {
   // load the coarse mesh for the aero surf
   // --------------------------------------
 
-//   TACSMeshLoader<T> mesh_loader_aero{};
-//   mesh_loader_aero.scanBDFFile("uCRM-135_wingbox_coarse.bdf");
-//   auto _assembler_aero =
-//       Assembler::createFromBDF(mesh_loader_aero, Data(E, nu, thick));
-  int nx = 51;  // 101
-  auto _assembler_aero = makeAeroSurfMesh<Assembler>(nx, nx);
-  int na = _assembler_aero.get_num_nodes();
-  int na_vars = _assembler_aero.get_num_vars();
-
+  double *xyz_forces;
+  auto _assembler_aero = makeFun3dAeroSurfMeshFromDat<Assembler>("fun3d_forces.dat", &xyz_forces);
   auto xa0 = _assembler_aero.getXpts();
+  int na = _assembler_aero.get_num_nodes();
   auto h_xa0 = xa0.createHostVec();
 
-  // make aero loads
-  auto h_fa = HostVec<T>(3 * na);
-  double load_mag = 1.0;
+  // compute aero loads
+  auto h_loads = HostVec<T>(6 * na);
+  auto h_fa = HostVec<T>(3*na);
   for (int i = 0; i < na; i++) {
-    h_fa[3 * i + 2] =
-        -load_mag * (std::sin(h_xa0[3 * i] / 50 * 3.1415 * 2.0) *
-                    std::sin(h_xa0[3 * i + 1] / 40 * 3.1415 * 1.0));
+    h_loads[6*i] = xyz_forces[3*i];
+    h_loads[6*i+1] = xyz_forces[3*i+1];
+    h_loads[6*i+2] = xyz_forces[3*i+2];
+    for (int idim = 0; idim < 3; idim++) {
+      h_fa[3*i+idim] = h_loads[6*i + idim];
+    }
   }
-  auto fa = h_fa.createDeviceVec();
+  auto d_fa = h_loads.createDeviceVec();
 
   // make the MELD transfer scheme
   // -----------------------------
 
   // T beta = 1e-3, Hreg = 1e-8;
-  // T beta = 0.1, Hreg = 1e-4;
-  T beta = 1e-1, Hreg = 1e-8;
+  T beta = 0.1, Hreg = 1e-4;
   int sym = -1, nn = 128;
   static constexpr int NN_PER_BLOCK = 32;
   bool meld_print = true;
@@ -155,13 +151,10 @@ int main() {
 
   printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_ua_ext, "uCRM_ua.vtk");
 
-  // printf("ua:");
-  // printVec<T>(100, h_ua.getPtr());
-
   // load transfer
   // -------------
 
-  auto fs = meld.transferLoads(fa);
+  auto fs = meld.transferLoads(d_fa);
   // DeviceVec<T> fs = DeviceVec<T>(3 * na);
   // for (int i = 0; i < 10; i++) {
   //     fs = meld.transferLoads(fa);

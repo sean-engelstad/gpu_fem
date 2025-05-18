@@ -9,9 +9,11 @@ from mpi4py import MPI
 from tacs import TACS, elements, constitutive, functions
 import time
 
+start_time = time.time()
+
 # Load structural mesh from BDF file
-# bdfFile = "../uCRM/CRM_box_2nd.bdf"
-bdfFile = "uCRM-135_wingbox_fine.bdf"
+bdfFile = "../uCRM/CRM_box_2nd.bdf"
+# bdfFile = "uCRM-135_wingbox_fine.bdf"
 tacs_comm = MPI.COMM_WORLD
 struct_mesh = TACS.MeshLoader(tacs_comm)
 struct_mesh.scanBDFFile(bdfFile)
@@ -69,23 +71,24 @@ u = tacs.createVec()
 # default is AMD ordering
 start_nz = time.time()
 ordering = TACS.TACS_AMD_ORDER
+# ordering = TACS.RCM_ORDER
 # ordering = TACS.ND_ORDER
 mat = tacs.createSchurMat(ordering)
 
 nz_time = time.time() - start_nz
 # ILUk = 3
-# ILUk = 8
-ILUk = 1e6
-pc = TACS.Pc(mat) #, lev_fill=ILUk) # for ILU(3), default is full LU or ILU(1000) if not set
+ILUk = 7
+# ILUk = 1e6
+pc = TACS.Pc(mat, lev_fill=ILUk) #, lev_fill=ILUk) # for ILU(3), default is full LU or ILU(1000) if not set
 # subspace = 100
 end_nz = time.time()
-subspace = 200
-restarts = 2
+subspace = 300
+restarts = 0
 rtol = 1e-10
 atol = 1e-6
 gmres = TACS.KSM(mat, pc, subspace, restarts)
-# gmres.setMonitor(tacs_comm)
-# gmres.setTolerances(rtol, atol)
+gmres.setMonitor(tacs_comm)
+gmres.setTolerances(rtol, atol)
 
 
 # Assemble the Jacobian and factor
@@ -130,6 +133,10 @@ if tacs_comm.rank == 0:
     # print(f"\tSpMV in {mult_time:.4e} sec")
     
 tacs.setVariables(ans)
+
+dt = time.time() - start_time
+if tacs_comm.rank == 0:
+    print(f"total time = {dt:.4e}")
 
 
 # Output for visualization
