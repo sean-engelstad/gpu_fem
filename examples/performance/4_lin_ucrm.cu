@@ -73,16 +73,18 @@ int main() {
   auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
   auto res = assembler.createVarsVec();
   auto soln = assembler.createVarsVec();
-  assembler.add_residual(res, print); // warmup call
+  // assembler.add_residual(res, print); // warmup call
   assembler.add_residual(res, print);
   assembler.add_jacobian(res, kmat, print);
   assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
 
+  return 0;
+
   auto start2 = std::chrono::high_resolution_clock::now();
 
   // newton solve => go to 10x the 1m up disp from initial loads
-  bool LU_solve = false;
+  bool LU_solve = true;
   if (LU_solve) {
     CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
   } else {

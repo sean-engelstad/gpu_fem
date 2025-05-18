@@ -31,6 +31,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 #ifdef USE_GPU
     static constexpr dim3 energy_block = dim3(32, num_quad_pts, 1);
     static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
+    // static constexpr dim3 res_block = dim3(64, num_quad_pts, 1);
     static constexpr dim3 jac_block = dim3(1, dof_per_elem, num_quad_pts);
     // static constexpr dim3 jac_block = dim3(dof_per_elem, num_quad_pts);
 #endif  // USE_GPU
