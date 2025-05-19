@@ -2,6 +2,7 @@
 
 ## Profiling commands
 Generate a profile with (and sudo sometimes needed with full path to ncu executable for permissions):
+* note you may not always need sudo, can just do `ncu **` rest of commands in that case.
 ```
 sudo /usr/local/cuda-12.6/bin/ncu --export myrep.ncu-rep ./4_lin_ucrm.out
 ```

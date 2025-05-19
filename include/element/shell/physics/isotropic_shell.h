@@ -121,8 +121,11 @@ class IsotropicShell {
 
     template <typename T2>
     __HOST_DEVICE__ static void compute_drill_strain_grad(const Data &physData, const T &scale,
-                        A2D::ADObj<A2D::Vec<T2,1> et) {
+                        A2D::ADObj<A2D::Vec<T2,1>> et) {
         // compute drilling stiffness
+        T E = physData.E;
+        T nu = physData.nu;
+        T thick = physData.thick;
         T C[6];
         Data::evalTangentStiffness2D(E, nu, C);
         T As = Data::getTransShearCorrFactor() * thick * C[5];

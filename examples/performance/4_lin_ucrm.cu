@@ -9,6 +9,7 @@
 #include "assembler.h"
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
+#include "element/shell/shell_elem_group_v2.h" // new one for unittesting
 
 int main() {
   using T = double;
@@ -33,7 +34,10 @@ int main() {
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
-  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+  // try using new ElemGroup to speedup assembly
+  // using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+  using ElemGroup = ShellElementGroupV2<T, Director, Basis, Physics>;
+
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
   double E = 70e9, nu = 0.3, thick = 0.02;  // material & thick properties
@@ -57,6 +61,18 @@ int main() {
   auto end1 = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> compute_nz_time = end1 - start1;
 
+  // setup kmat and initial vecs
+  auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+  auto res = assembler.createVarsVec();
+  auto soln = assembler.createVarsVec();
+  assembler.add_residual(res, print); // warmup call
+  assembler.add_residual(res, print);
+  return 0;
+
+  assembler.add_jacobian(res, kmat, print);
+  assembler.apply_bcs(res);
+  assembler.apply_bcs(kmat);
+
   // get the loads
   int nvars = assembler.get_num_vars();
   int nnodes = assembler.get_num_nodes();
@@ -68,18 +84,6 @@ int main() {
   }
   auto loads = h_loads.createDeviceVec();
   assembler.apply_bcs(loads);
-
-  // setup kmat and initial vecs
-  auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-  auto res = assembler.createVarsVec();
-  auto soln = assembler.createVarsVec();
-  // assembler.add_residual(res, print); // warmup call
-  assembler.add_residual(res, print);
-  assembler.add_jacobian(res, kmat, print);
-  assembler.apply_bcs(res);
-  assembler.apply_bcs(kmat);
-
-  // return 0;
 
   auto start2 = std::chrono::high_resolution_clock::now();
 
