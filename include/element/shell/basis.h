@@ -417,43 +417,53 @@ __HOST_DEVICE__ static void interpTyingStrain(const T pt[], const T ety[], T gty
 
     // get g11 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(0);
     constexpr int num_tying_g11 = Basis::num_tying_points(0);
     T N_g11[num_tying_g11];  // TODO : can we store less floats here?
     Basis::template getTyingInterp<0>(pt, N_g11);
     gty[0] = A2D::VecDotCore<T, num_tying_g11>(N_g11, &ety[offset]);
+    }
 
     // get g22 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(1);
     constexpr int num_tying_g22 = Basis::num_tying_points(1);
     T N_g22[num_tying_g22];
     Basis::template getTyingInterp<1>(pt, N_g22);
     gty[3] = A2D::VecDotCore<T, num_tying_g22>(N_g22, &ety[offset]);
+    }
 
     // get g12 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(2);
     constexpr int num_tying_g12 = Basis::num_tying_points(2);
     T N_g12[num_tying_g12];
     Basis::template getTyingInterp<2>(pt, N_g12);
     gty[1] = A2D::VecDotCore<T, num_tying_g12>(N_g12, &ety[offset]);
+    }
 
     // get g23 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(3);
     constexpr int num_tying_g23 = Basis::num_tying_points(3);
     T N_g23[num_tying_g23];
     Basis::template getTyingInterp<3>(pt, N_g23);
     gty[4] = A2D::VecDotCore<T, num_tying_g23>(N_g23, &ety[offset]);
+    }
 
     // get g13 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(4);
     constexpr int num_tying_g13 = Basis::num_tying_points(4);
     T N_g13[num_tying_g13];
     Basis::template getTyingInterp<4>(pt, N_g13);
     gty[2] = A2D::VecDotCore<T, num_tying_g13>(N_g13, &ety[offset]);
+    }
 
     // get g33 tying strain
     // --------------------
@@ -473,43 +483,53 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[], const T gty
 
     // get g11 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(0);
     constexpr int num_tying_g11 = Basis::num_tying_points(0);
     T N_g11[num_tying_g11];  // TODO : can we store less floats here?
     Basis::template getTyingInterp<0>(pt, N_g11);
     A2D::VecAddCore<T, num_tying_g11>(gty_bar[0], N_g11, &ety_bar[offset]);
+    }
 
     // get g22 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(1);
     constexpr int num_tying_g22 = Basis::num_tying_points(1);
     T N_g22[num_tying_g22];
     Basis::template getTyingInterp<1>(pt, N_g22);
     A2D::VecAddCore<T, num_tying_g22>(gty_bar[3], N_g22, &ety_bar[offset]);
+    }
 
     // get g12 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(2);
     constexpr int num_tying_g12 = Basis::num_tying_points(2);
     T N_g12[num_tying_g12];
     Basis::template getTyingInterp<2>(pt, N_g12);
     A2D::VecAddCore<T, num_tying_g12>(gty_bar[1], N_g12, &ety_bar[offset]);
+    }
 
     // get g23 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(3);
     constexpr int num_tying_g23 = Basis::num_tying_points(3);
     T N_g23[num_tying_g23];
     Basis::template getTyingInterp<3>(pt, N_g23);
     A2D::VecAddCore<T, num_tying_g23>(gty_bar[4], N_g23, &ety_bar[offset]);
+    }
 
     // get g13 tying strain
     // ------------------------------------
+    {
     offset = Basis::tying_point_offsets(4);
     constexpr int num_tying_g13 = Basis::num_tying_points(4);
     T N_g13[num_tying_g13];
     Basis::template getTyingInterp<4>(pt, N_g13);
     A2D::VecAddCore<T, num_tying_g13>(gty_bar[2], N_g13, &ety_bar[offset]);
+    }
 
     // get g33 tying strain
     // --------------------
