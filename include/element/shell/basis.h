@@ -221,6 +221,19 @@ class ShellQuadBasis {
         pt[1] = -1.0 + (2.0 / (order - 1)) * (n / order);
     }
 
+    __HOST_DEVICE__ static T getDetXd(const T pt[], const T xpts[]) {
+        // get detXd at quadpt
+        T Xxi[3], Xeta[3];
+        interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
+
+        // compute the shell node normals
+        ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
+
+        // assemble Xd frame
+        assembleFrame(Xxi, Xeta, n0, Xd);
+
+    }
+
     template <int vars_per_node, int num_fields>
     __HOST_DEVICE__ static void interpFields(const T pt[], const T values[], T field[]) {
         T N[num_nodes];
@@ -378,12 +391,18 @@ __HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[]) {
         T dXdxi[3], dXdeta[3];
         Basis::template interpFieldsGrad<3, 3>(pt, Xpts, dXdxi, dXdeta);
 
-        // compute the normal vector fn at each node
-        T tmp[3];
-        A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
-        T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
-        A2D::VecScaleCore<T, 3>(1.0 / norm, tmp, &fn[3 * inode]);
+        // call helper function to get node normal at single node
+        Basis::ShellComputeNodeNormal(pt, dXdxi, dXdeta, &fn[3*inode]);
     }
+}
+
+template <typename T, class Basis>
+__HOST_DEVICE__ void ShellComputeNodeNormal(const T pt[], const T dXdxi[], const T dXdeta[], T n0[]) {
+    // compute the shell node normal at a single node given already the pre-computed spatial gradients
+    T tmp[3];
+    A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
+    T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
+    A2D::VecScaleCore<T, 3>(1.0 / norm, tmp, n0);
 }
 
 template <typename T, class Basis>

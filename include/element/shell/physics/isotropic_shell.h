@@ -120,6 +120,23 @@ class IsotropicShell {
     }  // end of computeWeakRes
 
     template <typename T2>
+    __HOST_DEVICE__ static void compute_drill_strain_grad(const Data &physData, const T &scale,
+                        A2D::ADObj<A2D::Vec<T2,1> et) {
+        // compute drilling stiffness
+        T C[6];
+        Data::evalTangentStiffness2D(E, nu, C);
+        T As = Data::getTransShearCorrFactor() * thick * C[5];
+        T drill = Data::getDrillingRegularization() * As;
+
+        // or I could just do this..
+        T2 drill_strain = et.value()[0];
+        T2 drill_stress = drill * drill_strain;
+        et.bvalue()[0] = scale * drill_stress; // backprop from strain energy
+
+        // can also use stack, but not really necessary for this one
+    }
+
+    template <typename T2>
     __HOST_DEVICE__ static void computeWeakJacobianCol(const Data &physData, const T &scale,
                                                        A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
                                                        A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x,
