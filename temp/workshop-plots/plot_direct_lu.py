@@ -25,6 +25,9 @@ def plot_times(df, time_keys, all_flag):
 
         plt.style.use(niceplots.get_style())
 
+        plt.rcParams['axes.unicode_minus'] = False
+        plt.rcParams['font.family'] = 'DejaVu Sans'
+
         plt.figure()
         # Plot CPU line
         x = cpu_df['count'].to_numpy(); y = cpu_df[key].to_numpy()
