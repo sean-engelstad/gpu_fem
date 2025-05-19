@@ -456,6 +456,144 @@ __HOST_DEVICE__ static void computeTyingStrain(const T Xpts[], const T fn[], con
 
 }  // end of computeTyingStrain
 
+template <typename T, class Physics, class Basis, bool is_nonlinear>
+__HOST_DEVICE__ static void computeTyingStrainV2(const T Xpts[], const T vars[],
+                                               T ety[]) {
+    // using unrolled loop here for efficiency (if statements and for loops not
+    // great for device)
+    int32_t offset, num_tying;
+    static constexpr int vars_per_node = Physics::vars_per_node;
+
+    // get g11 tying strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(0);
+    num_tying = Basis::num_tying_points(0);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<0>(itying, pt);
+
+        // Interpolate the field value
+        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
+        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+
+        // store g11 strain
+        ety[offset + itying] = A2D::VecDotCore<T, 3>(Uxi, Xxi);
+
+        // nonlinear g11 strain term
+        if constexpr (is_nonlinear) {
+            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(Uxi, Uxi);
+        }
+
+    }  // end of itying for loop for g11
+
+    // get g22 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(1);
+    num_tying = Basis::num_tying_points(1);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<1>(itying, pt);
+
+        // Interpolate the field value
+        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
+        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+
+        // store g22 strain
+        ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
+
+        // nonlinear g22 strain term
+        if constexpr (is_nonlinear) {
+            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(Ueta, Ueta);
+        }
+
+    }  // end of itying for loop for g22
+
+    // get g12 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(2);
+    num_tying = Basis::num_tying_points(2);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<2>(itying, pt);
+
+        // Interpolate the field value
+        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
+        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+
+        // store g12 strain
+        ety[offset + itying] =
+            0.5 * (A2D::VecDotCore<T, 3>(Uxi, Xeta) + A2D::VecDotCore<T, 3>(Ueta, Xxi));
+
+        // nonlinear g12 strain term
+        if constexpr (is_nonlinear) {
+            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(Uxi, Ueta);
+        }
+    }  // end of itying for loop for g12
+
+    // get g23 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(3);
+    num_tying = Basis::num_tying_points(3);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<3>(itying, pt);
+
+        // Interpolate the field value
+        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
+        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+
+        T d0[3], n0[3];
+        Basis::template interpFields<3, 3>(pt, d, d0);
+        Basis::template interpFields<3, 3>(pt, fn, n0);
+
+        // store g23 strain
+        ety[offset + itying] =
+            0.5 * (A2D::VecDotCore<T, 3>(Xeta, d0) + A2D::VecDotCore<T, 3>(n0, Ueta));
+
+        // nonlinear g23 strain term
+        if constexpr (is_nonlinear) {
+            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(d0, Ueta);
+        }
+    }  // end of itying for loop for g23
+
+    // get g13 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(4);
+    num_tying = Basis::num_tying_points(4);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<4>(itying, pt);
+
+        // Interpolate the field value
+        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
+        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+
+        T d0[3], n0[3];
+        Basis::template interpFields<3, 3>(pt, d, d0);
+        Basis::template interpFields<3, 3>(pt, fn, n0);
+
+        // store g13 strain
+        ety[offset + itying] =
+            0.5 * (A2D::VecDotCore<T, 3>(Xxi, d0) + A2D::VecDotCore<T, 3>(n0, Uxi));
+
+        // nonlinear g13 strain term
+        if constexpr (is_nonlinear) {
+            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(d0, Uxi);
+        }
+    }  // end of itying for loop for g13
+
+}  // end of computeTyingStrain
+
 template <typename T, class Physics, class Basis>
 __HOST_DEVICE__ static void computeTyingStrainHfwd(const T Xpts[], const T fn[], const T vars[],
                                                    const T d[], const T p_vars[], const T p_d[],

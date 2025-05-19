@@ -297,12 +297,37 @@ class ShellQuadBasis {
         }
     }  // end of interpFieldsGrad method
 
+    __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T xpts[], T n0[]) {
+        // compute the shell node normal at a single node given already the pre-computed spatial gradients
+        T Xxi[3], Xeta[3];
+        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
+    }
+
     __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T dXdxi[], const T dXdeta[], T n0[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial gradients
         T tmp[3];
         A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
         T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
         A2D::VecScaleCore<T, 3>(1.0 / norm, tmp, n0);
+    }
+
+    __HOST_DEVICE__ static void ShellInterpNodeNormal(const T pt[], const xpts, T n0[]) {
+        // compute the shell node normal at a single node given already the pre-computed spatial gradients
+        T N[num_nodes];
+        lagrangeLobatto2D(pt[0], pt[1], N);
+
+        for (int ifield = 0; ifield < 3; ifield++) n0[ifield] = 0.0;
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            T fn[3], node_pt[2];
+            Basis::getNodePoint(inode, node_pt);
+            ShellComputeNodeNormal(node_pt, xpts, n0);
+
+            for (int ifield = 0; ifield < 3; ifield++) {
+                n0[ifield] += N[inode] * fn[ifield];
+            }
+        }
     }
 
     __HOST_DEVICE__ static void getTyingKnots(T red_knots[], T full_knots[]) {

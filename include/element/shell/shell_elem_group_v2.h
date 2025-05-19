@@ -77,7 +77,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],
                                                           const Data physData, T res[dof_per_elem]) {
-        // TODO
+        // this one sped up by calling 128 elements per block..
         T pt[2];
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
         A2D::ADObj<A2D::Vec<T, 1>> et;
