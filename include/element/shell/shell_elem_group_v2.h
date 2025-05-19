@@ -30,8 +30,8 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 // some if constexpr stuff on type of Basis?
 #ifdef USE_GPU
     static constexpr dim3 energy_block = dim3(32, num_quad_pts, 1);
-    static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
-    // static constexpr dim3 res_block = dim3(64, num_quad_pts, 1);
+    // static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
+    static constexpr dim3 res_block = dim3(128, num_quad_pts, 1);
     static constexpr dim3 jac_block = dim3(1, dof_per_elem, num_quad_pts);
     // static constexpr dim3 jac_block = dim3(dof_per_elem, num_quad_pts);
 #endif  // USE_GPU
@@ -55,6 +55,10 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         const T vars[dof_per_elem], const Data physData, T res[dof_per_elem])
 
     {
+        // this will just be for debug on CPU
+        // TODO : setup our own kernel functions for each element type and tunable launch params for each
+        // for this case, I want to launch a separate kernel for the drill strain, tying strain, bending strains, etc.
+
         if (!active_thread) return;
         // split up the quadpt residual into three pieces that contribute
         // separate terms to the strain energy for a metal / symmetric composite laminate
@@ -63,23 +67,24 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         _add_drill_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
 
         // TODO : split tying strains into midplane in-plane strains and transverse shear strain terms?
-        _add_tying_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
+        // _add_tying_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
 
-        _add_bending_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
+        // _add_bending_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
     }
 
     template <class Data>
     __HOST_DEVICE__ static void _add_drill_strain_quadpt_residual(const int iquad,
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],
-                                                          const Data physData, T &Uelem) {
-        // TODO
+                                                          const Data physData, T res[dof_per_elem]) {
+        // this one sped up by calling 128 elements per block..
+        T pt[2];
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
         A2D::ADObj<A2D::Vec<T, 1>> et;
 
         // compute the interpolated drill strain
         ShellComputeDrillStrainV2<T, vars_per_node, Data, Basis, Director>(
-            pt, physData.refAxis, xpts, vars, et.value().get_data(), &detXd);
+            pt, physData.refAxis, xpts, vars, et.value().get_data());
 
         // need to get scale = detXd * weight somehow
         T detXd = Basis::getDetXd(pt, xpts);
