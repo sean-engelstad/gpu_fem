@@ -43,7 +43,7 @@ __HOST_DEVICE__ void ShellComputeTransformLight(const T refAxis[], const T pt[],
     for (int i = 0; i < 3; i++) {
         Tmat[6+i] = n0[i];
     }
-    const T *n = &Tmat[6];
+    T *n = &Tmat[6];
     T norm = sqrt(A2D::VecDotCore<T,3>(n, n));
     for (int i = 0; i < 3; i++) {
         n[i] /= norm;
@@ -56,17 +56,19 @@ __HOST_DEVICE__ void ShellComputeTransformLight(const T refAxis[], const T pt[],
     } else {  // doesn't have ref axis
         // shell natural transform, set to dX/dxi
         for (int i = 0; i < 3; i++) {
-            Tmat[i] = Basis::interpFieldsGradLight<0,3>(i, pt, xpts);
+            Tmat[i] = Basis::template interpFieldsGradLight<XI,3>(i, pt, xpts);
         }
     }
 
     // remove normal component from t1 (of n)
     T d = A2D::VecDotCore<T,3>(&Tmat[0], &Tmat[6]); // t1 cross n
-    A2D::VecSum(T(1.0), &Tmat[0], -d, &Tmat[6], &Tmat[3]); // t1 - (t1 dot n) * n => t2 (temp store in t2)
-    A2D::VecNormalize(&Tmat[3], &Tmat[0]); // move from temp in t2 to t1
+    A2D::VecAddCore<T,3>(T(1.0), &Tmat[0], &Tmat[3]);
+    A2D::VecAddCore<T,3>(-d, &Tmat[6], &Tmat[3]); // t1 - (t1 dot n) * n => t2 (temp store in t2)
+    norm = sqrt(A2D::VecDotCore<T,3>(&Tmat[3], &Tmat[3]));
+    A2D::VecAddCore<T,3>(1.0, &Tmat[3], &Tmat[0]);
 
     // compute t2 by cross product
-    A2D::VecCrossCore<T,3>(&Tmat[6], &Tmat[0], &Tmat[3]); // nhat cross t1hat => t2hat
+    A2D::VecCrossCore<T>(&Tmat[6], &Tmat[0], &Tmat[3]); // nhat cross t1hat => t2hat
 
     // transpose Tmat to standard column major from row major format
     for (int i = 0; i < 3; i++) {
@@ -1042,12 +1044,20 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T xpts[], const T 
     // ------------------------------------
     offset = Basis::tying_point_offsets(0);
     num_tying = Basis::num_tying_points(0);
+
+    // return; // 32 registers per thread 
+
 #pragma unroll  // for low num_tying can speed up?
     for (int itying = 0; itying < num_tying; itying++) {
         T pt[2];
         Basis::template getTyingPoint<0>(itying, pt);
-        // backprop g11 = X,xi dot U0,xi
+        
+	// return; // still 32 registers per thread	
+
+	// backprop g11 = X,xi dot U0,xi
         Basis::template addInterpFieldsGradDotSensLight<XI, XI, 3, vars_per_node, 3>(ety_bar[offset + itying], pt, xpts, res);
+
+        return; // 136 registers per thread?
 
         if constexpr (is_nonlinear) {
             // backprop g11 nl term 1/2 * U0,xi dot U0,xi
@@ -1116,9 +1126,9 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T xpts[], const T 
             Director::template interpDirectorLight<Basis, vars_per_node, Basis::num_nodes>(pt, xpts, vars, d0);
 
             Basis::template interpFieldsGradRightDotLight_LeftSens<ETA, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, res, d0);
-            Basis::template interpFieldsGradRightDotLight_RightSens<ETA, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, d0_bar.get_data);
+            Basis::template interpFieldsGradRightDotLight_RightSens<ETA, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, d0_bar.get_data());
         }
-        Director::template interpDirectorLightSens<Basis, vars_per_node, Basis::num_nodes>(pt, xpts, d0_bar, res);
+        Director::template interpDirectorLightSens<Basis, vars_per_node, Basis::num_nodes>(1.0, pt, xpts, d0_bar.get_data(), res);
     }  // end of itying for loop for g23
 
     // get g13 strain
@@ -1145,9 +1155,9 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T xpts[], const T 
             Director::template interpDirectorLight<Basis, vars_per_node, Basis::num_nodes>(pt, xpts, vars, d0);
 
             Basis::template interpFieldsGradRightDotLight_LeftSens<XI, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, res, d0);
-            Basis::template interpFieldsGradRightDotLight_RightSens<XI, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, d0_bar.get_data);
+            Basis::template interpFieldsGradRightDotLight_RightSens<XI, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, d0_bar.get_data());
         }
-        Director::template interpDirectorLightSens<Basis, vars_per_node, Basis::num_nodes>(pt, xpts, d0_bar, res);
+        Director::template interpDirectorLightSens<Basis, vars_per_node, Basis::num_nodes>(1.0, pt, xpts, d0_bar.get_data(), res);
     }  // end of itying for loop for g13
 
 }  // end of computeTyingStrainSens

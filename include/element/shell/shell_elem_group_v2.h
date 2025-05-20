@@ -30,8 +30,8 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 // some if constexpr stuff on type of Basis?
 #ifdef USE_GPU
     static constexpr dim3 energy_block = dim3(32, num_quad_pts, 1);
-    // static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
-    static constexpr dim3 res_block = dim3(128, num_quad_pts, 1);
+    //static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
+    static constexpr dim3 res_block = dim3(64, num_quad_pts, 1);
     static constexpr dim3 jac_block = dim3(1, dof_per_elem, num_quad_pts);
     // static constexpr dim3 jac_block = dim3(dof_per_elem, num_quad_pts);
 #endif  // USE_GPU
@@ -62,7 +62,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         // separate terms to the strain energy for a metal / symmetric composite laminate
         // if not not sym laminate, could add extra term with k^T B eps_0 strain energy
 
-        int VERSION = 2; // 3
+        constexpr int VERSION = 2; // 3
         constexpr int CONTRIBUTION = 1; // for prelim testing, turn on only one term here
 
         if constexpr (CONTRIBUTION == 0) {
@@ -79,7 +79,9 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],
                                                           const Data physData, T res[dof_per_elem]) {
-        // this one sped up by calling 128 elements per block..
+        //printf("in drill strain\n");
+	    
+	    // this one sped up by calling 128 elements per block..
         T pt[2];
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
         A2D::ADObj<A2D::Vec<T, 1>> et;
@@ -115,30 +117,45 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
     __HOST_DEVICE__ static void _add_tying_strain_quadpt_residual(const int iquad,
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],
-                                                          const Data physData, T res[dof_per_elem]) {
+                                 			  const Data physData, T res[dof_per_elem]) {
         // TODO
+        //printf("in tying strain\n");
         T pt[2], detXd;
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
         A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
 
         // forward scope block
-        T XdinvT[9];
+        T XdinvT[9]; // 16 registers here
+
         { 
             // compute tying strain at the tying points
             T ety[Basis::num_all_tying_points];
             computeTyingStrainLight<T, Phys, Basis, Director>(xpts, vars, ety);
 
+	    //return; // 27 registers here
+
             // interp and rotate the tying strain
             A2D::SymMat<T, 3> gty;
             interpTyingStrainLight<T, Basis>(pt, ety, gty.get_data());
-            detXd = Basis::getFrameRotation<T, Data, Basis>(physData.refAxis, pt, xpts, XdinvT);
+            detXd = getFrameRotation<T, Data, Basis>(physData.refAxis, pt, xpts, XdinvT);
             A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
         }
+
+	// return; // 29 registers per thread
 
         // backprop from strain energy to tying strain gradient in physics
         T scale = detXd * weight;
         Phys::template compute_tying_strain_midplane_grad<T>(physData, scale, e0ty);
         Phys::template compute_tying_strain_transverse_grad<T>(physData, scale, e0ty);
+
+        //if (blockIdx.x == 0 && threadIdx.x == 0) {
+	//	A2D::SymMat<T,3>& e0ty_f = e0ty.value();
+	//	printf("e0ty_f: %.4e %.4e %.4e %.4e %.4e %.4e\n", e0ty_f[0], e0ty_f[1], e0ty_f[2], e0ty_f[3], e0ty_f[4], e0ty_f[5]);
+	//	A2D::SymMat<T,3>& e0ty_b = e0ty.bvalue();
+	//	printf("e0ty_b: %.4e %.4e %.4e %.4e %.4e %.4e\n", e0ty_b[0], e0ty_b[1], e0ty_b[2], e0ty_b[3], e0ty_b[4], e0ty_b[5]);
+	//}
+
+        //return; // 32 registers per thread
 
         // reverse scope block
         { 
@@ -147,19 +164,28 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             {
                 A2D::SymMat<T, 3> gty_bar;
                 A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(), gty_bar.get_data());
-                addinterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
+		
+		// return; // still 32 registers per thread
+
+		// TODO : the dot sens methods here are bugged out, massively grows the registers and slow down runtime by 10x lol
+                // this is the bottleneck function..
+		// addinterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
             }
+
+	    //return; // still 32 registers per thread
 
             // compute tying strain sens
             computeTyingStrainSensLight<T, Phys, Basis, Director>(xpts, vars, ety_bar.get_data(), res);
         }
+
+	return; // 
     }
 
     template <class Data>
     __HOST_DEVICE__ static void _add_bending_strain_quadpt_residual(const int iquad,
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],
-                                                          const Data physData, T &Uelem) {
+                                                          const Data physData, T res[]) {
         // TODO
         
     }

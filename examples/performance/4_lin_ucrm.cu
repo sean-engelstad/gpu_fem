@@ -65,8 +65,25 @@ int main() {
   auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
   auto res = assembler.createVarsVec();
   auto soln = assembler.createVarsVec();
+
+  // debug
+  int nvars = assembler.get_num_vars();
+  auto h_soln1 = soln.createHostVec();
+  for (int i = 0; i < nvars; i++) {
+      h_soln1[i] = 1.1343 + 2.3142 * i + 4.132 * i * i;
+      h_soln1[i] *= 1e-6;
+  }
+  auto soln2 = h_soln1.createDeviceVec();
+  assembler.set_variables(soln2);
+
   assembler.add_residual(res, print); // warmup call
   assembler.add_residual(res, print);
+
+  // check residual not zero
+  printf("check resid\n");
+  auto h_res = res.createHostVec();
+  printVec<T>(100, h_res.getPtr());
+
   return 0;
 
   assembler.add_jacobian(res, kmat, print);
@@ -74,7 +91,7 @@ int main() {
   assembler.apply_bcs(kmat);
 
   // get the loads
-  int nvars = assembler.get_num_vars();
+  //int nvars = assembler.get_num_vars();
   int nnodes = assembler.get_num_nodes();
   HostVec<T> h_loads(nvars);
   double load_mag = 3.0 * 23.0;

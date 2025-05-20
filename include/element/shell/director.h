@@ -121,8 +121,8 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
     }
 
     template <class Basis, int vars_per_node, int num_nodes>
-    __HOST_DEVICE__ static void interpDirectorLightSens(const T scale[], const T pt[], const T xpts[], const T d0_bar[], T res[]) {
-        const T *q_bar = &res[offset];
+    __HOST_DEVICE__ static void interpDirectorLightSens(const T scale, const T pt[], const T xpts[], const T d0_bar[], T res[]) {
+        T *q_bar = &res[offset];
         for (int inode = 0; inode < num_nodes; inode++) {
             T n0[3], node_pt[2], d_bar[3];
             Basis::getNodePoint(inode, node_pt);
@@ -130,7 +130,7 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
 
             for (int ifield = 0; ifield < 3; ifield++) {
                 T jac = Basis::lagrangeLobatto2DLight(inode, pt[0], pt[1]);
-                d_bar[ifield] = scale * jac *  * d0_bar[ifield];
+                d_bar[ifield] = scale * jac * d0_bar[ifield];
             }
 
             A2D::VecCrossCoreAdd<T>(n0, d_bar, q_bar);

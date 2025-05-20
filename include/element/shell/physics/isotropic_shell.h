@@ -141,7 +141,7 @@ class IsotropicShell {
 
     template <typename T2>
     __HOST_DEVICE__ static void compute_tying_strain_midplane_grad(const Data &physData, const T &scale,
-                        A2D::ADObj<A2D::SymMat<T, 3>> e0ty) {
+                        A2D::ADObj<A2D::SymMat<T, 3>> &e0ty) {
         /* compute gradient of energy term with midplane strains */
         
         // compute the A matrix * strain (assume B = 0, sym laminate)
@@ -160,12 +160,15 @@ class IsotropicShell {
         e0ty_b[0] = scale * s0[0];
         e0ty_b[3] = scale * s0[1];
         e0ty_b[1] = scale * s0[2];
+	//if (threadIdx.x == 0 && blockIdx.x == 0) {
+	//    printf("e0ty_b 0 %.4e, 1 %.4e, 2 %.4e\n", e0ty_b[0], e0ty_b[3], e0ty_b[1]);
+	//}
         // this scale*stress is the midplane energy gradient
     }
 
     template <typename T2>
     __HOST_DEVICE__ static void compute_tying_strain_transverse_grad(const Data &physData, const T &scale,
-                        A2D::ADObj<A2D::SymMat<T, 3>> e0ty) {
+                        A2D::ADObj<A2D::SymMat<T, 3>> &e0ty) {
         /* compute gradient of energy term with transverse shear strains */
         T As;
         {
