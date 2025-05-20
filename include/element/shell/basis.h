@@ -646,10 +646,11 @@ class ShellQuadBasis {
                 }
             }
         }
+        return dot;
     }  // end of getTyingInterp
 
     template <int icomp>
-    __HOST_DEVICE__ static T addTyingInterpTransposeLight(const T pt[], const T out_bar[], T ety_bar[]) {
+    __HOST_DEVICE__ static void addTyingInterpTransposeLight(const T pt[], const T out_bar[], T ety_bar[]) {
         if constexpr (icomp == 0) {
             // g11
             for (int j = 0; j < order; j++) {

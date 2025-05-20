@@ -109,7 +109,7 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
         for (int inode = 0; inode < num_nodes; inode++) {
             T n0[3], node_pt[2], d[3];
             Basis::getNodePoint(inode, node_pt);
-            ShellComputeNodeNormal(node_pt, xpts, n0);
+            Basis::ShellComputeNodeNormal(node_pt, xpts, n0);
 
             A2D::VecCrossCore<T>(q, n0, d);
             q += vars_per_node;
@@ -126,7 +126,7 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
         for (int inode = 0; inode < num_nodes; inode++) {
             T n0[3], node_pt[2], d_bar[3];
             Basis::getNodePoint(inode, node_pt);
-            ShellComputeNodeNormal(node_pt, xpts, n0);
+            Basis::ShellComputeNodeNormal(node_pt, xpts, n0);
 
             for (int ifield = 0; ifield < 3; ifield++) {
                 T jac = Basis::lagrangeLobatto2DLight(inode, pt[0], pt[1]);
