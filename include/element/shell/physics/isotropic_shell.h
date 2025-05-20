@@ -167,7 +167,7 @@ class IsotropicShell {
     __HOST_DEVICE__ static void compute_tying_strain_transverse_grad(const Data &physData, const T &scale,
                         A2D::ADObj<A2D::SymMat<T, 3>> e0ty) {
         /* compute gradient of energy term with transverse shear strains */
-        T As
+        T As;
         {
             T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
             Data::evalTangentStiffness2D(E, nu, C);

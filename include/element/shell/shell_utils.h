@@ -1,6 +1,10 @@
 #pragma once
 #include "../../cuda_utils.h"
 
+enum COMP_VAR {
+    XI, ETA
+};
+
 template <typename T, class Data>
 __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], const T dXdeta[],
                                            const T n0[], T Tmat[]) {
