@@ -104,7 +104,7 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
     }
 
     template <class Basis, int vars_per_node, int num_nodes>
-    __HOST_DEVICE__ static void interpDirectorLight(const T pt[], const T xpts, const T vars[], T d0[]) {
+    __HOST_DEVICE__ static void interpDirectorLight(const T pt[], const T xpts[], const T vars[], T d0[]) {
         const T *q = &vars[offset];
         for (int inode = 0; inode < num_nodes; inode++) {
             T n0[3], node_pt[2], d[3];
@@ -121,7 +121,7 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
     }
 
     template <class Basis, int vars_per_node, int num_nodes>
-    __HOST_DEVICE__ static void interpDirectorLightSens(const T scale[], const T pt[], const T xpts, const T d0_bar[], T res[]) {
+    __HOST_DEVICE__ static void interpDirectorLightSens(const T scale[], const T pt[], const T xpts[], const T d0_bar[], T res[]) {
         const T *q_bar = &res[offset];
         for (int inode = 0; inode < num_nodes; inode++) {
             T n0[3], node_pt[2], d_bar[3];

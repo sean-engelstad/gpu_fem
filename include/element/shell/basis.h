@@ -598,7 +598,7 @@ class ShellQuadBasis {
     }  // end of getTyingInterp
 
     template <int icomp>
-    __HOST_DEVICE__ static T getTyingInterpLight(const T pt[], T ety[]) {
+    __HOST_DEVICE__ static T getTyingInterpLight(const T pt[], const T ety[]) {
         // get 1d knot vectors
         // T red_knots[(order-1)], full_knots[order];
         // getTyingKnots(red_knots, full_knots);
