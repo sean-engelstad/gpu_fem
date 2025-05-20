@@ -143,10 +143,11 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         // reverse scope block
         { 
             // interp tying strain sens
+            A2D::Vec<T, Basis::num_all_tying_points> ety_bar;
             {
                 A2D::SymMat<T, 3> gty_bar;
                 A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(), gty_bar.get_data());
-                interpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar);
+                addinterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
             }
 
             // compute tying strain sens

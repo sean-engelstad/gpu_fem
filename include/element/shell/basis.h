@@ -260,7 +260,7 @@ class ShellQuadBasis {
     }
 
     template <int vars_per_node>
-    __HOST_DEVICE__ static void assembleFrameLight(const T pt[], const T values[], const T normal, T Xd[]) {
+    __HOST_DEVICE__ static void assembleFrameLight(const T pt[], const T values[], const T normal[], T frame[]) {
         /* light implementation of assembleFrame for xpts */
         
         for (int i = 0; i < 3; i++) {
@@ -287,16 +287,7 @@ class ShellQuadBasis {
     __HOST_DEVICE__ static T getDetXd(const T pt[], const T xpts[]) {
         // get detXd at quadpt
         T Xd[9];
-        {
-        T Xxi[3], Xeta[3], n0[3];
-        interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
-
-        // compute the shell node normals
-        ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
-
-        // assemble Xd frame
-        assembleFrame(Xxi, Xeta, n0, Xd);
-        }
+        assembleXptFrameLight(pt, xpts, Xd);
 
         // now compute det of Xd jacobian
         T detXd = A2D::MatDetCore<T, 3>(Xd);
@@ -344,12 +335,12 @@ class ShellQuadBasis {
         }
     }  // end of interpFieldsGrad method
 
-    template <COMP_VAR ideriv, int vars_per_node>
+    template <COMP_VAR DERIV, int vars_per_node>
     __HOST_DEVICE__ static T interpFieldsGradLight(const int ifield, const T pt[], const T values[]) {
         /* light version of interpFieldsGrad, where ideriv is either 0 or 1 */
         T out = 0.0;
         for (int inode = 0; inode < num_nodes; inode++) {
-            out += lagrangeLobatto2DGradLight<ideriv>(inode, pt[0], pt[1]) * values[vars_per_node * inode + ifield];
+            out += lagrangeLobatto2DGradLight<DERIV>(inode, pt[0], pt[1]) * values[vars_per_node * inode + ifield];
         }
         return out;
     }  // end of interpFieldsGradLight method
@@ -412,7 +403,7 @@ class ShellQuadBasis {
         */
         for (int ifield = 0; ifield < nfields; ifield++) {
             for (int inode = 0; inode < num_nodes; inode++) {
-                T jac = vec2[ifield] * lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) * vec1[vpn1 * inode + ifield];
+                T jac = vec2[ifield] * lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]);
                 vec1_bar[vpn1*inode + ifield] += scale * jac;
             }
         }
@@ -493,6 +484,7 @@ class ShellQuadBasis {
 
     __HOST_DEVICE__ static void ShellComputeNodeNormalLight(const T pt[], const T xpts[], T n0[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial gradients
+        // TODO : could make this cheaper and compute the dot product on the fly with less memory if I want / need to
         T Xxi[3], Xeta[3];
         for (int i = 0; i < 3; i++) {
             Xxi[i] = interpFieldsGradLight<XI,3>(i, pt, xpts);
@@ -511,9 +503,6 @@ class ShellQuadBasis {
 
     __HOST_DEVICE__ static void interpNodeNormalLight(const T pt[], const xpts, T n0[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial gradients
-        T N[num_nodes];
-        lagrangeLobatto2D(pt[0], pt[1], N);
-
         for (int ifield = 0; ifield < 3; ifield++) n0[ifield] = 0.0;
 
         for (int inode = 0; inode < num_nodes; inode++) {
@@ -522,7 +511,7 @@ class ShellQuadBasis {
             ShellComputeNodeNormalLight(node_pt, xpts, n0);
 
             for (int ifield = 0; ifield < 3; ifield++) {
-                n0[ifield] += N[inode] * fn[ifield];
+                n0[ifield] += lagrangeLobatto2DLight(inode, pt[0], pt[1]) * fn[ifield];
             }
         }
     }
@@ -648,7 +637,7 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety++) {
                     // na[i] * nbr[j]
-                    dot += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * ety[0];
+                    dot += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * ety[0];
                 }
             }
         } else if constexpr (icomp == 3) {
@@ -656,7 +645,7 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety++) {
                     // na[i] * nbr[j]
-                    dot += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * ety[0];
+                    dot += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * ety[0];
                 }
             }
         }
@@ -693,7 +682,7 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety_bar++) {
                     // na[i] * nbr[j]
-                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * out_bar;
+                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * out_bar;
                 }
             }
         } else if constexpr (icomp == 3) {
@@ -701,7 +690,7 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety_bar++) {
                     // na[i] * nbr[j]
-                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * out_bar;
+                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * out_bar;
                 }
             }
         }
@@ -911,7 +900,7 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[], const T gty
 }
 
 template <typename T, class Basis>
-__HOST_DEVICE__ static void interpTyingStrainTransposeLight(const T pt[], const T gty_bar[],
+__HOST_DEVICE__ static void addinterpTyingStrainTransposeLight(const T pt[], const T gty_bar[],
                                                        T ety_bar[]) {
     // given quadpt pt[] and ety[] the tying strains at each tying point from MITC
     // in order {g11-n1, g11-n2, ..., g11-nN, g22-n1, g22-n2,...}
