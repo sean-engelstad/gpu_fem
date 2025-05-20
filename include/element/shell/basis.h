@@ -180,7 +180,7 @@ class ShellQuadBasis {
         }
     }
 
-    __HOST_DEVICE__ static void lagrangeLobatto1DGradLight(const int i, const int u) {
+    __HOST_DEVICE__ static T lagrangeLobatto1DGradLight(const int i, const int u) {
         if constexpr (order == 2) {
             return -1.0 + 2.0 * i;
         }

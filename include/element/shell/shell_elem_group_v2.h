@@ -63,7 +63,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         // if not not sym laminate, could add extra term with k^T B eps_0 strain energy
 
         int VERSION = 2; // 3
-        int CONTRIBUTION = 1; // for prelim testing, turn on only one term here
+        constexpr int CONTRIBUTION = 1; // for prelim testing, turn on only one term here
 
         if constexpr (CONTRIBUTION == 0) {
             _add_drill_strain_quadpt_residual<Data, VERSION>(iquad, xpts, vars, physData, res);
