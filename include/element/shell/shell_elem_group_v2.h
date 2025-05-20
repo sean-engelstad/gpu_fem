@@ -131,8 +131,8 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             // interp and rotate the tying strain
             A2D::SymMat<T, 3> gty;
             interpTyingStrainLight<T, Basis>(pt, ety, gty.get_data());
-            detXd = getFrameRotation<T, Data, Basis>(physData.refAxis, pt, xpts, XdinvT);
-            A2D::SymMatRotateFrame<T, 3>(XdinvT, gty.get_data(), e0ty.value().get_data());
+            detXd = Basis::getFrameRotation<T, Data, Basis>(physData.refAxis, pt, xpts, XdinvT);
+            A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
         }
 
         // backprop from strain energy to tying strain gradient in physics
