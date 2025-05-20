@@ -123,12 +123,12 @@ class IsotropicShell {
     __HOST_DEVICE__ static void compute_drill_strain_grad(const Data &physData, const T &scale,
                         A2D::ADObj<A2D::Vec<T2,1>> et) {
         // compute drilling stiffness
-        
+        T drill;
         { // TODO : could just compute G here separately.., less data
             T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
             Data::evalTangentStiffness2D(E, nu, C);
             T As = Data::getTransShearCorrFactor() * thick * C[5];
-            T drill = Data::getDrillingRegularization() * As;
+            drill = Data::getDrillingRegularization() * As;
         }
 
         // or I could just do this..
@@ -167,9 +167,14 @@ class IsotropicShell {
     __HOST_DEVICE__ static void compute_tying_strain_transverse_grad(const Data &physData, const T &scale,
                         A2D::ADObj<A2D::SymMat<T, 3>> e0ty) {
         /* compute gradient of energy term with transverse shear strains */
+        T As
+        {
+            T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
+            Data::evalTangentStiffness2D(E, nu, C);
+            As = Data::getTransShearCorrFactor() * thick * C[5];
+        }
         A2D::SymMat<T,3> &e0ty_f = e0ty.value();
         A2D::SymMat<T,3> &e0ty_b = e0ty.bvalue();
-        T As = Data::getTransShearCorrFactor() * thick * C[5];
         
         // scale * stress is the gradient of e0ty in these entries
         e0ty_b[6] *= 4.0 * scale * As * e0ty_f[6]; // e23, transverse shear

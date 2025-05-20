@@ -126,7 +126,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         { 
             // compute tying strain at the tying points
             T ety[Basis::num_all_tying_points];
-            computeTyingStrainLight<T, Phys, Basis>(xpts, vars, ety);
+            computeTyingStrainLight<T, Phys, Basis, Director>(xpts, vars, ety);
 
             // interp and rotate the tying strain
             A2D::SymMat<T, 3> gty;
@@ -151,7 +151,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             }
 
             // compute tying strain sens
-            computeTyingStrainSensLight<T, Phys, Basis>(xpts, vars, ety_bar.get_data(), res);
+            computeTyingStrainSensLight<T, Phys, Basis, Director>(xpts, vars, ety_bar.get_data(), res);
         }
     }
 

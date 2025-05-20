@@ -53,6 +53,7 @@ class ShellIsotropicData {
         // sym mat prod
         stress[0] = D * strain[0] + nu_ * D * strain[1]; // e11 => s11
         stress[1] = nu_ * D * strain[0] + D * strain[1]; // e22 => s22
+        T G = E_ / 2.0 / (1.0 + nu_);
         stress[2] = G * strain[2]; // e12 => s12
         for (int i = 0; i < 3; i++) stress[i] *= scale;
     }
