@@ -363,7 +363,7 @@ class ShellQuadBasis {
     }  // end of interpFieldsGradDotLight method
 
     template <COMP_VAR i1, COMP_VAR i2, int vpn1, int vpn2, int nfields>
-    __HOST_DEVICE__ static T addInterpFieldsGradDotSensLight(const T scale[], const T pt[], const T vec1[], const T vec2_bar[]) {
+    __HOST_DEVICE__ static void addInterpFieldsGradDotSensLight(const T scale[], const T pt[], const T vec1[], T vec2_bar[]) {
         /* i1, i2 represent xi, eta through 0,1
             dot product of forward analysis is <dvec1/di1, dvec2/di2> assume here vec2 is for derivative
         */
@@ -397,7 +397,7 @@ class ShellQuadBasis {
     }  // end of interpFieldsGradDotLight method
 
     template <COMP_VAR i1, int vpn1, int nfields>
-    __HOST_DEVICE__ static void interpFieldsGradRightDotLight_LeftSens(const T scale[], const T pt[], const T vec1_bar[], const T vec2[]) {
+    __HOST_DEVICE__ static void interpFieldsGradRightDotLight_LeftSens(const T scale[], const T pt[], T vec1_bar[], const T vec2[]) {
         /* i1, i2 represent xi, eta through 0,1
             then this is dot product <dvec1/di1, vec2> where i1 is comp derivative
         */
@@ -410,7 +410,7 @@ class ShellQuadBasis {
     }  // end of interpFieldsGradDotLight method
 
     template <COMP_VAR i1, int vpn1, int nfields>
-    __HOST_DEVICE__ static T interpFieldsGradRightDotLight_RightSens(const T scale[], const T pt[], const T vec1[], const T vec2_bar[]) {
+    __HOST_DEVICE__ static T interpFieldsGradRightDotLight_RightSens(const T scale[], const T pt[], const T vec1[], T vec2_bar[]) {
         /* i1, i2 represent xi, eta through 0,1
             then this is dot product <dvec1/di1, vec2> where i1 is comp derivative
         */

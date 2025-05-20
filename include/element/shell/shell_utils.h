@@ -1033,7 +1033,7 @@ __HOST_DEVICE__ static void computeTyingStrainSens(const T Xpts[], const T fn[],
 }  // end of computeTyingStrainSens
 
 template <typename T, class Physics, class Basis>
-__HOST_DEVICE__ static void computeTyingStrainSensLight(const T Xpts[], const T vars[],
+__HOST_DEVICE__ static void computeTyingStrainSensLight(const T xpts[], const T vars[],
                                                    const T ety_bar[], T res[]) {
     // using unrolled loop here for efficiency (if statements and for loops not
     // great for device)
@@ -1050,11 +1050,11 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T Xpts[], const T 
         T pt[2];
         Basis::template getTyingPoint<0>(itying, pt);
         // backprop g11 = X,xi dot U0,xi
-        addInterpFieldsGradDotSensLight<XI, XI, 3, vars_per_node, 3>(ety_bar[offset + itying], pt, xpts, res);
+        Basis::addInterpFieldsGradDotSensLight<XI, XI, 3, vars_per_node, 3>(ety_bar[offset + itying], pt, xpts, res);
 
         if constexpr (is_nonlinear) {
             // backprop g11 nl term 1/2 * U0,xi dot U0,xi
-            addInterpFieldsGradDotSensLight<XI, XI, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
+            Basis::addInterpFieldsGradDotSensLight<XI, XI, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
         }
     }  // end of itying for loop for g11
 
@@ -1067,11 +1067,11 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T Xpts[], const T 
         T pt[2];
         Basis::template getTyingPoint<1>(itying, pt);
         // backprop g22 = X,eta dot U0,eta
-        addInterpFieldsGradDotSensLight<ETA, ETA, 3, vars_per_node, 3>(ety_bar[offset + itying], pt, xpts, res);
+        Basis::addInterpFieldsGradDotSensLight<ETA, ETA, 3, vars_per_node, 3>(ety_bar[offset + itying], pt, xpts, res);
 
         if constexpr (is_nonlinear) {
             // backprop g22 nl term 1/2 * U0,eta dot U0,eta
-            addInterpFieldsGradDotSensLight<ETA, ETA, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
+            Basis::addInterpFieldsGradDotSensLight<ETA, ETA, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
         }
     }  // end of itying for loop for g22
 
@@ -1085,13 +1085,13 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T Xpts[], const T 
         Basis::template getTyingPoint<2>(itying, pt);
 
         // backprop g12 = 0.5 * (X,eta dot U0,xi + X,xi dot U0,eta)
-        addInterpFieldsGradDotSensLight<XI, ETA, 3, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, xpts, res);
-        addInterpFieldsGradDotSensLight<ETA, XI, 3, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, xpts, res);
+        Basis::addInterpFieldsGradDotSensLight<XI, ETA, 3, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, xpts, res);
+        Basis::addInterpFieldsGradDotSensLight<ETA, XI, 3, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, xpts, res);
 
         if constexpr (is_nonlinear) {
             // backprop g12 nl term 1/2 * U0,xi dot U0,eta
-            addInterpFieldsGradDotSensLight<XI, ETA, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
-            addInterpFieldsGradDotSensLight<ETA, XI, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
+            Basis::addInterpFieldsGradDotSensLight<XI, ETA, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
+            Basis::addInterpFieldsGradDotSensLight<ETA, XI, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, res);
         }
     }  // end of itying for loop for g12
 
