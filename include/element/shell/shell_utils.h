@@ -1109,7 +1109,7 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T xpts[], const T 
         Basis::interpFieldsGradRightDotLight_RightSens<ETA, 3, 3>(0.5 * ety_bar[offset + itying], pt, xpts, d0_bar.get_data());
         {
             T n0[3]; // U0,eta dot d0 term
-            Basis::interpNodeNormalLight(pt, Xpts, n0);
+            Basis::interpNodeNormalLight(pt, xpts, n0);
             Basis::interpFieldsGradRightDotLight_LeftSens<ETA, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, res, n0);
         }
 
@@ -1138,7 +1138,7 @@ __HOST_DEVICE__ static void computeTyingStrainSensLight(const T xpts[], const T 
         Basis::interpFieldsGradRightDotLight_RightSens<XI, 3, 3>(0.5 * ety_bar[offset + itying], pt, xpts, d0_bar.get_data());
         {
             T n0[3]; // U0,eta dot d0 term
-            Basis::interpNodeNormalLight(pt, Xpts, n0);
+            Basis::interpNodeNormalLight(pt, xpts, n0);
             Basis::interpFieldsGradRightDotLight_LeftSens<XI, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, res, n0);
         }
 
