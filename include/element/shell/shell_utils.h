@@ -34,6 +34,50 @@ __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], c
     }
 }
 
+template <typename T, class Basis, class Data>
+__HOST_DEVICE__ void ShellComputeTransformLight(const T refAxis[], const T pt[], const T xpts[],
+                                           const T n0[], T Tmat[]) {
+    // make the normal a unit vector, store it in Tmat (Tmat assembled in transpose form first for convenience, then transposed later)
+    for (int i = 0; i < 9; i++) Tmat[i] = 0.0; // zero out
+    for (int i = 0; i < 3; i++) {
+        Tmat[6+i] = n0[i];
+    }
+    const T *n = &Tmat[6];
+    T norm = sqrt(A2D::VecDotCore<T,3>(n, n));
+    for (int i = 0; i < 3; i++) {
+        n[i] /= norm;
+    }
+
+    // set t1
+    if constexpr (Data::has_ref_axis) {
+        // shell ref axis transform
+        A2D::VecAddCore<T,3>(1.0, refAxis, &Tmat[0]);
+    } else {  // doesn't have ref axis
+        // shell natural transform, set to dX/dxi
+        for (int i = 0; i < 3; i++) {
+            Tmat[i] = interpFieldsGradLight<XI,3>(i, pt, xpts);
+        }
+    }
+
+    // remove normal component from t1 (of n)
+    T d = A2D::VecDotCore<T,3>(&Tmat[0], &Tmat[6]); // t1 cross n
+    A2D::VecSum(T(1.0), &Tmat[0], -d, &Tmat[6], &Tmat[3]); // t1 - (t1 dot n) * n => t2 (temp store in t2)
+    A2D::VecNormalize(&Tmat[3], &Tmat[0]); // move from temp in t2 to t1
+
+    // compute t2 by cross product
+    A2D::VecCrossCore<T,3>(&Tmat[6], &Tmat[0], &Tmat[3]); // nhat cross t1hat => t2hat
+
+    // transpose Tmat to standard column major from row major format
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            // in place transpose swap
+            T tmp = Tmat[3 * i + j];
+            Tmat[3 * i + j] = Tmat[3 * j + i];
+            Tmat[3 * j + i] = tmp;
+        }
+    }
+}
+
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[], const T xpts[],
                                              const T vars[], const T fn[], T et[]) {
@@ -133,6 +177,64 @@ __HOST_DEVICE__ void ShellComputeDrillStrainV2(const T quad_pt[], const T refAxi
 
             A2D::Vec<T, 3> zero;
             Basis::assembleFrame(u0xi, u0eta, zero.get_data(), u0xn);
+        }
+
+        // compute rotation matrix at this node
+        T C[9], tmp[9];
+        Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
+
+        // compute Ct = T^T * C * T
+        using MatOp = A2D::MatOp;
+        A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, C, tmp);
+        A2D::MatMatMultCore3x3<T>(tmp, Tmat, C);
+
+        // inverse Xd frame and Transformed product
+        T XdinvTn[9];
+        A2D::MatInvCore<T, 3>(Xd, tmp);
+        A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
+
+        // Compute transformation u0x = T^T * u0xn * (Xdinv*T)
+        A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
+        A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
+
+        // compute the drill strain
+        etn[inode] = Director::evalDrillStrain(u0xn, C);
+
+    }  // end of node for loop
+
+    // now interpolate to single et value
+    Basis::template interpFields<1, 1>(quad_pt, etn, et);
+
+}  // end of method ShellComputeDrillStrainV2
+
+template <typename T, int vars_per_node, class Data, class Basis, class Director>
+__HOST_DEVICE__ void ShellComputeDrillStrainV3(const T quad_pt[], const T refAxis[], const T xpts[],
+                                             const T vars[], T et[]) {
+    // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
+
+    T etn[Basis::num_nodes];
+    for (int inode = 0; inode < Basis::num_nodes; inode++) {
+        T pt[2];
+        Basis::getNodePoint(inode, pt);
+
+        // get shell transform and Xdn frame scope
+        T Tmat[9], Xd[9];
+        {
+            T n0[3];
+            ShellComputeNodeNormalLight(pt, xpts, n0);
+
+            // assemble Xd frame
+            Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
+
+            // compute the shell transform based on the ref axis in Data object
+            ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
+        }  // end of Xd and shell transform scope
+
+        // assemble u0xn frame scope
+        T u0xn[9];
+        {
+            Basis::assembleFrameLight<6>(pt, values, &Xd[0], u0xn);
+            for (int i = 0; i < 3; i++) u0xn[3*i+2] = 0.0; // last column is zero (just put Xd in there to save registers)
         }
 
         // compute rotation matrix at this node
@@ -306,7 +408,72 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSensV2(const T quad_pt[], const T re
         }
 
     }  // end of node for loop
-}  // end of method ShellComputeDrillStrainSens
+}  // end of method ShellComputeDrillStrainSensV2
+
+template <typename T, int vars_per_node, class Data, class Basis, class Director>
+__HOST_DEVICE__ void ShellComputeDrillStrainSensV3(const T quad_pt[], const T refAxis[],
+                                                 const T xpts[], const T vars[],
+                                                 const T et_bar[], T res[]) {
+    // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
+
+    // first interpolate back to nodal level
+    A2D::Vec<T, Basis::num_nodes> etn_bar;
+    Basis::template interpFieldsTransposeLight<1, 1>(quad_pt, et_bar, etn_bar.get_data());
+
+    constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
+    constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
+
+    for (int inode = 0; inode < Basis::num_nodes; inode++) {
+        T pt[2];
+        Basis::getNodePoint(inode, pt);
+
+        // get shell transform and Xdn frame scope
+        T Tmat[9], Xd[9];
+        {
+            T n0[3];
+            ShellComputeNodeNormalLight(pt, xpts, n0);
+
+            // assemble Xd frame
+            Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
+
+            // compute the shell transform based on the ref axis in Data object
+            ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
+        }  // end of Xd and shell transform scope
+
+        T u0xn_bar[9], C_bar[9];  // really u0x_bar at this point (but don't want two vars for it)
+        Director::evalDrillStrainSens(etn_bar[inode], u0xn_bar, C_bar);
+
+        T tmp[9];
+        {
+            // C_bar = T * C2_bar * T^t (in reverse)
+            A2D::MatMatMultCore3x3<T>(Tmat, C_bar, tmp);
+            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, C_bar);
+
+            // reverse C(vars) to C_bar => res
+            Director::template computeRotationMatSens<vars_per_node, 1>(
+                C_bar, &res[vars_per_node * inode]);
+        }
+
+        // backprop u0x_bar to u0xn_bar^T
+        {
+            T XdinvT[9];
+            A2D::MatInvCore<T, 3>(Xd, tmp);  // Xdinv
+            A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvT);
+
+            // u0xn_bar = T * u0x_bar * XdinvT^t
+            // transpose version for convenience of cols avail in rows
+            // u0xn_bar^t = XdinvT * u0x_bar^t * T^t (u0xn_bar now holds transpose u0xn_bar^t)
+            A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u0xn_bar, tmp);
+            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0xn_bar);
+
+            // reverse the interpolations u0xn_bar to res
+            // because we have u0xn_bar^T stored, each row is u0xi_bar, u0eta_bar
+            Basis::template interpFieldsGradTransposeLight<vars_per_node, 3>(pt, &u0xn_bar[0],
+                                                                        &u0xn_bar[3], res);
+        }
+
+    }  // end of node for loop
+}  // end of method ShellComputeDrillStrainSensV3
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainHrev(const T quad_pt[], const T refAxis[],
@@ -456,12 +623,13 @@ __HOST_DEVICE__ static void computeTyingStrain(const T Xpts[], const T fn[], con
 
 }  // end of computeTyingStrain
 
-template <typename T, class Physics, class Basis, bool is_nonlinear>
-__HOST_DEVICE__ static void computeTyingStrainV2(const T Xpts[], const T vars[],
+template <typename T, class Physics, class Basis>
+__HOST_DEVICE__ static void computeTyingStrainLight(const T xpts[], const T vars[],
                                                T ety[]) {
     // using unrolled loop here for efficiency (if statements and for loops not
     // great for device)
     int32_t offset, num_tying;
+    static constexpr bool is_nonlinear = Physics::is_nonlinear;
     static constexpr int vars_per_node = Physics::vars_per_node;
 
     // get g11 tying strain
@@ -473,17 +641,12 @@ __HOST_DEVICE__ static void computeTyingStrainV2(const T Xpts[], const T vars[],
         T pt[2];
         Basis::template getTyingPoint<0>(itying, pt);
 
-        // Interpolate the field value
-        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        // g11 strain = X,xi * U0,xi (midplane disps)
+        ety[offset + itying] = interpFieldsGradDotLight<XI, XI, 3, vars_per_node, 3>(pt, xpts, vars);
 
-        // store g11 strain
-        ety[offset + itying] = A2D::VecDotCore<T, 3>(Uxi, Xxi);
-
-        // nonlinear g11 strain term
+        // nonlinear g11 strain term = 0.5 * U0,xi * U0,xi
         if constexpr (is_nonlinear) {
-            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(Uxi, Uxi);
+            ety[offset + itying] += 0.5 * interpFieldsGradDotLight<XI, XI, vars_per_node, vars_per_node, 3>(pt, vars, vars);
         }
 
     }  // end of itying for loop for g11
@@ -497,17 +660,12 @@ __HOST_DEVICE__ static void computeTyingStrainV2(const T Xpts[], const T vars[],
         T pt[2];
         Basis::template getTyingPoint<1>(itying, pt);
 
-        // Interpolate the field value
-        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        // store g22 strain = X,eta * U0,eta
+        ety[offset + itying] = interpFieldsGradDotLight<ETA, ETA, 3, vars_per_node, 3>(pt, xpts, vars);
 
-        // store g22 strain
-        ety[offset + itying] = A2D::VecDotCore<T, 3>(Ueta, Xeta);
-
-        // nonlinear g22 strain term
+        // nonlinear g22 strain term += 0.5 * U0,eta * U0,eta
         if constexpr (is_nonlinear) {
-            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(Ueta, Ueta);
+            ety[offset + itying] += 0.5 * interpFieldsGradDotLight<ETA, ETA, vars_per_node, vars_per_node, 3>(pt, vars, vars);
         }
 
     }  // end of itying for loop for g22
@@ -521,18 +679,13 @@ __HOST_DEVICE__ static void computeTyingStrainV2(const T Xpts[], const T vars[],
         T pt[2];
         Basis::template getTyingPoint<2>(itying, pt);
 
-        // Interpolate the field value
-        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        // store g12 strain = 0.5 * (X,eta * U0,xi + X,xi * U0,eta)
+        ety[offset + itying] = 0.5 * interpFieldsGradDotLight<ETA, XI, 3, vars_per_node, 3>(pt, xpts, vars);
+        ety[offset + itying] += 0.5 * interpFieldsGradDotLight<XI, ETA, 3, vars_per_node, 3>(pt, xpts, vars);
 
-        // store g12 strain
-        ety[offset + itying] =
-            0.5 * (A2D::VecDotCore<T, 3>(Uxi, Xeta) + A2D::VecDotCore<T, 3>(Ueta, Xxi));
-
-        // nonlinear g12 strain term
+        // nonlinear g12 strain term += 0.5 * U0,xi * U0,eta
         if constexpr (is_nonlinear) {
-            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(Uxi, Ueta);
+            ety[offset + itying] += 0.5 * interpFieldsGradDotLight<XI, ETA, vars_per_node, vars_per_node, 3>(pt, vars, vars);
         }
     }  // end of itying for loop for g12
 
@@ -545,22 +698,19 @@ __HOST_DEVICE__ static void computeTyingStrainV2(const T Xpts[], const T vars[],
         T pt[2];
         Basis::template getTyingPoint<3>(itying, pt);
 
-        // Interpolate the field value
-        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        // store g23 strain = 0.5 * (X,eta * d0 + U,eta * n0)
+        T d0[3]; // X,eta dot d0 term
+        Director::interpDirectorLight(pt, Xpts, vars, d0);
+        ety[offset + itying] = 0.5 * interpFieldsGradRightDotLight<ETA, 3, 3>(pt, xpts, d0);
+        {
+            T n0[3]; // U0,eta dot d0 term
+            Basis::interpNodeNormalLight(pt, Xpts, n0);
+            ety[offset + itying] += 0.5 * interpFieldsGradRightDotLight<ETA, vars_per_node, 3>(pt, vars, n0);
+        }
 
-        T d0[3], n0[3];
-        Basis::template interpFields<3, 3>(pt, d, d0);
-        Basis::template interpFields<3, 3>(pt, fn, n0);
-
-        // store g23 strain
-        ety[offset + itying] =
-            0.5 * (A2D::VecDotCore<T, 3>(Xeta, d0) + A2D::VecDotCore<T, 3>(n0, Ueta));
-
-        // nonlinear g23 strain term
+        // nonlinear g23 strain term += 0.5 * U,eta dot d0
         if constexpr (is_nonlinear) {
-            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(d0, Ueta);
+            ety[offset + itying] += 0.5 * interpFieldsGradRightDotLight<ETA, vars_per_node, 3>(pt, vars, d0);
         }
     }  // end of itying for loop for g23
 
@@ -573,22 +723,19 @@ __HOST_DEVICE__ static void computeTyingStrainV2(const T Xpts[], const T vars[],
         T pt[2];
         Basis::template getTyingPoint<4>(itying, pt);
 
-        // Interpolate the field value
-        T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
-        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
-        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+        // store g13 strain = 0.5 * (X,xi * d0 + U,xi * n0)
+        T d0[3]; // X,eta dot d0 term
+        Director::interpDirectorLight(pt, Xpts, vars, d0);
+        ety[offset + itying] = 0.5 * interpFieldsGradRightDotLight<XI, 3, 3>(pt, xpts, d0);
+        {
+            T n0[3]; // U0,eta dot d0 term
+            Basis::interpNodeNormalLight(pt, Xpts, n0);
+            ety[offset + itying] += 0.5 * interpFieldsGradRightDotLight<XI, vars_per_node, 3>(pt, vars, n0);
+        }
 
-        T d0[3], n0[3];
-        Basis::template interpFields<3, 3>(pt, d, d0);
-        Basis::template interpFields<3, 3>(pt, fn, n0);
-
-        // store g13 strain
-        ety[offset + itying] =
-            0.5 * (A2D::VecDotCore<T, 3>(Xxi, d0) + A2D::VecDotCore<T, 3>(n0, Uxi));
-
-        // nonlinear g13 strain term
+        // nonlinear g13 strain term += 0.5 * U,xi dot d0
         if constexpr (is_nonlinear) {
-            ety[offset + itying] += 0.5 * A2D::VecDotCore<T, 3>(d0, Uxi);
+            ety[offset + itying] += 0.5 * interpFieldsGradRightDotLight<XI, vars_per_node, 3>(pt, vars, d0);
         }
     }  // end of itying for loop for g13
 
@@ -877,6 +1024,129 @@ __HOST_DEVICE__ static void computeTyingStrainSens(const T Xpts[], const T fn[],
                                                                     zero.get_data(), res);
         Basis::template interpFieldsTranspose<3, 3>(pt, d0_bar.get_data(), d_bar);
 
+    }  // end of itying for loop for g13
+
+}  // end of computeTyingStrainSens
+
+template <typename T, class Physics, class Basis>
+__HOST_DEVICE__ static void computeTyingStrainSensLight(const T Xpts[], const T vars[],
+                                                   const T ety_bar[], T res[]) {
+    // using unrolled loop here for efficiency (if statements and for loops not
+    // great for device)
+    int32_t offset, num_tying;
+    static constexpr bool is_nonlinear = Physics::is_nonlinear;
+    static constexpr int vars_per_node = Physics::vars_per_node;
+
+    // get g11 tying strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(0);
+    num_tying = Basis::num_tying_points(0);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<0>(itying, pt);
+        // backprop g11 = X,xi dot U0,xi
+        addInterpFieldsGradDotSensLight<XI, XI, 3, vars_per_node, 3>(ety_bar[offset + itying], pt, xpts, vars, res);
+
+        if constexpr (is_nonlinear) {
+            // backprop g11 nl term 1/2 * U0,xi dot U0,xi
+            addInterpFieldsGradDotSensLight<XI, XI, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, vars, res);
+        }
+    }  // end of itying for loop for g11
+
+    // get g22 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(1);
+    num_tying = Basis::num_tying_points(1);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<1>(itying, pt);
+        // backprop g22 = X,eta dot U0,eta
+        addInterpFieldsGradDotSensLight<ETA, ETA, 3, vars_per_node, 3>(ety_bar[offset + itying], pt, xpts, vars, res);
+
+        if constexpr (is_nonlinear) {
+            // backprop g22 nl term 1/2 * U0,eta dot U0,eta
+            addInterpFieldsGradDotSensLight<ETA, ETA, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, vars, res);
+        }
+    }  // end of itying for loop for g22
+
+    // get g12 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(2);
+    num_tying = Basis::num_tying_points(2);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<2>(itying, pt);
+
+        // backprop g12 = 0.5 * (X,eta dot U0,xi + X,xi dot U0,eta)
+        addInterpFieldsGradDotSensLight<XI, ETA, 3, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, xpts, vars, res);
+        addInterpFieldsGradDotSensLight<ETA, XI, 3, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, xpts, vars, res);
+
+        if constexpr (is_nonlinear) {
+            // backprop g12 nl term 1/2 * U0,xi dot U0,eta
+            addInterpFieldsGradDotSensLight<XI, ETA, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, vars, res);
+            addInterpFieldsGradDotSensLight<ETA, XI, vars_per_node, vars_per_node, 3>(ety_bar[offset + itying], pt, vars, vars, res);
+        }
+    }  // end of itying for loop for g12
+
+    // get g23 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(3);
+    num_tying = Basis::num_tying_points(3);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<3>(itying, pt);
+
+        // g23 = 0.5 * (X,eta dot d0 + n0 dot U,eta)
+        A2D::Vec<T,3> d0_bar;
+        interpFieldsGradRightDotLight_RightSens<ETA, 3, 3>(0.5 * ety_bar[offset + itying], pt, xpts, d0_bar.get_data());
+        {
+            T n0[3]; // U0,eta dot d0 term
+            Basis::interpNodeNormalLight(pt, Xpts, n0);
+            interpFieldsGradRightDotLight_LeftSens<ETA, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, n0);
+        }
+
+        // nonlinear g23 strain term += 0.5 * U,eta dot d0
+        if constexpr (is_nonlinear) {
+            T d0[3];
+            Basis::interpDirectorLight(pt, xpts, vars, d0);
+
+            interpFieldsGradRightDotLight_LeftSens<ETA, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, res, d0);
+            interpFieldsGradRightDotLight_RightSens<ETA, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, d0_bar.get_data);
+        }
+        Basis::interpDirectorLightSens(pt, xpts, d0_bar, res);
+    }  // end of itying for loop for g23
+
+    // get g13 strain
+    // ------------------------------------
+    offset = Basis::tying_point_offsets(4);
+    num_tying = Basis::num_tying_points(4);
+#pragma unroll  // for low num_tying can speed up?
+    for (int itying = 0; itying < num_tying; itying++) {
+        T pt[2];
+        Basis::template getTyingPoint<4>(itying, pt);
+        
+        // g23 = 0.5 * (X,xi dot d0 + n0 dot U,xi)
+        A2D::Vec<T,3> d0_bar;
+        interpFieldsGradRightDotLight_RightSens<XI, 3, 3>(0.5 * ety_bar[offset + itying], pt, xpts, d0_bar.get_data());
+        {
+            T n0[3]; // U0,eta dot d0 term
+            Basis::interpNodeNormalLight(pt, Xpts, n0);
+            interpFieldsGradRightDotLight_LeftSens<XI, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, n0);
+        }
+
+        // nonlinear g23 strain term += 0.5 * U,eta dot d0
+        if constexpr (is_nonlinear) {
+            T d0[3];
+            Basis::interpDirectorLight(pt, xpts, vars, d0);
+
+            interpFieldsGradRightDotLight_LeftSens<XI, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, res, d0);
+            interpFieldsGradRightDotLight_RightSens<XI, vars_per_node, 3>(0.5 * ety_bar[offset + itying], pt, vars, d0_bar.get_data);
+        }
+        Basis::interpDirectorLightSens(pt, xpts, d0_bar, res);
     }  // end of itying for loop for g13
 
 }  // end of computeTyingStrainSens

@@ -52,9 +52,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_residual(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data physData, T res[dof_per_elem])
-
-    {
+        const T vars[dof_per_elem], const Data physData, T res[dof_per_elem])   {
         // this will just be for debug on CPU
         // TODO : setup our own kernel functions for each element type and tunable launch params for each
         // for this case, I want to launch a separate kernel for the drill strain, tying strain, bending strains, etc.
@@ -64,15 +62,19 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         // separate terms to the strain energy for a metal / symmetric composite laminate
         // if not not sym laminate, could add extra term with k^T B eps_0 strain energy
 
-        _add_drill_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
+        int VERSION = 2; // 3
+        int CONTRIBUTION = 1; // for prelim testing, turn on only one term here
 
-        // TODO : split tying strains into midplane in-plane strains and transverse shear strain terms?
-        // _add_tying_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
-
-        // _add_bending_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
+        if constexpr (CONTRIBUTION == 0) {
+            _add_drill_strain_quadpt_residual<Data, VERSION>(iquad, xpts, vars, physData, res);
+        } else if (CONTRIBUTION == 1) {
+            _add_tying_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
+        } else {
+            _add_bending_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
+        }
     }
 
-    template <class Data>
+    template <class Data, int version>
     __HOST_DEVICE__ static void _add_drill_strain_quadpt_residual(const int iquad,
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],
@@ -83,8 +85,13 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         A2D::ADObj<A2D::Vec<T, 1>> et;
 
         // compute the interpolated drill strain
-        ShellComputeDrillStrainV2<T, vars_per_node, Data, Basis, Director>(
-            pt, physData.refAxis, xpts, vars, et.value().get_data());
+        if constexpr (version == 2) {
+            ShellComputeDrillStrainV2<T, vars_per_node, Data, Basis, Director>(
+                pt, physData.refAxis, xpts, vars, et.value().get_data());
+        } else if (version == 3) {
+            ShellComputeDrillStrainV3<T, vars_per_node, Data, Basis, Director>(
+                pt, physData.refAxis, xpts, vars, et.value().get_data());
+        }
 
         // need to get scale = detXd * weight somehow
         T detXd = Basis::getDetXd(pt, xpts);
@@ -94,8 +101,14 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         Phys::template compute_drill_strain_grad<T>(physData, scale, et);
             
         // backprop from drill strain to residual
-        ShellComputeDrillStrainSensV2<T, vars_per_node, Data, Basis, Director>(
+        if constexpr (version == 2) {
+            ShellComputeDrillStrainSensV2<T, vars_per_node, Data, Basis, Director>(
             pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
+        } else if (version == 3) {
+            ShellComputeDrillStrainSensV3<T, vars_per_node, Data, Basis, Director>(
+            pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
+        }
+        
     }
 
     template <class Data>
@@ -104,7 +117,41 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
                                                           const T vars[dof_per_elem],
                                                           const Data physData, T &Uelem) {
         // TODO
-        
+        T pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+        A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
+
+        // forward scope block
+        T XdinvT[9];
+        { 
+            // compute tying strain at the tying points
+            T ety[Basis::num_all_tying_points];
+            computeTyingStrainLight<T, Phys, Basis>(xpts, vars, ety);
+
+            // interp and rotate the tying strain
+            A2D::SymMat<T, 3> gty;
+            interpTyingStrainLight<T, Basis>(pt, ety, gty.get_data());
+            getFrameRotation(physData.refAxis, pt, xpts, XdinvT);
+            A2D::SymMat3x3RotateFrame<T>(XdinvT, gty.get_data(), e0ty.value().get_data());
+        }
+
+        // backprop from strain energy to tying strain gradient in physics
+        T scale = detXd * weight;
+        Phys::template compute_tying_strain_midplane_grad<T>(physData, scale, et);
+        Phys::template compute_tying_strain_transverse_grad<T>(physData, scale, et);
+
+        // reverse scope block
+        { 
+            // interp tying strain sens
+            {
+                A2D::SymMat<T, 3> gty_bar;
+                A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(), gty_bar.get_data());
+                interpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar);
+            }
+
+            // compute tying strain sens
+            computeTyingStrainSensLight<T, Phys, Basis>(xpts, vars, ety_bar.get_data(), res);
+        }
     }
 
     template <class Data>

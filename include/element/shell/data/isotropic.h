@@ -48,6 +48,15 @@ class ShellIsotropicData {
         C[5] = G;
     }
 
+    __HOST_DEVICE__ static void stiffnessMatrixProd(const T E_, const T nu_, const T scale, const T strain[], T stress[]) {
+        T D = E_ / (1.0 - nu_ * nu_);
+        // sym mat prod
+        stress[0] = D * strain[0] + nu_ * D * strain[1]; // e11 => s11
+        stress[1] = nu_ * D * strain[0] + D * strain[1]; // e22 => s22
+        stress[2] = G * strain[2]; // e12 => s12
+        for (int i = 0; i < 3; i++) stress[i] *= scale;
+    }
+
     __HOST_DEVICE__ static T getTransShearCorrFactor() { return T(5.0 / 6.0); }
     __HOST_DEVICE__ static T getDrillingRegularization() { return T(10.0); }
 
