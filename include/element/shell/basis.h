@@ -3,10 +3,7 @@
 #include "a2dshell.h"
 #include "quadrature.h"
 #include "shell_utils.h"
-
-enum COMP_VAR {
-    XI, ETA
-};
+#include "_basis_utils.h"
 
 template <typename T, class Quadrature_, int order = 2>
 class ShellQuadBasis {
@@ -164,7 +161,7 @@ class ShellQuadBasis {
     }
 
     template <int tyingOrder>
-    __HOST_DEVICE__ static T lagrangeLobatto1D_tyingLight(int ind, const T u) {
+    __HOST_DEVICE__ static T lagrangeLobatto1D_tyingLight(int i, const T u) {
         if constexpr (tyingOrder == 1) {
             return 1.0;
         } else if constexpr (tyingOrder == 2) {
@@ -231,8 +228,8 @@ class ShellQuadBasis {
     template <COMP_VAR deriv>
     __HOST_DEVICE__ static void lagrangeLobatto2DGradLight(const int inode, const T xi, const T eta) {
         /* deriv == 0 is xi deriv, deriv == 1 is eta deriv */
-        int ixi = ind % order;
-        int ieta = ind / order;
+        int ixi = inode % order;
+        int ieta = inode / order;
         if constexpr (deriv == XI) {
             return lagrangeLobatto1DGradLight(ixi, xi) * lagrangeLobatto1DLight(ieta, eta);
         } else if (deriv == ETA) {
@@ -248,7 +245,7 @@ class ShellQuadBasis {
         }
     }
 
-    __HOST_DEVICE__ static void assembleXptFrameLight(const T pt[], const T xpts[], T Xd[]) {
+    __HOST_DEVICE__ static void assembleXptFrameLight(const T pt[], const T xpts[], T frame[]) {
         /* light implementation of assembleFrame for xpts */
         T n0[3];
         ShellComputeNodeNormalLight(pt, xpts, n0);
@@ -438,7 +435,7 @@ class ShellQuadBasis {
     }  // end of interpFieldsTranspose method
 
     template <int vars_per_node, int num_fields>
-    __HOST_DEVICE__ static void interpFieldsTransposeLight(const int ifield, const T field_bar[], T values_bar[]) {
+    __HOST_DEVICE__ static void interpFieldsTransposeLight(const pt[], const T field_bar[], T values_bar[]) {
         /* light version of interpFields that just gets one value only of the output vector */
         // xpts[ifield] = sum_inode N[inode] * values[inode * vars_per_node + ifield] for single ifield
 
@@ -469,8 +466,8 @@ class ShellQuadBasis {
         for (int ifield = 0; ifield < num_fields; ifield++) {
             for (int inode = 0; inode < num_nodes; inode++) {
                 int ind = inode * vars_per_node + ifield;
-                values_bar[ind] += dxi_bar[ifield] * lagrangeLobatto2DGradLight<XI>(inode, pt[0], pt[1])
-                values_bar[ind] += deta_bar[ifield] * lagrangeLobatto2DGradLight<ETA>(inode, pt[0], pt[1])
+                values_bar[ind] += dxi_bar[ifield] * lagrangeLobatto2DGradLight<XI>(inode, pt[0], pt[1]);
+                values_bar[ind] += deta_bar[ifield] * lagrangeLobatto2DGradLight<ETA>(inode, pt[0], pt[1]);
             }
         }
     }  // end of interpFieldsGradTransposeLight method
@@ -501,7 +498,7 @@ class ShellQuadBasis {
         A2D::VecScaleCore<T, 3>(1.0 / norm, tmp, n0);
     }
 
-    __HOST_DEVICE__ static void interpNodeNormalLight(const T pt[], const xpts, T n0[]) {
+    __HOST_DEVICE__ static void interpNodeNormalLight(const T pt[], const T xpts[], T n0[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial gradients
         for (int ifield = 0; ifield < 3; ifield++) n0[ifield] = 0.0;
 
