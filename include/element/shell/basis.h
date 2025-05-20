@@ -475,7 +475,7 @@ class ShellQuadBasis {
     __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T xpts[], T n0[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial gradients
         T Xxi[3], Xeta[3];
-        interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
         ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
     }
 
@@ -732,6 +732,8 @@ __HOST_DEVICE__ static T getFrameRotation(const T refAxis, const T pt[], const T
 
     // compute XdinvT = Xdinv*T
     A2D::MatMatMultCore3x3<T>(XdinvT, Tmat, XdinvT);
+
+    return detXd;
 }  // end of Xd and shell transform scope
 
 template <typename T, class Basis>

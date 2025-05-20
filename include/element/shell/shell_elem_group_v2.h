@@ -117,7 +117,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
                                                           const T vars[dof_per_elem],
                                                           const Data physData, T res[dof_per_elem]) {
         // TODO
-        T pt[2];
+        T pt[2], detXd;
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
         A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
 
@@ -131,7 +131,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             // interp and rotate the tying strain
             A2D::SymMat<T, 3> gty;
             interpTyingStrainLight<T, Basis>(pt, ety, gty.get_data());
-            getFrameRotation(physData.refAxis, pt, xpts, XdinvT);
+            detXd = getFrameRotation(physData.refAxis, pt, xpts, XdinvT);
             A2D::SymMatRotateFrame<T>(XdinvT, gty.get_data(), e0ty.value().get_data());
         }
 
