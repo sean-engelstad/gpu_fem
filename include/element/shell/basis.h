@@ -226,7 +226,7 @@ class ShellQuadBasis {
     }  // end of lagrangeLobatto2D_grad
 
     template <COMP_VAR deriv>
-    __HOST_DEVICE__ static void lagrangeLobatto2DGradLight(const int inode, const T xi, const T eta) {
+    __HOST_DEVICE__ static T lagrangeLobatto2DGradLight(const int inode, const T xi, const T eta) {
         /* deriv == 0 is xi deriv, deriv == 1 is eta deriv */
         int ixi = inode % order;
         int ieta = inode / order;
