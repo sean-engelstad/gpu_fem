@@ -134,7 +134,7 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
             }
 
             A2D::VecCrossCoreAdd<T>(n0, d_bar, q_bar);
-            q += vars_per_node;
+            q_bar += vars_per_node;
         }
     }
 

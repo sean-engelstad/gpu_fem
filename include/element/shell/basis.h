@@ -261,8 +261,8 @@ class ShellQuadBasis {
         /* light implementation of assembleFrame for xpts */
         
         for (int i = 0; i < 3; i++) {
-            frame[3 * i] = interpFieldsGradLight<XI,vars_per_node>(i, pt, xpts);
-            frame[3 * i + 1] = interpFieldsGradLight<ETA,vars_per_node>(i, pt, xpts);
+            frame[3 * i] = interpFieldsGradLight<XI,vars_per_node>(i, pt, values);
+            frame[3 * i + 1] = interpFieldsGradLight<ETA,vars_per_node>(i, pt, values);
             frame[3 * i + 2] = normal[i];
         }
     }
@@ -435,7 +435,7 @@ class ShellQuadBasis {
     }  // end of interpFieldsTranspose method
 
     template <int vars_per_node, int num_fields>
-    __HOST_DEVICE__ static void interpFieldsTransposeLight(const pt[], const T field_bar[], T values_bar[]) {
+    __HOST_DEVICE__ static void interpFieldsTransposeLight(const T pt[], const T field_bar[], T values_bar[]) {
         /* light version of interpFields that just gets one value only of the output vector */
         // xpts[ifield] = sum_inode N[inode] * values[inode * vars_per_node + ifield] for single ifield
 
@@ -475,7 +475,7 @@ class ShellQuadBasis {
     __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T xpts[], T n0[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial gradients
         T Xxi[3], Xeta[3];
-        Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
+        interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
         ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
     }
 
@@ -504,7 +504,7 @@ class ShellQuadBasis {
 
         for (int inode = 0; inode < num_nodes; inode++) {
             T fn[3], node_pt[2];
-            Basis::getNodePoint(inode, node_pt);
+            getNodePoint(inode, node_pt);
             ShellComputeNodeNormalLight(node_pt, xpts, n0);
 
             for (int ifield = 0; ifield < 3; ifield++) {
@@ -725,7 +725,7 @@ __HOST_DEVICE__ static T getFrameRotation(const T refAxis, const T pt[], const T
 
     // invert the Xd transformation (so Xdinv stored in XdinvT now)
     A2D::MatInvCore<T, 3>(Tmat, XdinvT);
-    detXd = A2D::MatDetCore<T, 3>(XdinvT);
+    T detXd = A2D::MatDetCore<T, 3>(XdinvT);
 
     // compute the shell transform based on the ref axis in Data object
     ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);

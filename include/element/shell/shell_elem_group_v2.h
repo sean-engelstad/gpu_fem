@@ -115,7 +115,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
     __HOST_DEVICE__ static void _add_tying_strain_quadpt_residual(const int iquad,
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],
-                                                          const Data physData, T &Uelem) {
+                                                          const Data physData, T res[dof_per_elem]) {
         // TODO
         T pt[2];
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
@@ -132,13 +132,13 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             A2D::SymMat<T, 3> gty;
             interpTyingStrainLight<T, Basis>(pt, ety, gty.get_data());
             getFrameRotation(physData.refAxis, pt, xpts, XdinvT);
-            A2D::SymMat3x3RotateFrame<T>(XdinvT, gty.get_data(), e0ty.value().get_data());
+            A2D::SymMatRotateFrame<T>(XdinvT, gty.get_data(), e0ty.value().get_data());
         }
 
         // backprop from strain energy to tying strain gradient in physics
         T scale = detXd * weight;
-        Phys::template compute_tying_strain_midplane_grad<T>(physData, scale, et);
-        Phys::template compute_tying_strain_transverse_grad<T>(physData, scale, et);
+        Phys::template compute_tying_strain_midplane_grad<T>(physData, scale, e0ty);
+        Phys::template compute_tying_strain_transverse_grad<T>(physData, scale, e0ty);
 
         // reverse scope block
         { 
