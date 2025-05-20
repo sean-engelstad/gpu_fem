@@ -701,7 +701,7 @@ __HOST_DEVICE__ static void computeTyingStrainLight(const T xpts[], const T vars
 
         // store g23 strain = 0.5 * (X,eta * d0 + U,eta * n0)
         T d0[3]; // X,eta dot d0 term
-        Director::template DirectorLight<Basis, vars_per_node>(pt, xpts, vars, d0);
+        Director::template interpDirectorLight<Basis, vars_per_node, Basis::num_nodes>(pt, xpts, vars, d0);
         ety[offset + itying] = 0.5 * Basis::interpFieldsGradRightDotLight<ETA, 3, 3>(pt, xpts, d0);
         {
             T n0[3]; // U0,eta dot d0 term
@@ -726,7 +726,7 @@ __HOST_DEVICE__ static void computeTyingStrainLight(const T xpts[], const T vars
 
         // store g13 strain = 0.5 * (X,xi * d0 + U,xi * n0)
         T d0[3]; // X,eta dot d0 term
-        Director::template DirectorLight<Basis, vars_per_node>(pt, xpts, vars, d0);
+        Director::template interpDirectorLight<Basis, vars_per_node, Basis::num_nodes>(pt, xpts, vars, d0);
         ety[offset + itying] = 0.5 * Basis::interpFieldsGradRightDotLight<XI, 3, 3>(pt, xpts, d0);
         {
             T n0[3]; // U0,eta dot d0 term
