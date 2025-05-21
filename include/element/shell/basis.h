@@ -5,12 +5,13 @@
 #include "shell_utils.h"
 #include "_basis_utils.h"
 
-template <typename T, class Quadrature_, int order = 2>
+template <typename T, class Quadrature_, int order_ = 2>
 class ShellQuadBasis {
    public:
     using Quadrature = Quadrature_;
 
     // Required for loading solution data
+    static constexpr int32_t order = order_;
     static constexpr int32_t num_nodes = order * order;
     static constexpr int32_t param_dim = 2;
 
@@ -929,6 +930,7 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     // interp the final tying strain {g11, g22, g12, g23, g13} in ety_bar storage to
     // with symMat storage also
     int32_t offset;
+    constexpr int order = Basis::order;
 
     // g11
     offset = Basis::tying_point_offsets(0);
