@@ -272,7 +272,7 @@ template <typename T, int vars_per_node, class Data, class Basis, class Director
 __HOST_DEVICE__ void ShellComputeDrillStrainFast(const T &xi, const T &eta, const T refAxis[], const T xpts[],
                                              const T vars[], T &et) {
     // instead of storing etn[4], we add to interpolated et on the fly..
-    et_f = 0.0;
+    et = 0.0;
     for (int inode = 0; inode < Basis::num_nodes; inode++) {
         // T pt[2];
         // Basis::getNodePoint(inode, pt);
@@ -316,7 +316,7 @@ __HOST_DEVICE__ void ShellComputeDrillStrainFast(const T &xi, const T &eta, cons
         // A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
 
         // compute the drill strain
-        T etn = Director::evalDrillStrain(u0xn, C);
+        // T etn = Director::evalDrillStrain(u0xn, C);
 
         // add to interp of et_f
 

@@ -62,10 +62,10 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         // separate terms to the strain energy for a metal / symmetric composite laminate
         // if not not sym laminate, could add extra term with k^T B eps_0 strain energy
 
-        constexpr int CONTRIBUTION = 1; // for prelim testing, turn on only one term here
+        constexpr int CONTRIBUTION = 0; // for prelim testing, turn on only one term here
 
         if constexpr (CONTRIBUTION == 0) {
-	        // constexpr int VERSION = 2; // 3
+	    constexpr int VERSION = 2; // 3
             _add_drill_strain_quadpt_residual<Data, VERSION>(iquad, xpts, vars, physData, res);
             // _add_drill_strain_quadpt_residual_fast<Data, VERSION>(iquad, xpts, vars, physData, res);
         } else if (CONTRIBUTION == 1) {

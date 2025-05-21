@@ -322,7 +322,7 @@ class ShellQuadBasis {
     }  // end of interpFieldsLight method
 
     template <int vars_per_node>
-    __HOST_DEVICE__ static T interpFieldsFast(const int ifield, const T pt[], const T values[]) {
+    __HOST_DEVICE__ static T interpFieldsFast(const int ifield, const T &xi, const T &eta, const T values[]) {
         /* fast version of interpFields that just gets one value only of the output vector */
         T out = 0.0;
         for (int inode = 0; inode < num_nodes; inode++) {

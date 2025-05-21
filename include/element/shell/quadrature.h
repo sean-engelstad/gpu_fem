@@ -29,6 +29,6 @@ class QuadLinearQuadrature {
         /* GPU friendly of getQuadraturePoint */
         xi = _get_point(ind % 2);
         eta = _get_point(ind / 2);
-        return 1.0
+        return 1.0;
     }
 };
