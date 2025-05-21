@@ -207,7 +207,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     T H[(n_iter + 1) * (n_iter)];
 
     // GMRES device data
-    T *d_Vmat, *d_V;
+    T *d_Vmat; //, *d_V;
     CHECK_CUDA(cudaMalloc((void **)&d_Vmat, (n_iter + 1) * N * sizeof(T)));
     // CHECK_CUDA(cudaMalloc((void **)&d_V, N * sizeof(T)));
     // cusparseDnVecDescr_t vec_V;

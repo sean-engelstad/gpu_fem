@@ -62,10 +62,10 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         // separate terms to the strain energy for a metal / symmetric composite laminate
         // if not not sym laminate, could add extra term with k^T B eps_0 strain energy
 
-        constexpr int VERSION = 2; // 3
         constexpr int CONTRIBUTION = 1; // for prelim testing, turn on only one term here
 
         if constexpr (CONTRIBUTION == 0) {
+	    constexpr int VERSION = 2; // 3
             _add_drill_strain_quadpt_residual<Data, VERSION>(iquad, xpts, vars, physData, res);
         } else if (CONTRIBUTION == 1) {
             _add_tying_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
@@ -169,7 +169,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 
 		// TODO : the dot sens methods here are bugged out, massively grows the registers and slow down runtime by 10x lol
                 // this is the bottleneck function..
-		    addInterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
+		//addInterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
             }
 
 	    //return; // still 32 registers per thread
