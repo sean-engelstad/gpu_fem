@@ -932,60 +932,67 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     int32_t offset;
     constexpr int order = Basis::order;
 
+    // g11 fast
+    for (int j = 0; j < order; j++) {
+        for (int i = 0; i < order - 1; i++, ety_bar++) {
+            ety_bar[0] += 1.0 * 0.5 * (1.0 + (-1.0 + 2.0 * j) * pt[1]) * gty_bar[0];
+        }
+    }
+
     // g11
-    offset = Basis::tying_point_offsets(0);
-    #pragma unroll
-    for (int j = 0; j < order; j++) {
-        T nbj = Basis::lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
-        #pragma unroll
-        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-            ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[0];
-        }
-    }
+    // offset = Basis::tying_point_offsets(0);
+    // #pragma unroll
+    // for (int j = 0; j < order; j++) {
+    //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
+    //     #pragma unroll
+    //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[0];
+    //     }
+    // }
 
-    // g12
-    offset = Basis::tying_point_offsets(1);
-    #pragma unroll
-    for (int j = 0; j < order - 1; j++) {
-        T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
-        #pragma unroll
-        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-            ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[3];
-        }
-    }
+    // // g12
+    // offset = Basis::tying_point_offsets(1);
+    // #pragma unroll
+    // for (int j = 0; j < order - 1; j++) {
+    //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
+    //     #pragma unroll
+    //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[3];
+    //     }
+    // }
 
-    // g13
-    offset = Basis::tying_point_offsets(2);
-    #pragma unroll
-    for (int j = 0; j < order; j++) {
-        T nbj = Basis::lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
-        #pragma unroll
-        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-            ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[1];
-        }
-    }
+    // // g13
+    // offset = Basis::tying_point_offsets(2);
+    // #pragma unroll
+    // for (int j = 0; j < order; j++) {
+    //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
+    //     #pragma unroll
+    //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[1];
+    //     }
+    // }
 
-    // g22
-    offset = Basis::tying_point_offsets(3);
-    #pragma unroll
-    for (int j = 0; j < order - 1; j++) {
-        T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
-        #pragma unroll
-        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-            ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[4];
-        }
-    }
+    // // g22
+    // offset = Basis::tying_point_offsets(3);
+    // #pragma unroll
+    // for (int j = 0; j < order - 1; j++) {
+    //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
+    //     #pragma unroll
+    //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[4];
+    //     }
+    // }
 
-    // g23
-    offset = Basis::tying_point_offsets(4);
-    #pragma unroll
-    for (int j = 0; j < order - 1; j++) {
-        T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
-        #pragma unroll
-        for (int i = 0 ; i < order; i++, ety_bar++) {
-            ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[2];
-        }
-    }
+    // // g23
+    // offset = Basis::tying_point_offsets(4);
+    // #pragma unroll
+    // for (int j = 0; j < order - 1; j++) {
+    //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
+    //     #pragma unroll
+    //     for (int i = 0 ; i < order; i++, ety_bar++) {
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[2];
+    //     }
+    // }
 
 
     // really slow register version
