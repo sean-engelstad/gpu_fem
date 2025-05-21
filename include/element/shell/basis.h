@@ -272,6 +272,19 @@ class ShellQuadBasis {
         }
     }
 
+    template <int vars_per_node>
+    __HOST_DEVICE__ static void assembleFrameFast(const T &xi, const T &eta, const T values[], const T &n0x, const T &n0y, const T &n0z, T frame[]) {
+        /* fast implementation of assembleFrame for xpts */
+        
+        for (int i = 0; i < 3; i++) {
+            frame[3 * i] = interpFieldsGradFast<XI,vars_per_node>(i, xi, eta, values);
+            frame[3 * i + 1] = interpFieldsGradFast<ETA,vars_per_node>(i, xi, eta, values);
+        }
+        frame[2] = n0x;
+        frame[5] = n0y;
+        frame[8] = n0z;
+    }
+
     __HOST_DEVICE__ static void extractFrame(const T frame[], T a[], T b[], T c[]) {
         for (int i = 0; i < 3; i++) {
             a[i] = frame[3 * i];
@@ -284,6 +297,12 @@ class ShellQuadBasis {
         // get xi, eta coordinates of each node point
         pt[0] = -1.0 + (2.0 / (order - 1)) * (n % order);
         pt[1] = -1.0 + (2.0 / (order - 1)) * (n / order);
+    }
+
+    __HOST_DEVICE__ static void getNodePoint(const int n, T &xi, T &eta) {
+        // get xi, eta coordinates of each node point
+        xi = -1.0 + (2.0 / (order - 1)) * (n % order);
+        eta = -1.0 + (2.0 / (order - 1)) * (n / order);
     }
 
     __HOST_DEVICE__ static T getDetXd(const T pt[], const T xpts[]) {
@@ -356,6 +375,16 @@ class ShellQuadBasis {
         }
         return out;
     }  // end of interpFieldsGradLight method
+
+    template <COMP_VAR DERIV, int vars_per_node>
+    __HOST_DEVICE__ static T interpFieldsGradFast(const int ifield, const T &xi, const T &eta, const T values[]) {
+        /* light version of interpFieldsGrad, where ideriv is either 0 or 1 */
+        T out = 0.0;
+        for (int inode = 0; inode < num_nodes; inode++) {
+            out += lagrangeLobatto2DGradLight<DERIV>(inode, xi, eta) * values[vars_per_node * inode + ifield];
+        }
+        return out;
+    }  // end of interpFieldsGradFasat method
 
     template <COMP_VAR i1, COMP_VAR i2, int vpn1, int vpn2, int nfields>
     __HOST_DEVICE__ static T interpFieldsGradDotLight(const T pt[], const T vec1[], const T vec2[]) {
@@ -521,6 +550,28 @@ class ShellQuadBasis {
             Xeta[i] = interpFieldsGradLight<ETA,3>(i, pt, xpts);
         }
         ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
+    }
+
+    __HOST_DEVICE__ static void ShellComputeNodeNormalFast(const T &xi, const T &eta, const T xpts[], T &n0x, T &n0y, T &n0z) {
+        /* exploring a faster GPU method to get the node normal */
+
+        // compute n0x = Y,xi * Z,eta - Y,eta * Z,xi
+        n0x = interpFieldsGradFast<XI, 3>(1, xi, eta, xpts) * interpFieldsGradFast<ETA, 3>(2, xi, eta, xpts);
+        n0x -= interpFieldsGradFast<ETA, 3>(1, xi, eta, xpts) * interpFieldsGradFast<XI, 3>(2, xi, eta, xpts);
+
+        // compute n0y = X,eta * Z,xi - X,xi * Z,eta
+        n0y = interpFieldsGradFast<ETA, 3>(0, xi, eta, xpts) * interpFieldsGradFast<XI, 3>(2, xi, eta, xpts);
+        n0y -= interpFieldsGradFast<XI, 3>(0, xi, eta, xpts) * interpFieldsGradFast<ETA, 3>(2, xi, eta, xpts);
+
+        // compute n0z = X,xi * Y,eta - X,eta * Y,xi
+        n0z = interpFieldsGradFast<XI, 3>(0, xi, eta, xpts) * interpFieldsGradFast<ETA, 3>(1, xi, eta, xpts);
+        n0z -= interpFieldsGradFast<ETA, 3>(0, xi, eta, xpts) * interpFieldsGradFast<XI, 3>(1, xi, eta, xpts);
+
+        // normalize the unit vector
+        T norm = sqrt(n0x * n0x + n0y * n0y + n0z * n0z);
+        n0x /= norm;
+        n0y /= norm;
+        n0z /= norm;
     }
 
     __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T dXdxi[], const T dXdeta[], T n0[]) {

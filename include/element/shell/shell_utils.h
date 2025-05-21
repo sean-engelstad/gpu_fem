@@ -270,12 +270,33 @@ __HOST_DEVICE__ void ShellComputeDrillStrainV3(const T quad_pt[], const T refAxi
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainFast(const T &xi, const T &eta, const T refAxis[], const T xpts[],
-                                             const T vars[], T &et) {
+                                             const T vars[], T sharedWorkArr[], T &et) {
     // instead of storing etn[4], we add to interpolated et on the fly..
     et = 0.0;
     for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        // T pt[2];
-        // Basis::getNodePoint(inode, pt);
+        T node_xi, node_eta;
+        Basis::getNodePoint(inode, node_xi, node_eta);
+
+        // maybe best strategy is this:
+        // use work array of size 24 for each thread in shared memory?
+        //   still better to use registers when possible.. right?
+        // should I use n0x, n0y, n0z storage, or do T n0[3], or do shared memory array
+        T *Xd = &sharedWorkArr[0];
+        {
+            T n0x, n0y, n0z;
+            ShellComputeNodeNormalFast(xi, eta, xpts, n0x, n0y, n0z);
+
+            Basis::assembleFrameFast<3>(xi, eta, xpts, n0x, n0y, n0z, Xd);
+        }
+
+        
+
+        // compute n0 and store in first row of mat2
+        // use n0 and xpts to compute Xd in mat1
+        // use n0 and xpts to compute Tmat in mat2
+        // st
+
+        // how to compute shell node normal light, should I put n0 in shared memory arrays? I certainly could
 
         // // get shell transform and Xdn frame scope
         // T Tmat[9], Xd[9];
