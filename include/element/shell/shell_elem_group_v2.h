@@ -169,7 +169,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 
 		// TODO : the dot sens methods here are bugged out, massively grows the registers and slow down runtime by 10x lol
                 // this is the bottleneck function..
-		// addinterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
+		    addInterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
             }
 
 	    //return; // still 32 registers per thread

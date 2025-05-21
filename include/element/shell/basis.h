@@ -369,31 +369,24 @@ class ShellQuadBasis {
             dot product of forward analysis is <dvec1/di1, dvec2/di2> assume here vec2 is for derivative
         */
         
-	// return; // 32 registers per thread
 
-        // even just single for loop breaks all the registers, wth, smh
-	// vec2_bar[0] = scale;
-        
-	// using vec2_bar at all messes up the registers?? something is bugged with this function
-	// return;
-	vec2_bar[0] = scale;
-	return;
-
-	// T dv1_di1;
-        // for (int ifield = 0; ifield < nfields; ifield++) {
-            // dv1_di1 = 0.0;
-            //for (int inode = 0; inode < num_nodes; inode++) {
-            //    dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) * vec1[vpn1 * inode + ifield];
-            //}
+	    T dv1_di1;
+        for (int ifield = 0; ifield < nfields; ifield++) {
+            dv1_di1 = 0.0;
+            for (int inode = 0; inode < num_nodes; inode++) {
+                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) * vec1[vpn1 * inode + ifield];
+            }
 
 	    // return; // 32 registers per thread 
 
 	    // vec2_bar[ifield] += scale;
 
-            // for (int inode = 0; inode < num_nodes; inode++) {
-                //T loc_scale = scale * lagrangeLobatto2DGradLight<i2>(inode, pt[0], pt[1]);
+            for (int inode = 0; inode < num_nodes; inode++) {
+                T loc_scale = scale * lagrangeLobatto2DGradLight<i2>(inode, pt[0], pt[1]);
 		// return; // 32 registers per thread
-                // vec2_bar[vpn2 * inode + ifield] += loc_scale * dv1_di1;
+                vec2_bar[vpn2 * inode + ifield] += loc_scale * dv1_di1;
+            }
+        }
 		// compiler is aggressively inlining stuff here and messing up the compile?
 
 		//vec2_bar[vpn2 * inode + ifield] += scale * lagrangeLobatto2DGradLight<i2>(inode, pt[0], pt[1]) * dv1_di1;
@@ -929,33 +922,90 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[], const T gty
 }
 
 template <typename T, class Basis>
-__HOST_DEVICE__ static void addinterpTyingStrainTransposeLight(const T pt[], const T gty_bar[],
+__HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], const T gty_bar[],
                                                        T ety_bar[]) {
     // given quadpt pt[] and ety[] the tying strains at each tying point from MITC
     // in order {g11-n1, g11-n2, ..., g11-nN, g22-n1, g22-n2,...}
     // interp the final tying strain {g11, g22, g12, g23, g13} in ety_bar storage to
     // with symMat storage also
     int32_t offset;
-    
-    // g11 tying strain
+
+    // g11
     offset = Basis::tying_point_offsets(0);
-    Basis::template addTyingInterpTransposeLight<0>(pt, gty_bar[0], &ety_bar[offset]);
-    
-    // g22 tying strain
+    #pragma unroll
+    for (int j = 0; j < order; j++) {
+        T nbj = lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
+        #pragma unroll
+        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+            ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[0];
+        }
+    }
+
+    // g12
     offset = Basis::tying_point_offsets(1);
-    Basis::template addTyingInterpTransposeLight<1>(pt, gty_bar[3], &ety_bar[offset]);
+    #pragma unroll
+    for (int j = 0; j < order - 1; j++) {
+        T nbj = lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
+        #pragma unroll
+        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+            ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[3];
+        }
+    }
 
-    // g12 tying strain
+    // g13
     offset = Basis::tying_point_offsets(2);
-    Basis::template addTyingInterpTransposeLight<2>(pt, gty_bar[1], &ety_bar[offset]);
+    #pragma unroll
+    for (int j = 0; j < order; j++) {
+        T nbj = lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
+        #pragma unroll
+        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+            ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[1];
+        }
+    }
 
-    // g23 tying strain
+    // g22
     offset = Basis::tying_point_offsets(3);
-    Basis::template addTyingInterpTransposeLight<3>(pt, gty_bar[4], &ety_bar[offset]);
+    #pragma unroll
+    for (int j = 0; j < order - 1; j++) {
+        T nbj = lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
+        #pragma unroll
+        for (int i = 0 ; i < order - 1; i++, ety_bar++) {
+            ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[4];
+        }
+    }
 
-    // g13 tying strain
+    // g23
     offset = Basis::tying_point_offsets(4);
-    Basis::template addTyingInterpTransposeLight<4>(pt, gty_bar[2], &ety_bar[offset]);
+    #pragma unroll
+    for (int j = 0; j < order - 1; j++) {
+        T nbj = lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
+        #pragma unroll
+        for (int i = 0 ; i < order; i++, ety_bar++) {
+            ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[2];
+        }
+    }
+
+
+    // really slow register version
+    // // g11 tying strain
+    // offset = Basis::tying_point_offsets(0);
+    // Basis::template addTyingInterpTransposeLight<0>(pt, gty_bar[0], &ety_bar[offset]);
+    
+    // // g22 tying strain
+    // offset = Basis::tying_point_offsets(1);
+    // Basis::template addTyingInterpTransposeLight<1>(pt, gty_bar[3], &ety_bar[offset]);
+
+    // // g12 tying strain
+    // offset = Basis::tying_point_offsets(2);
+    // Basis::template addTyingInterpTransposeLight<2>(pt, gty_bar[1], &ety_bar[offset]);
+
+    // // g23 tying strain
+    // offset = Basis::tying_point_offsets(3);
+    // Basis::template addTyingInterpTransposeLight<3>(pt, gty_bar[4], &ety_bar[offset]);
+
+    // // g13 tying strain
+    // offset = Basis::tying_point_offsets(4);
+    // Basis::template addTyingInterpTransposeLight<4>(pt, gty_bar[2], &ety_bar[offset]);
     
     // get g33 tying strain
     // --------------------
