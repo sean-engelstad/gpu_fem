@@ -65,8 +65,9 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         constexpr int CONTRIBUTION = 1; // for prelim testing, turn on only one term here
 
         if constexpr (CONTRIBUTION == 0) {
-	    constexpr int VERSION = 2; // 3
+	        // constexpr int VERSION = 2; // 3
             _add_drill_strain_quadpt_residual<Data, VERSION>(iquad, xpts, vars, physData, res);
+            // _add_drill_strain_quadpt_residual_fast<Data, VERSION>(iquad, xpts, vars, physData, res);
         } else if (CONTRIBUTION == 1) {
             _add_tying_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
         } else {
@@ -110,7 +111,36 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             ShellComputeDrillStrainSensV3<T, vars_per_node, Data, Basis, Director>(
             pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
         }
+    }
+
+    template <class Data, int version>
+    __HOST_DEVICE__ static void _add_drill_strain_quadpt_residual_fast(const int iquad,
+                                                          const T xpts[xpts_per_elem],
+                                                          const T vars[dof_per_elem],
+                                                          const Data physData, T res[dof_per_elem]) {
+        /* 
+        new fast drill strain residual
+        goal: all methods use shared memory or registers only, no local memory
+        I will then go back and see if I can make A2D more GPU friendly at some point..
+        */
         
+        T xi, eta;
+        T weight = Quadrature::getQuadraturePoint(iquad, xi, eta);
+        T et_f, et_b;
+
+        // compute the interpolated drill strain
+        ShellComputeDrillStrainFast<T, vars_per_node, Data, Basis, Director>(xi, eta, physData.refAxis, xpts, vars, et_f);
+
+        // // need to get scale = detXd * weight somehow
+        // T detXd = Basis::getDetXd(pt, xpts);
+        // T scale = detXd * weight;
+
+        // backprop from strain energy to et
+        // Phys::template compute_drill_strain_grad<T>(physData, scale, et);
+            
+        // // backprop from drill strain to residual
+        // ShellComputeDrillStrainSensV2<T, vars_per_node, Data, Basis, Director>(
+        // pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
     }
 
     template <class Data>
@@ -169,7 +199,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 
 		// TODO : the dot sens methods here are bugged out, massively grows the registers and slow down runtime by 10x lol
                 // this is the bottleneck function..
-		addInterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
+		        addInterpTyingStrainTransposeLight<T, Basis>(pt, gty_bar.get_data(), ety_bar.get_data());
             }
 
 	    //return; // still 32 registers per thread

@@ -266,7 +266,64 @@ __HOST_DEVICE__ void ShellComputeDrillStrainV3(const T quad_pt[], const T refAxi
     // now interpolate to single et value
     Basis::template interpFields<1, 1>(quad_pt, etn, et);
 
-}  // end of method ShellComputeDrillStrain
+}  // end of method ShellComputeDrillStrainV3
+
+template <typename T, int vars_per_node, class Data, class Basis, class Director>
+__HOST_DEVICE__ void ShellComputeDrillStrainFast(const T &xi, const T &eta, const T refAxis[], const T xpts[],
+                                             const T vars[], T &et) {
+    // instead of storing etn[4], we add to interpolated et on the fly..
+    et_f = 0.0;
+    for (int inode = 0; inode < Basis::num_nodes; inode++) {
+        // T pt[2];
+        // Basis::getNodePoint(inode, pt);
+
+        // // get shell transform and Xdn frame scope
+        // T Tmat[9], Xd[9];
+        // {
+        //     T n0[3];
+        //     ShellComputeNodeNormalLight(pt, xpts, n0);
+
+        //     // assemble Xd frame
+        //     Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
+
+        //     // compute the shell transform based on the ref axis in Data object
+        //     ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
+        // }  // end of Xd and shell transform scope
+
+        // // assemble u0xn frame scope
+        // T u0xn[9];
+        // {
+        //     Basis::assembleFrameLight<6>(pt, vars, &Xd[0], u0xn);
+        //     for (int i = 0; i < 3; i++) u0xn[3*i+2] = 0.0; // last column is zero (just put Xd in there to save registers)
+        // }
+
+        // // compute rotation matrix at this node
+        // T C[9], tmp[9];
+        // Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
+
+        // // compute Ct = T^T * C * T
+        // using MatOp = A2D::MatOp;
+        // A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, C, tmp);
+        // A2D::MatMatMultCore3x3<T>(tmp, Tmat, C);
+
+        // // inverse Xd frame and Transformed product
+        // T XdinvTn[9];
+        // A2D::MatInvCore<T, 3>(Xd, tmp);
+        // A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
+
+        // // Compute transformation u0x = T^T * u0xn * (Xdinv*T)
+        // A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
+        // A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
+
+        // compute the drill strain
+        T etn = Director::evalDrillStrain(u0xn, C);
+
+        // add to interp of et_f
+
+    }  // end of node for loop
+
+}  // end of method ShellComputeDrillStrainFast
+
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainHfwd(const T quad_pt[], const T refAxis[],

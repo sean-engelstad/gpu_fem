@@ -137,14 +137,14 @@ class ShellQuadBasis {
     using Geo = LinearQuadGeo;
 
     // shape functions here
-    __HOST_DEVICE__ static void lagrangeLobatto1D(const T u, T *N) {
+    __HOST_DEVICE__ static void lagrangeLobatto1D(const T &u, T *N) {
         if constexpr (order == 2) {
             N[0] = 0.5 * (1.0 - u);
             N[1] = 0.5 * (1.0 + u);
         }
     }
 
-    __HOST_DEVICE__ static T lagrangeLobatto1DLight(const int i, const T u) {
+    __HOST_DEVICE__ static T lagrangeLobatto1DLight(const int i, const T &u) {
         // for higher order, could use product formula and a const data of the nodal points in order to get this on the fly (is possible)
         if constexpr (order == 2) {
             return 0.5 * (1.0 + (-1.0 + 2.0 * i) * u);
@@ -152,7 +152,7 @@ class ShellQuadBasis {
     }
 
     template <int tyingOrder>
-    __HOST_DEVICE__ static void lagrangeLobatto1D_tying(const T u, T *N) {
+    __HOST_DEVICE__ static void lagrangeLobatto1D_tying(const T &u, T *N) {
         if constexpr (tyingOrder == 1) {
             N[0] = 1.0;
         } else if constexpr (tyingOrder == 2) {
@@ -162,7 +162,7 @@ class ShellQuadBasis {
     }
 
     template <int tyingOrder>
-    __HOST_DEVICE__ static T lagrangeLobatto1D_tyingLight(int i, const T u) {
+    __HOST_DEVICE__ static T lagrangeLobatto1D_tyingLight(int i, const T &u) {
         if constexpr (tyingOrder == 1) {
             return 1.0;
         } else if constexpr (tyingOrder == 2) {
@@ -181,13 +181,13 @@ class ShellQuadBasis {
         }
     }
 
-    __HOST_DEVICE__ static T lagrangeLobatto1DGradLight(const int i, const int u) {
+    __HOST_DEVICE__ static T lagrangeLobatto1DGradLight(const int i, const T &u) {
         if constexpr (order == 2) {
             return -1.0 + 2.0 * i;
         }
     }
 
-    __HOST_DEVICE__ static void lagrangeLobatto2D(const T xi, const T eta, T *N) {
+    __HOST_DEVICE__ static void lagrangeLobatto2D(const T &xi, const T &eta, T *N) {
         // compute N_i(u) shape function values at each node
         T na[order], nb[order];
         lagrangeLobatto1D(xi, na);
@@ -201,7 +201,7 @@ class ShellQuadBasis {
         }
     }  // end of lagrangeLobatto2D
 
-     __HOST_DEVICE__ static T lagrangeLobatto2DLight(const int ind, const T xi, const T eta) {
+     __HOST_DEVICE__ static T lagrangeLobatto2DLight(const int ind, const T &xi, const T &eta) {
         /* on the fly interp */
         // int ixi = ind % order;
         // int ieta = ind / order;
@@ -317,6 +317,16 @@ class ShellQuadBasis {
         T out = 0.0;
         for (int inode = 0; inode < num_nodes; inode++) {
             out += lagrangeLobatto2DLight(inode, pt[0], pt[1]) * values[vars_per_node * inode + ifield];
+        }
+        return out;
+    }  // end of interpFieldsLight method
+
+    template <int vars_per_node>
+    __HOST_DEVICE__ static T interpFieldsFast(const int ifield, const T pt[], const T values[]) {
+        /* fast version of interpFields that just gets one value only of the output vector */
+        T out = 0.0;
+        for (int inode = 0; inode < num_nodes; inode++) {
+            out += lagrangeLobatto2DLight(inode, xi, eta) * values[vars_per_node * inode + ifield];
         }
         return out;
     }  // end of interpFieldsLight method
