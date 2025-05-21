@@ -65,9 +65,9 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         constexpr int CONTRIBUTION = 0; // for prelim testing, turn on only one term here
 
         if constexpr (CONTRIBUTION == 0) {
-	    constexpr int VERSION = 2; // 3
+	        constexpr int VERSION = 3; // 3
             _add_drill_strain_quadpt_residual<Data, VERSION>(iquad, xpts, vars, physData, res);
-            // _add_drill_strain_quadpt_residual_fast<Data, VERSION>(iquad, xpts, vars, physData, res);
+            // _add_drill_strain_quadpt_residual_fast<Data>(iquad, xpts, vars, physData, res);
         } else if (CONTRIBUTION == 1) {
             _add_tying_strain_quadpt_residual<Data>(iquad, xpts, vars, physData, res);
         } else {
@@ -113,7 +113,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         }
     }
 
-    template <class Data, int version>
+    template <class Data>
     __HOST_DEVICE__ static void _add_drill_strain_quadpt_residual_fast(const int iquad,
                                                           const T xpts[xpts_per_elem],
                                                           const T vars[dof_per_elem],

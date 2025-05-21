@@ -552,26 +552,27 @@ class ShellQuadBasis {
         ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
     }
 
-    __HOST_DEVICE__ static void ShellComputeNodeNormalFast(const T &xi, const T &eta, const T xpts[], T &n0x, T &n0y, T &n0z) {
+    __HOST_DEVICE__ static void ShellComputeNodeNormalFast(const T &xi, const T &eta, const T xpts[], T n0[]) {
         /* exploring a faster GPU method to get the node normal */
 
-        // compute n0x = Y,xi * Z,eta - Y,eta * Z,xi
-        n0x = interpFieldsGradFast<XI, 3>(1, xi, eta, xpts) * interpFieldsGradFast<ETA, 3>(2, xi, eta, xpts);
-        n0x -= interpFieldsGradFast<ETA, 3>(1, xi, eta, xpts) * interpFieldsGradFast<XI, 3>(2, xi, eta, xpts);
+        for (int i = 0; i < 3; i++) {
+            int j = (i + 1) % 3;
+            int k = (i + 2) % 3;
+            // cycles through so no sign change needed
+            // X,xi * Y,eta
+            T val1 = interpFieldsGradFast<XI, 3>(j, xi, eta, xpts);
+            T val2 = interpFieldsGradFast<ETA, 3>(k, xi, eta, xpts);
+            n0[i] = val1 * val2;
 
-        // compute n0y = X,eta * Z,xi - X,xi * Z,eta
-        n0y = interpFieldsGradFast<ETA, 3>(0, xi, eta, xpts) * interpFieldsGradFast<XI, 3>(2, xi, eta, xpts);
-        n0y -= interpFieldsGradFast<XI, 3>(0, xi, eta, xpts) * interpFieldsGradFast<ETA, 3>(2, xi, eta, xpts);
-
-        // compute n0z = X,xi * Y,eta - X,eta * Y,xi
-        n0z = interpFieldsGradFast<XI, 3>(0, xi, eta, xpts) * interpFieldsGradFast<ETA, 3>(1, xi, eta, xpts);
-        n0z -= interpFieldsGradFast<ETA, 3>(0, xi, eta, xpts) * interpFieldsGradFast<XI, 3>(1, xi, eta, xpts);
+            // X,eta * Y,xi
+            val1 = interpFieldsGradFast<ETA, 3>(j, xi, eta, xpts);
+            val2 = interpFieldsGradFast<XI, 3>(k, xi, eta, xpts);
+            n0[i] -= val1 * val2;
+        }
 
         // normalize the unit vector
-        T norm = sqrt(n0x * n0x + n0y * n0y + n0z * n0z);
-        n0x /= norm;
-        n0y /= norm;
-        n0z /= norm;
+        T norm = sqrt(A2D::VecDotCore<T, 3>(n0, n0));
+        for (int i = 0; i < 3; i++) n0[i] /= 1.0;
     }
 
     __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T dXdxi[], const T dXdeta[], T n0[]) {

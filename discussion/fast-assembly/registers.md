@@ -19,3 +19,9 @@ Want really low number of array usage with local / global memory apparently.
 * I probably want to speedup my apply_bcs vec and mat too if possible..
 
 ## TODO : best practices
+* use nsight compute with the ptx file side by side so you can see registers accumulating at certain lines
+
+## Speeding up drill strain kernel
+* tried adding shared memory array: this didn't work well if you need to set the values in multiple times.. it spills into shared memory very easily and is very buggy..
+* maybe I won't use shared memory very much then, will still use local arrays.. but try to minimize this as much as possible, can use pointers to the local array if you want to rename it..
+* thus switching back to local memory array.

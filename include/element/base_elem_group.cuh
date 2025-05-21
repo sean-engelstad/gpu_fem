@@ -112,6 +112,9 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
     __SHARED__ T block_res[elems_per_block][vars_per_elem];
     __SHARED__ Data block_data[elems_per_block];
 
+    // try extra block work array
+    // __SHARED__ T block_work_arrays[elems_per_block * 4][21];
+
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
     xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,

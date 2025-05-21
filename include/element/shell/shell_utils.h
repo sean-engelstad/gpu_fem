@@ -81,6 +81,52 @@ __HOST_DEVICE__ void ShellComputeTransformLight(const T refAxis[], const T pt[],
     }
 }
 
+template <typename T, class Basis, class Data>
+__HOST_DEVICE__ void ShellComputeTransformFast(const T refAxis[], const T &xi, const T &eta, const T xpts[],
+                                           const T n0[], T Tmat[]) {
+    // make the normal a unit vector, store it in Tmat (Tmat assembled in transpose form first for convenience, then transposed later)
+    for (int i = 0; i < 9; i++) Tmat[i] = 0.0; // zero out
+    for (int i = 0; i < 3; i++) {
+        Tmat[6+i] = n0[i];
+    }
+    T *n = &Tmat[6];
+    T norm = sqrt(A2D::VecDotCore<T,3>(n, n));
+    for (int i = 0; i < 3; i++) {
+        n[i] /= norm;
+    }
+
+    // set t1
+    if constexpr (Data::has_ref_axis) {
+        // shell ref axis transform
+        A2D::VecAddCore<T,3>(1.0, refAxis, &Tmat[0]);
+    } else {  // doesn't have ref axis
+        // shell natural transform, set to dX/dxi
+        for (int i = 0; i < 3; i++) {
+            Tmat[i] = Basis::template interpFieldsGradFast<XI,3>(i, xi, eta, xpts);
+        }
+    }
+
+    // remove normal component from t1 (of n)
+    T d = A2D::VecDotCore<T,3>(&Tmat[0], &Tmat[6]); // t1 cross n
+    A2D::VecAddCore<T,3>(T(1.0), &Tmat[0], &Tmat[3]);
+    A2D::VecAddCore<T,3>(-d, &Tmat[6], &Tmat[3]); // t1 - (t1 dot n) * n => t2 (temp store in t2)
+    norm = sqrt(A2D::VecDotCore<T,3>(&Tmat[3], &Tmat[3]));
+    A2D::VecAddCore<T,3>(1.0, &Tmat[3], &Tmat[0]);
+
+    // compute t2 by cross product
+    A2D::VecCrossCore<T>(&Tmat[6], &Tmat[0], &Tmat[3]); // nhat cross t1hat => t2hat
+
+    // transpose Tmat to standard column major from row major format
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            // in place transpose swap
+            T tmp = Tmat[3 * i + j];
+            Tmat[3 * i + j] = Tmat[3 * j + i];
+            Tmat[3 * j + i] = tmp;
+        }
+    }
+}
+
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[], const T xpts[],
                                              const T vars[], const T fn[], T et[]) {
@@ -224,7 +270,7 @@ __HOST_DEVICE__ void ShellComputeDrillStrainV3(const T quad_pt[], const T refAxi
         T Tmat[9], Xd[9];
         {
             T n0[3];
-            ShellComputeNodeNormalLight(pt, xpts, n0);
+            Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
 
             // assemble Xd frame
             Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
@@ -270,7 +316,7 @@ __HOST_DEVICE__ void ShellComputeDrillStrainV3(const T quad_pt[], const T refAxi
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainFast(const T &xi, const T &eta, const T refAxis[], const T xpts[],
-                                             const T vars[], T sharedWorkArr[], T &et) {
+                                             const T vars[], T &et) {
     // instead of storing etn[4], we add to interpolated et on the fly..
     et = 0.0;
     for (int inode = 0; inode < Basis::num_nodes; inode++) {
@@ -281,35 +327,19 @@ __HOST_DEVICE__ void ShellComputeDrillStrainFast(const T &xi, const T &eta, cons
         // use work array of size 24 for each thread in shared memory?
         //   still better to use registers when possible.. right?
         // should I use n0x, n0y, n0z storage, or do T n0[3], or do shared memory array
-        T *Xd = &sharedWorkArr[0];
+        // T Xd[9];
         {
-            T n0x, n0y, n0z;
-            ShellComputeNodeNormalFast(xi, eta, xpts, n0x, n0y, n0z);
+            T n0[3];
+            // this hugely increases shared memory and allocated data
+            Basis::ShellComputeNodeNormalFast(xi, eta, xpts, n0);
 
-            Basis::assembleFrameFast<3>(xi, eta, xpts, n0x, n0y, n0z, Xd);
-        }
+            // compute the shell transform based on the ref axis in Data object
+            // ShellComputeTransformFast<T, Basis, Data>(refAxis, node_xi, node_eta, xpts, n0x, n0y, n0z, Tmat);
 
-        
+            // Basis::assembleFrameFast<3>(xi, eta, xpts, n0x, n0y, n0z, Xd);
 
-        // compute n0 and store in first row of mat2
-        // use n0 and xpts to compute Xd in mat1
-        // use n0 and xpts to compute Tmat in mat2
-        // st
-
-        // how to compute shell node normal light, should I put n0 in shared memory arrays? I certainly could
-
-        // // get shell transform and Xdn frame scope
-        // T Tmat[9], Xd[9];
-        // {
-        //     T n0[3];
-        //     ShellComputeNodeNormalLight(pt, xpts, n0);
-
-        //     // assemble Xd frame
-        //     Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
-
-        //     // compute the shell transform based on the ref axis in Data object
-        //     ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
-        // }  // end of Xd and shell transform scope
+            
+        }  // end of Xd and shell transform scope
 
         // // assemble u0xn frame scope
         // T u0xn[9];
@@ -512,7 +542,7 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSensV3(const T quad_pt[], const T re
         T Tmat[9], Xd[9];
         {
             T n0[3];
-            ShellComputeNodeNormalLight(pt, xpts, n0);
+            Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
 
             // assemble Xd frame
             Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);

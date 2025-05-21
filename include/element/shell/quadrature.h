@@ -22,6 +22,7 @@ class QuadLinearQuadrature {
         switch(ind) {
             case 0: return -rt3;
             case 1: return rt3;
+            default: return 0.0;
         }
     }
 

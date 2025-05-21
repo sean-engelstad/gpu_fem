@@ -48,13 +48,13 @@ int main() {
   // BSR factorization
   auto start1 = std::chrono::high_resolution_clock::now();
   auto& bsr_data = assembler.getBsrData();
-  double fillin = 10.0;  // 10.0
+  // double fillin = 10.0;  // 10.0
   // bsr_data.AMD_reordering();
   // bsr_data.compute_full_LU_pattern(fillin, print);
 
-  bsr_data.AMD_reordering();
+  // bsr_data.AMD_reordering();
   // bsr_data.qorder_reordering(0.2);
-  bsr_data.compute_ILUk_pattern(5, fillin, print);
+  // bsr_data.compute_ILUk_pattern(5, fillin, print);
   // bsr_data.compute_full_LU_pattern(fillin, print);
 
   assembler.moveBsrDataToDevice();
