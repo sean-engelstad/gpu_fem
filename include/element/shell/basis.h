@@ -929,15 +929,30 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     // in order {g11-n1, g11-n2, ..., g11-nN, g22-n1, g22-n2,...}
     // interp the final tying strain {g11, g22, g12, g23, g13} in ety_bar storage to
     // with symMat storage also
-    int32_t offset;
-    constexpr int order = Basis::order;
+    // int32_t offset;
+    // constexpr int order = Basis::order;
 
-    // g11 fast
-    for (int j = 0; j < order; j++) {
-        for (int i = 0; i < order - 1; i++, ety_bar++) {
-            ety_bar[0] += 1.0 * 0.5 * (1.0 + (-1.0 + 2.0 * j) * pt[1]) * gty_bar[0];
-        }
-    }
+    // g11 super actually fast ?
+    // offset = Basis::tying_point_offsets(0);
+    // offset = 0;
+    // ety_bar[0] = 0.5; // fine, 32 registers, 4.8e-4 seconds
+    // ety_bar[0] = 0.5 * (1.0 - pt[1]); // fine, 32 registers, 4.9e-4 sec
+    // so multiply by gty_bar[0] breaks it
+    // ety_bar[0] = 0.5 * (1.0 - pt[1]) * gty_bar[0]; // bad (136 registers, 3.6e-3 sec)
+    ety_bar[0] = gty_bar[0]; // this alone breaks the registers
+    // ety_bar[offset+1] = 0.5 * (1.0 + pt[1]) * gty_bar[0];
+    return;
+
+
+    // g11 fast (pragma unroll here?)
+    // offset = Basis::tying_point_offsets(0);
+    // #pragma unroll
+    // for (int j = 0; j < order; j++) {
+	// #pragma unroll
+    //    for (int i = 0; i < order - 1; i++, offset++) {
+    //        ety_bar[offset] += 1.0 * 0.5 * (1.0 + (-1.0 + 2.0 * j) * pt[1]) * gty_bar[0];
+    //    }
+    // }
 
     // g11
     // offset = Basis::tying_point_offsets(0);
