@@ -38,8 +38,9 @@ __GLOBAL__ void shell_elem_add_residual_gpu(const int32_t num_elements, const Ve
     __SHARED__ Data block_data[elems_per_block];
 
     // store Tmat, XdinvT for each node and element
-    __SHARED__ T block_Tmat[elems_per_block][36];
-    __SHARED__ T block_XdinvT[elems_per_block][36];
+    const int nmat = 9 * Basis::num_nodes; // 36 for quad elements
+    __SHARED__ T block_Tmat[elems_per_block][nmat];
+    __SHARED__ T block_XdinvT[elems_per_block][nmat];
 
     // try extra block work array
     // __SHARED__ T block_work_arrays[elems_per_block * 4][21];
@@ -70,20 +71,47 @@ __GLOBAL__ void shell_elem_add_residual_gpu(const int32_t num_elements, const Ve
     T local_res[vars_per_elem];
     memset(local_res, 0.0, sizeof(T) * vars_per_elem);
 
-    // first compute the nodal shell transforms which allows the main residual calculatoin to be faster
-    int inode = iquad; // for now
-    ElemGroup::template compute_nodal_shell_transforms<Data>(active_thread, inode, 
-        block_xpts[local_elem], block_data[local_elem], &block_Tmat[local_elem][9*inode], 
-        &block_XdinvT[local_elem][9*inode]);
+    constexpr bool include_drill_strain = true, 
+                   include_tying_strain = true,
+                   include_bending_strain = false;
 
-    // accessing value crashes the kernel.. (block_xpts not initialized right)
-    // printf("block_xpts:");
-    // printVec<T>(12,&block_xpts[local_elem][0]);
+    // drill strain terms.. using nodal shell transforms
+    if constexpr (include_drill_strain) {
+        int inode = iquad; // for now
+        ElemGroup::template compute_nodal_shell_transforms<Data>(active_thread, inode, 
+            block_xpts[local_elem], block_data[local_elem], &block_Tmat[local_elem][9*inode], 
+            &block_XdinvT[local_elem][9*inode]);
+        __syncthreads(); // each thread needs to then use the nodal transforms
 
-    ElemGroup::template add_element_quadpt_residual_fast<Data>(
-        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], &block_Tmat[local_elem][0], 
-        &block_XdinvT[local_elem][0], local_res);
+        ElemGroup::template _add_drill_strain_quadpt_residual_fast<Data>(active_thread, iquad, block_xpts[local_elem],
+            block_vars[local_elem], block_data[local_elem], &block_Tmat[local_elem][0], 
+            &block_XdinvT[local_elem][0], local_res);
+    }
+
+    if constexpr (include_tying_strain) {
+        // only need quadpt Tmat, XdinvT for tying strains
+        ElemGroup::template compute_quadpt_shell_transforms<Data>(active_thread, iquad, 
+            block_xpts[local_elem], block_data[local_elem], &block_Tmat[local_elem][9*iquad], 
+            &block_XdinvT[local_elem][9*iquad]);
+
+        ElemGroup::template _add_tying_strain_quadpt_residual_fast<Data>(active_thread, iquad, block_xpts[local_elem],
+            block_vars[local_elem], block_data[local_elem], 
+            &block_XdinvT[local_elem][9*iquad], local_res);
+    }
+
+    if constexpr (include_bending_strain) {
+        // only need quadpt Tmat, XdinvT for bending strains
+        if constexpr (!include_tying_strain) {
+            // only need to recompute if not done tying strains
+            ElemGroup::template compute_quadpt_shell_transforms<Data>(active_thread, iquad, 
+                block_xpts[local_elem], block_data[local_elem], &block_Tmat[local_elem][9*iquad], 
+                &block_XdinvT[local_elem][9*iquad]);
+        }
+
+        ElemGroup::template _add_bending_strain_quadpt_residual_fast<Data>(active_thread, iquad, block_xpts[local_elem],
+            block_vars[local_elem], block_data[local_elem], &block_Tmat[local_elem][9*iquad], 
+            &block_XdinvT[local_elem][9*iquad], local_res);
+    }
 
     if (global_elem == 0 && threadIdx.x == 0 && threadIdx.y == 0) printf("ran custom shell elem kernel\n");
 

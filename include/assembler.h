@@ -512,6 +512,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
         // xpts,
         //                                                     vars, physData, res);
 
+        // TODO : figure out how to make this call from the ElemGroup..
         shell_elem_add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
     } else {

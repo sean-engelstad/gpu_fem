@@ -75,7 +75,8 @@ int main() {
   auto soln2 = h_soln1.createDeviceVec();
   assembler.set_variables(soln2);
 
-  assembler.add_residual(res, print); // warmup call
+  assembler.apply_bcs(res); // warmup call
+  // assembler.add_residual(res, print); // warmup call
   assembler.add_residual(res, print);
 
   // check residual not zero
