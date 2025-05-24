@@ -1,9 +1,9 @@
 #pragma once
+#include "_basis_utils.h"
 #include "a2dcore.h"
 #include "a2dshell.h"
 #include "quadrature.h"
 #include "shell_utils.h"
-#include "_basis_utils.h"
 
 template <typename T, class Quadrature_, int order_ = 2>
 class ShellQuadBasis {
@@ -145,7 +145,8 @@ class ShellQuadBasis {
     }
 
     __HOST_DEVICE__ static T lagrangeLobatto1DLight(const int i, const T &u) {
-        // for higher order, could use product formula and a const data of the nodal points in order to get this on the fly (is possible)
+        // for higher order, could use product formula and a const data of the nodal points in order
+        // to get this on the fly (is possible)
         if constexpr (order == 2) {
             return 0.5 * (1.0 + (-1.0 + 2.0 * i) * u);
         }
@@ -201,7 +202,7 @@ class ShellQuadBasis {
         }
     }  // end of lagrangeLobatto2D
 
-     __HOST_DEVICE__ static T lagrangeLobatto2DLight(const int ind, const T &xi, const T &eta) {
+    __HOST_DEVICE__ static T lagrangeLobatto2DLight(const int ind, const T &xi, const T &eta) {
         /* on the fly interp */
         // int ixi = ind % order;
         // int ieta = ind / order;
@@ -232,14 +233,18 @@ class ShellQuadBasis {
         // int ixi = inode % order;
         // int ieta = inode / order;
         if constexpr (deriv == XI) {
-            return lagrangeLobatto1DGradLight(inode % order, xi) * lagrangeLobatto1DLight(inode / order, eta);
+            return lagrangeLobatto1DGradLight(inode % order, xi) *
+                   lagrangeLobatto1DLight(inode / order, eta);
         } else if (deriv == ETA) {
-            return lagrangeLobatto1DLight(inode % order, xi) * lagrangeLobatto1DGradLight(inode / order, eta);
+            return lagrangeLobatto1DLight(inode % order, xi) *
+                   lagrangeLobatto1DGradLight(inode / order, eta);
         }
     }  // end of lagrangeLobatto2D_gradLight
-    
-    __HOST_DEVICE__ static T lagrangeLobatto2DGradEtaLight(const int inode, const T xi, const T eta) {
-	    return lagrangeLobatto1DLight(inode % order, xi) * lagrangeLobatto1DGradLight(inode / order, eta);
+
+    __HOST_DEVICE__ static T lagrangeLobatto2DGradEtaLight(const int inode, const T xi,
+                                                           const T eta) {
+        return lagrangeLobatto1DLight(inode % order, xi) *
+               lagrangeLobatto1DGradLight(inode / order, eta);
     }
 
     __HOST_DEVICE__ static void assembleFrame(const T a[], const T b[], const T c[], T frame[]) {
@@ -255,30 +260,33 @@ class ShellQuadBasis {
         T n0[3];
         ShellComputeNodeNormalLight(pt, xpts, n0);
         for (int i = 0; i < 3; i++) {
-            frame[3 * i] = interpFieldsGradLight<XI,3>(i, pt, xpts);
-            frame[3 * i + 1] = interpFieldsGradLight<ETA,3>(i, pt, xpts);
+            frame[3 * i] = interpFieldsGradLight<XI, 3>(i, pt, xpts);
+            frame[3 * i + 1] = interpFieldsGradLight<ETA, 3>(i, pt, xpts);
             frame[3 * i + 2] = n0[i];
         }
     }
 
     template <int vars_per_node>
-    __HOST_DEVICE__ static void assembleFrameLight(const T pt[], const T values[], const T normal[], T frame[]) {
+    __HOST_DEVICE__ static void assembleFrameLight(const T pt[], const T values[], const T normal[],
+                                                   T frame[]) {
         /* light implementation of assembleFrame for xpts */
-        
+
         for (int i = 0; i < 3; i++) {
-            frame[3 * i] = interpFieldsGradLight<XI,vars_per_node>(i, pt, values);
-            frame[3 * i + 1] = interpFieldsGradLight<ETA,vars_per_node>(i, pt, values);
+            frame[3 * i] = interpFieldsGradLight<XI, vars_per_node>(i, pt, values);
+            frame[3 * i + 1] = interpFieldsGradLight<ETA, vars_per_node>(i, pt, values);
             frame[3 * i + 2] = normal[i];
         }
     }
 
     template <int vars_per_node>
-    __HOST_DEVICE__ static void assembleFrameFast(const T &xi, const T &eta, const T values[], const T &n0x, const T &n0y, const T &n0z, T frame[]) {
+    __HOST_DEVICE__ static void assembleFrameFast(const T &xi, const T &eta, const T values[],
+                                                  const T &n0x, const T &n0y, const T &n0z,
+                                                  T frame[]) {
         /* fast implementation of assembleFrame for xpts */
-        
+
         for (int i = 0; i < 3; i++) {
-            frame[3 * i] = interpFieldsGradFast<XI,vars_per_node>(i, xi, eta, values);
-            frame[3 * i + 1] = interpFieldsGradFast<ETA,vars_per_node>(i, xi, eta, values);
+            frame[3 * i] = interpFieldsGradFast<XI, vars_per_node>(i, xi, eta, values);
+            frame[3 * i + 1] = interpFieldsGradFast<ETA, vars_per_node>(i, xi, eta, values);
         }
         frame[2] = n0x;
         frame[5] = n0y;
@@ -331,17 +339,29 @@ class ShellQuadBasis {
     template <int vars_per_node>
     __HOST_DEVICE__ static T interpFieldsLight(const int ifield, const T pt[], const T values[]) {
         /* light version of interpFields that just gets one value only of the output vector */
-        // xpts[ifield] = sum_inode N[inode] * values[inode * vars_per_node + ifield] for single ifield
+        // xpts[ifield] = sum_inode N[inode] * values[inode * vars_per_node + ifield] for single
+        // ifield
 
         T out = 0.0;
         for (int inode = 0; inode < num_nodes; inode++) {
-            out += lagrangeLobatto2DLight(inode, pt[0], pt[1]) * values[vars_per_node * inode + ifield];
+            out += lagrangeLobatto2DLight(inode, pt[0], pt[1]) *
+                   values[vars_per_node * inode + ifield];
         }
         return out;
     }  // end of interpFieldsLight method
 
     template <int vars_per_node>
-    __HOST_DEVICE__ static T interpFieldsFast(const int ifield, const T &xi, const T &eta, const T values[]) {
+    __HOST_DEVICE__ static T addInterpFieldsLight(const int inode, const int ifield, const T pt[],
+                                                  const T values[]) {
+        /* light version of interpFields that just gets one value only of the output vector */
+        // xpts[ifield] = sum_inode N[inode] * values[inode * vars_per_node + ifield] for single
+        // ifield
+        return lagrangeLobatto2DLight(inode, pt[0], pt[1]) * values[vars_per_node * inode + ifield];
+    }  // end of interpFieldsLight method
+
+    template <int vars_per_node>
+    __HOST_DEVICE__ static T interpFieldsFast(const int ifield, const T &xi, const T &eta,
+                                              const T values[]) {
         /* fast version of interpFields that just gets one value only of the output vector */
         T out = 0.0;
         for (int inode = 0; inode < num_nodes; inode++) {
@@ -367,36 +387,44 @@ class ShellQuadBasis {
     }  // end of interpFieldsGrad method
 
     template <COMP_VAR DERIV, int vars_per_node>
-    __HOST_DEVICE__ static T interpFieldsGradLight(const int ifield, const T pt[], const T values[]) {
+    __HOST_DEVICE__ static T interpFieldsGradLight(const int ifield, const T pt[],
+                                                   const T values[]) {
         /* light version of interpFieldsGrad, where ideriv is either 0 or 1 */
         T out = 0.0;
         for (int inode = 0; inode < num_nodes; inode++) {
-            out += lagrangeLobatto2DGradLight<DERIV>(inode, pt[0], pt[1]) * values[vars_per_node * inode + ifield];
+            out += lagrangeLobatto2DGradLight<DERIV>(inode, pt[0], pt[1]) *
+                   values[vars_per_node * inode + ifield];
         }
         return out;
     }  // end of interpFieldsGradLight method
 
     template <COMP_VAR DERIV, int vars_per_node>
-    __HOST_DEVICE__ static T interpFieldsGradFast(const int ifield, const T &xi, const T &eta, const T values[]) {
+    __HOST_DEVICE__ static T interpFieldsGradFast(const int ifield, const T &xi, const T &eta,
+                                                  const T values[]) {
         /* light version of interpFieldsGrad, where ideriv is either 0 or 1 */
         T out = 0.0;
         for (int inode = 0; inode < num_nodes; inode++) {
-            out += lagrangeLobatto2DGradLight<DERIV>(inode, xi, eta) * values[vars_per_node * inode + ifield];
+            out += lagrangeLobatto2DGradLight<DERIV>(inode, xi, eta) *
+                   values[vars_per_node * inode + ifield];
         }
         return out;
     }  // end of interpFieldsGradFasat method
 
     template <COMP_VAR i1, COMP_VAR i2, int vpn1, int vpn2, int nfields>
-    __HOST_DEVICE__ static T interpFieldsGradDotLight(const T pt[], const T vec1[], const T vec2[]) {
+    __HOST_DEVICE__ static T interpFieldsGradDotLight(const T pt[], const T vec1[],
+                                                      const T vec2[]) {
         /* i1, i2 represent xi, eta through 0,1
-            then this is dot product <dvec1/di1, dvec2/di2> where i1,i2 represent either xi or eta each
+            then this is dot product <dvec1/di1, dvec2/di2> where i1,i2 represent either xi or eta
+           each
         */
         T dot = 0.0;
         for (int ifield = 0; ifield < nfields; ifield++) {
             T dv1_di1 = 0.0, dv2_di2 = 0.0;
             for (int inode = 0; inode < num_nodes; inode++) {
-                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) * vec1[vpn1 * inode + ifield];
-                dv2_di2 += lagrangeLobatto2DGradLight<i2>(inode, pt[0], pt[1]) * vec2[vpn2 * inode + ifield];
+                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) *
+                           vec1[vpn1 * inode + ifield];
+                dv2_di2 += lagrangeLobatto2DGradLight<i2>(inode, pt[0], pt[1]) *
+                           vec2[vpn2 * inode + ifield];
             }
             dot += dv1_di1 * dv2_di2;
         }
@@ -404,43 +432,47 @@ class ShellQuadBasis {
     }  // end of interpFieldsGradDotLight method
 
     template <COMP_VAR i1, COMP_VAR i2, int vpn1, int vpn2, int nfields>
-    __HOST_DEVICE__ static void addInterpFieldsGradDotSensLight(const T scale, const T pt[], const T vec1[], T vec2_bar[]) {
+    __HOST_DEVICE__ static void addInterpFieldsGradDotSensLight(const T scale, const T pt[],
+                                                                const T vec1[], T vec2_bar[]) {
         /* i1, i2 represent xi, eta through 0,1
-            dot product of forward analysis is <dvec1/di1, dvec2/di2> assume here vec2 is for derivative
+            dot product of forward analysis is <dvec1/di1, dvec2/di2> assume here vec2 is for
+           derivative
         */
-        
 
-	    T dv1_di1;
+        T dv1_di1;
         for (int ifield = 0; ifield < nfields; ifield++) {
             dv1_di1 = 0.0;
             for (int inode = 0; inode < num_nodes; inode++) {
-                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) * vec1[vpn1 * inode + ifield];
+                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) *
+                           vec1[vpn1 * inode + ifield];
             }
 
-	    // return; // 32 registers per thread 
+            // return; // 32 registers per thread
 
-	    // vec2_bar[ifield] += scale;
+            // vec2_bar[ifield] += scale;
 
             for (int inode = 0; inode < num_nodes; inode++) {
                 T loc_scale = scale * lagrangeLobatto2DGradLight<i2>(inode, pt[0], pt[1]);
-		// return; // 32 registers per thread
+                // return; // 32 registers per thread
                 vec2_bar[vpn2 * inode + ifield] += loc_scale * dv1_di1;
             }
         }
-		// compiler is aggressively inlining stuff here and messing up the compile?
+        // compiler is aggressively inlining stuff here and messing up the compile?
 
-		//vec2_bar[vpn2 * inode + ifield] += scale * lagrangeLobatto2DGradLight<i2>(inode, pt[0], pt[1]) * dv1_di1;
-		// 2nd version still introduces 100 registers per thread??
-		// vec2_bar[vpn2 * inode + ifield] += scale * lagrangeLobatto2DGradEtaLight(inode, pt[0], pt[1]) * 1.0;
-		// vec2_bar[vpn2 * inode + ifield] += scale;
-		// return; // 136 registers per thread? 
-            // }
-	    // return; // 136 registers per thread?
+        // vec2_bar[vpn2 * inode + ifield] += scale * lagrangeLobatto2DGradLight<i2>(inode, pt[0],
+        // pt[1]) * dv1_di1;
+        //  2nd version still introduces 100 registers per thread??
+        //  vec2_bar[vpn2 * inode + ifield] += scale * lagrangeLobatto2DGradEtaLight(inode, pt[0],
+        //  pt[1]) * 1.0; vec2_bar[vpn2 * inode + ifield] += scale; return; // 136 registers per
+        //  thread?
+        // }
+        // return; // 136 registers per thread?
         // }
     }  // end of interpFieldsGradDotLight method
 
     template <COMP_VAR i1, int vpn1, int nfields>
-    __HOST_DEVICE__ static T interpFieldsGradRightDotLight(const T pt[], const T vec1[], const T vec2[]) {
+    __HOST_DEVICE__ static T interpFieldsGradRightDotLight(const T pt[], const T vec1[],
+                                                           const T vec2[]) {
         /* i1, i2 represent xi, eta through 0,1
             then this is dot product <dvec1/di1, vec2> where i1 is comp derivative
         */
@@ -448,7 +480,8 @@ class ShellQuadBasis {
         for (int ifield = 0; ifield < nfields; ifield++) {
             T dv1_di1 = 0.0;
             for (int inode = 0; inode < num_nodes; inode++) {
-                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) * vec1[vpn1 * inode + ifield];
+                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) *
+                           vec1[vpn1 * inode + ifield];
             }
             dot += dv1_di1 * vec2[ifield];
         }
@@ -456,27 +489,32 @@ class ShellQuadBasis {
     }  // end of interpFieldsGradDotLight method
 
     template <COMP_VAR i1, int vpn1, int nfields>
-    __HOST_DEVICE__ static void interpFieldsGradRightDotLight_LeftSens(const T scale, const T pt[], T vec1_bar[], const T vec2[]) {
+    __HOST_DEVICE__ static void interpFieldsGradRightDotLight_LeftSens(const T scale, const T pt[],
+                                                                       T vec1_bar[],
+                                                                       const T vec2[]) {
         /* i1, i2 represent xi, eta through 0,1
             then this is dot product <dvec1/di1, vec2> where i1 is comp derivative
         */
         for (int ifield = 0; ifield < nfields; ifield++) {
             for (int inode = 0; inode < num_nodes; inode++) {
                 T jac = vec2[ifield] * lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]);
-                vec1_bar[vpn1*inode + ifield] += scale * jac;
+                vec1_bar[vpn1 * inode + ifield] += scale * jac;
             }
         }
     }  // end of interpFieldsGradDotLight method
 
     template <COMP_VAR i1, int vpn1, int nfields>
-    __HOST_DEVICE__ static void interpFieldsGradRightDotLight_RightSens(const T scale, const T pt[], const T vec1[], T vec2_bar[]) {
+    __HOST_DEVICE__ static void interpFieldsGradRightDotLight_RightSens(const T scale, const T pt[],
+                                                                        const T vec1[],
+                                                                        T vec2_bar[]) {
         /* i1, i2 represent xi, eta through 0,1
             then this is dot product <dvec1/di1, vec2> where i1 is comp derivative
         */
         for (int ifield = 0; ifield < nfields; ifield++) {
             T dv1_di1 = 0.0;
             for (int inode = 0; inode < num_nodes; inode++) {
-                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) * vec1[vpn1 * inode + ifield];
+                dv1_di1 += lagrangeLobatto2DGradLight<i1>(inode, pt[0], pt[1]) *
+                           vec1[vpn1 * inode + ifield];
             }
             vec2_bar[ifield] += dv1_di1 * scale;
         }
@@ -497,13 +535,16 @@ class ShellQuadBasis {
     }  // end of interpFieldsTranspose method
 
     template <int vars_per_node, int num_fields>
-    __HOST_DEVICE__ static void interpFieldsTransposeLight(const T pt[], const T field_bar[], T values_bar[]) {
+    __HOST_DEVICE__ static void interpFieldsTransposeLight(const T pt[], const T field_bar[],
+                                                           T values_bar[]) {
         /* light version of interpFields that just gets one value only of the output vector */
-        // xpts[ifield] = sum_inode N[inode] * values[inode * vars_per_node + ifield] for single ifield
+        // xpts[ifield] = sum_inode N[inode] * values[inode * vars_per_node + ifield] for single
+        // ifield
 
         for (int ifield = 0; ifield < num_fields; ifield++) {
             for (int inode = 0; inode < num_nodes; inode++) {
-                values_bar[inode * vars_per_node + ifield] += field_bar[ifield] * lagrangeLobatto2DLight(inode, pt[0], pt[1]);
+                values_bar[inode * vars_per_node + ifield] +=
+                    field_bar[ifield] * lagrangeLobatto2DLight(inode, pt[0], pt[1]);
             }
         }
     }  // end of interpFieldsLight method
@@ -524,35 +565,41 @@ class ShellQuadBasis {
 
     template <int vars_per_node, int num_fields>
     __HOST_DEVICE__ static void interpFieldsGradTransposeLight(const T pt[], const T dxi_bar[],
-                                                          const T deta_bar[], T values_bar[]) {
+                                                               const T deta_bar[], T values_bar[]) {
         for (int ifield = 0; ifield < num_fields; ifield++) {
             for (int inode = 0; inode < num_nodes; inode++) {
                 int ind = inode * vars_per_node + ifield;
-                values_bar[ind] += dxi_bar[ifield] * lagrangeLobatto2DGradLight<XI>(inode, pt[0], pt[1]);
-                values_bar[ind] += deta_bar[ifield] * lagrangeLobatto2DGradLight<ETA>(inode, pt[0], pt[1]);
+                values_bar[ind] +=
+                    dxi_bar[ifield] * lagrangeLobatto2DGradLight<XI>(inode, pt[0], pt[1]);
+                values_bar[ind] +=
+                    deta_bar[ifield] * lagrangeLobatto2DGradLight<ETA>(inode, pt[0], pt[1]);
             }
         }
     }  // end of interpFieldsGradTransposeLight method
 
     __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T xpts[], T n0[]) {
-        // compute the shell node normal at a single node given already the pre-computed spatial gradients
+        // compute the shell node normal at a single node given already the pre-computed spatial
+        // gradients
         T Xxi[3], Xeta[3];
         interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
         ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
     }
 
     __HOST_DEVICE__ static void ShellComputeNodeNormalLight(const T pt[], const T xpts[], T n0[]) {
-        // compute the shell node normal at a single node given already the pre-computed spatial gradients
-        // TODO : could make this cheaper and compute the dot product on the fly with less memory if I want / need to
+        // compute the shell node normal at a single node given already the pre-computed spatial
+        // gradients
+        // TODO : could make this cheaper and compute the dot product on the fly with less memory if
+        // I want / need to
         T Xxi[3], Xeta[3];
         for (int i = 0; i < 3; i++) {
-            Xxi[i] = interpFieldsGradLight<XI,3>(i, pt, xpts);
-            Xeta[i] = interpFieldsGradLight<ETA,3>(i, pt, xpts);
+            Xxi[i] = interpFieldsGradLight<XI, 3>(i, pt, xpts);
+            Xeta[i] = interpFieldsGradLight<ETA, 3>(i, pt, xpts);
         }
         ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
     }
 
-    __HOST_DEVICE__ static void ShellComputeNodeNormalFast(const T &xi, const T &eta, const T xpts[], T n0[]) {
+    __HOST_DEVICE__ static void ShellComputeNodeNormalFast(const T &xi, const T &eta,
+                                                           const T xpts[], T n0[]) {
         /* exploring a faster GPU method to get the node normal */
 
         for (int i = 0; i < 3; i++) {
@@ -575,8 +622,10 @@ class ShellQuadBasis {
         for (int i = 0; i < 3; i++) n0[i] /= 1.0;
     }
 
-    __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T dXdxi[], const T dXdeta[], T n0[]) {
-        // compute the shell node normal at a single node given already the pre-computed spatial gradients
+    __HOST_DEVICE__ static void ShellComputeNodeNormal(const T pt[], const T dXdxi[],
+                                                       const T dXdeta[], T n0[]) {
+        // compute the shell node normal at a single node given already the pre-computed spatial
+        // gradients
         T tmp[3];
         A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
         T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
@@ -584,7 +633,8 @@ class ShellQuadBasis {
     }
 
     __HOST_DEVICE__ static void interpNodeNormalLight(const T pt[], const T xpts[], T n0[]) {
-        // compute the shell node normal at a single node given already the pre-computed spatial gradients
+        // compute the shell node normal at a single node given already the pre-computed spatial
+        // gradients
         for (int ifield = 0; ifield < 3; ifield++) n0[ifield] = 0.0;
 
         for (int inode = 0; inode < num_nodes; inode++) {
@@ -695,7 +745,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order; j++) {
                 for (int i = 0; i < order - 1; i++, ety++) {
                     // nar[i] * nb[j]
-                    dot += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * ety[0];
+                    dot += lagrangeLobatto1D_tyingLight<order - 1>(i, pt[0]) *
+                           lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * ety[0];
                 }
             }
         } else if constexpr (icomp == 2) {
@@ -703,7 +754,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order - 1; i++, ety++) {
                     // nar[i] * nbr[j]
-                    dot += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * ety[0];
+                    dot += lagrangeLobatto1D_tyingLight<order - 1>(i, pt[0]) *
+                           lagrangeLobatto1D_tyingLight<order - 1>(j, pt[1]) * ety[0];
                 }
             }
         } else if constexpr (icomp == 4) {
@@ -711,7 +763,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order; j++) {
                 for (int i = 0; i < order - 1; i++, ety++) {
                     // nar[i] * nb[j]
-                    dot += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * ety[0];
+                    dot += lagrangeLobatto1D_tyingLight<order - 1>(i, pt[0]) *
+                           lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * ety[0];
                 }
             }
         } else if constexpr (icomp == 1) {
@@ -719,7 +772,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety++) {
                     // na[i] * nbr[j]
-                    dot += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * ety[0];
+                    dot += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) *
+                           lagrangeLobatto1D_tyingLight<order - 1>(j, pt[1]) * ety[0];
                 }
             }
         } else if constexpr (icomp == 3) {
@@ -727,7 +781,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety++) {
                     // na[i] * nbr[j]
-                    dot += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * ety[0];
+                    dot += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) *
+                           lagrangeLobatto1D_tyingLight<order - 1>(j, pt[1]) * ety[0];
                 }
             }
         }
@@ -735,13 +790,15 @@ class ShellQuadBasis {
     }  // end of getTyingInterp
 
     template <int icomp>
-    __HOST_DEVICE__ static void addTyingInterpTransposeLight(const T pt[], const T out_bar, T ety_bar[]) {
+    __HOST_DEVICE__ static void addTyingInterpTransposeLight(const T pt[], const T out_bar,
+                                                             T ety_bar[]) {
         if constexpr (icomp == 0) {
             // g11
             for (int j = 0; j < order; j++) {
                 for (int i = 0; i < order - 1; i++, ety_bar++) {
                     // nar[i] * nb[j]
-                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * out_bar;
+                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order - 1>(i, pt[0]) *
+                                  lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * out_bar;
                 }
             }
         } else if constexpr (icomp == 2) {
@@ -749,7 +806,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order - 1; i++, ety_bar++) {
                     // nar[i] * nbr[j]
-                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * out_bar;
+                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order - 1>(i, pt[0]) *
+                                  lagrangeLobatto1D_tyingLight<order - 1>(j, pt[1]) * out_bar;
                 }
             }
         } else if constexpr (icomp == 4) {
@@ -757,7 +815,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order; j++) {
                 for (int i = 0; i < order - 1; i++, ety_bar++) {
                     // nar[i] * nb[j]
-                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * out_bar;
+                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order - 1>(i, pt[0]) *
+                                  lagrangeLobatto1D_tyingLight<order>(j, pt[1]) * out_bar;
                 }
             }
         } else if constexpr (icomp == 1) {
@@ -765,7 +824,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety_bar++) {
                     // na[i] * nbr[j]
-                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * out_bar;
+                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) *
+                                  lagrangeLobatto1D_tyingLight<order - 1>(j, pt[1]) * out_bar;
                 }
             }
         } else if constexpr (icomp == 3) {
@@ -773,7 +833,8 @@ class ShellQuadBasis {
             for (int j = 0; j < order - 1; j++) {
                 for (int i = 0; i < order; i++, ety_bar++) {
                     // na[i] * nbr[j]
-                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]) * out_bar;
+                    ety_bar[0] += lagrangeLobatto1D_tyingLight<order>(i, pt[0]) *
+                                  lagrangeLobatto1D_tyingLight<order - 1>(j, pt[1]) * out_bar;
                 }
             }
         }
@@ -796,12 +857,13 @@ __HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[]) {
         Basis::template interpFieldsGrad<3, 3>(pt, Xpts, dXdxi, dXdeta);
 
         // call helper function to get node normal at single node
-        Basis::ShellComputeNodeNormal(pt, dXdxi, dXdeta, &fn[3*inode]);
+        Basis::ShellComputeNodeNormal(pt, dXdxi, dXdeta, &fn[3 * inode]);
     }
 }
 
 template <typename T, class Data, class Basis>
-__HOST_DEVICE__ static T getFrameRotation(const T refAxis[], const T pt[], const T xpts[], T XdinvT[]) {
+__HOST_DEVICE__ static T getFrameRotation(const T refAxis[], const T pt[], const T xpts[],
+                                          T XdinvT[]) {
     /* get XdinvT the full frame rotation */
     T Tmat[9], n0[3];
     Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
@@ -835,58 +897,57 @@ __HOST_DEVICE__ static void interpTyingStrain(const T pt[], const T ety[], T gty
     // get g11 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(0);
-    constexpr int num_tying_g11 = Basis::num_tying_points(0);
-    T N_g11[num_tying_g11];  // TODO : can we store less floats here?
-    Basis::template getTyingInterp<0>(pt, N_g11);
-    gty[0] = A2D::VecDotCore<T, num_tying_g11>(N_g11, &ety[offset]);
+        offset = Basis::tying_point_offsets(0);
+        constexpr int num_tying_g11 = Basis::num_tying_points(0);
+        T N_g11[num_tying_g11];  // TODO : can we store less floats here?
+        Basis::template getTyingInterp<0>(pt, N_g11);
+        gty[0] = A2D::VecDotCore<T, num_tying_g11>(N_g11, &ety[offset]);
     }
 
     // get g22 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(1);
-    constexpr int num_tying_g22 = Basis::num_tying_points(1);
-    T N_g22[num_tying_g22];
-    Basis::template getTyingInterp<1>(pt, N_g22);
-    gty[3] = A2D::VecDotCore<T, num_tying_g22>(N_g22, &ety[offset]);
+        offset = Basis::tying_point_offsets(1);
+        constexpr int num_tying_g22 = Basis::num_tying_points(1);
+        T N_g22[num_tying_g22];
+        Basis::template getTyingInterp<1>(pt, N_g22);
+        gty[3] = A2D::VecDotCore<T, num_tying_g22>(N_g22, &ety[offset]);
     }
 
     // get g12 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(2);
-    constexpr int num_tying_g12 = Basis::num_tying_points(2);
-    T N_g12[num_tying_g12];
-    Basis::template getTyingInterp<2>(pt, N_g12);
-    gty[1] = A2D::VecDotCore<T, num_tying_g12>(N_g12, &ety[offset]);
+        offset = Basis::tying_point_offsets(2);
+        constexpr int num_tying_g12 = Basis::num_tying_points(2);
+        T N_g12[num_tying_g12];
+        Basis::template getTyingInterp<2>(pt, N_g12);
+        gty[1] = A2D::VecDotCore<T, num_tying_g12>(N_g12, &ety[offset]);
     }
 
     // get g23 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(3);
-    constexpr int num_tying_g23 = Basis::num_tying_points(3);
-    T N_g23[num_tying_g23];
-    Basis::template getTyingInterp<3>(pt, N_g23);
-    gty[4] = A2D::VecDotCore<T, num_tying_g23>(N_g23, &ety[offset]);
+        offset = Basis::tying_point_offsets(3);
+        constexpr int num_tying_g23 = Basis::num_tying_points(3);
+        T N_g23[num_tying_g23];
+        Basis::template getTyingInterp<3>(pt, N_g23);
+        gty[4] = A2D::VecDotCore<T, num_tying_g23>(N_g23, &ety[offset]);
     }
 
     // get g13 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(4);
-    constexpr int num_tying_g13 = Basis::num_tying_points(4);
-    T N_g13[num_tying_g13];
-    Basis::template getTyingInterp<4>(pt, N_g13);
-    gty[2] = A2D::VecDotCore<T, num_tying_g13>(N_g13, &ety[offset]);
+        offset = Basis::tying_point_offsets(4);
+        constexpr int num_tying_g13 = Basis::num_tying_points(4);
+        T N_g13[num_tying_g13];
+        Basis::template getTyingInterp<4>(pt, N_g13);
+        gty[2] = A2D::VecDotCore<T, num_tying_g13>(N_g13, &ety[offset]);
     }
 
     // get g33 tying strain
     // --------------------
     gty[5] = 0.0;
 }
-
 
 template <typename T, class Basis>
 __HOST_DEVICE__ static void interpTyingStrainLight(const T pt[], const T ety[], T gty[]) {
@@ -932,51 +993,51 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[], const T gty
     // get g11 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(0);
-    constexpr int num_tying_g11 = Basis::num_tying_points(0);
-    T N_g11[num_tying_g11];  // TODO : can we store less floats here?
-    Basis::template getTyingInterp<0>(pt, N_g11);
-    A2D::VecAddCore<T, num_tying_g11>(gty_bar[0], N_g11, &ety_bar[offset]);
+        offset = Basis::tying_point_offsets(0);
+        constexpr int num_tying_g11 = Basis::num_tying_points(0);
+        T N_g11[num_tying_g11];  // TODO : can we store less floats here?
+        Basis::template getTyingInterp<0>(pt, N_g11);
+        A2D::VecAddCore<T, num_tying_g11>(gty_bar[0], N_g11, &ety_bar[offset]);
     }
 
     // get g22 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(1);
-    constexpr int num_tying_g22 = Basis::num_tying_points(1);
-    T N_g22[num_tying_g22];
-    Basis::template getTyingInterp<1>(pt, N_g22);
-    A2D::VecAddCore<T, num_tying_g22>(gty_bar[3], N_g22, &ety_bar[offset]);
+        offset = Basis::tying_point_offsets(1);
+        constexpr int num_tying_g22 = Basis::num_tying_points(1);
+        T N_g22[num_tying_g22];
+        Basis::template getTyingInterp<1>(pt, N_g22);
+        A2D::VecAddCore<T, num_tying_g22>(gty_bar[3], N_g22, &ety_bar[offset]);
     }
 
     // get g12 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(2);
-    constexpr int num_tying_g12 = Basis::num_tying_points(2);
-    T N_g12[num_tying_g12];
-    Basis::template getTyingInterp<2>(pt, N_g12);
-    A2D::VecAddCore<T, num_tying_g12>(gty_bar[1], N_g12, &ety_bar[offset]);
+        offset = Basis::tying_point_offsets(2);
+        constexpr int num_tying_g12 = Basis::num_tying_points(2);
+        T N_g12[num_tying_g12];
+        Basis::template getTyingInterp<2>(pt, N_g12);
+        A2D::VecAddCore<T, num_tying_g12>(gty_bar[1], N_g12, &ety_bar[offset]);
     }
 
     // get g23 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(3);
-    constexpr int num_tying_g23 = Basis::num_tying_points(3);
-    T N_g23[num_tying_g23];
-    Basis::template getTyingInterp<3>(pt, N_g23);
-    A2D::VecAddCore<T, num_tying_g23>(gty_bar[4], N_g23, &ety_bar[offset]);
+        offset = Basis::tying_point_offsets(3);
+        constexpr int num_tying_g23 = Basis::num_tying_points(3);
+        T N_g23[num_tying_g23];
+        Basis::template getTyingInterp<3>(pt, N_g23);
+        A2D::VecAddCore<T, num_tying_g23>(gty_bar[4], N_g23, &ety_bar[offset]);
     }
 
     // get g13 tying strain
     // ------------------------------------
     {
-    offset = Basis::tying_point_offsets(4);
-    constexpr int num_tying_g13 = Basis::num_tying_points(4);
-    T N_g13[num_tying_g13];
-    Basis::template getTyingInterp<4>(pt, N_g13);
-    A2D::VecAddCore<T, num_tying_g13>(gty_bar[2], N_g13, &ety_bar[offset]);
+        offset = Basis::tying_point_offsets(4);
+        constexpr int num_tying_g13 = Basis::num_tying_points(4);
+        T N_g13[num_tying_g13];
+        Basis::template getTyingInterp<4>(pt, N_g13);
+        A2D::VecAddCore<T, num_tying_g13>(gty_bar[2], N_g13, &ety_bar[offset]);
     }
 
     // get g33 tying strain
@@ -986,7 +1047,7 @@ __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[], const T gty
 
 template <typename T, class Basis>
 __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], const T gty_bar[],
-                                                       T ety_bar[]) {
+                                                               T ety_bar[]) {
     // given quadpt pt[] and ety[] the tying strains at each tying point from MITC
     // in order {g11-n1, g11-n2, ..., g11-nN, g22-n1, g22-n2,...}
     // interp the final tying strain {g11, g22, g12, g23, g13} in ety_bar storage to
@@ -1001,16 +1062,15 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     // ety_bar[0] = 0.5 * (1.0 - pt[1]); // fine, 32 registers, 4.9e-4 sec
     // so multiply by gty_bar[0] breaks it
     // ety_bar[0] = 0.5 * (1.0 - pt[1]) * gty_bar[0]; // bad (136 registers, 3.6e-3 sec)
-    ety_bar[0] = gty_bar[0]; // this alone breaks the registers
+    ety_bar[0] = gty_bar[0];  // this alone breaks the registers
     // ety_bar[offset+1] = 0.5 * (1.0 + pt[1]) * gty_bar[0];
     return;
-
 
     // g11 fast (pragma unroll here?)
     // offset = Basis::tying_point_offsets(0);
     // #pragma unroll
     // for (int j = 0; j < order; j++) {
-	// #pragma unroll
+    // #pragma unroll
     //    for (int i = 0; i < order - 1; i++, offset++) {
     //        ety_bar[offset] += 1.0 * 0.5 * (1.0 + (-1.0 + 2.0 * j) * pt[1]) * gty_bar[0];
     //    }
@@ -1023,7 +1083,8 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
     //     #pragma unroll
     //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[0];
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj *
+    //         gty_bar[0];
     //     }
     // }
 
@@ -1034,7 +1095,8 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
     //     #pragma unroll
     //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[3];
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj *
+    //         gty_bar[3];
     //     }
     // }
 
@@ -1045,7 +1107,8 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order>(j, pt[1]);
     //     #pragma unroll
     //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj * gty_bar[1];
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order-1>(i, pt[0]) * nbj *
+    //         gty_bar[1];
     //     }
     // }
 
@@ -1056,7 +1119,8 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
     //     #pragma unroll
     //     for (int i = 0 ; i < order - 1; i++, ety_bar++) {
-    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[4];
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj *
+    //         gty_bar[4];
     //     }
     // }
 
@@ -1067,16 +1131,16 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     //     T nbj = Basis::lagrangeLobatto1D_tyingLight<order-1>(j, pt[1]);
     //     #pragma unroll
     //     for (int i = 0 ; i < order; i++, ety_bar++) {
-    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj * gty_bar[2];
+    //         ety_bar[0] += Basis::lagrangeLobatto1D_tyingLight<order>(i, pt[0]) * nbj *
+    //         gty_bar[2];
     //     }
     // }
-
 
     // really slow register version
     // // g11 tying strain
     // offset = Basis::tying_point_offsets(0);
     // Basis::template addTyingInterpTransposeLight<0>(pt, gty_bar[0], &ety_bar[offset]);
-    
+
     // // g22 tying strain
     // offset = Basis::tying_point_offsets(1);
     // Basis::template addTyingInterpTransposeLight<1>(pt, gty_bar[3], &ety_bar[offset]);
@@ -1092,7 +1156,7 @@ __HOST_DEVICE__ static void addInterpTyingStrainTransposeLight(const T pt[], con
     // // g13 tying strain
     // offset = Basis::tying_point_offsets(4);
     // Basis::template addTyingInterpTransposeLight<4>(pt, gty_bar[2], &ety_bar[offset]);
-    
+
     // get g33 tying strain
     // --------------------
     // zero so do nothing

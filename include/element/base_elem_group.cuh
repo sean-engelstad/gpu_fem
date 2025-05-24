@@ -1,6 +1,9 @@
 
 #include "cuda_utils.h"
 
+// now include the other .cuh files
+#include "shell/shell_elem_group.cuh"
+
 // base class methods to launch kernel depending on how many elements per block
 // may override these in some base classes
 
