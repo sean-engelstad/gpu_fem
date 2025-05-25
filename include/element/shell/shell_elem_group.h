@@ -92,7 +92,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         Uelem += _Uelem.value();
     }
 
-    template <class Data>
+    template <class Data, int debug_mode = -1>
     __HOST_DEVICE__ static void add_element_quadpt_residual(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, T res[dof_per_elem])
@@ -138,6 +138,22 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             // get the scale for disp grad sens of the energy
             T scale = detXd * weight;
+
+            // debug and testing modes (1 - drill, 2 - tying, 3 - bending)
+            if constexpr (debug_mode == 2 || debug_mode == 3) {
+                et.value()[0] = 0.0;
+            }
+            if constexpr (debug_mode == 1 || debug_mode == 3) {
+                for (int i = 0; i < 6; i++) {
+                    e0ty.value()[i] = 0.0;
+                }
+            }
+            if constexpr (debug_mode == 1 || debug_mode == 2) {
+                for (int i = 0; i < 9; i++) {
+                    u0x.value()[i] = 0.0;
+                    u1x.value()[i] = 0.0;
+                }
+            }
 
             // compute energy + energy-dispGrad sensitivites with physics
             Phys::template computeWeakRes<T>(physData, scale, u0x, u1x, e0ty, et);

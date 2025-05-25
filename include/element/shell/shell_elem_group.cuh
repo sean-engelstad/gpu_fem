@@ -19,7 +19,7 @@ __GLOBAL__ void shell_elem_add_residual_gpu(const int32_t num_elements, const Ve
     // __SHARED__ T geo_data[elems_per_block][Geo::geo_data_size];
     // __SHARED__ T basis_data[elems_per_block][Geo::geo_data_size];
 
-    int local_elem = threadIdx.x;
+    int local_elem = threadIdx.y;
     int global_elem = local_elem + blockDim.x * blockIdx.x;
     bool active_thread = global_elem < num_elements;
     int local_thread =
@@ -48,18 +48,21 @@ __GLOBAL__ void shell_elem_add_residual_gpu(const int32_t num_elements, const Ve
 
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
-    xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,
+    xpts.copyElemValuesToShared(active_thread, threadIdx.x, blockDim.x, Geo::spatial_dim,
                                 Geo::num_nodes, geo_elem_conn, &block_xpts[local_elem][0]);
 
     const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
-    vars.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Phys::vars_per_node,
+    vars.copyElemValuesToShared(active_thread, threadIdx.x, blockDim.x, Phys::vars_per_node,
                                 Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
 
     if (active_thread) {
         if (threadIdx.y == 0) memset(&block_res[local_elem][0], 0.0, vars_per_elem * sizeof(T));
+        // for (int i = 0; i < vars_per_elem; i++) {
+        //     block_res[local_elem][0] = 0.0;
+        // }
 
         if (local_thread < elems_per_block) {
-            int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
+            int global_elem_thread = local_thread + blockDim.y * blockIdx.y;
             block_data[local_thread] = _phys_data[global_elem_thread];
         }
     }
@@ -67,15 +70,21 @@ __GLOBAL__ void shell_elem_add_residual_gpu(const int32_t num_elements, const Ve
 
     // printf("<<<res GPU kernel>>>\n");
 
-    int iquad = threadIdx.y;
+    int iquad = threadIdx.x;
 
     T local_res[vars_per_elem];
     memset(local_res, 0.0, sizeof(T) * vars_per_elem);
 
     // can toggle on different strain energy terms (could also potentially launch in separate kernels if need be)
-    constexpr bool include_drill_strain = true, 
-                   include_tying_strain = true,
-                   include_bending_strain = true;
+    constexpr bool fast_drill_strain = false, 
+                    include_drill_strain = true, 
+                   include_tying_strain = false,
+                   include_bending_strain = false;
+
+    if constexpr (fast_drill_strain) {
+        ElemGroup::template _add_drill_strain_quadpt_residual_fast<Data>(active_thread, iquad, block_xpts[local_elem],
+            block_vars[local_elem], block_data[local_elem], block_vars[local_elem], block_vars[local_elem], local_res);
+    }
 
     // drill strain terms.. using nodal shell transforms
     if constexpr (include_drill_strain) {
@@ -115,13 +124,29 @@ __GLOBAL__ void shell_elem_add_residual_gpu(const int32_t num_elements, const Ve
             &block_XdinvT[local_elem][9*iquad], &block_XdinvzT[local_elem][9*iquad], local_res);
     }
 
-    if (global_elem == 0 && threadIdx.x == 0 && threadIdx.y == 0) printf("ran custom shell elem kernel\n");
+    // if (global_elem == 0 && threadIdx.x == 0 && threadIdx.y == 0) printf("ran custom shell elem kernel\n");
 
-    Vec<T>::copyLocalToShared(active_thread, 1.0, vars_per_elem, &local_res[0],
-                              &block_res[local_elem][0]);
-    __syncthreads();
+    // warp reduction across quadpts (need all 4 quadpts in the same warp)
+    for (int i = 0; i < vars_per_elem; i++) {
+        double val = local_res[i];
 
-    res.addElementValuesFromShared(active_thread, threadIdx.y, blockDim.y, Phys::vars_per_node,
+        // __shfl_down_sync(mask, val, offset)
+
+        // Reduce within quadpt group of 4
+        val += __shfl_down_sync(0xffffffff, val, 1);
+        val += __shfl_down_sync(0xffffffff, val, 2);
+
+        if (iquad == 0) {
+            // Only the first thread in each element writes to shared memory
+            block_res[local_elem][i] = val;
+        }
+    }
+
+    // Vec<T>::copyLocalToShared(active_thread, 1.0, vars_per_elem, &local_res[0],
+    //                           &block_res[local_elem][0]);
+    // __syncthreads();
+
+    res.addElementValuesFromShared(active_thread, threadIdx.x, blockDim.x, Phys::vars_per_node,
                                    Basis::num_nodes, vars_elem_conn,
                                    &block_res[local_elem][0]);
 }  // end of add_residual_gpu kernel

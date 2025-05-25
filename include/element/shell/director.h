@@ -108,6 +108,10 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset_>, T
     __HOST_DEVICE__ static void interpDirectorLight(const T pt[], const T xpts[], const T vars[],
                                                     T d0[]) {
         const T *q = &vars[offset];
+#pragma unroll
+        for (int i = 0; i < 3; i++) d0[i] = 0.0;
+
+#pragma unroll
         for (int inode = 0; inode < num_nodes; inode++) {
             T n0[3], node_pt[2], d[3];
             Basis::getNodePoint(inode, node_pt);
@@ -116,6 +120,7 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset_>, T
             A2D::VecCrossCore<T>(q, n0, d);
             q += vars_per_node;
 
+#pragma unroll
             for (int ifield = 0; ifield < 3; ifield++) {
                 d0[ifield] += Basis::lagrangeLobatto2DLight(inode, pt[0], pt[1]) * d[ifield];
             }
@@ -126,11 +131,13 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset_>, T
     __HOST_DEVICE__ static void interpDirectorLightSens(const T scale, const T pt[], const T xpts[],
                                                         const T d0_bar[], T res[]) {
         T *q_bar = &res[offset];
+#pragma unroll
         for (int inode = 0; inode < num_nodes; inode++) {
             T n0[3], node_pt[2], d_bar[3];
             Basis::getNodePoint(inode, node_pt);
             Basis::ShellComputeNodeNormal(node_pt, xpts, n0);
 
+#pragma unroll
             for (int ifield = 0; ifield < 3; ifield++) {
                 T jac = Basis::lagrangeLobatto2DLight(inode, pt[0], pt[1]);
                 d_bar[ifield] = scale * jac * d0_bar[ifield];

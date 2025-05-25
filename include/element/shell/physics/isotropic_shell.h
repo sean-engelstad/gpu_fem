@@ -66,8 +66,14 @@ class IsotropicShell {
                            A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
         // printf("Uelem = %.8e\n", Uelem.value());
 
+        // printf("ek_f:");
+        // printVec<T>(3, &E.value().get_data()[3]);
+
         Uelem.bvalue() = 1.0;
         strain_energy_stack.reverse();
+
+        // printf("ek_b:");
+        // printVec<T>(3, &E.bvalue().get_data()[3]);
         // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
     }  // end of computeWeakRes
 
@@ -86,6 +92,7 @@ class IsotropicShell {
         // or I could just do this..
         T2 drill_strain = et.value()[0];
         T2 drill_stress = drill * drill_strain;
+
         et.bvalue()[0] = scale * drill_stress;  // backprop from strain energy
 
         // can also use stack, but not really necessary for this one
@@ -111,7 +118,7 @@ class IsotropicShell {
         A2D::SymMat<T, 3> &e0ty_b = e0ty.bvalue();
         e0ty_b[0] = scale * s0[0];
         e0ty_b[3] = scale * s0[1];
-        e0ty_b[1] = scale * s0[2];
+        e0ty_b[1] = 2.0 * scale * s0[2];
         //  this scale*stress is the midplane energy gradient
     }
 
@@ -129,8 +136,8 @@ class IsotropicShell {
         A2D::SymMat<T, 3> &e0ty_b = e0ty.bvalue();
 
         // scale * stress is the gradient of e0ty in these entries
-        e0ty_b[6] *= 4.0 * scale * As * e0ty_f[6];  // e23, transverse shear
-        e0ty_b[7] *= 4.0 * scale * As * e0ty_f[7];  // e13, transverse shear
+        e0ty_b[2] += 4.0 * scale * As * e0ty_f[2];  // e13, transverse shear
+        e0ty_b[4] += 4.0 * scale * As * e0ty_f[4];  // e23, transverse shear
         // can also use stack, but not really necessary for this one
     }
 

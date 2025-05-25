@@ -30,7 +30,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 // some if constexpr stuff on type of Basis?
 #ifdef USE_GPU
     static constexpr dim3 energy_block = dim3(32, num_quad_pts, 1);
-    static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
+    static constexpr dim3 res_block = dim3(num_quad_pts, 32, 1);
     // static constexpr dim3 res_block = dim3(64, num_quad_pts, 1);
     static constexpr dim3 jac_block = dim3(1, dof_per_elem, num_quad_pts);
     // static constexpr dim3 jac_block = dim3(dof_per_elem, num_quad_pts);
@@ -87,6 +87,14 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 
         if (!active_thread) return;
 
+        // // debug, do almost no computation, but use all shared memory parts
+        // for (int i = 0; i < 12; i++) {
+        //     res[2 * i] += xpts[i];
+        //     res[2 * i + 1] += xpts[i];
+        //     res[2 * i] += physData.E + XdinvT[i] * Tmat[i];
+        // }
+        // return;  // 4e-3 to 2e-3 sec when I just do this computation instead..
+
         T quad_pt[2];
         T weight = Quadrature::getQuadraturePoint(iquad, quad_pt);
         A2D::ADObj<A2D::Vec<T, 1>> et;
@@ -96,8 +104,6 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             ShellComputeDrillStrainFast<T, vars_per_node, Basis, Director>(
                 quad_pt, xpts, vars, Tmat, XdinvT, et.value().get_data()[0]);
         }
-
-        // very fast up to here..
 
         // need to get scale = detXd * weight somehow
         T detXd = Basis::getDetXd(quad_pt, xpts);
@@ -117,7 +123,7 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
     template <class Data>
     __HOST_DEVICE__ static void _add_tying_strain_quadpt_residual_fast(
         bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data physData, T XdinvT[9], T res[dof_per_elem]) {
+        const T vars[dof_per_elem], const Data &physData, T XdinvT[9], T res[dof_per_elem]) {
         if (!active_thread) return;
 
         T quad_pt[2];
@@ -134,21 +140,12 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
             A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
         }
 
-        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-        //     printf("e0ty:");
-        //     printVec<T>(5, e0ty.value().get_data());
-        // }
-
         // backprop from strain energy to tying strain gradient in physics
         T detXd = Basis::getDetXd(quad_pt, xpts);
         T scale = detXd * weight;
+
         Phys::template compute_tying_strain_midplane_grad<T>(physData, scale, e0ty);
         Phys::template compute_tying_strain_transverse_grad<T>(physData, scale, e0ty);
-
-        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-        //     printf("e0ty b:");
-        //     printVec<T>(5, e0ty.bvalue().get_data());
-        // }
 
         // reverse scope block
         {
@@ -181,27 +178,14 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         computeBendingStrains<T, vars_per_node, Basis, Director, Phys::is_nonlinear>(
             quad_pt, xpts, vars, Tmat, XdinvT, XdinvzT, u0x, u1x, ek.value().get_data());
 
-        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-        //     printf("\tek:");
-        //     printVec<T>(3, ek.value().get_data());
-        // }
-
         // now compute the strains to stresses
         T detXd = Basis::getDetXd(quad_pt, xpts);
         T scale = detXd * weight;
         Phys::template compute_bending_strain_grad<T>(physData, scale, ek);
 
-        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-        //     printf("\tek:");
-        //     printVec<T>(3, ek.bvalue().get_data());
-        // }
-
         // reverse scope block
         computeBendingStrainSens<T, vars_per_node, Basis, Director, Phys::is_nonlinear>(
             quad_pt, xpts, vars, Tmat, XdinvT, XdinvzT, ek.bvalue().get_data(), u0x, u1x, res);
-
-        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0)
-        //     printf("\tinside bending strain resid\n");
     }
 
     // SLOW SECTION

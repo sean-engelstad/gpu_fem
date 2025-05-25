@@ -795,6 +795,7 @@ __HOST_DEVICE__ T ShellComputeDispGrad(const T pt[], const T refAxis[], const T 
     {  // interp and rotate tying strains scope
         A2D::SymMat<T, 3> gty;
         interpTyingStrain<T, Basis>(pt, ety, gty.get_data());
+
         A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty);
     }  // end of interp and rotate tying strains scope
 
@@ -862,14 +863,16 @@ __HOST_DEVICE__ void ShellComputeDispGradSens(const T pt[], const T refAxis[], c
             A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat.get_data(), u0d_barT);
 
             // u0d_bar^t += XdinvzT * u1x_bar^t * T^t
+            // think this should be add here..
             A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvzT, u1x_bar, tmp);
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat.get_data(), u0d_barT);
+            A2D::MatMatMultCore3x3Add<T, NORM, TRANS>(tmp, Tmat.get_data(), u0d_barT);
 
             // transfer back to u0xi, u0eta, d0 bar (with transpose so columns now available in
             // rows)
             Basis::template interpFieldsTranspose<3, 3>(pt, &u0d_barT[6], d_bar);
             Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0d_barT[0],
                                                                         &u0d_barT[3], res);
+
         }  // end of u0d_barT scope
 
         // scope for u1d_barT

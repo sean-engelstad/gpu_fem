@@ -34,8 +34,8 @@ int main() {
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
   // try using new ElemGroup to speedup assembly
-  // using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-  using ElemGroup = ShellElementGroupV2<T, Director, Basis, Physics>;
+  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+  // using ElemGroup = ShellElementGroupV2<T, Director, Basis, Physics>;
 
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 

@@ -387,6 +387,7 @@ class DeviceVec : public BaseVec<T> {
             int iglobal = _global_inode * dof_per_node + (idof % dof_per_node);
 
             atomicAdd(&this->data[iglobal], shared_data[idof]);
+            // this->data[iglobal] += shared_data[idof];
         }
     }
 

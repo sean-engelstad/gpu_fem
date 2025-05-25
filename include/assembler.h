@@ -499,12 +499,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
 
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
-    constexpr bool use_custom_kernel = true;
-
-    dim3 block = ElemGroup::res_block;
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+    constexpr bool use_custom_kernel = false;
 
     if constexpr (use_custom_kernel) {
         // customized add_residual_gpu for this element
@@ -512,13 +507,28 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
         // xpts,
         //                                                     vars, physData, res);
 
+        dim3 block = ElemGroup::res_block;
+        int nblocks = (num_elements + block.y - 1) / block.y;
+        dim3 grid(nblocks);
+        constexpr int32_t elems_per_block = ElemGroup::res_block.y;
+
         // TODO : figure out how to make this call from the ElemGroup..
-        shell_elem_add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        fast_drill_strain_add_residual<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+
+        // shell_elem_add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
     } else {
+        dim3 block = ElemGroup::res_block;
+        int nblocks = (num_elements + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+        constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+
         add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
     }
+
+    CHECK_CUDA(cudaDeviceSynchronize());
 
 #else   // USE_GPU
     ElemGroup::template add_residual_cpu<Data, Vec>(num_elements, geo_conn, vars_conn, xpts, vars,

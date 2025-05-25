@@ -54,7 +54,7 @@ class ShellQuadBasis : public ShellQuadBasisOld<T, Quadrature_, order_> {
 
     __HOST_DEVICE__ static T lagrangeLobatto1DGradLight(const int i, const T &u) {
         if constexpr (order == 2) {
-            return -1.0 + 2.0 * i;
+            return 0.5 * (-1.0 + 2.0 * i);
         }
     }
 
@@ -116,7 +116,8 @@ class ShellQuadBasis : public ShellQuadBasisOld<T, Quadrature_, order_> {
     __HOST_DEVICE__ static void assembleXptFrameLight(const T pt[], const T xpts[], T frame[]) {
         /* light implementation of assembleFrame for xpts */
         T n0[3];
-        ShellComputeNodeNormalLight(pt, xpts, n0);
+        interpNodeNormalLight(pt, xpts, n0);
+#pragma unroll
         for (int i = 0; i < 3; i++) {
             frame[3 * i] = interpFieldsGradLight<XI, 3>(i, pt, xpts);
             frame[3 * i + 1] = interpFieldsGradLight<ETA, 3>(i, pt, xpts);
@@ -341,12 +342,13 @@ class ShellQuadBasis : public ShellQuadBasisOld<T, Quadrature_, order_> {
         A2D::VecScaleCore<T, 3>(norm, tmp, n0);
     }
 
-    __HOST_DEVICE__ static void ShellComputeNormalFrameLight(const T pt[], const T xpts[],
+    __HOST_DEVICE__ static void ShellComputeNormalFrameLight(const T quad_pt[], const T xpts[],
                                                              T Xdz[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial
         // gradients: assembles the frame (n0,xi; n0,eta; 0-vec)
 
         T n0[3], node_pt[2];
+#pragma unroll
         for (int i = 0; i < 9; i++) Xdz[i] = 0.0;
 #pragma unroll
         for (int inode = 0; inode < num_nodes; inode++) {
@@ -354,27 +356,30 @@ class ShellQuadBasis : public ShellQuadBasisOld<T, Quadrature_, order_> {
             getNodePoint(inode, node_pt);
             ShellComputeNodeNormalLight(node_pt, xpts, n0);
 
-            // add into Xd at the pt (which is usually quad_pt)
+            // add into Xdz at the pt (which is usually quad_pt)
             for (int idim = 0; idim < 3; idim++) {
-                Xdz[3 * idim] += n0[idim] * interpFieldsGradLight<XI, 3>(inode, idim, pt, xpts);
+                Xdz[3 * idim] +=
+                    n0[idim] * lagrangeLobatto2DGradLight<XI>(inode, quad_pt[0], quad_pt[1]);
                 Xdz[3 * idim + 1] +=
-                    n0[idim] * interpFieldsGradLight<ETA, 3>(inode, idim, pt, xpts);
+                    n0[idim] * lagrangeLobatto2DGradLight<ETA>(inode, quad_pt[0], quad_pt[1]);
             }
         }
     }
 
-    __HOST_DEVICE__ static void interpNodeNormalLight(const T pt[], const T xpts[], T n0[]) {
-        // compute the shell node normal at a single node given already the pre-computed spatial
-        // gradients
+    __HOST_DEVICE__ static void interpNodeNormalLight(const T quad_pt[], const T xpts[], T n0[]) {
+// compute the shell node normal at a single node given already the pre-computed spatial
+// gradients
+#pragma unroll
         for (int ifield = 0; ifield < 3; ifield++) n0[ifield] = 0.0;
 
+#pragma unroll
         for (int inode = 0; inode < num_nodes; inode++) {
             T fn[3], node_pt[2];
             getNodePoint(inode, node_pt);
-            ShellComputeNodeNormalLight(node_pt, xpts, n0);
+            ShellComputeNodeNormalLight(node_pt, xpts, fn);
 
             for (int ifield = 0; ifield < 3; ifield++) {
-                n0[ifield] += lagrangeLobatto2DLight(inode, pt[0], pt[1]) * fn[ifield];
+                n0[ifield] += lagrangeLobatto2DLight(inode, quad_pt[0], quad_pt[1]) * fn[ifield];
             }
         }
     }

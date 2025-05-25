@@ -35,53 +35,6 @@ __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], c
     }
 }
 
-template <typename T, class Basis, class Data>
-__HOST_DEVICE__ void ShellComputeTransformLight(const T refAxis[], const T pt[], const T xpts[],
-                                                const T n0[], T Tmat[]) {
-    // make the normal a unit vector, store it in Tmat (Tmat assembled in transpose form first for
-    // convenience, then transposed later)
-    for (int i = 0; i < 9; i++) Tmat[i] = 0.0;  // zero out
-    for (int i = 0; i < 3; i++) {
-        Tmat[6 + i] = n0[i];
-    }
-    T *n = &Tmat[6];
-    T norm = sqrt(A2D::VecDotCore<T, 3>(n, n));
-    for (int i = 0; i < 3; i++) {
-        n[i] /= norm;
-    }
-
-    // set t1
-    if constexpr (Data::has_ref_axis) {
-        // shell ref axis transform
-        A2D::VecAddCore<T, 3>(1.0, refAxis, &Tmat[0]);
-    } else {  // doesn't have ref axis
-        // shell natural transform, set to dX/dxi
-        for (int i = 0; i < 3; i++) {
-            Tmat[i] = Basis::template interpFieldsGradLight<XI, 3>(i, pt, xpts);
-        }
-    }
-
-    // remove normal component from t1 (of n)
-    T d = A2D::VecDotCore<T, 3>(&Tmat[0], &Tmat[6]);  // t1 cross n
-    A2D::VecAddCore<T, 3>(T(1.0), &Tmat[0], &Tmat[3]);
-    A2D::VecAddCore<T, 3>(-d, &Tmat[6], &Tmat[3]);  // t1 - (t1 dot n) * n => t2 (temp store in t2)
-    norm = sqrt(A2D::VecDotCore<T, 3>(&Tmat[3], &Tmat[3]));
-    A2D::VecAddCore<T, 3>(1.0, &Tmat[3], &Tmat[0]);
-
-    // compute t2 by cross product
-    A2D::VecCrossCore<T>(&Tmat[6], &Tmat[0], &Tmat[3]);  // nhat cross t1hat => t2hat
-
-    // transpose Tmat to standard column major from row major format
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            // in place transpose swap
-            T tmp = Tmat[3 * i + j];
-            Tmat[3 * i + j] = Tmat[3 * j + i];
-            Tmat[3 * j + i] = tmp;
-        }
-    }
-}
-
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[], const T xpts[],
                                              const T vars[], const T fn[], T et[]) {
@@ -144,132 +97,6 @@ __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[
     Basis::template interpFields<1, 1>(quad_pt, etn, et);
 
 }  // end of method ShellComputeDrillStrain
-
-template <typename T, int vars_per_node, class Data, class Basis, class Director>
-__HOST_DEVICE__ void ShellComputeDrillStrainV2(const T quad_pt[], const T refAxis[], const T xpts[],
-                                               const T vars[], T et[]) {
-    // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
-
-    T etn[Basis::num_nodes];
-    for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        T pt[2];
-        Basis::getNodePoint(inode, pt);
-
-        // get shell transform and Xdn frame scope
-        T Tmat[9], Xd[9], n0[3];
-        {
-            // compute the computational coord gradients of Xpts for xi, eta
-            T dXdxi[3], dXdeta[3];
-            Basis::template interpFieldsGrad<3, 3>(pt, xpts, dXdxi, dXdeta);
-
-            // compute the shell node normals
-            Basis::ShellComputeNodeNormal(pt, dXdxi, dXdeta, n0);
-
-            // assemble Xd frame
-            Basis::assembleFrame(dXdxi, dXdeta, n0, Xd);
-
-            // compute the shell transform based on the ref axis in Data object
-            ShellComputeTransform<T, Data>(refAxis, dXdxi, dXdeta, n0, Tmat);
-        }  // end of Xd and shell transform scope
-
-        // assemble u0xn frame scope
-        T u0xn[9];
-        {
-            // compute midplane disp field gradients
-            T u0xi[3], u0eta[3];
-            Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, u0xi, u0eta);
-
-            A2D::Vec<T, 3> zero;
-            Basis::assembleFrame(u0xi, u0eta, zero.get_data(), u0xn);
-        }
-
-        // compute rotation matrix at this node
-        T C[9], tmp[9];
-        Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
-
-        // compute Ct = T^T * C * T
-        using MatOp = A2D::MatOp;
-        A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, C, tmp);
-        A2D::MatMatMultCore3x3<T>(tmp, Tmat, C);
-
-        // inverse Xd frame and Transformed product
-        T XdinvTn[9];
-        A2D::MatInvCore<T, 3>(Xd, tmp);
-        A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
-
-        // Compute transformation u0x = T^T * u0xn * (Xdinv*T)
-        A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
-        A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
-
-        // compute the drill strain
-        etn[inode] = Director::evalDrillStrain(u0xn, C);
-
-    }  // end of node for loop
-
-    // now interpolate to single et value
-    Basis::template interpFields<1, 1>(quad_pt, etn, et);
-
-}  // end of method ShellComputeDrillStrainV2
-
-template <typename T, int vars_per_node, class Data, class Basis, class Director>
-__HOST_DEVICE__ void ShellComputeDrillStrainV3(const T quad_pt[], const T refAxis[], const T xpts[],
-                                               const T vars[], T et[]) {
-    // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
-
-    T etn[Basis::num_nodes];
-    for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        T pt[2];
-        Basis::getNodePoint(inode, pt);
-
-        // get shell transform and Xdn frame scope
-        T Tmat[9], Xd[9];
-        {
-            T n0[3];
-            Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
-
-            // assemble Xd frame
-            Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
-
-            // compute the shell transform based on the ref axis in Data object
-            ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
-        }  // end of Xd and shell transform scope
-
-        // assemble u0xn frame scope
-        T u0xn[9];
-        {
-            Basis::assembleFrameLight<6>(pt, vars, &Xd[0], u0xn);
-            for (int i = 0; i < 3; i++)
-                u0xn[3 * i + 2] =
-                    0.0;  // last column is zero (just put Xd in there to save registers)
-        }
-
-        // compute rotation matrix at this node
-        T C[9], tmp[9];
-        Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
-
-        // compute Ct = T^T * C * T
-        using MatOp = A2D::MatOp;
-        A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, C, tmp);
-        A2D::MatMatMultCore3x3<T>(tmp, Tmat, C);
-
-        // inverse Xd frame and Transformed product
-        T XdinvTn[9];
-        A2D::MatInvCore<T, 3>(Xd, tmp);
-        A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
-
-        // Compute transformation u0x = T^T * u0xn * (Xdinv*T)
-        A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
-        A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
-
-        // compute the drill strain
-        etn[inode] = Director::evalDrillStrain(u0xn, C);
-
-    }  // end of node for loop
-
-    // now interpolate to single et value
-    Basis::template interpFields<1, 1>(quad_pt, etn, et);
-
-}  // end of method ShellComputeDrillStrainV3
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainHfwd(const T quad_pt[], const T refAxis[],
@@ -346,140 +173,6 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSens(const T quad_pt[], const T refA
 
     }  // end of node for loop
 }  // end of method ShellComputeDrillStrainSens
-
-template <typename T, int vars_per_node, class Data, class Basis, class Director>
-__HOST_DEVICE__ void ShellComputeDrillStrainSensV2(const T quad_pt[], const T refAxis[],
-                                                   const T xpts[], const T vars[], const T et_bar[],
-                                                   T res[]) {
-    // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
-
-    // first interpolate back to nodal level
-    A2D::Vec<T, Basis::num_nodes> etn_bar;
-    Basis::template interpFieldsTranspose<1, 1>(quad_pt, et_bar, etn_bar.get_data());
-
-    constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
-    constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
-
-    for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        T pt[2];
-        Basis::getNodePoint(inode, pt);
-
-        // get shell transform and Xdn frame scope
-        T Tmat[9], Xd[9], n0[3];
-        {
-            // compute the computational coord gradients of Xpts for xi, eta
-            T dXdxi[3], dXdeta[3];
-            Basis::template interpFieldsGrad<3, 3>(pt, xpts, dXdxi, dXdeta);
-
-            // compute the shell node normals
-            Basis::ShellComputeNodeNormal(pt, dXdxi, dXdeta, n0);
-
-            // assemble Xd frame
-            Basis::assembleFrame(dXdxi, dXdeta, n0, Xd);
-
-            // compute the shell transform based on the ref axis in Data object
-            ShellComputeTransform<T, Data>(refAxis, dXdxi, dXdeta, n0, Tmat);
-        }  // end of Xd and shell transform scope
-
-        T u0xn_bar[9], C_bar[9];  // really u0x_bar at this point (but don't want two vars for it)
-        Director::evalDrillStrainSens(etn_bar[inode], u0xn_bar, C_bar);
-
-        T tmp[9];
-        {
-            // C_bar = T * C2_bar * T^t (in reverse)
-            A2D::MatMatMultCore3x3<T>(Tmat, C_bar, tmp);
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, C_bar);
-
-            // reverse C(vars) to C_bar => res
-            Director::template computeRotationMatSens<vars_per_node, 1>(
-                C_bar, &res[vars_per_node * inode]);
-        }
-
-        // backprop u0x_bar to u0xn_bar^T
-        {
-            T XdinvT[9];
-            A2D::MatInvCore<T, 3>(Xd, tmp);  // Xdinv
-            A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvT);
-
-            // u0xn_bar = T * u0x_bar * XdinvT^t
-            // transpose version for convenience of cols avail in rows
-            // u0xn_bar^t = XdinvT * u0x_bar^t * T^t (u0xn_bar now holds transpose u0xn_bar^t)
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u0xn_bar, tmp);
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0xn_bar);
-
-            // reverse the interpolations u0xn_bar to res
-            // because we have u0xn_bar^T stored, each row is u0xi_bar, u0eta_bar
-            Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0xn_bar[0],
-                                                                        &u0xn_bar[3], res);
-        }
-
-    }  // end of node for loop
-}  // end of method ShellComputeDrillStrainSensV2
-
-template <typename T, int vars_per_node, class Data, class Basis, class Director>
-__HOST_DEVICE__ void ShellComputeDrillStrainSensV3(const T quad_pt[], const T refAxis[],
-                                                   const T xpts[], const T vars[], const T et_bar[],
-                                                   T res[]) {
-    // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
-
-    // first interpolate back to nodal level
-    A2D::Vec<T, Basis::num_nodes> etn_bar;
-    Basis::template interpFieldsTransposeLight<1, 1>(quad_pt, et_bar, etn_bar.get_data());
-
-    constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
-    constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
-
-    for (int inode = 0; inode < Basis::num_nodes; inode++) {
-        T pt[2];
-        Basis::getNodePoint(inode, pt);
-
-        // get shell transform and Xdn frame scope
-        T Tmat[9], Xd[9];
-        {
-            T n0[3];
-            Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
-
-            // assemble Xd frame
-            Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
-
-            // compute the shell transform based on the ref axis in Data object
-            ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
-        }  // end of Xd and shell transform scope
-
-        T u0xn_bar[9], C_bar[9];  // really u0x_bar at this point (but don't want two vars for it)
-        Director::evalDrillStrainSens(etn_bar[inode], u0xn_bar, C_bar);
-
-        T tmp[9];
-        {
-            // C_bar = T * C2_bar * T^t (in reverse)
-            A2D::MatMatMultCore3x3<T>(Tmat, C_bar, tmp);
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, C_bar);
-
-            // reverse C(vars) to C_bar => res
-            Director::template computeRotationMatSens<vars_per_node, 1>(
-                C_bar, &res[vars_per_node * inode]);
-        }
-
-        // backprop u0x_bar to u0xn_bar^T
-        {
-            T XdinvT[9];
-            A2D::MatInvCore<T, 3>(Xd, tmp);  // Xdinv
-            A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvT);
-
-            // u0xn_bar = T * u0x_bar * XdinvT^t
-            // transpose version for convenience of cols avail in rows
-            // u0xn_bar^t = XdinvT * u0x_bar^t * T^t (u0xn_bar now holds transpose u0xn_bar^t)
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u0xn_bar, tmp);
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0xn_bar);
-
-            // reverse the interpolations u0xn_bar to res
-            // because we have u0xn_bar^T stored, each row is u0xi_bar, u0eta_bar
-            Basis::template interpFieldsGradTransposeLight<vars_per_node, 3>(pt, &u0xn_bar[0],
-                                                                             &u0xn_bar[3], res);
-        }
-
-    }  // end of node for loop
-}  // end of method ShellComputeDrillStrainSensV3
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainHrev(const T quad_pt[], const T refAxis[],
@@ -872,7 +565,7 @@ __HOST_DEVICE__ static void computeTyingStrainHfwd(const T Xpts[], const T fn[],
     }  // end of itying for loop for g13
 }
 
-template <typename T, class Physics, class Basis, class Director>
+template <typename T, class Physics, class Basis>
 __HOST_DEVICE__ static void computeTyingStrainSens(const T Xpts[], const T fn[], const T vars[],
                                                    const T d[], const T ety_bar[], T res[],
                                                    T d_bar[]) {
@@ -1343,3 +1036,265 @@ __HOST_DEVICE__ static void computeTyingStrainHrev(const T Xpts[], const T fn[],
 
     }  // end of itying for loop for g13
 }
+
+// template <typename T, int vars_per_node, class Data, class Basis, class Director>
+// __HOST_DEVICE__ void ShellComputeDrillStrainV2(const T quad_pt[], const T refAxis[], const T
+// xpts[],
+//                                                const T vars[], T et[]) {
+//     // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
+
+//     T etn[Basis::num_nodes];
+//     for (int inode = 0; inode < Basis::num_nodes; inode++) {
+//         T pt[2];
+//         Basis::getNodePoint(inode, pt);
+
+//         // get shell transform and Xdn frame scope
+//         T Tmat[9], Xd[9], n0[3];
+//         {
+//             // compute the computational coord gradients of Xpts for xi, eta
+//             T dXdxi[3], dXdeta[3];
+//             Basis::template interpFieldsGrad<3, 3>(pt, xpts, dXdxi, dXdeta);
+
+//             // compute the shell node normals
+//             Basis::ShellComputeNodeNormal(pt, dXdxi, dXdeta, n0);
+
+//             // assemble Xd frame
+//             Basis::assembleFrame(dXdxi, dXdeta, n0, Xd);
+
+//             // compute the shell transform based on the ref axis in Data object
+//             ShellComputeTransform<T, Data>(refAxis, dXdxi, dXdeta, n0, Tmat);
+//         }  // end of Xd and shell transform scope
+
+//         // assemble u0xn frame scope
+//         T u0xn[9];
+//         {
+//             // compute midplane disp field gradients
+//             T u0xi[3], u0eta[3];
+//             Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, u0xi, u0eta);
+
+//             A2D::Vec<T, 3> zero;
+//             Basis::assembleFrame(u0xi, u0eta, zero.get_data(), u0xn);
+//         }
+
+//         // compute rotation matrix at this node
+//         T C[9], tmp[9];
+//         Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
+
+//         // compute Ct = T^T * C * T
+//         using MatOp = A2D::MatOp;
+//         A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, C, tmp);
+//         A2D::MatMatMultCore3x3<T>(tmp, Tmat, C);
+
+//         // inverse Xd frame and Transformed product
+//         T XdinvTn[9];
+//         A2D::MatInvCore<T, 3>(Xd, tmp);
+//         A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
+
+//         // Compute transformation u0x = T^T * u0xn * (Xdinv*T)
+//         A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
+//         A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
+
+//         // compute the drill strain
+//         etn[inode] = Director::evalDrillStrain(u0xn, C);
+
+//     }  // end of node for loop
+
+//     // now interpolate to single et value
+//     Basis::template interpFields<1, 1>(quad_pt, etn, et);
+
+// }  // end of method ShellComputeDrillStrainV2
+
+// template <typename T, int vars_per_node, class Data, class Basis, class Director>
+// __HOST_DEVICE__ void ShellComputeDrillStrainV3(const T quad_pt[], const T refAxis[], const T
+// xpts[],
+//                                                const T vars[], T et[]) {
+//     // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
+
+//     T etn[Basis::num_nodes];
+//     for (int inode = 0; inode < Basis::num_nodes; inode++) {
+//         T pt[2];
+//         Basis::getNodePoint(inode, pt);
+
+//         // get shell transform and Xdn frame scope
+//         T Tmat[9], Xd[9];
+//         {
+//             T n0[3];
+//             Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
+
+//             // assemble Xd frame
+//             Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
+
+//             // compute the shell transform based on the ref axis in Data object
+//             ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
+//         }  // end of Xd and shell transform scope
+
+//         // assemble u0xn frame scope
+//         T u0xn[9];
+//         {
+//             Basis::assembleFrameLight<6>(pt, vars, &Xd[0], u0xn);
+//             for (int i = 0; i < 3; i++)
+//                 u0xn[3 * i + 2] =
+//                     0.0;  // last column is zero (just put Xd in there to save registers)
+//         }
+
+//         // compute rotation matrix at this node
+//         T C[9], tmp[9];
+//         Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
+
+//         // compute Ct = T^T * C * T
+//         using MatOp = A2D::MatOp;
+//         A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, C, tmp);
+//         A2D::MatMatMultCore3x3<T>(tmp, Tmat, C);
+
+//         // inverse Xd frame and Transformed product
+//         T XdinvTn[9];
+//         A2D::MatInvCore<T, 3>(Xd, tmp);
+//         A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvTn);
+
+//         // Compute transformation u0x = T^T * u0xn * (Xdinv*T)
+//         A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
+//         A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
+
+//         // compute the drill strain
+//         etn[inode] = Director::evalDrillStrain(u0xn, C);
+
+//     }  // end of node for loop
+
+//     // now interpolate to single et value
+//     Basis::template interpFields<1, 1>(quad_pt, etn, et);
+
+// }  // end of method ShellComputeDrillStrainV3
+
+// template <typename T, int vars_per_node, class Data, class Basis, class Director>
+// __HOST_DEVICE__ void ShellComputeDrillStrainSensV2(const T quad_pt[], const T refAxis[],
+//                                                    const T xpts[], const T vars[], const T
+//                                                    et_bar[], T res[]) {
+//     // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
+
+//     // first interpolate back to nodal level
+//     A2D::Vec<T, Basis::num_nodes> etn_bar;
+//     Basis::template interpFieldsTranspose<1, 1>(quad_pt, et_bar, etn_bar.get_data());
+
+//     constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
+//     constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
+
+//     for (int inode = 0; inode < Basis::num_nodes; inode++) {
+//         T pt[2];
+//         Basis::getNodePoint(inode, pt);
+
+//         // get shell transform and Xdn frame scope
+//         T Tmat[9], Xd[9], n0[3];
+//         {
+//             // compute the computational coord gradients of Xpts for xi, eta
+//             T dXdxi[3], dXdeta[3];
+//             Basis::template interpFieldsGrad<3, 3>(pt, xpts, dXdxi, dXdeta);
+
+//             // compute the shell node normals
+//             Basis::ShellComputeNodeNormal(pt, dXdxi, dXdeta, n0);
+
+//             // assemble Xd frame
+//             Basis::assembleFrame(dXdxi, dXdeta, n0, Xd);
+
+//             // compute the shell transform based on the ref axis in Data object
+//             ShellComputeTransform<T, Data>(refAxis, dXdxi, dXdeta, n0, Tmat);
+//         }  // end of Xd and shell transform scope
+
+//         T u0xn_bar[9], C_bar[9];  // really u0x_bar at this point (but don't want two vars for
+//         it) Director::evalDrillStrainSens(etn_bar[inode], u0xn_bar, C_bar);
+
+//         T tmp[9];
+//         {
+//             // C_bar = T * C2_bar * T^t (in reverse)
+//             A2D::MatMatMultCore3x3<T>(Tmat, C_bar, tmp);
+//             A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, C_bar);
+
+//             // reverse C(vars) to C_bar => res
+//             Director::template computeRotationMatSens<vars_per_node, 1>(
+//                 C_bar, &res[vars_per_node * inode]);
+//         }
+
+//         // backprop u0x_bar to u0xn_bar^T
+//         {
+//             T XdinvT[9];
+//             A2D::MatInvCore<T, 3>(Xd, tmp);  // Xdinv
+//             A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvT);
+
+//             // u0xn_bar = T * u0x_bar * XdinvT^t
+//             // transpose version for convenience of cols avail in rows
+//             // u0xn_bar^t = XdinvT * u0x_bar^t * T^t (u0xn_bar now holds transpose u0xn_bar^t)
+//             A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u0xn_bar, tmp);
+//             A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0xn_bar);
+
+//             // reverse the interpolations u0xn_bar to res
+//             // because we have u0xn_bar^T stored, each row is u0xi_bar, u0eta_bar
+//             Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0xn_bar[0],
+//                                                                         &u0xn_bar[3], res);
+//         }
+
+//     }  // end of node for loop
+// }  // end of method ShellComputeDrillStrainSensV2
+
+// template <typename T, int vars_per_node, class Data, class Basis, class Director>
+// __HOST_DEVICE__ void ShellComputeDrillStrainSensV3(const T quad_pt[], const T refAxis[],
+//                                                    const T xpts[], const T vars[], const T
+//                                                    et_bar[], T res[]) {
+//     // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
+
+//     // first interpolate back to nodal level
+//     A2D::Vec<T, Basis::num_nodes> etn_bar;
+//     Basis::template interpFieldsTransposeLight<1, 1>(quad_pt, et_bar, etn_bar.get_data());
+
+//     constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
+//     constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
+
+//     for (int inode = 0; inode < Basis::num_nodes; inode++) {
+//         T pt[2];
+//         Basis::getNodePoint(inode, pt);
+
+//         // get shell transform and Xdn frame scope
+//         T Tmat[9], Xd[9];
+//         {
+//             T n0[3];
+//             Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
+
+//             // assemble Xd frame
+//             Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
+
+//             // compute the shell transform based on the ref axis in Data object
+//             ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);
+//         }  // end of Xd and shell transform scope
+
+//         T u0xn_bar[9], C_bar[9];  // really u0x_bar at this point (but don't want two vars for
+//         it) Director::evalDrillStrainSens(etn_bar[inode], u0xn_bar, C_bar);
+
+//         T tmp[9];
+//         {
+//             // C_bar = T * C2_bar * T^t (in reverse)
+//             A2D::MatMatMultCore3x3<T>(Tmat, C_bar, tmp);
+//             A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, C_bar);
+
+//             // reverse C(vars) to C_bar => res
+//             Director::template computeRotationMatSens<vars_per_node, 1>(
+//                 C_bar, &res[vars_per_node * inode]);
+//         }
+
+//         // backprop u0x_bar to u0xn_bar^T
+//         {
+//             T XdinvT[9];
+//             A2D::MatInvCore<T, 3>(Xd, tmp);  // Xdinv
+//             A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvT);
+
+//             // u0xn_bar = T * u0x_bar * XdinvT^t
+//             // transpose version for convenience of cols avail in rows
+//             // u0xn_bar^t = XdinvT * u0x_bar^t * T^t (u0xn_bar now holds transpose u0xn_bar^t)
+//             A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u0xn_bar, tmp);
+//             A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0xn_bar);
+
+//             // reverse the interpolations u0xn_bar to res
+//             // because we have u0xn_bar^T stored, each row is u0xi_bar, u0eta_bar
+//             Basis::template interpFieldsGradTransposeLight<vars_per_node, 3>(pt, &u0xn_bar[0],
+//                                                                              &u0xn_bar[3], res);
+//         }
+
+//     }  // end of node for loop
+// }  // end of method ShellComputeDrillStrainSensV3
