@@ -81,10 +81,29 @@ class ShellQuadBasis : public ShellQuadBasisOld<T, Quadrature_, order_> {
                                                    T frame[]) {
         /* light implementation of assembleFrame for xpts */
 
+#pragma unroll
         for (int i = 0; i < 3; i++) {
             frame[3 * i] = interpFieldsGradLight<XI, vars_per_node>(i, pt, values);
             frame[3 * i + 1] = interpFieldsGradLight<ETA, vars_per_node>(i, pt, values);
             frame[3 * i + 2] = normal[i];
+        }
+    }
+
+    template <int vars_per_node>
+    __HOST_DEVICE__ static void assembleFrameLightSens(const T pt[], const T frame_bar[],
+                                                       T normal_bar[3], T values_bar[]) {
+        /* light implementation of assembleFrame for xpts */
+
+#pragma unroll
+        for (int i = 0; i < 3; i++) {
+#pragma unroll
+            for (int inode = 0; inode < num_nodes; inode++) {
+                values_bar[vars_per_node * inode + i] +=
+                    lagrangeLobatto2DGradLight<XI>(inode, pt[0], pt[1]) * frame_bar[3 * i];
+                values_bar[vars_per_node * inode + i] +=
+                    lagrangeLobatto2DGradLight<ETA>(inode, pt[0], pt[1]) * frame_bar[3 * i + 1];
+            }
+            normal_bar[i] = frame_bar[3 * i + 2];
         }
     }
 
@@ -159,6 +178,14 @@ class ShellQuadBasis : public ShellQuadBasisOld<T, Quadrature_, order_> {
                    values[vars_per_node * inode + ifield];
         }
         return out;
+    }  // end of interpFieldsGradLight method
+
+    template <COMP_VAR DERIV, int vars_per_node>
+    __HOST_DEVICE__ static T interpFieldsGradLight(const int inode, const int ifield, const T pt[],
+                                                   const T values[]) {
+        /* light version of interpFieldsGrad, where ideriv is either 0 or 1 */
+        return lagrangeLobatto2DGradLight<DERIV>(inode, pt[0], pt[1]) *
+               values[vars_per_node * inode + ifield];
     }  // end of interpFieldsGradLight method
 
     template <COMP_VAR DERIV, int vars_per_node>
@@ -300,14 +327,40 @@ class ShellQuadBasis : public ShellQuadBasisOld<T, Quadrature_, order_> {
     __HOST_DEVICE__ static void ShellComputeNodeNormalLight(const T pt[], const T xpts[], T n0[]) {
         // compute the shell node normal at a single node given already the pre-computed spatial
         // gradients
-        // TODO : could make this cheaper and compute the dot product on the fly with less memory if
-        // I want / need to
         T Xxi[3], Xeta[3];
         for (int i = 0; i < 3; i++) {
             Xxi[i] = interpFieldsGradLight<XI, 3>(i, pt, xpts);
             Xeta[i] = interpFieldsGradLight<ETA, 3>(i, pt, xpts);
         }
-        ShellComputeNodeNormal(pt, Xxi, Xeta, n0);
+
+        // compute and normalize X,xi cross X,eta
+        T tmp[3];
+        A2D::VecCrossCore<T>(Xxi, Xeta, tmp);
+        T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
+        norm = 1.0 / norm;
+        A2D::VecScaleCore<T, 3>(norm, tmp, n0);
+    }
+
+    __HOST_DEVICE__ static void ShellComputeNormalFrameLight(const T pt[], const T xpts[],
+                                                             T Xdz[]) {
+        // compute the shell node normal at a single node given already the pre-computed spatial
+        // gradients: assembles the frame (n0,xi; n0,eta; 0-vec)
+
+        T n0[3], node_pt[2];
+        for (int i = 0; i < 9; i++) Xdz[i] = 0.0;
+#pragma unroll
+        for (int inode = 0; inode < num_nodes; inode++) {
+            // compute the node normal at each basis node
+            getNodePoint(inode, node_pt);
+            ShellComputeNodeNormalLight(node_pt, xpts, n0);
+
+            // add into Xd at the pt (which is usually quad_pt)
+            for (int idim = 0; idim < 3; idim++) {
+                Xdz[3 * idim] += n0[idim] * interpFieldsGradLight<XI, 3>(inode, idim, pt, xpts);
+                Xdz[3 * idim + 1] +=
+                    n0[idim] * interpFieldsGradLight<ETA, 3>(inode, idim, pt, xpts);
+            }
+        }
     }
 
     __HOST_DEVICE__ static void interpNodeNormalLight(const T pt[], const T xpts[], T n0[]) {

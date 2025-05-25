@@ -66,11 +66,11 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
                                                                 const int iquad,
                                                                 const T xpts[xpts_per_elem],
                                                                 const Data physData, T Tmat[9],
-                                                                T XdinvT[9]) {
+                                                                T XdinvT[9], T XdinvzT[9]) {
         if (!active_thread) return;
 
         ShellComputeQuadptTransforms<T, Data, Basis, Quadrature>(iquad, xpts, physData, Tmat,
-                                                                 XdinvT);
+                                                                 XdinvT, XdinvzT);
     }
 
     template <class Data>
@@ -119,7 +119,6 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         bool active_thread, const int iquad, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, T XdinvT[9], T res[dof_per_elem]) {
         if (!active_thread) return;
-        // TODO
 
         T quad_pt[2];
         T weight = Quadrature::getQuadraturePoint(iquad, quad_pt);
@@ -168,12 +167,41 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
     template <class Data>
     __HOST_DEVICE__ static void _add_bending_strain_quadpt_residual_fast(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data physData, T res[]) {
-        // TODO
+        const T vars[dof_per_elem], const Data physData, const T Tmat[9], const T XdinvT[9],
+        const T XdinvzT[9], T res[]) {
         if (!active_thread) return;
 
-        if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0)
-            printf("\tinside bending strain resid\n");
+        // prelim
+        T quad_pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, quad_pt);
+        A2D::ADObj<A2D::Vec<T, 3>> ek;
+
+        // forward scope block
+        T u0x[9], u1x[9];  // needed for backprop (should become registers hopefully)
+        computeBendingStrains<T, vars_per_node, Basis, Director, Phys::is_nonlinear>(
+            quad_pt, xpts, vars, Tmat, XdinvT, XdinvzT, u0x, u1x, ek.value().get_data());
+
+        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+        //     printf("\tek:");
+        //     printVec<T>(3, ek.value().get_data());
+        // }
+
+        // now compute the strains to stresses
+        T detXd = Basis::getDetXd(quad_pt, xpts);
+        T scale = detXd * weight;
+        Phys::template compute_bending_strain_grad<T>(physData, scale, ek);
+
+        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+        //     printf("\tek:");
+        //     printVec<T>(3, ek.bvalue().get_data());
+        // }
+
+        // reverse scope block
+        computeBendingStrainSens<T, vars_per_node, Basis, Director, Phys::is_nonlinear>(
+            quad_pt, xpts, vars, Tmat, XdinvT, XdinvzT, ek.bvalue().get_data(), u0x, u1x, res);
+
+        // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0)
+        //     printf("\tinside bending strain resid\n");
     }
 
     // SLOW SECTION
@@ -195,126 +223,14 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
 
         constexpr int CONTRIBUTION = 1;  // for prelim testing, turn on only one term here
 
-        if constexpr (CONTRIBUTION == 0) {
-            _add_drill_strain_quadpt_residual_fast<Data>(true, iquad, xpts, vars, physData, Tmat,
-                                                         XdinvT, res);
-        } else if (CONTRIBUTION == 1) {
-            _add_tying_strain_quadpt_residual<Data>(true, iquad, xpts, vars, physData, res);
-        } else if (CONTRIBUTION == 2) {
-            // _add_bending_strain_quadpt_residual<Data>(true, iquad, xpts, vars, physData, res);
-        }
-    }
-
-    template <class Data>
-    __HOST_DEVICE__ static void _add_tying_strain_quadpt_residual(const int iquad,
-                                                                  const T xpts[xpts_per_elem],
-                                                                  const T vars[dof_per_elem],
-                                                                  const Data physData,
-                                                                  T res[dof_per_elem]) {
-        // TODO
-        // printf("in tying strain\n");
-        T quad_pt[2], detXd;
-        T weight = Quadrature::getQuadraturePoint(iquad, quad_pt);
-        A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
-
-        // forward scope block
-        T XdinvT[9];  // 16 registers here
-
-        {
-            // compute tying strain at the tying points
-            T ety[Basis::num_all_tying_points];
-            computeTyingStrainLight<T, Phys, Basis, Director>(xpts, vars, ety);
-
-            // return; // 27 registers here
-
-            // interp and rotate the tying strain
-            A2D::SymMat<T, 3> gty;
-            interpTyingStrainLight<T, Basis>(quad_pt, ety, gty.get_data());
-            detXd = getFrameRotation<T, Data, Basis>(physData.refAxis, quad_pt, xpts, XdinvT);
-            A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
-        }
-
-        // return; // 29 registers per thread
-
-        // backprop from strain energy to tying strain gradient in physics
-        T scale = detXd * weight;
-        Phys::template compute_tying_strain_midplane_grad<T>(physData, scale, e0ty);
-        Phys::template compute_tying_strain_transverse_grad<T>(physData, scale, e0ty);
-
-        // if (blockIdx.x == 0 && threadIdx.x == 0) {
-        //	A2D::SymMat<T,3>& e0ty_f = e0ty.value();
-        //	printf("e0ty_f: %.4e %.4e %.4e %.4e %.4e %.4e\n", e0ty_f[0], e0ty_f[1], e0ty_f[2],
-        // e0ty_f[3], e0ty_f[4], e0ty_f[5]); 	A2D::SymMat<T,3>& e0ty_b = e0ty.bvalue();
-        //	printf("e0ty_b: %.4e %.4e %.4e %.4e %.4e %.4e\n", e0ty_b[0], e0ty_b[1], e0ty_b[2],
-        // e0ty_b[3], e0ty_b[4], e0ty_b[5]);
+        // if constexpr (CONTRIBUTION == 0) {
+        //     _add_drill_strain_quadpt_residual_fast<Data>(true, iquad, xpts, vars, physData, Tmat,
+        //                                                  XdinvT, res);
+        // } else if (CONTRIBUTION == 1) {
+        //     _add_tying_strain_quadpt_residual<Data>(true, iquad, xpts, vars, physData, res);
+        // } else if (CONTRIBUTION == 2) {
+        //     // _add_bending_strain_quadpt_residual<Data>(true, iquad, xpts, vars, physData, res);
         // }
-
-        // return; // 32 registers per thread
-
-        // reverse scope block
-        {
-            // interp tying strain sens
-            A2D::Vec<T, Basis::num_all_tying_points> ety_bar;
-            {
-                A2D::SymMat<T, 3> gty_bar;
-                A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(),
-                                                    gty_bar.get_data());
-
-                // return; // still 32 registers per thread
-
-                // TODO : the dot sens methods here are bugged out, massively grows the
-                // registers and slow down runtime by 10x lol this is the bottleneck function..
-                addInterpTyingStrainTransposeLight<T, Basis>(quad_pt, gty_bar.get_data(),
-                                                             ety_bar.get_data());
-            }
-
-            // return; // still 32 registers per thread
-
-            // compute tying strain sens
-            computeTyingStrainSensLight<T, Phys, Basis, Director>(xpts, vars, ety_bar.get_data(),
-                                                                  res);
-        }
-
-        return;  //
-    }
-
-    template <class Data, int version>
-    __HOST_DEVICE__ static void _add_drill_strain_quadpt_residual(const int iquad,
-                                                                  const T xpts[xpts_per_elem],
-                                                                  const T vars[dof_per_elem],
-                                                                  const Data physData,
-                                                                  T res[dof_per_elem]) {
-        // printf("in drill strain\n");
-
-        // this one sped up by calling 128 elements per block..
-        T pt[2];
-        T weight = Quadrature::getQuadraturePoint(iquad, pt);
-        A2D::ADObj<A2D::Vec<T, 1>> et;
-
-        // compute the interpolated drill strain
-        if constexpr (version == 2) {
-            ShellComputeDrillStrainV2<T, vars_per_node, Data, Basis, Director>(
-                pt, physData.refAxis, xpts, vars, et.value().get_data());
-        } else if (version == 3) {
-            ShellComputeDrillStrainV3<T, vars_per_node, Data, Basis, Director>(
-                pt, physData.refAxis, xpts, vars, et.value().get_data());
-        }
-
-        // need to get scale = detXd * weight somehow
-        T detXd = Basis::getDetXd(pt, xpts);
-        T scale = detXd * weight;
-
-        // backprop from strain energy to et
-        Phys::template compute_drill_strain_grad<T>(physData, scale, et);
-
-        // backprop from drill strain to residual
-        if constexpr (version == 2) {
-            ShellComputeDrillStrainSensV2<T, vars_per_node, Data, Basis, Director>(
-                pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
-        } else if (version == 3) {
-            ShellComputeDrillStrainSensV3<T, vars_per_node, Data, Basis, Director>(
-                pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
-        }
     }
 
     template <class Data>
@@ -329,3 +245,115 @@ class ShellElementGroupV2 : public BaseElementGroup<ShellElementGroup<T, Directo
         // TODO: but do residual first
     }
 };
+
+// template <class Data>
+// __HOST_DEVICE__ static void _add_tying_strain_quadpt_residual(const int iquad,
+//                                                               const T xpts[xpts_per_elem],
+//                                                               const T vars[dof_per_elem],
+//                                                               const Data physData,
+//                                                               T res[dof_per_elem]) {
+//     // TODO
+//     // printf("in tying strain\n");
+//     T quad_pt[2], detXd;
+//     T weight = Quadrature::getQuadraturePoint(iquad, quad_pt);
+//     A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
+
+//     // forward scope block
+//     T XdinvT[9];  // 16 registers here
+
+//     {
+//         // compute tying strain at the tying points
+//         T ety[Basis::num_all_tying_points];
+//         computeTyingStrainLight<T, Phys, Basis, Director>(xpts, vars, ety);
+
+//         // return; // 27 registers here
+
+//         // interp and rotate the tying strain
+//         A2D::SymMat<T, 3> gty;
+//         interpTyingStrainLight<T, Basis>(quad_pt, ety, gty.get_data());
+//         detXd = getFrameRotation<T, Data, Basis>(physData.refAxis, quad_pt, xpts, XdinvT);
+//         A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
+//     }
+
+//     // return; // 29 registers per thread
+
+//     // backprop from strain energy to tying strain gradient in physics
+//     T scale = detXd * weight;
+//     Phys::template compute_tying_strain_midplane_grad<T>(physData, scale, e0ty);
+//     Phys::template compute_tying_strain_transverse_grad<T>(physData, scale, e0ty);
+
+//     // if (blockIdx.x == 0 && threadIdx.x == 0) {
+//     //	A2D::SymMat<T,3>& e0ty_f = e0ty.value();
+//     //	printf("e0ty_f: %.4e %.4e %.4e %.4e %.4e %.4e\n", e0ty_f[0], e0ty_f[1], e0ty_f[2],
+//     // e0ty_f[3], e0ty_f[4], e0ty_f[5]); 	A2D::SymMat<T,3>& e0ty_b = e0ty.bvalue();
+//     //	printf("e0ty_b: %.4e %.4e %.4e %.4e %.4e %.4e\n", e0ty_b[0], e0ty_b[1], e0ty_b[2],
+//     // e0ty_b[3], e0ty_b[4], e0ty_b[5]);
+//     // }
+
+//     // return; // 32 registers per thread
+
+//     // reverse scope block
+//     {
+//         // interp tying strain sens
+//         A2D::Vec<T, Basis::num_all_tying_points> ety_bar;
+//         {
+//             A2D::SymMat<T, 3> gty_bar;
+//             A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(),
+//                                                 gty_bar.get_data());
+
+//             // return; // still 32 registers per thread
+
+//             // TODO : the dot sens methods here are bugged out, massively grows the
+//             // registers and slow down runtime by 10x lol this is the bottleneck function..
+//             addInterpTyingStrainTransposeLight<T, Basis>(quad_pt, gty_bar.get_data(),
+//                                                          ety_bar.get_data());
+//         }
+
+//         // return; // still 32 registers per thread
+
+//         // compute tying strain sens
+//         computeTyingStrainSensLight<T, Phys, Basis, Director>(xpts, vars, ety_bar.get_data(),
+//         res);
+//     }
+
+//     return;  //
+// }
+
+// template <class Data, int version>
+// __HOST_DEVICE__ static void _add_drill_strain_quadpt_residual(const int iquad,
+//                                                               const T xpts[xpts_per_elem],
+//                                                               const T vars[dof_per_elem],
+//                                                               const Data physData,
+//                                                               T res[dof_per_elem]) {
+//     // printf("in drill strain\n");
+
+//     // this one sped up by calling 128 elements per block..
+//     T pt[2];
+//     T weight = Quadrature::getQuadraturePoint(iquad, pt);
+//     A2D::ADObj<A2D::Vec<T, 1>> et;
+
+//     // compute the interpolated drill strain
+//     if constexpr (version == 2) {
+//         ShellComputeDrillStrainV2<T, vars_per_node, Data, Basis, Director>(
+//             pt, physData.refAxis, xpts, vars, et.value().get_data());
+//     } else if (version == 3) {
+//         ShellComputeDrillStrainV3<T, vars_per_node, Data, Basis, Director>(
+//             pt, physData.refAxis, xpts, vars, et.value().get_data());
+//     }
+
+//     // need to get scale = detXd * weight somehow
+//     T detXd = Basis::getDetXd(pt, xpts);
+//     T scale = detXd * weight;
+
+//     // backprop from strain energy to et
+//     Phys::template compute_drill_strain_grad<T>(physData, scale, et);
+
+//     // backprop from drill strain to residual
+//     if constexpr (version == 2) {
+//         ShellComputeDrillStrainSensV2<T, vars_per_node, Data, Basis, Director>(
+//             pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
+//     } else if (version == 3) {
+//         ShellComputeDrillStrainSensV3<T, vars_per_node, Data, Basis, Director>(
+//             pt, physData.refAxis, xpts, vars, et.bvalue().get_data(), res);
+//     }
+// }

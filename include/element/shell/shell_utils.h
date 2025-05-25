@@ -80,27 +80,36 @@ __HOST_DEVICE__ void ShellComputeNodalTransforms(const int inode, const T xpts[]
 
 template <typename T, class Data, class Basis, class Quadrature>
 __HOST_DEVICE__ void ShellComputeQuadptTransforms(const int iquad, const T xpts[],
-                                                  const Data physData, T Tmat[9], T XdinvT[9]) {
-    T pt[2];
-    Quadrature::getQuadraturePoint(iquad, pt);
+                                                  const Data physData, T Tmat[9], T XdinvT[9],
+                                                  T XdinvzT[9]) {
+    T quad_pt[2];
+    Quadrature::getQuadraturePoint(iquad, quad_pt);
 
     // get shell transform and Xdn frame scope
-    T Xdinv[9];
+    T Xdinv[9], Xdz[9];
     {
         T n0[3];
-        Basis::ShellComputeNodeNormalLight(pt, xpts, n0);
+        Basis::ShellComputeNodeNormalLight(quad_pt, xpts, n0);
 
         // assemble Xd frame (Tmat treated here as Xd)
         T *Xd = &Tmat[0];
-        Basis::assembleFrameLight<3>(pt, xpts, n0, Xd);
+        Basis::assembleFrameLight<3>(quad_pt, xpts, n0, Xd);
         A2D::MatInvCore<T, 3>(Xd, Xdinv);
 
+        // compute Xdz
+        Basis::ShellComputeNormalFrameLight(quad_pt, xpts, Xdz);
+
         // compute the shell transform based on the ref axis in Data object
-        ShellComputeTransformLight<T, Basis, Data>(physData.refAxis, pt, xpts, n0, Tmat);
+        ShellComputeTransformLight<T, Basis, Data>(physData.refAxis, quad_pt, xpts, n0, Tmat);
     }  // end of Xd and shell transform scope
 
-    // get full transform product
+    // get full transform product XdinvT
     A2D::MatMatMultCore3x3<T>(Xdinv, Tmat, XdinvT);
+
+    // compute XdinvzT = -1.0 * Xdinv * Xdz * XdinvT
+    T tmp[9];
+    A2D::MatMatMultCore3x3Scale<T>(-1.0, Xdinv, Xdz, tmp);
+    A2D::MatMatMultCore3x3<T>(tmp, XdinvT, XdinvzT);
 }
 
 template <typename T, int vars_per_node, class Basis, class Director>
@@ -453,3 +462,243 @@ __HOST_DEVICE__ static void computeInterpTyingStrainFastSens(const T quad_pt[], 
         // g33 = 0
     }
 }  // end of computeInterpTyingStrainFastSens
+
+template <typename T, int vars_per_node, class Basis, class Director>
+__HOST_DEVICE__ void assembleDirectorFrame(const T quad_pt[], const T xpts[], const T vars[],
+                                           T u1x_0[]) {
+    // goal is to assemble the 3x3 frame (d0,xi; d0,eta; 0-vec) efficiently
+    T d0[3], node_pt[2], n0[3], d[3];
+    const T *q = &vars[Director::offset];
+
+#pragma unroll
+    for (int i = 0; i < 9; i++) {
+        u1x_0[i] = 0.0;
+    }
+
+#pragma unroll
+    for (int inode = 0; inode < Basis::num_nodes; inode++) {
+        // compute the director at this point (unrolled interpDirectorLight here)
+        Basis::getNodePoint(inode, node_pt);
+        Basis::ShellComputeNodeNormal(node_pt, xpts, n0);
+
+        A2D::VecCrossCore<T>(q, n0, d);
+        q += vars_per_node;
+
+#pragma unroll
+        for (int ifield = 0; ifield < 3; ifield++) {
+            d0[ifield] = Basis::lagrangeLobatto2DLight(inode, node_pt[0], node_pt[1]) * d[ifield];
+        }
+
+#pragma unroll
+        // add into Xd at the pt (which is usually quad_pt)
+        for (int idim = 0; idim < 3; idim++) {
+            u1x_0[3 * idim] +=
+                d0[idim] * Basis::interpFieldsGradLight<XI, 3>(inode, idim, quad_pt, xpts);
+            u1x_0[3 * idim + 1] +=
+                d0[idim] * Basis::interpFieldsGradLight<ETA, 3>(inode, idim, quad_pt, xpts);
+        }
+    }
+    // zero the last column
+    u1x_0[2] = 0.0;
+    u1x_0[5] = 0.0;
+    u1x_0[8] = 0.0;
+}
+
+template <typename T, int vars_per_node, class Basis, class Director>
+__HOST_DEVICE__ void assembleDirectorFrameSens(const T quad_pt[], const T xpts[], const T u1x_bar[],
+                                               T res[]) {
+    // goal is to assemble the 3x3 frame (d0,xi; d0,eta; 0-vec) efficiently
+    T d_bar[3], node_pt[2], n0[3], d[3];
+    T *q_bar = &res[Director::offset];
+
+#pragma unroll
+    for (int inode = 0; inode < Basis::num_nodes; inode++) {
+        // compute the director at this point (unrolled interpDirectorLight here)
+        Basis::getNodePoint(inode, node_pt);
+        Basis::ShellComputeNodeNormal(node_pt, xpts, n0);
+
+#pragma unroll
+        for (int idim = 0; idim < 3; idim++) {
+            d_bar[idim] =
+                u1x_bar[3 * idim] * Basis::interpFieldsGradLight<XI, 3>(inode, idim, quad_pt, xpts);
+            d_bar[idim] += u1x_bar[3 * idim + 1] *
+                           Basis::interpFieldsGradLight<ETA, 3>(inode, idim, quad_pt, xpts);
+            // reverse interp
+            d_bar[idim] *= Basis::lagrangeLobatto2DLight(inode, node_pt[0], node_pt[1]);
+        }
+
+        A2D::VecCrossCore<T>(n0, d_bar, q_bar);
+        q_bar += vars_per_node;
+    }
+}
+
+template <typename T, int vars_per_node, class Basis, class Director, bool is_nonlinear>
+__HOST_DEVICE__ T computeBendingStrains(const T quad_pt[], const T xpts[], const T vars[],
+                                        const T Tmat[9], const T XdinvT[9], const T XdinvzT[9],
+                                        T u0x[9], T u1x[9], T ek[3]) {
+    // get init u0x frame
+    {
+        T d0[3];
+        Director::template interpDirectorLight<Basis, vars_per_node, Basis::num_nodes>(
+            quad_pt, xpts, vars, d0);
+        Basis::template assembleFrameLight<vars_per_node>(quad_pt, vars, d0, u0x);
+    }
+
+    // get init u1x frame = (d0,xi; d0,eta; 0-vec)
+    { assembleDirectorFrame<T, vars_per_node, Basis, Director>(quad_pt, xpts, vars, u1x); }
+
+    // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+    //     printf("u0x:");
+    //     printVec<T>(9, u0x);
+
+    //     printf("u1x:");
+    //     printVec<T>(9, u1x);
+    // }
+
+    // now compute transformed u0x, u1x with shared memory calculations
+    T tmp[9];
+    // compute u1x = T^{T}*u1d*XdinvT + T^{T}*u0d*XdinvzT
+    {
+        A2D::MatMatMultCore3x3<T>(u1x, XdinvT, tmp);
+        A2D::MatMatMultCore3x3Add<T>(u0x, XdinvzT, tmp);
+        A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE>(Tmat, tmp, u1x);
+    }
+
+    // compute u0x = T^{T}*u0d*Xdinv*T
+    {
+        A2D::MatMatMultCore3x3<T>(u0x, XdinvT, tmp);
+        A2D::MatMatMultCore3x3<T, A2D::MatOp::TRANSPOSE>(Tmat, tmp, u0x);
+    }
+
+    // immediately go to the bending strains (the hope is that using this instead of u0x[9], u1x[9])
+    // may promote fewer registers through inlining A2D functions
+    ek[0] = u1x[0];
+    ek[1] = u1x[4];
+    ek[2] = u1x[1] + u1x[3];
+
+    if constexpr (is_nonlinear) {
+        ek[0] = u0x[0] * u1x[0] + u0x[3] * u1x[3] + u0x[6] * u1x[6];  // k11
+        ek[1] = u0x[1] * u1x[1] + u0x[4] * u1x[4] + u0x[7] * u1x[7];  // k22
+        ek[2] = u0x[0] * u1x[1] + u0x[3] * u1x[4] + u0x[6] * u1x[7] + u1x[0] * u0x[1] +
+                u1x[3] * u0x[4] + u1x[6] * u0x[7];  // k12
+    }
+}
+
+template <typename T, int vars_per_node, class Basis, class Director, bool is_nonlinear>
+__HOST_DEVICE__ void computeBendingStrainSens(const T quad_pt[], const T xpts[], const T vars[],
+                                              const T Tmat[9], const T XdinvT[9],
+                                              const T XdinvzT[9], const T ek_bar[3], const T u0x[9],
+                                              const T u1x[9], T res[]) {
+    // TODO:
+    T u0x_bar[9], u1x_bar[9], tmp[9];
+
+#pragma unroll
+    for (int i = 0; i < 9; i++) {
+        u0x_bar[i] = 0.0;
+        u1x_bar[i] = 0.0;
+    }
+
+    // linear part
+    u1x_bar[0] = ek_bar[0];
+    u1x_bar[4] = ek_bar[1];
+    u1x_bar[1] = ek_bar[2];
+    u1x_bar[3] = ek_bar[2];
+
+    // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+    //     printf("u0x:");
+    //     printVec<T>(9, u0x);
+
+    //     printf("u1x:");
+    //     printVec<T>(9, u1x);
+
+    //     printf("ek_bar:");
+    //     printVec<T>(3, ek_bar);
+
+    //     printf("u0x_bar:");
+    //     printVec<T>(9, u0x_bar);
+
+    //     printf("u1x_bar:");
+    //     printVec<T>(9, u1x_bar);
+    // }
+
+    // nonlinear part
+    if constexpr (is_nonlinear) {
+        // k11 part, ek[0] = u0x[0] * u1x[0] + u0x[3] * u1x[3] + u0x[6] * u1x[6]
+        u1x_bar[0] += u0x[0] * ek_bar[0];
+        u1x_bar[3] += u0x[3] * ek_bar[0];
+        u1x_bar[6] += u0x[6] * ek_bar[0];
+        u0x_bar[0] += u1x[0] * ek_bar[0];
+        u0x_bar[3] += u1x[3] * ek_bar[0];
+        u0x_bar[6] += u1x[6] * ek_bar[0];
+
+        // k22 part, ek[1] = u0x[1] * u1x[1] + u0x[4] * u1x[4] + u0x[7] * u1x[7]
+        u1x_bar[1] += u0x[1] * ek_bar[1];
+        u1x_bar[4] += u0x[4] * ek_bar[1];
+        u1x_bar[7] += u0x[7] * ek_bar[1];
+        u0x_bar[1] += u1x[1] * ek_bar[1];
+        u0x_bar[4] += u1x[4] * ek_bar[1];
+        u0x_bar[7] += u1x[7] * ek_bar[1];
+
+        // k12 part, ek[2] = u0x[0] * u1x[1] + u0x[3] * u1x[4] + u0x[6] * u1x[7] + u1x[0] * u0x[1] +
+        //              u1x[3] * u0x[4] + u1x[6] * u0x[7];  // k12
+        u0x_bar[0] += u1x[1] * ek_bar[2];
+        u1x_bar[0] += u0x[1] * ek_bar[2];
+        u0x_bar[1] += u1x[0] * ek_bar[2];
+        u1x_bar[1] += u0x[0] * ek_bar[2];
+        u0x_bar[3] += u1x[4] * ek_bar[2];
+        u1x_bar[3] += u0x[4] * ek_bar[2];
+        u0x_bar[4] += u1x[3] * ek_bar[2];
+        u1x_bar[4] += u0x[3] * ek_bar[2];
+        u0x_bar[6] += u1x[7] * ek_bar[2];
+        u1x_bar[6] += u0x[7] * ek_bar[2];
+        u0x_bar[7] += u1x[6] * ek_bar[2];
+        u1x_bar[7] += u0x[6] * ek_bar[2];
+    }
+
+    // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+    //     printf("u0x_bar:");
+    //     printVec<T>(9, u0x_bar);
+
+    //     printf("u1x_bar:");
+    //     printVec<T>(9, u1x_bar);
+    // }
+
+    // now backprop through the u0x, u1x parts
+    constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
+    constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
+
+    // reverse of u1x' += T^t * u0x * XdinvzT and u0x' = T^t * u0x * XdinvT
+    // becomes u0x_bar = XdinvzT * u1x'_bar * T^t + XdinvT * u0x'_bar * T^t
+    {
+        // first part u0x_bar += XdinvT * u0x'_bar * T^t
+        A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u0x_bar, tmp);
+        A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0x_bar);
+
+        // 2nd part u0x_bar += XdinvzT * u1x'_bar * T^t
+        A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvzT, u1x_bar, tmp);
+        A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0x_bar);
+    }
+
+    // reverse of fw: u1x' = T^t * u1x * XdinvT
+    // first u1x_bar = XdinvT * u1x'_bar * T^t
+    {
+        A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvT, u1x_bar, tmp);
+        A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u1x_bar);
+    }
+
+    // so now u0x_bar, u1x_bar are at un-transformed stage in reverse
+    // backprop now to the variables
+    // -----------------------------
+
+    // backprop u0x_bar to vars or res
+    {
+        T d0_bar[3];
+        Basis::template assembleFrameLightSens<vars_per_node>(quad_pt, u0x_bar, d0_bar, res);
+
+        Director::template interpDirectorLightSens<Basis, vars_per_node, Basis::num_nodes>(
+            1.0, quad_pt, xpts, d0_bar, res);
+    }
+
+    // backprop u1x_bar to vars or res
+    assembleDirectorFrameSens<T, vars_per_node, Basis, Director>(quad_pt, xpts, u1x_bar, res);
+}

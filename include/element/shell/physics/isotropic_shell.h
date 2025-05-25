@@ -21,54 +21,6 @@ class IsotropicShell {
     static constexpr bool is_nonlinear = isNonlinear;
     static constexpr int num_dvs = 1;
 
-    // function declarations
-    // -------------------------------------------------------
-
-    /**
-    template <typename T2>
-    __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
-                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
-                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x,
-                                                    A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
-                                                    A2D::ADObj<A2D::Vec<T2, 1>> et,
-                                                    A2D::ADObj<T2> &Uelem);
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeWeakRes(const Data &physData, const T &scale,
-                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                               A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
-                                               A2D::ADObj<A2D::Vec<T2, 1>> &et);
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeWeakJacobianCol(const Data &physData, const T &scale,
-                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                                       A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
-                                                       A2D::A2DObj<A2D::Vec<T2, 1>> &et);
-
-                                                       template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
-                                                            A2D::Mat<T2, 3, 3> &u0x,
-                                                            A2D::Mat<T2, 3, 3> &u1x,
-                                                            A2D::SymMat<T2, 3> &e0ty,
-                                                            A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S);
-
-                                                            template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
-                                                     A2D::Mat<T2, 3, 3> &u0x,
-                                                     A2D::Mat<T2, 3, 3> &u1x,
-                                                     A2D::SymMat<T2, 3> &e0ty, A2D::Vec<T2, 1> &et,
-                                                     A2D::Vec<T, 9> E);
-
-    __HOST_DEVICE__
-    static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
-                                 T *fail_index);
-     */
-
-    // -------------------------------------------------------
-    // end of function declarations
-
     template <typename T2>
     __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
                                                     A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
@@ -160,9 +112,6 @@ class IsotropicShell {
         e0ty_b[0] = scale * s0[0];
         e0ty_b[3] = scale * s0[1];
         e0ty_b[1] = scale * s0[2];
-        // if (threadIdx.x == 0 && blockIdx.x == 0) {
-        //     printf("e0ty_b 0 %.4e, 1 %.4e, 2 %.4e\n", e0ty_b[0], e0ty_b[3], e0ty_b[1]);
-        // }
         //  this scale*stress is the midplane energy gradient
     }
 
@@ -183,6 +132,21 @@ class IsotropicShell {
         e0ty_b[6] *= 4.0 * scale * As * e0ty_f[6];  // e23, transverse shear
         e0ty_b[7] *= 4.0 * scale * As * e0ty_f[7];  // e13, transverse shear
         // can also use stack, but not really necessary for this one
+    }
+
+    template <typename T2>
+    __HOST_DEVICE__ static void compute_bending_strain_grad(const Data &physData, const T &scale,
+                                                            A2D::ADObj<A2D::Vec<T, 3>> &ek) {
+        /* compute gradient of energy term with midplane strains */
+
+        // compute the D matrix * strain (assume B = 0, sym laminate)
+        T E = physData.E, nu = physData.nu, thick = physData.thick;
+        T I = thick * thick * thick / 12.0;
+        T *ek_f = ek.value().get_data();
+        T *ek_b = ek.bvalue().get_data();
+
+        // Mi = D * ek_i; D = C * I
+        Data::stiffnessMatrixProd(E, nu, I * scale, ek_f, ek_b);
     }
 
     template <typename T2>
