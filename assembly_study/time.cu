@@ -15,8 +15,8 @@ int main() {
   constexpr bool just_drill_strain = true;
   // constexpr bool just_drill_strain = false;
 
-  // constexpr version = 1;
-  constexpr int version = 2;
+  constexpr int version = 1;
+  // constexpr int version = 2;
 
   if constexpr (version == 1) {
     // no just drill strain setting for version 1
