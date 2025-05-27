@@ -7,6 +7,7 @@
 // shell imports
 #include "include/v1/v1.h"
 #include "include/v2/v2.h"
+#include "include/v3/v3.h"
 
 int main() {
   using T = double;
@@ -15,8 +16,9 @@ int main() {
   constexpr bool just_drill_strain = true;
   // constexpr bool just_drill_strain = false;
 
-  constexpr int version = 1;
+  // constexpr int version = 1;
   // constexpr int version = 2;
+  constexpr int version = 3;
 
   if constexpr (version == 1) {
     // no just drill strain setting for version 1
@@ -40,6 +42,22 @@ int main() {
     using Physics = IsotropicShellV2<T, Data, is_nonlinear>;
     using ElemGroup = ShellElementGroupV2<T, Director, Basis, Physics, full_strain>;
     using Assembler = ElementAssemblerV2<T, ElemGroup, VecType, BsrMat>;
+
+    time_assembler<T, Data, Assembler>();
+  } else if constexpr (version == 3) {
+    // exploring pre-computing xpt shell transform data vs computing all in oneshot
+    // 1 - shared, 2 - local, 3 - oneshot
+    // constexpr int kernel_option = 1;
+    // constexpr int kernel_option = 2;
+    constexpr int kernel_option = 3;
+
+    using Quad = QuadLinearQuadratureV3<T>;
+    using Director = LinearizedRotationV3<T>;
+    using Basis = ShellQuadBasisV3<T, Quad>;
+    using Data = ShellIsotropicDataV3<T, false>;
+    using Physics = IsotropicShellV3<T, Data, is_nonlinear>;
+    using ElemGroup = ShellElementGroupV3<T, Director, Basis, Physics, kernel_option>; //, full_strain>;
+    using Assembler = ElementAssemblerV3<T, ElemGroup, VecType, BsrMat>;
 
     time_assembler<T, Data, Assembler>();
   }

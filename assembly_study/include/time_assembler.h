@@ -28,11 +28,12 @@ void time_assembler() {
     auto soln2 = h_soln1.createDeviceVec();
     assembler.set_variables(soln2);
 
-    assembler.apply_bcs(res);            // warmup call
+    assembler.apply_bcs(res);  // warmup call
+    printf("\n");
     assembler.add_residual(res, print);  // prints runtime in here
 
     // check residual not zero
-    printf("check resid\n");
+    printf("\tcheck resid: ");
     auto h_res = res.createHostVec();
-    printVec<T>(30, h_res.getPtr());
+    printVec<T>(10, h_res.getPtr());
 }

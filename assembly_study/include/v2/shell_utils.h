@@ -679,7 +679,7 @@ __HOST_DEVICE__ static T getFrameRotation(const T refAxis[], const T pt[], const
 
     // invert the Xd transformation (so Xdinv stored in XdinvT now)
     A2D::MatInvCore<T, 3>(Tmat, XdinvT);
-    T detXd = A2D::MatDetCore<T, 3>(XdinvT);
+    T detXd = A2D::MatDetCore<T, 3>(XdinvT);  // shouldn't this be on Xd not XdinvT
 
     // compute the shell transform based on the ref axis in Data object
     ShellComputeTransformLight<T, Basis, Data>(refAxis, pt, xpts, n0, Tmat);

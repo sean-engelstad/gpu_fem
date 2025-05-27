@@ -5,6 +5,7 @@
 #include "chrono"
 #include "cuda_utils.h"
 #include "mesh/TACSMeshLoader.h"
+#include "shell_transforms.cuh"
 
 // linear algebra formats
 #include "linalg/bsr_data.h"
@@ -34,9 +35,9 @@ class ElementAssemblerV3 {
 
     void add_residual(Vec<T> &res, bool can_print = false) {
         auto start = std::chrono::high_resolution_clock::now();
-        if (can_print) {
-            printf("begin add_residual\n");
-        }
+        // if (can_print) {
+        //     printf("begin add_residual\n");
+        // }
 
         using Phys = typename ElemGroup::Phys;
         using Data = typename Phys::Data;
@@ -46,17 +47,32 @@ class ElementAssemblerV3 {
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
 
-        dim3 block = ElemGroup::res_block;
-        int nblocks = (num_elements + block.y - 1) / block.y;
+        // fewer elems can slightly speedup by increasing occupancy on SM
+        constexpr int32_t elems_per_block = 32;
+        int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
         dim3 grid(nblocks);
-        constexpr int32_t elems_per_block = ElemGroup::res_block.y;
-        if constexpr (ElemGroup::full_strain) {
-            shell_elem_add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
-                <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
-        } else {
-            fast_drill_strain_add_residual<T, ElemGroup, Data, elems_per_block, Vec>
-                <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+
+        constexpr int32_t kernel_option = ElemGroup::kernel_option;
+
+        if constexpr (kernel_option == 1) {
+            dim3 block(16, 32, 1);  // faster with (4,32,1) memory access so that's why I switch to
+                                    // shared_v2 aka shared2
+            drill_strain_residual_shared<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+                num_elements, geo_conn, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, res);
+        } else if (kernel_option == 2) {
+            // again leads to slow mem access of 9e-4 sec vs 2e-4 for (4,32,1) so faster compute but
+            // slower memory although, I can do warp reduction and bcast using just (4,32,1) so see
+            // kernel_options 3 and 4 for improvement
+            dim3 block(16, 32, 1);
+            drill_strain_residual_local<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+                num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, res);
+        } else if (kernel_option == 3) {
+            printf("launch kernel 3\n");
+            dim3 block(4, 32, 1);
+            drill_strain_residual_local2<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+                num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, res);
         }
+        // TODO : do one all with oneshot compute, no pre-computing xpts shell transforms
 
         CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -66,7 +82,50 @@ class ElementAssemblerV3 {
         auto stop = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> add_resid_time = stop - start;
         if (can_print) {
-            printf("\tfinished add_residual in %.4e\n", add_resid_time.count());
+            printf("add_residual in %.4e\n", add_resid_time.count());
+        }
+    };
+
+    void _compute_shell_transforms(bool can_print = true) {
+        /* computes the shell transforms at each new design */
+        auto start = std::chrono::high_resolution_clock::now();
+        // if (can_print) {
+        //     printf("begin compute shell transforms\n");
+        // }
+
+        using Phys = typename ElemGroup::Phys;
+        using Data = typename Phys::Data;
+
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+
+        // launch kernel to compute nodal transforms
+        static constexpr int elems_per_block = 32;
+        dim3 block1(elems_per_block, 4);
+        int nblocks1 = (num_elements + block1.x - 1) / block1.x;
+        dim3 grid1(nblocks1);
+
+        compute_shell_nodal_transforms<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid1, block1>>>(num_elements, geo_conn, xpts, physData, Tmatn, XdinvTn);
+
+        // launch kernel to compute quadpt element transforms / detXd (TBD)
+        // static constexpr int elems_per_block = 32;
+        dim3 block2(elems_per_block, 4);
+        int nblocks2 = (num_elements + block2.x - 1) / block2.x;
+        dim3 grid2(nblocks2);
+        compute_shell_quadpt_transforms<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid2, block2>>>(num_elements, geo_conn, xpts, physData, detXdq);
+        // TBD on adding XdinvTq and Tmatq to this computation
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+#endif  // USE_GPU
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> add_resid_time = stop - start;
+        if (can_print) {
+            printf("compute shell transforms in %.4e\n", add_resid_time.count());
         }
     };
 
@@ -143,6 +202,10 @@ class ElementAssemblerV3 {
     Vec<T> xpts, vars;
     Vec<Data> physData;
     BsrData bsr_data;
+
+    // additional place to hold shell transform data for faster assembly
+    Vec<T> Tmatn, XdinvTn, detXdq;
+
 };  // end of ElementAssemblerV3 class declaration
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
@@ -181,6 +244,11 @@ ElementAssemblerV3<T, ElemGroup, Vec, Mat>::ElementAssemblerV3(
     this->physData = physData.createDeviceVec(false);
     this->elem_components = elem_components.createDeviceVec();
 
+    // create temporary data for kernels
+    this->Tmatn = DeviceVec<T>(36 * num_elements);
+    this->XdinvTn = DeviceVec<T>(36 * num_elements);
+    this->detXdq = DeviceVec<T>(4 * num_elements);
+
 #else  // not USE_GPU
 
     // on host just copy normally
@@ -192,6 +260,9 @@ ElementAssemblerV3<T, ElemGroup, Vec, Mat>::ElementAssemblerV3(
     this->elem_components = elem_components;
 
 #endif  // end of USE_GPU or not USE_GPU check
+
+    // compute on each design and init the shell transform data
+    this->_compute_shell_transforms(false);  // true or false to print or not
 }
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
