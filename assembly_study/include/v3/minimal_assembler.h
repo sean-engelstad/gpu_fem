@@ -92,6 +92,19 @@ class ElementAssemblerV3 {
             drill_strain_residual_local3<T, ElemGroup, Data, elems_per_block2, Vec>
                 <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
                                   res);
+        } else if (kernel_option == 5) {
+            /* try here switching to shared mem for XdinvTn, Tmatn since I'm well under shared mem
+            occupancy now with block_res no longer here goal is to reduce registers and see if that
+            helps improve waves per SM occupancy */
+            printf("launch kernel 5\n");
+            constexpr int32_t elems_per_block2 = 8;
+            // constexpr int32_t elems_per_block2 = 16;
+            // constexpr int32_t elems_per_block2 = 32;
+            dim3 block(4, elems_per_block2, 1);
+
+            drill_strain_residual_shared3<T, ElemGroup, Data, elems_per_block2, Vec>
+                <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
+                                  res);
         }
         // TODO : do one all with oneshot compute, no pre-computing xpts shell transforms
 

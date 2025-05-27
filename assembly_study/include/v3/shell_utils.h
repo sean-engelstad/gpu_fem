@@ -47,14 +47,6 @@ __HOST_DEVICE__ void ShellComputeDrillStrainFast(const int inode, const T vars[]
     // compiler should just compile away my copy statements here
     T node_pt[2];
     Basis::getNodePoint(inode, node_pt);
-    T t1[3], t2[3], Xd0[3], Xd1[3];
-#pragma unroll
-    for (int i = 0; i < 3; i++) {
-        t1[i] = Tmat[3 * i];
-        t2[i] = Tmat[3 * i + 2];
-        Xd0[i] = XdinvT[3 * i];
-        Xd1[i] = XdinvT[3 * i + 2];
-    }
     T zero[3];
 #pragma unroll
     for (int i = 0; i < 3; i++) zero[i] = 0.0;
@@ -65,13 +57,17 @@ __HOST_DEVICE__ void ShellComputeDrillStrainFast(const int inode, const T vars[]
     // use_fast_math compiler flag
 
     T u01, u10;
-    assembleFrameLightTripleProduct<T, Basis, vars_per_node>(node_pt, vars, zero, t1, Xd1, u01);
-    assembleFrameLightTripleProduct<T, Basis, vars_per_node>(node_pt, vars, zero, t2, Xd0, u10);
+    assembleFrameLightTripleProduct<T, Basis, vars_per_node>(node_pt, vars, zero, &Tmat[0],
+                                                             &XdinvT[3], u01);
+    assembleFrameLightTripleProduct<T, Basis, vars_per_node>(node_pt, vars, zero, &Tmat[3],
+                                                             &XdinvT[0], u10);
 
     // compute rotation matrix at this node
     T C01, C10;
-    Director::template computeRotationMatScalarProduct<vars_per_node>(inode, vars, t1, t2, C01);
-    Director::template computeRotationMatScalarProduct<vars_per_node>(inode, vars, t2, t1, C10);
+    Director::template computeRotationMatScalarProduct<vars_per_node>(inode, vars, &Tmat[0],
+                                                                      &Tmat[3], C01);
+    Director::template computeRotationMatScalarProduct<vars_per_node>(inode, vars, &Tmat[3],
+                                                                      &Tmat[0], C10);
 
     // TODO : try turning off use_fast_math compiler flag on double type (only keeps this intrinsic
     // for float type, see doc)
@@ -86,29 +82,20 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSensFast(const int inode, const T va
     // prelim block
     T node_pt[2];
     Basis::getNodePoint(inode, node_pt);
-    T t1[3], t2[3], Xd0[3], Xd1[3];
-#pragma unroll
-    for (int i = 0; i < 3; i++) {
-        t1[i] = Tmat[3 * i];
-        t2[i] = Tmat[3 * i + 2];
-        Xd0[i] = XdinvT[3 * i];
-        Xd1[i] = XdinvT[3 * i + 2];
-    }
-    T zero[3];
-#pragma unroll
-    for (int i = 0; i < 3; i++) zero[i] = 0.0;
 
     // reverse from teh
     T u01b, u10b, C01b, C10b;
     Director::evalDrillStrainSens(et_bar, u01b, u10b, C01b, C10b);
 
-    assembleFrameLightTripleProductSens<T, Basis, vars_per_node>(node_pt, t1, t2, u01b, res);
-    assembleFrameLightTripleProductSens<T, Basis, vars_per_node>(node_pt, t2, t1, u10b, res);
+    assembleFrameLightTripleProductSens<T, Basis, vars_per_node>(node_pt, &Tmat[0], &Tmat[3], u01b,
+                                                                 res);
+    assembleFrameLightTripleProductSens<T, Basis, vars_per_node>(node_pt, &Tmat[3], &Tmat[0], u10b,
+                                                                 res);
 
-    Director::template computeRotationMatScalarProductSens<vars_per_node>(inode, t1, Xd1, C01b,
-                                                                          res);
-    Director::template computeRotationMatScalarProductSens<vars_per_node>(inode, t2, Xd0, C10b,
-                                                                          res);
+    Director::template computeRotationMatScalarProductSens<vars_per_node>(inode, &Tmat[0],
+                                                                          &XdinvT[3], C01b, res);
+    Director::template computeRotationMatScalarProductSens<vars_per_node>(inode, &Tmat[3],
+                                                                          &XdinvT[0], C10b, res);
 
 }  // end of method ShellComputeDrillStrainSensFast
 

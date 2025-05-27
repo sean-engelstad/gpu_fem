@@ -48,9 +48,11 @@ int main() {
   } else if constexpr (version == 3) {
     // exploring pre-computing xpt shell transform data vs computing all in oneshot
     // 1 - shared, 2 - local, 3 - oneshot
-    // constexpr int kernel_option = 1;
-    // constexpr int kernel_option = 2;
-    constexpr int kernel_option = 3;
+    // constexpr int kernel_option = 1; // failed call, 7.97e-5
+    // constexpr int kernel_option = 2; // just mem, 2.27e-4
+    // constexpr int kernel_option = 3; // 2.29e-4 (fastest but uses more smem)
+    constexpr int kernel_option = 4; // 2.38e-4    (fewest smem, prob best for jac, somewhat more variable though..)
+    // constexpr int kernel_option = 5; // 2.61e-4 (slower with Tmat, XdinvT in smem than registers)
 
     using Quad = QuadLinearQuadratureV3<T>;
     using Director = LinearizedRotationV3<T>;
