@@ -420,34 +420,34 @@ void ElementAssemblerV3<T, ElemGroup, Vec, Mat>::set_variables(Vec<T> &newVars) 
 }
 
 //  template <class ExecParameters>
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat_>
-void ElementAssemblerV3<T, ElemGroup, Vec, Mat_>::add_jacobian(
-    Vec<T> &res, Mat_<Vec<T>> &mat,
-    bool can_print) {  // TODO : make this Vec here..
-    auto start = std::chrono::high_resolution_clock::now();
-    if (can_print) {
-        printf("begin add_jacobian\n");
-    }
+// template <typename T, typename ElemGroup, template <typename> class Vec,
+//           template <typename> class Mat_>
+// void ElementAssemblerV3<T, ElemGroup, Vec, Mat_>::add_jacobian(
+//     Vec<T> &res, Mat_<Vec<T>> &mat,
+//     bool can_print) {  // TODO : make this Vec here..
+//     auto start = std::chrono::high_resolution_clock::now();
+//     if (can_print) {
+//         printf("begin add_jacobian\n");
+//     }
 
-    using Phys = typename ElemGroup::Phys;
-    using Data = typename Phys::Data;
-    using Mat = Mat_<Vec<T>>;
+//     using Phys = typename ElemGroup::Phys;
+//     using Data = typename Phys::Data;
+//     using Mat = Mat_<Vec<T>>;
 
-    res.zeroValues();
-    mat.zeroValues();
+//     res.zeroValues();
+//     mat.zeroValues();
 
-// input is either a device array when USE_GPU or a host array if not USE_GPU
-#ifdef USE_GPU
+// // input is either a device array when USE_GPU or a host array if not USE_GPU
+// #ifdef USE_GPU
 
-    dim3 block = ElemGroup::jac_block;
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-    constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
+//     dim3 block = ElemGroup::jac_block;
+//     int nblocks = (num_elements + block.x - 1) / block.x;
+//     dim3 grid(nblocks);
+//     constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
 
-    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
-        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+//     add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+//         num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
 
-    CHECK_CUDA(cudaDeviceSynchronize());
-#endif
-};
+//     CHECK_CUDA(cudaDeviceSynchronize());
+// #endif
+// };

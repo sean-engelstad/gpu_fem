@@ -88,6 +88,15 @@ __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[
         A2D::MatMatMultCore3x3<T>(u0xn, XdinvTn, tmp);
         A2D::MatMatMultCore3x3<T, MatOp::TRANSPOSE>(Tmat, tmp, u0xn);
 
+        if (inode == 0) {
+            printf("Tmatn:");
+            printVec<T>(9, Tmat);
+            printf("XdinvTn:");
+            printVec<T>(9, XdinvTn);
+
+            printf("u01 %.8e, u10 %.8e\n", u0xn[1], u0xn[3]);
+        }
+
         // compute the drill strain
         etn[inode] = Director::evalDrillStrain(u0xn, C);
 

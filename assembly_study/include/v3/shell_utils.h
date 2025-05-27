@@ -37,6 +37,64 @@ __HOST_DEVICE__ static void assembleFrameLightTripleProductSens(const T pt[], co
     }
 }
 
+template <typename T, class Basis, class Data>
+__HOST_DEVICE__ void ShellComputeTransformLight(const T refAxis[], const T pt[], const T xpts[],
+                                                const T n0[], T Tmat[]) {
+// make the normal a unit vector, store it in Tmat (Tmat assembled in transpose form first for
+// convenience, then transposed later)
+#pragma unroll
+    for (int i = 0; i < 9; i++) Tmat[i] = 0.0;  // zero out
+#pragma unroll
+    for (int i = 0; i < 3; i++) {
+        Tmat[6 + i] = n0[i];
+    }
+    T *n = &Tmat[6];
+    T norm = sqrt(A2D::VecDotCore<T, 3>(n, n));
+#pragma unroll
+    for (int i = 0; i < 3; i++) {
+        n[i] /= norm;
+    }
+
+    // set t1
+    if constexpr (Data::has_ref_axis) {
+        // shell ref axis transform
+        A2D::VecAddCore<T, 3>(1.0, refAxis, &Tmat[0]);
+    } else {  // doesn't have ref axis
+              // shell natural transform, set to dX/dxi
+#pragma unroll
+        for (int i = 0; i < 3; i++) {
+            Tmat[i] = Basis::template interpFieldsGradLight<XI, 3>(i, pt, xpts);
+        }
+    }
+
+    // remove normal component from t1 (of n)
+    T *t1 = &Tmat[0], *tmp = &Tmat[3];
+    T d = A2D::VecDotCore<T, 3>(t1, n);  // t1 cross n
+    A2D::VecAddCore<T, 3>(T(1.0), t1, tmp);
+    A2D::VecAddCore<T, 3>(-d, n, tmp);  // t1 - (t1 dot n) * n => t2 (temp store in t2)
+    norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
+#pragma unroll
+    for (int i = 0; i < 3; i++) {
+        t1[i] = tmp[i] / norm;
+    }
+
+    // compute t2 by cross product
+    T *t2 = tmp;
+    A2D::VecCrossCore<T>(n, t1, t2);  // nhat cross t1hat => t2hat
+
+// transpose Tmat to standard column major from row major format
+#pragma unroll
+    for (int i = 0; i < 3; i++) {
+#pragma unroll
+        for (int j = 0; j < i; j++) {
+            // in place transpose swap
+            T tmp = Tmat[3 * i + j];
+            Tmat[3 * i + j] = Tmat[3 * j + i];
+            Tmat[3 * j + i] = tmp;
+        }
+    }
+}
+
 template <typename T, int vars_per_node, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainFast(const int inode, const T vars[], const T Tmat[],
                                                  const T XdinvT[], T &etn) {
@@ -61,6 +119,8 @@ __HOST_DEVICE__ void ShellComputeDrillStrainFast(const int inode, const T vars[]
                                                              &XdinvT[3], u01);
     assembleFrameLightTripleProduct<T, Basis, vars_per_node>(node_pt, vars, zero, &Tmat[3],
                                                              &XdinvT[0], u10);
+
+    printf("u01 %.8e, u10 %.8e\n", u01, u10);
 
     // compute rotation matrix at this node
     T C01, C10;

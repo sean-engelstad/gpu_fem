@@ -10,7 +10,7 @@ class ShellElementGroupV3 {
     using Basis = Basis_;
     using Geo = typename Basis::Geo;
     using Phys = Phys_;
-    using ElemGroup = ShellElementGroupV2<T, Director_, Basis_, Phys_>;
+    using ElemGroup = ShellElementGroupV3<T, Director_, Basis_, Phys_>;
     using Quadrature = typename Basis::Quadrature;
     using FADType = typename A2D::ADScalar<T, 1>;
 
@@ -72,9 +72,9 @@ class ShellElementGroupV3 {
         T etq_b;
         Phys::template compute_drill_strain_grad<T>(physData, scale, etq_f, etq_b);
 
-        // if (threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0) {
-        //     printf("etq_f %.4e, etq_b %.4e\n", etq_f, etq_b);
-        // }
+        if (threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0) {
+            printf("etq_f %.4e, etq_b %.4e\n", etq_f, etq_b);
+        }
 
         // backprop from etq_b to etn_b, won't work for nonlinear rotation, TBD on that
         T etn_b = 0.0;

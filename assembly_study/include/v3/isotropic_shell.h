@@ -15,8 +15,6 @@ class IsotropicShellV3 {
     // u, v, w, thx, thy, thz
     static constexpr int32_t vars_per_node = 6;
     // whether strain is linear or nonlinear (in this case linear)
-    static constexpr A2D::ShellStrainType STRAIN_TYPE =
-        isNonlinear ? A2D::ShellStrainType::NONLINEAR : A2D::ShellStrainType::LINEAR;
     static constexpr bool is_nonlinear = isNonlinear;
     static constexpr int num_dvs = 1;
 
