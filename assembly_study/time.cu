@@ -10,6 +10,7 @@
 #include "include/v3/v3.h"
 
 int main() {
+  // using T = float;
   using T = double;
   constexpr bool is_nonlinear = true; // true
   

@@ -68,9 +68,17 @@ class ElementAssemblerV3 {
                 num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, res);
         } else if (kernel_option == 3) {
             printf("launch kernel 3\n");
-            dim3 block(4, 32, 1);
-            drill_strain_residual_local2<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-                num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, res);
+            // WAY faster 1e-3 to 2.7e-4 with fewer elems per block
+            // really need launch parms since this is platform dependent probably
+            // constexpr int32_t elems_per_block2 = 4;
+            constexpr int32_t elems_per_block2 = 8;
+            // constexpr int32_t elems_per_block2 = 16;
+            // constexpr int32_t elems_per_block2 = 32;
+            dim3 block(4, elems_per_block2, 1);
+
+            drill_strain_residual_local2<T, ElemGroup, Data, elems_per_block2, Vec>
+                <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
+                                  res);
         }
         // TODO : do one all with oneshot compute, no pre-computing xpts shell transforms
 
