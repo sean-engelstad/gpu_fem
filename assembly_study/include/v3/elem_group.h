@@ -56,10 +56,13 @@ class ShellElementGroupV3 {
         // TODO : potential issue in speed or undefined behavior if we exceed num elements here?
         int thread_ind = blockDim.x * threadIdx.y + threadIdx.x;
         int warp_ind = thread_ind % 32;
+        // maybe should use this? See one of the kernels warp reductions,
+        // int group_root = lane & ~0x3; // finds starting line e.g. 0,4,8, etc.
         int group_start = (warp_ind / 4) * 4;
 #pragma unroll  // warp broadcast aka sync
         for (int i = 0; i < 4; i++) {
             // TODO : should this be 0xffffffff ?
+
             T etni = __shfl_sync(0xFFFFFFFF, etn_f, group_start + i);  // extra arg default width=32
             etq_f += etni * Basis::lagrangeLobatto2DLight(inode, quad_pt[0], quad_pt[1]);
         }

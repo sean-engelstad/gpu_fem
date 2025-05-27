@@ -79,6 +79,19 @@ class ElementAssemblerV3 {
             drill_strain_residual_local2<T, ElemGroup, Data, elems_per_block2, Vec>
                 <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
                                   res);
+        } else if (kernel_option == 4) {
+            // change here is we use less shared mem (no longer shared mem of block_res)
+            // this should help with jac later!
+            // slightly faster at 2.2655e-4 vs 2.7e-4 than kernel option 3!
+            printf("launch kernel 4\n");
+            constexpr int32_t elems_per_block2 = 8;
+            // constexpr int32_t elems_per_block2 = 16;
+            // constexpr int32_t elems_per_block2 = 32;
+            dim3 block(4, elems_per_block2, 1);
+
+            drill_strain_residual_local3<T, ElemGroup, Data, elems_per_block2, Vec>
+                <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
+                                  res);
         }
         // TODO : do one all with oneshot compute, no pre-computing xpts shell transforms
 

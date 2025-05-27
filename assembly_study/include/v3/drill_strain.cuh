@@ -1,5 +1,137 @@
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
+__GLOBAL__ void drill_strain_residual_local3(const int32_t num_elements,
+                                               const Vec<int32_t> vars_conn,
+                                               const Vec<T> vars, Vec<Data> physData, 
+                                               const Vec<T> Tmatn, const Vec<T> XdinvTn, 
+                                               const Vec<T> detXdq,
+                                               Vec<T> res) {
+    /* this one starts from a fast baseline kernel with drill_strain_residual_local2 that ran with on the RT 3060 Ti
+       GPU at 2.7e-4 sec. The change is that I'm not not putting block_res in shared mem. No reason since I'm doing warp reduction
+       and then only one add into shared and then global memory. No reason to take up extra space for that. 
+       TODO : is still to change data to be a struct of arrays for faster load for that maybe. Could also try taking Data out of shared memory. 
+       But I think that one kind of makes sense. */
+
+    using Geo = typename ElemGroup::Geo;
+    using Basis = typename ElemGroup::Basis;
+    using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
+
+    int local_elem = threadIdx.y;
+    int global_elem = local_elem + blockDim.x * blockIdx.x;
+    bool active_thread = global_elem < num_elements;
+    int local_thread =
+        (blockDim.x * blockDim.y) * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+    
+    int iquad = threadIdx.x;
+    int inode = iquad; // do iquad and inode parallelism at different parts of the code
+
+    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+
+    const int32_t *_vars_conn = vars_conn.getPtr();
+    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
+    const Data *_phys_data = physData.getPtr();
+
+    // TODO : switch from array of structs (AOS) to struct of arrays (SOA) for faster and more coalesced memory transfer of physData
+
+    __SHARED__ T block_vars[elems_per_block][vars_per_elem];
+    __SHARED__ Data block_data[elems_per_block];
+
+    T *shared_vars = &block_vars[local_elem][0];
+    Data &shared_data = block_data[local_elem];
+
+    vars.copyElemValuesToShared(active_thread, threadIdx.x, blockDim.x, Phys::vars_per_node,
+                                Basis::num_nodes, vars_elem_conn, shared_vars);
+
+    // load Tmatn, XdinvTn, detXdq into local memory (diff for nodal and quadpt, so technically some overlap)
+    const T *_Tmatn = Tmatn.getPtr();
+    const T *elem_Tmatn = &_Tmatn[36 * global_elem];
+    const T *_XdinvTn = XdinvTn.getPtr();
+    const T *elem_XdinvTn = &_XdinvTn[36 * global_elem];
+    const T *_detXdq = detXdq.getPtr();
+    const T *elem_detXd = &_detXdq[global_elem * Quadrature::num_quad_pts];
+    T loc_Tmatn[9], loc_XdinvTn[9], loc_detXdq;
+    if (active_thread) {
+
+        constexpr bool load_global = true;
+
+        if constexpr (load_global) {
+            for (int i = 0; i < 9; i++) {
+                loc_Tmatn[i] = elem_Tmatn[9 * inode + i];
+                loc_XdinvTn[i] = elem_XdinvTn[9 * inode + i];
+            }   
+            loc_detXdq = elem_detXd[iquad];
+        } else {
+            for (int i = 0; i < 9; i++) {
+                loc_Tmatn[i] = 0.0;
+                loc_XdinvTn[i] = 0.0;
+            }
+            loc_detXdq = 0.0;
+        }
+
+        if (local_thread < elems_per_block) {
+            int global_elem_thread = local_thread + blockDim.y * blockIdx.y;
+            block_data[local_thread] = _phys_data[global_elem_thread];
+        }
+    }
+    __syncthreads();
+
+    // much faster to do memset locally.. (shaves off 2e-4 sec for some reason, uses vectorized instructions)
+    T local_res[24];
+    memset(local_res, 0.0, sizeof(T) * vars_per_elem);
+
+    // if (threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0) {
+    //     printf("here1\n");
+    // }
+
+    ElemGroup::template add_drill_strain_quadpt_residual_fast<Data>(
+        active_thread, iquad, shared_vars, shared_data, 
+        loc_Tmatn, loc_XdinvTn, loc_detXdq,
+        local_res);
+
+    // if (threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0) {
+    //     printf("here2\n");
+    // }
+
+    // warp reduction is way faster here..
+    constexpr bool use_warp_reduction = true;
+
+    // using warp reduction reduces runtime from 8e-4 to 3e-4 sec!
+    if constexpr (use_warp_reduction) {
+        // warp reduction across quadpts (need all 4 quadpts in the same warp)
+        // #pragma unroll // this does nothing
+        for (int i = 0; i < vars_per_elem; i++) {
+            double val = local_res[i];
+
+            // Reduce within quadpt group of 4 in case of QuadBasis and QuadElement
+            // shuffles down by 2, 1 to reduce every 4 threads, // __shfl_down_sync(mask, val, offset)
+            val += __shfl_down_sync(0xffffffff, val, 1);
+            val += __shfl_down_sync(0xffffffff, val, 2);
+
+            if (iquad == 0) {
+                // Only the first thread in each element writes to shared memory
+                local_res[i] = val;
+            }
+
+            // need warp bacast here so I can then use local_res to add directly to global
+            int lane = local_thread % 32;
+            int group_root = lane & ~0x3; // finds starting line e.g. 0,4,8, etc.
+            local_res[i] = __shfl_sync(0xffffffff, local_res[i], group_root);
+        }
+    } else {
+        // slower by 3e-4 to 8e-4
+        Vec<T>::copyLocalToShared(active_thread, 1.0, vars_per_elem, &local_res[0],
+                                  local_res);
+        __syncthreads();
+    }
+
+    res.addElementValuesFromShared(active_thread, threadIdx.x, blockDim.x, Phys::vars_per_node,
+                                   Basis::num_nodes, vars_elem_conn, local_res);  
+}  // end of add_residual_gpu kernel
+
+template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
+          template <typename> class Vec>
 __GLOBAL__ void drill_strain_residual_local2(const int32_t num_elements,
                                                const Vec<int32_t> vars_conn,
                                                const Vec<T> vars, Vec<Data> physData, 
@@ -111,12 +243,10 @@ __GLOBAL__ void drill_strain_residual_local2(const int32_t num_elements,
         for (int i = 0; i < vars_per_elem; i++) {
             double val = local_res[i];
 
-            // Reduce within quadpt & node group of 16 in case of QuadBasis and QuadElement
-            // shuffles down by 8, 4, 2, 1 to reduce every 16 threads, // __shfl_down_sync(mask, val, offset)
+            // Reduce within quadpt group of 4 in case of QuadBasis and QuadElement
+            // shuffles down by 2, 1 to reduce every 4 threads, // __shfl_down_sync(mask, val, offset)
             val += __shfl_down_sync(0xffffffff, val, 1);
             val += __shfl_down_sync(0xffffffff, val, 2);
-            val += __shfl_down_sync(0xffffffff, val, 4);
-            val += __shfl_down_sync(0xffffffff, val, 8);
 
             if (iquad == 0 && inode == 0) {
                 // Only the first thread in each element writes to shared memory
@@ -130,6 +260,7 @@ __GLOBAL__ void drill_strain_residual_local2(const int32_t num_elements,
         __syncthreads();
     }
 
+    // don't have to add from root of every 4th thread here since was added into shared memory..
     res.addElementValuesFromShared(active_thread, threadIdx.x, blockDim.x, Phys::vars_per_node,
                                    Basis::num_nodes, vars_elem_conn, shared_res);  
 }  // end of add_residual_gpu kernel
