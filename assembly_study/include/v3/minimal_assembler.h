@@ -48,15 +48,15 @@ class ElementAssemblerV3 {
 #ifdef USE_GPU
 
         // fewer elems can slightly speedup by increasing occupancy on SM
-        constexpr int32_t elems_per_block = 32;
-        int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
-        dim3 grid(nblocks);
+        constexpr int32_t elems_per_block = 32;  // 8 is faster
 
         constexpr int32_t kernel_option = ElemGroup::kernel_option;
 
         if constexpr (kernel_option == 1) {
             dim3 block(16, 32, 1);  // faster with (4,32,1) memory access so that's why I switch to
-                                    // shared_v2 aka shared2
+            // shared_v2 aka shared2
+            int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
+            dim3 grid(nblocks);
             drill_strain_residual_shared<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
                 num_elements, geo_conn, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, res);
         } else if (kernel_option == 2) {
@@ -64,6 +64,8 @@ class ElementAssemblerV3 {
             // slower memory although, I can do warp reduction and bcast using just (4,32,1) so see
             // kernel_options 3 and 4 for improvement
             dim3 block(16, 32, 1);
+            int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
+            dim3 grid(nblocks);
             drill_strain_residual_local<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
                 num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, res);
         } else if (kernel_option == 3) {
@@ -75,6 +77,8 @@ class ElementAssemblerV3 {
             // constexpr int32_t elems_per_block2 = 16;
             // constexpr int32_t elems_per_block2 = 32;
             dim3 block(4, elems_per_block2, 1);
+            int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
+            dim3 grid(nblocks);
 
             drill_strain_residual_local2<T, ElemGroup, Data, elems_per_block2, Vec>
                 <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
@@ -89,6 +93,9 @@ class ElementAssemblerV3 {
             // constexpr int32_t elems_per_block2 = 32;
             dim3 block(4, elems_per_block2, 1);
 
+            int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
+            dim3 grid(nblocks);
+
             drill_strain_residual_local3<T, ElemGroup, Data, elems_per_block2, Vec>
                 <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
                                   res);
@@ -101,8 +108,24 @@ class ElementAssemblerV3 {
             // constexpr int32_t elems_per_block2 = 16;
             // constexpr int32_t elems_per_block2 = 32;
             dim3 block(4, elems_per_block2, 1);
+            int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
+            dim3 grid(nblocks);
 
             drill_strain_residual_shared3<T, ElemGroup, Data, elems_per_block2, Vec>
+                <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
+                                  res);
+        } else if (kernel_option == 6) {
+            /* goal is to see if simpler code but a little more loading is comparable registers,
+             * etc. */
+            printf("launch kernel 6\n");
+            constexpr int32_t elems_per_block2 = 8;
+            // constexpr int32_t elems_per_block2 = 16;
+            // constexpr int32_t elems_per_block2 = 32;
+            dim3 block(4, elems_per_block2, 1);
+            int nblocks = (num_elements + elems_per_block - 1) / elems_per_block;
+            dim3 grid(nblocks);
+
+            drill_strain_residual_local3_simple<T, ElemGroup, Data, elems_per_block2, Vec>
                 <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq,
                                   res);
         }
@@ -117,6 +140,48 @@ class ElementAssemblerV3 {
         std::chrono::duration<double> add_resid_time = stop - start;
         if (can_print) {
             printf("add_residual in %.4e\n", add_resid_time.count());
+        }
+    };
+
+    void add_jacobian(Vec<T> &res, Mat_<Vec<T>> &mat,
+                      bool can_print = false) {  // TODO : make this Vec here..
+        auto start = std::chrono::high_resolution_clock::now();
+        if (can_print) {
+            printf("begin add_jacobian\n");
+        }
+
+        using Phys = typename ElemGroup::Phys;
+        using Data = typename Phys::Data;
+        using Mat = Mat_<Vec<T>>;
+
+        res.zeroValues();
+        mat.zeroValues();
+
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+
+        // constexpr int32_t mat_cols_per_block = 8;
+        constexpr int32_t mat_cols_per_block = 24;
+        // constexpr int32_t mat_cols_per_block = 32;
+
+        dim3 block(4, mat_cols_per_block, 1);  // (4,8,1)
+        int num_elem_cols = num_elements * 24;
+        // int num_elem_cols = num_elements;
+        int nblocks = (num_elem_cols + mat_cols_per_block - 1) / mat_cols_per_block;
+        printf("nblocks %d, nelements %d\n", nblocks, num_elements);
+        dim3 grid(nblocks);
+
+        drill_strain_jac<T, ElemGroup, Data, mat_cols_per_block, Vec, Mat>
+            <<<grid, block>>>(num_elements, vars_conn, vars, physData, Tmatn, XdinvTn, detXdq, mat);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+#endif
+
+        // print timing data
+        auto stop = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> add_jac_time = stop - start;
+        if (can_print) {
+            printf("add_jac in %.4e\n", add_jac_time.count());
         }
     };
 
@@ -180,7 +245,6 @@ class ElementAssemblerV3 {
 #endif
 
     void set_variables(Vec<T> &newVars);
-    void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false);
 
     // util functions
     BsrData &getBsrData() { return bsr_data; }

@@ -13,5 +13,10 @@ time-profile:
 	make time
 	sudo /usr/local/cuda-12.6/bin/ncu --set full --export time_report.ncu-rep  ./time.out
 
+time-jac-profile:
+	rm -rf time_jac_report.ncu-rep
+	make time_jac
+	sudo /usr/local/cuda-12.6/bin/ncu --set full --export time_jac_report.ncu-rep  ./time_jac.out
+
 # %.ptx: %.cu
 # 	${GPU_CXX} -ptx --source-in-ptx -g -G ${GPU_CC_FLAGS} -DUSE_GPU -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} -std=c++17 $< -o $@ ${LINK} # --maxrregcount=32

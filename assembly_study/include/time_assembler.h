@@ -1,6 +1,6 @@
 #pragma once
 
-template <typename T, class Data, class Assembler>
+template <typename T, class Data, class Assembler, bool is_jac = true>
 void time_assembler() {
     bool print = true;
     bool mesh_print = false;
@@ -14,7 +14,7 @@ void time_assembler() {
     assembler.moveBsrDataToDevice();
 
     // setup kmat and initial vecs
-    // auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
     auto res = assembler.createVarsVec();
     auto soln = assembler.createVarsVec();
 
@@ -30,10 +30,14 @@ void time_assembler() {
 
     assembler.apply_bcs(res);  // warmup call
     printf("\n");
-    assembler.add_residual(res, print);  // prints runtime in here
 
-    // check residual not zero
-    printf("\tcheck resid: ");
-    auto h_res = res.createHostVec();
-    printVec<T>(10, h_res.getPtr());
+    if constexpr (is_jac) {
+        assembler.add_jacobian(res, kmat, print);
+    } else {
+        assembler.add_residual(res, print);  // prints runtime in here
+        // check residual not zero
+        printf("\tcheck resid: ");
+        auto h_res = res.createHostVec();
+        printVec<T>(10, h_res.getPtr());
+    }
 }

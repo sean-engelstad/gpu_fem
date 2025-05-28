@@ -37,6 +37,44 @@ class IsotropicShellV3 {
     }
 
     template <typename T2>
+    __HOST_DEVICE__ static void compute_drill_strain_grad(const Data &physData, const T &scale,
+                                                          const T &et_f, T &et_b_dual,
+                                                          T &tot_scale) {
+        // compute drilling stiffness
+        T drill;
+        {  // TODO : could just compute G here separately.., less data
+            T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
+            Data::evalTangentStiffness2D(E, nu, C);
+            T As = Data::getTransShearCorrFactor() * thick * C[5];
+            drill = Data::getDrillingRegularization() * As;
+        }
+
+        // or I could just do this..
+        tot_scale = scale * drill;
+        et_b_dual = et_f;  // backprop from strain energy
+
+        // can also use stack, but not really necessary for this one
+    }
+
+    template <typename T2>
+    __HOST_DEVICE__ static void compute_drill_strain_hrev(const Data &physData, const T &scale,
+                                                          const T &et_pf, T &et_h) {
+        // compute drilling stiffness
+        T drill;
+        {  // TODO : could just compute G here separately.., less data
+            T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
+            Data::evalTangentStiffness2D(E, nu, C);
+            T As = Data::getTransShearCorrFactor() * thick * C[5];
+            drill = Data::getDrillingRegularization() * As;
+        }
+
+        // TODO : include nonlinear terms?
+        et_h = scale * drill * et_pf;
+
+        // can also use stack, but not really necessary for this one
+    }
+
+    template <typename T2>
     __HOST_DEVICE__ static void compute_tying_strain_midplane_grad(
         const Data &physData, const T &scale, A2D::ADObj<A2D::SymMat<T, 3>> &e0ty) {
         /* compute gradient of energy term with midplane strains */

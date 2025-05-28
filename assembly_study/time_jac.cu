@@ -15,8 +15,8 @@ int main() {
   constexpr bool is_nonlinear = true; // true
   
   constexpr bool just_drill_strain = true;
-  constexpr bool is_jac = false;
   // constexpr bool just_drill_strain = false;
+  constexpr bool is_jac = true;
 
   // constexpr int version = 1;
   // constexpr int version = 2;
