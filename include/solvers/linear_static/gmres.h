@@ -14,7 +14,7 @@
 
 namespace CUSPARSE {
 
-template <typename T, bool use_precond = true, bool right = false>
+template <typename T, bool right = false, bool modifiedGS = true, bool use_precond = true>
 void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                  int _n_iter = 100, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
                  bool can_print = false, bool debug = false, int print_freq = 10) {
@@ -120,6 +120,10 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     T g[n_iter + 1], cs[n_iter], ss[n_iter];
     T H[(n_iter + 1) * (n_iter)];
 
+    double *d_H;  // buffer for H
+    cudaMalloc(&d_H, sizeof(double) * n_iter);
+    double *h_H_buf = new double[n_iter];
+
     // GMRES device data
     T *d_Vmat, *d_V;
     CHECK_CUDA(cudaMalloc((void **)&d_Vmat, (n_iter + 1) * N * sizeof(T)));
@@ -144,13 +148,11 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             CHECK_CUSPARSE(cusparseDbsrmv(
                 cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
                 nnzb, &a, descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
-            CHECK_CUDA(cudaDeviceSynchronize());
 
             // then L * tmp => xR0
             CHECK_CUSPARSE(cusparseDbsrmv(
                 cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
                 nnzb, &a, descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim, d_tmp, &b, d_xR));
-            CHECK_CUDA(cudaDeviceSynchronize());
 
             // then for right precond instead of A*M^-1*xR0
             // this is equal to A*x0, so we leave it at b - A*x0 here
@@ -161,15 +163,12 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
                                       CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
                                       d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
-        CHECK_CUDA(cudaDeviceSynchronize());
         // resid -= A * x
         a = -1.0;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
-        CHECK_CUDA(cudaDeviceSynchronize());
 
         T init_true_resid;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &init_true_resid));
-        CHECK_CUDA(cudaDeviceSynchronize());
 
         // now apply precond to the resid
         if constexpr (left_precond) {
@@ -182,13 +181,11 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
                                                  descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
                                                  info_L, d_resid, d_tmp, policy_L, pBuffer));
-            CHECK_CUDA(cudaDeviceSynchronize());
 
             // U^-1 * tmp => into rhs
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
                                                  descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
                                                  info_U, d_tmp, d_resid, policy_U, pBuffer));
-            CHECK_CUDA(cudaDeviceSynchronize());
         }
 
         // temp debug
@@ -203,7 +200,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         // assumes here d_X is 0 initially => so r0 = b - Ax
         T beta;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &beta));
-        CHECK_CUDA(cudaDeviceSynchronize());
+
         if (can_print)
             printf("GMRES init resid = true %.9e, precond %.9e\n", init_true_resid, beta);
         g[0] = beta;
@@ -211,7 +208,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         // set v0 = r0 / beta (unit vec)
         a = 1.0 / beta;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_resid, 1, &d_Vmat[0], 1));
-        CHECK_CUDA(cudaDeviceSynchronize());
 
         T *h_v0 = new T[N];
         CHECK_CUDA(cudaMemcpy(h_v0, d_Vmat, N * sizeof(T), cudaMemcpyDeviceToHost));
@@ -236,12 +232,11 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
                     cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L, d_vals_ILU0, d_rowp,
                     d_cols, block_dim, info_L, &d_Vmat[j * N], d_tmp, policy_L, pBuffer));
-                CHECK_CUDA(cudaDeviceSynchronize());
+
                 // U^-1 * tmp => into vj
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
                     cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U, d_vals_ILU0, d_rowp,
                     d_cols, block_dim, info_U, d_tmp, d_tmp2, policy_U, pBuffer));
-                CHECK_CUDA(cudaDeviceSynchronize());
 
                 // w = A * vj + 0 * w
                 // BSR matrix multiply here MV
@@ -249,7 +244,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                 CHECK_CUSPARSE(cusparseDbsrmv(
                     cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb,
                     mb, nnzb, &a, descrA, d_vals, d_rowp, d_cols, block_dim, d_tmp2, &b, d_w));
-                CHECK_CUDA(cudaDeviceSynchronize());
             }
 
             if constexpr (left_precond) {
@@ -260,7 +254,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                                               CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a,
                                               descrA, d_vals, d_rowp, d_cols, block_dim,
                                               &d_Vmat[j * N], &b, d_w));
-                CHECK_CUDA(cudaDeviceSynchronize());
 
                 // U^-1 L^-1 * w => w precond solve here
                 a = 1.0;
@@ -268,33 +261,56 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
                     cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L, d_vals_ILU0, d_rowp,
                     d_cols, block_dim, info_L, d_w, d_tmp, policy_L, pBuffer));
-                CHECK_CUDA(cudaDeviceSynchronize());
+
                 // U^-1 * tmp => into w
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
                     cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U, d_vals_ILU0, d_rowp,
                     d_cols, block_dim, info_U, d_tmp, d_w, policy_U, pBuffer));
-                CHECK_CUDA(cudaDeviceSynchronize());
             }
 
-            // now update householder matrix
-            for (int i = 0; i < j + 1; i++) {
-                // get vi column
-                void *vi_col = static_cast<void *>(&d_Vmat[i * N]);
-                CHECK_CUSPARSE(cusparseDnVecSetValues(vec_V, vi_col));
+            // orthogonalization and writing householder matrix column
+            if constexpr (modifiedGS) {
+                // ensures more numerically stable orthogonalization process, but more expensive
+                for (int i = 0; i < j + 1; i++) {
+                    // // get vi column
+                    // void *vi_col = static_cast<void *>(&d_Vmat[i * N]);
+                    // CHECK_CUSPARSE(cusparseDnVecSetValues(vec_V, vi_col));
 
-                T w_vi_dot;
-                CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_w, 1, &d_Vmat[i * N], 1, &w_vi_dot));
-                CHECK_CUDA(cudaDeviceSynchronize());
+                    T w_vi_dot;
+                    CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_w, 1, &d_Vmat[i * N], 1, &w_vi_dot));
 
-                // H_ij = vi dot w
-                H[n_iter * i + j] = w_vi_dot;
+                    // H_ij = vi dot w
+                    H[n_iter * i + j] = w_vi_dot;
 
-                if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[n_iter * i + j]);
+                    if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[n_iter * i + j]);
 
-                // w -= Hij * vi
-                a = -H[n_iter * i + j];
-                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[i * N], 1, d_w, 1));
-                CHECK_CUDA(cudaDeviceSynchronize());
+                    // w -= Hij * vi
+                    a = -H[n_iter * i + j];
+                    CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[i * N], 1, d_w, 1));
+                }
+            } else {
+                // classical Graham Schmidt using batched dot products, but
+                // maybe less numerically stable
+
+                // TODO : the values in H need to be transposed, and they are on host not device
+                // rn..
+
+                // 1. Compute H[0:j+1, j] = V^T * w
+                a = 1.0, b = 0.0;
+                CHECK_CUBLAS(cublasDgemv(cublasHandle, CUBLAS_OP_T, N, j + 1, &a, d_Vmat, N, d_w, 1,
+                                         &b, d_H, 1));
+
+                // 2. w = w - V * H[0:j+1, j]
+                a = -1.0;
+                b = 1.0;
+                CHECK_CUBLAS(cublasDgemv(cublasHandle, CUBLAS_OP_N, N, j + 1, &a, d_Vmat, N, d_H, 1,
+                                         &b, d_w, 1));
+
+                // TODO : get rid of this copy statement later somehow
+                cudaMemcpy(h_H_buf, d_H, sizeof(double) * (j + 1), cudaMemcpyDeviceToHost);
+                for (int i = 0; i < j + 1; i++) {
+                    H[n_iter * i + j] = h_H_buf[i];
+                }
             }
 
             // double check and print the value of
@@ -311,7 +327,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             // norm of w
             T nrm_w;
             CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_w, 1, &nrm_w));
-            CHECK_CUDA(cudaDeviceSynchronize());
 
             // H_{j+1,j}
             H[n_iter * (j + 1) + j] = nrm_w;
@@ -319,10 +334,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             // v_{j+1} column unit vec = w / H_{j+1,j}
             a = 1.0 / H[n_iter * (j + 1) + j];
             CHECK_CUBLAS(cublasDcopy(cublasHandle, N, d_w, 1, &d_Vmat[(j + 1) * N], 1));
-            CHECK_CUDA(cudaDeviceSynchronize());
 
             CHECK_CUBLAS(cublasDscal(cublasHandle, N, &a, &d_Vmat[(j + 1) * N], 1));
-            CHECK_CUDA(cudaDeviceSynchronize());
 
             if (debug && N <= 16) {
                 T *h_tmp = new T[N];
@@ -404,7 +417,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         // CHECK_CUDA(cudaMalloc(&d_y, (jj+1) * sizeof(T)));
         CHECK_CUBLAS(cublasDtrsv(cublasHandle, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N,
                                  CUBLAS_DIAG_NON_UNIT, jj + 1, d_Hred, jj + 1, d_gred, 1));
-        CHECK_CUDA(cudaDeviceSynchronize());
+
         // writes g => y inplace
 
         // now copy back to the host
@@ -423,7 +436,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                 a = h_y[j];
                 CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[j * N], 1, d_x, 1));
             }
-            CHECK_CUDA(cudaDeviceSynchronize());
         }
 
         if constexpr (right_precond) {
@@ -432,7 +444,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                 a = h_y[j];
                 CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[j * N], 1, d_xR, 1));
             }
-            CHECK_CUDA(cudaDeviceSynchronize());
 
             // then compute the solution from the preconditioned one x = M^-1 * xR
             // U^-1 L^-1 * xR => x precond solve here
@@ -441,12 +452,11 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
                                                  descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
                                                  info_L, d_xR, d_tmp, policy_L, pBuffer));
-            CHECK_CUDA(cudaDeviceSynchronize());
+
             // U^-1 * tmp => into w
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
                                                  descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
                                                  info_U, d_tmp, d_x, policy_U, pBuffer));
-            CHECK_CUDA(cudaDeviceSynchronize());
         }
 
         if (converged) break;
@@ -464,11 +474,10 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
                                   CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
                                   d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
-    CHECK_CUDA(cudaDeviceSynchronize());
+
     // resid -= A * x
     a = -1.0;
     CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
-    CHECK_CUDA(cudaDeviceSynchronize());
 
     T final_resid;
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_resid));
@@ -495,18 +504,15 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
                                              d_vals_ILU0, d_rowp, d_cols, block_dim, info_L,
                                              d_resid, d_tmp, policy_L, pBuffer));
-        CHECK_CUDA(cudaDeviceSynchronize());
 
         // U^-1 * tmp => into rhs
         CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
                                              d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_tmp,
                                              d_resid, policy_U, pBuffer));
-        CHECK_CUDA(cudaDeviceSynchronize());
     }
 
     T final_precond_resid;
     CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_precond_resid));
-    CHECK_CUDA(cudaDeviceSynchronize());
 
     if (can_print)
         printf("GMRES converged to %.4e resid, %.4e precond resid in %d iterations\n", final_resid,

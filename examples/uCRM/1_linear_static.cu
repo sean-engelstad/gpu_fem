@@ -54,7 +54,7 @@ int main() {
     // bsr_data.RCM_reordering();
     bsr_data.AMD_reordering();
     // bsr_data.qorder_reordering(1.0, 10); // qordering not working well for some reason..
-    bsr_data.compute_ILUk_pattern(10, fillin);
+    bsr_data.compute_ILUk_pattern(10, fillin); // 10, 20 (for BiCGStab)
     // bsr_data.compute_full_LU_pattern(fillin, print);
   }
   assembler.moveBsrDataToDevice();
@@ -87,10 +87,12 @@ int main() {
   if (full_LU) {
       CUSPARSE::direct_LU_solve(kmat, loads, soln);
   } else {
-      int n_iter = 200, max_iter = 400;
+      int n_iter = 200, max_iter = 200;
       T abs_tol = 1e-11, rel_tol = 1e-15;
       bool print = true;
-      CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      constexpr bool right = false, modifiedGS = true; // better with modifiedGS true, yeah it is..
+      CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      // CUSPARSE::BiCGStab_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
   }
 
   // print some of the data of host residual
@@ -114,10 +116,10 @@ int main() {
   auto h_res = res.createPermuteVec(block_dim, iperm).createHostVec();
   auto h_rhs = rhs.createPermuteVec(block_dim, iperm).createHostVec();
   int NPRINT = 100;
-  printf("add_res\nr(u): ");
-  printVec<T>(NPRINT, h_res.getPtr());
-  printf("r(u)-b: ");
-  printVec<T>(NPRINT, h_rhs.getPtr());
+  // printf("add_res\nr(u): ");
+  // printVec<T>(NPRINT, h_res.getPtr());
+  // printf("r(u)-b: ");
+  // printVec<T>(NPRINT, h_rhs.getPtr());
 
   // baseline norm (with zero soln, just loads essentially)
   rhs.zeroValues();
