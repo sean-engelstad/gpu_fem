@@ -120,6 +120,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     T g[n_iter + 1], cs[n_iter], ss[n_iter];
     T H[(n_iter + 1) * (n_iter)];
 
+    memset(H, 0.0, (n_iter + 1) * (n_iter) * sizeof(T));
+
     double *d_H;  // buffer for H
     cudaMalloc(&d_H, sizeof(double) * n_iter);
     double *h_H_buf = new double[n_iter];

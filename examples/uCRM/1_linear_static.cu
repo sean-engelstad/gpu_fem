@@ -91,8 +91,9 @@ int main() {
       T abs_tol = 1e-11, rel_tol = 1e-15;
       bool print = true;
       constexpr bool right = false, modifiedGS = true; // better with modifiedGS true, yeah it is..
-      CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      // CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);0
       // CUSPARSE::BiCGStab_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
+      CUSPARSE::GMRES_DR_solve<T, right, modifiedGS>(kmat, loads, soln, 4, 2, 8, abs_tol, rel_tol, print, true, 1);
   }
 
   // print some of the data of host residual
@@ -100,47 +101,47 @@ int main() {
   printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "uCRM.vtk");
 
   // check the residual of the system
-  assembler.set_variables(soln);
-  assembler.add_residual(res);  // internal residual
-  // assembler.add_jacobian(res, kmat);
-  auto rhs = assembler.createVarsVec();
-  CUBLAS::axpy(1.0, loads, rhs);
-  CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
-  assembler.apply_bcs(rhs);
-  double resid_norm = CUBLAS::get_vec_norm(rhs);
-  printf("resid_norm = %.4e\n", resid_norm);
+  // assembler.set_variables(soln);
+  // assembler.add_residual(res);  // internal residual
+  // // assembler.add_jacobian(res, kmat);
+  // auto rhs = assembler.createVarsVec();
+  // CUBLAS::axpy(1.0, loads, rhs);
+  // CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
+  // assembler.apply_bcs(rhs);
+  // double resid_norm = CUBLAS::get_vec_norm(rhs);
+  // printf("resid_norm = %.4e\n", resid_norm);
 
-  int block_dim = bsr_data.block_dim;
-  int *iperm = bsr_data.iperm;
-  assembler.apply_bcs(res);
-  auto h_res = res.createPermuteVec(block_dim, iperm).createHostVec();
-  auto h_rhs = rhs.createPermuteVec(block_dim, iperm).createHostVec();
-  int NPRINT = 100;
+  // int block_dim = bsr_data.block_dim;
+  // int *iperm = bsr_data.iperm;
+  // assembler.apply_bcs(res);
+  // auto h_res = res.createPermuteVec(block_dim, iperm).createHostVec();
+  // auto h_rhs = rhs.createPermuteVec(block_dim, iperm).createHostVec();
+  // int NPRINT = 100;
   // printf("add_res\nr(u): ");
   // printVec<T>(NPRINT, h_res.getPtr());
   // printf("r(u)-b: ");
   // printVec<T>(NPRINT, h_rhs.getPtr());
 
-  // baseline norm (with zero soln, just loads essentially)
-  rhs.zeroValues();
-  CUBLAS::axpy(1.0, loads, rhs);
-  assembler.apply_bcs(rhs);
-  double init_norm = CUBLAS::get_vec_norm(rhs);
-  printf("init_norm = %.4e\n", init_norm);
+  // // baseline norm (with zero soln, just loads essentially)
+  // rhs.zeroValues();
+  // CUBLAS::axpy(1.0, loads, rhs);
+  // assembler.apply_bcs(rhs);
+  // double init_norm = CUBLAS::get_vec_norm(rhs);
+  // printf("init_norm = %.4e\n", init_norm);
 
-  auto h_rhs2 = rhs.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_rhs2, "uCRM-rhs.vtk");
+  // auto h_rhs2 = rhs.createHostVec();
+  // printToVTK<Assembler, HostVec<T>>(assembler, h_rhs2, "uCRM-rhs.vtk");
 
-  // test get residual here
-  assembler.add_jacobian(res, kmat);
-  assembler.apply_bcs(kmat);
-  T resid2 = CUSPARSE::get_resid<T>(kmat, loads, soln);
-  printf("cusparse resid norm = %.4e\n", resid2);
+  // // test get residual here
+  // assembler.add_jacobian(res, kmat);
+  // assembler.apply_bcs(kmat);
+  // T resid2 = CUSPARSE::get_resid<T>(kmat, loads, soln);
+  // printf("cusparse resid norm = %.4e\n", resid2);
 
-  // debug: run GMRES again starting from scratch to see initial beta
-  int n_iter = 1, max_iter = 1;
-  T abs_tol = 1e-11, rel_tol = 1e-15;
-  CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+  // // debug: run GMRES again starting from scratch to see initial beta
+  // int n_iter = 1, max_iter = 1;
+  // T abs_tol = 1e-11, rel_tol = 1e-15;
+  // CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
 
   // auto h_rhs = rhs.createHostVec();
   // printf("rhs:");
@@ -154,6 +155,6 @@ int main() {
   res.free();
   vars.free();
   h_soln.free();
-  rhs.free();
-  h_rhs.free();
+  // rhs.free();
+  // h_rhs.free();
 };
