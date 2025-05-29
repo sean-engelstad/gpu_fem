@@ -87,10 +87,12 @@ int main() {
   if (full_LU) {
       CUSPARSE::direct_LU_solve(kmat, loads, soln);
   } else {
-      int n_iter = 200, max_iter = 400;
-      T abs_tol = 1e-11, rel_tol = 1e-15;
+      int n_iter = 300, max_iter = 300;
+      // T abs_tol = 1e-11, rel_tol = 1e-15;
+      T abs_tol = 1e-8, rel_tol = 1e-8;
       bool print = true;
-      CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      constexpr bool right = true;
+      CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
   }
 
   // print some of the data of host residual
