@@ -292,6 +292,9 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
             CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &nrm));
             T inrm = 1.0 / nrm;
             CHECK_CUBLAS(cublasDscal(cublasHandle, N, &inrm, &d_V[k * N], 1));
+
+            // also set g_k = v_k^T r_0
+            g[k] = beta;
         }
 
         // start at k (0-based) if restart, less new iterations with restarted cases

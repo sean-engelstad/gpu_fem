@@ -91,10 +91,10 @@ int main() {
     } else {
         int n_iter = 200, max_iter = 400;
         T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = false;
-        // CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+        bool print = true;
+        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
 
-        CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 30, 10, 60, abs_tol, rel_tol, true, false, 10);
+        // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
     }
 
     // print some of the data of host residual
