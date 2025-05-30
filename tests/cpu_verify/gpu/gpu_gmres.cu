@@ -25,8 +25,8 @@ int main(int argc, char **argv) {
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
   // bool mesh_print = false;
   TACSMeshLoader mesh_loader{comm};
-  mesh_loader.scanBDFFile("../../../examples/uCRM/CRM_box_2nd.bdf");
-  // mesh_loader.scanBDFFile("../../../examples/performance/uCRM-135_wingbox_fine.bdf");
+  // mesh_loader.scanBDFFile("../../../examples/uCRM/CRM_box_2nd.bdf");
+  mesh_loader.scanBDFFile("../../../examples/performance/uCRM-135_wingbox_fine.bdf");
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
@@ -63,7 +63,10 @@ int main(int argc, char **argv) {
   // bsr_data.RCM_reordering(1);
   // bsr_data.qorder_reordering(0.5, 1);
   // bsr_data.compute_nofill_pattern();
-  bsr_data.compute_ILUk_pattern(7, fillin, print);
+  // int lev_fill = 7;
+  // int lev_fill = 11;
+  int lev_fill = 15;
+  bsr_data.compute_ILUk_pattern(lev_fill, fillin, print);
   // bsr_data.compute_full_LU_pattern(fillin, print);
 
   assembler.moveBsrDataToDevice();
@@ -97,7 +100,9 @@ int main(int argc, char **argv) {
     int n_iter = 300, max_iter = 300;
     constexpr bool right = true;
     T abs_tol = 1e-30, rel_tol = 1e-8; // for left preconditioning
-    CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+    bool debug = true; // shows timing printouts with thisa
+    print = true;
+    CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
 
   // free data
   assembler.free();

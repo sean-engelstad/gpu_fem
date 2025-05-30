@@ -12,8 +12,8 @@ import time
 start_time = time.time()
 
 # Load structural mesh from BDF file
-bdfFile = "../../../examples/uCRM/CRM_box_2nd.bdf"
-# bdfFile = "../../../examples/performance/uCRM-135_wingbox_fine.bdf"
+# bdfFile = "../../../examples/uCRM/CRM_box_2nd.bdf"
+bdfFile = "../../../examples/performance/uCRM-135_wingbox_fine.bdf"
 tacs_comm = MPI.COMM_WORLD
 struct_mesh = TACS.MeshLoader(tacs_comm)
 struct_mesh.scanBDFFile(bdfFile)
@@ -77,8 +77,9 @@ mat = tacs.createSchurMat(ordering)
 
 nz_time = time.time() - start_nz
 # ILUk = 3
-ILUk = 7 # not enough on fine mesh
+# ILUk = 7 # not enough on fine mesh
 # ILUk = 11
+ILUk = 15
 # ILUk = int(1e6)
 # ILUk = 1e6
 pc = TACS.Pc(mat, lev_fill=ILUk) #, lev_fill=ILUk) # for ILU(3), default is full LU or ILU(1000) if not set
@@ -86,8 +87,8 @@ pc = TACS.Pc(mat, lev_fill=ILUk) #, lev_fill=ILUk) # for ILU(3), default is full
 end_nz = time.time()
 subspace = 300
 restarts = 0
-rtol = 1e-10
-atol = 1e-6
+rtol = 1e-8
+atol = 1e-30
 gmres = TACS.KSM(mat, pc, subspace, restarts)
 gmres.setMonitor(tacs_comm)
 gmres.setTolerances(rtol, atol)
