@@ -1,7 +1,12 @@
+#include <fstream>
+
 #include "TACSIsoShellConstitutive.h"
 #include "TACSKSFailure.h"
 #include "TACSMeshLoader.h"
 #include "TACSShellElementDefs.h"
+
+/* goal of this script is to writeout CPU precond (pre-factorization) to binary so we can load and
+ * factor on GPU */
 
 int main(int argc, char **argv) {
     // Intialize MPI and declare communicator
@@ -12,7 +17,8 @@ int main(int argc, char **argv) {
     MPI_Comm_rank(comm, &rank);
 
     // Write name of BDF file to be load to char array
-    const char *filename = "../../examples/performance/uCRM-135_wingbox_fine.bdf";
+    const char *filename = "../../../examples/uCRM/CRM_box_2nd.bdf";
+    // const char *filename = "../../../examples/performance/uCRM-135_wingbox_fine.bdf";
 
     // Create the mesh loader object and load file
     TACSMeshLoader *mesh = new TACSMeshLoader(comm);
@@ -23,13 +29,13 @@ int main(int argc, char **argv) {
     int num_components = mesh->getNumComponents();
 
     // Set properties needed to create stiffness object
-    TacsScalar rho = 2500.0; // density, kg/m^3
+    TacsScalar rho = 2500.0;  // density, kg/m^3
     TacsScalar specific_heat = 921.096;
-    TacsScalar E = 70e9;      // elastic modulus, Pa
-    TacsScalar nu = 0.3;      // poisson's ratio
-    TacsScalar ys = 350e6;    // yield stress, Pa
-    TacsScalar cte = 24.0e-6; // Coefficient of thermal expansion
-    TacsScalar kappa = 230.0; // Thermal conductivity
+    TacsScalar E = 70e9;       // elastic modulus, Pa
+    TacsScalar nu = 0.3;       // poisson's ratio
+    TacsScalar ys = 350e6;     // yield stress, Pa
+    TacsScalar cte = 24.0e-6;  // Coefficient of thermal expansion
+    TacsScalar kappa = 230.0;  // Thermal conductivity
 
     TACSMaterialProperties *props =
         new TACSMaterialProperties(rho, specific_heat, E, nu, ys, cte, kappa);
@@ -43,8 +49,8 @@ int main(int argc, char **argv) {
         int thickness_index = i;
         TacsScalar min_thickness = 0.01;
         TacsScalar max_thickness = 0.20;
-        TACSShellConstitutive *con = new TACSIsoShellConstitutive(
-            props, thickness, thickness_index, min_thickness, max_thickness);
+        TACSShellConstitutive *con = new TACSIsoShellConstitutive(props, thickness, thickness_index,
+                                                                  min_thickness, max_thickness);
 
         // Initialize element object
         TACSElement *shell = TacsCreateShellByName(descriptor, transform, con);
@@ -59,27 +65,17 @@ int main(int argc, char **argv) {
     mesh->decref();
 
     // Create matrix and vectors
-    TACSBVec *res = assembler->createVec(); // The residual
+    TACSBVec *res = assembler->createVec();  // The residual
     // TACS_AMD_ORDER);
-    TACSSchurMat *mat = assembler->createSchurMat(); // stiffness matrix
+    TACSSchurMat *mat = assembler->createSchurMat();  // stiffness matrix
 
     // Increment reference count to the matrix/vectors
     res->incref();
     mat->incref();
 
-    // Allocate the factorization
-    // double t0 = MPI_Wtime();
-    // int lev = 7;
-    // double fill = 10.0;
-    // int reorder_schur = 1;
-    // TACSSchurPc *pc = new TACSSchurPc(mat, lev, fill, reorder_schur);
-    // pc->incref();
-    // double t1 = MPI_Wtime();
-    // double dt1 = t1 - t0;
-    // printf("Factorization = %.4e sec\n", dt1);
-
     // Assemble and factor the stiffness/Jacobian matrix. Factor the
     // Jacobian and solve the linear system for the displacements
+    bool here1 = false, here2 = true;
     double t2 = MPI_Wtime();
     double alpha = 1.0, beta = 0.0, gamma = 0.0;
     assembler->assembleJacobian(alpha, beta, gamma, NULL, mat);
@@ -87,8 +83,20 @@ int main(int argc, char **argv) {
     double dt2 = t3 - t2;
     printf("Assembly = %.4e sec\n", dt2);
 
-    BCSRMat *B, *C, *Emat, *F;
+    // Allocate the factorization
+    double t0 = MPI_Wtime();
+    int lev = 7;
+    double fill = 10.0;
+    int reorder_schur = 1;
+    TACSSchurPc *pc = new TACSSchurPc(mat, lev, fill, reorder_schur);
+    pc->incref();
+    // pc->factor(); // will factor on GPU
+    double t1 = MPI_Wtime();
+    double dt1 = t1 - t0;
+
+    BCSRMat *Bpc, *C, *Emat, *F, *B;
     mat->getBCSRMat(&B, &C, &Emat, &F);
+    pc->getBCSRMat(&Bpc, &C, &Emat, &F);
 
     BCSRMatData *Bdata = B->getMatData();
     int *rowp = Bdata->rowp;
@@ -96,51 +104,33 @@ int main(int argc, char **argv) {
     double *vals = Bdata->A;
     int nrows = Bdata->nrows;
     int ct = 0;
-    int MAX_CT = 800;
 
-    // print out the kmat sparsity pattern
-    printf("rowp:");
-    for (int i = 0; i < 10; i++) printf("%d,", rowp[i]);
-    printf("\n");
-    printf("cols:");
+    // copy values from B into Bpc (no factor)
+    Bpc->copyValues(B);
+
+    // writeout BCSR precond matrix (before factor) to binary so we can load on GPU and factor there
+    std::ofstream fout("cpu_prefactor_ILU7.bcsr", std::ios::binary);
+
+    // at one point was zero
+    // printf("vals:");
+    // for (int i = 0; i < 800; i++) {
+    //     printf("%.2e,", vals[i]);
+    // }
+    // printf("\n");
+
+    int block_dim = 6;
+    int n_block_rows = nrows;
     int nnzb = rowp[nrows];
-    for (int i = 0; i < 30; i++) printf("%d,", cols[i]);
-    printf("\n");
+    fout.write((char *)&block_dim, sizeof(int));
+    fout.write((char *)&n_block_rows, sizeof(int));
+    fout.write((char *)&nnzb, sizeof(int));
 
-    for (int i = 0; i < nrows; i++) {
-      for (int jp = rowp[i]; jp < rowp[i+1]; jp++) {
-        int j = cols[jp];
-        
-        for (int iv = 0; iv < 36; iv++) {
-          TacsScalar val = vals[36 * jp + iv];
-          int glob_row = 6 * i + iv / 6;
-          int glob_col = 6 * j + iv % 6;
-          
-          if (iv % 6 == 0) {
-            if (iv / 6 == 0) {
-              printf("Kmat[%d,%d]: ", glob_row, glob_col);
-            } else {
-              printf("             ");
-            }
-          }
-          
-          printf("%.14e,", val);
-          ct += 1;
-          if (iv % 6 == 5) printf("\n");
-          if (ct > MAX_CT) break;
-        }
+    // Write arrays
+    fout.write((char *)rowp, sizeof(int) * (n_block_rows + 1));
+    fout.write((char *)cols, sizeof(int) * nnzb);
+    fout.write((char *)vals, sizeof(double) * nnzb * block_dim * block_dim);
 
-        if (ct > MAX_CT) break;
-      }
-
-      if (ct > MAX_CT) break;
-    }
-
-
-    // now printout entries of B and its sparsity on one process
-
-    // pc->factor(); // LU factorization of stiffness matrix
-
+    fout.close();
 
     // Decref TACS
     assembler->decref();

@@ -104,10 +104,14 @@ template <typename T, bool use_precond = true, bool right = false>
 void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                  int _n_iter = 100, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
                  bool can_print = false, bool debug = false, int print_freq = 10) {
+    printf("here\n");
+
     /* GMRES iterative solve using a BsrMat on GPU with CUDA / CuSparse
         only supports T = double right now, may add float at some point (but float won't converge as
        deeply the residual, only about 1e-7) */
     auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
+
+    printf("here2\n");
 
     // which type of preconditioners
     constexpr bool left_precond = use_precond && !right;
@@ -121,9 +125,17 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     // copy important inputs for Bsr structure out of BsrMat
     // TODO : was trying to make some of these const but didn't accept it in
     // final solve
+    printf("here2.2\n");
     BsrData bsr_data = mat.getBsrData();
     int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
+
+    printf("here2.3\n");
+
+    T *h_rhs = DeviceVec<T>(mb * 6, rhs_perm.getPtr()).createHostVec().getPtr();
+    printf("h_rhs:");
+    printVec<T>(30, h_rhs);
+
     int block_dim = bsr_data.block_dim;
     index_t *d_rowp = bsr_data.rowp;
     index_t *d_cols = bsr_data.cols;
@@ -133,8 +145,16 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     T *d_rhs = rhs_perm.getPtr();
     T *d_x = soln.getPtr();
 
+    printf("here2.5\n");
+
+    int *h_rowp = DeviceVec<int>(mb + 1, d_rowp).createHostVec().getPtr();
+    printf("h_rowp:");
+    printVec<int>(10, h_rowp);
+
     // permute data in soln if guess is not zero
     soln.permuteData(block_dim, iperm);
+
+    printf("here3\n");
 
     // note this changes the mat data to be LU (but that's the whole point
     // of LU solve is for repeated linear solves we now just do triangular
@@ -144,7 +164,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     // also make a temporary array for the preconditioner values
     T *d_vals_ILU0 = DeviceVec<T>(mat.get_nnz()).getPtr();
     // ILU0 equiv to ILU(k) if sparsity pattern has ILU(k)
-    CHECK_CUDA(cudaMalloc((void **)&d_vals_ILU0, mat.get_nnz() * sizeof(T)));
     CHECK_CUDA(
         cudaMemcpy(d_vals_ILU0, d_vals, mat.get_nnz() * sizeof(T), cudaMemcpyDeviceToDevice));
 
@@ -207,7 +226,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     T H[(n_iter + 1) * (n_iter)];
 
     // GMRES device data
-    T *d_Vmat, *d_V;
+    T *d_Vmat;  // , *d_V;
     CHECK_CUDA(cudaMalloc((void **)&d_Vmat, (n_iter + 1) * N * sizeof(T)));
     // CHECK_CUDA(cudaMalloc((void **)&d_V, N * sizeof(T)));
     // cusparseDnVecDescr_t vec_V;
@@ -291,7 +310,9 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             auto end_triang = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> triang_time_loc = end_triang - start_triang;
             triang_time += triang_time_loc.count();
-            if (can_print && debug) printf("\ttriang time loc %.4e, total %.4e\n", triang_time_loc.count(), triang_time);
+            if (can_print && debug)
+                printf("\ttriang time loc %.4e, total %.4e\n", triang_time_loc.count(),
+                       triang_time);
         }
 
         // temp debug
@@ -356,7 +377,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             }
 
             if constexpr (left_precond) {
-
                 auto start_mult = std::chrono::high_resolution_clock::now();
 
                 // w = A * vj + 0 * w
@@ -374,8 +394,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                 if (can_print && debug && j % print_freq == 0) {
                     printf("\tSpMV on GPU in %.4e sec, total %.4e\n", spmv_time.count(), SpMV_time);
                 }
-
-
 
                 auto start_triang = std::chrono::high_resolution_clock::now();
 
@@ -396,7 +414,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                 std::chrono::duration<double> triang_time_loc = end_triang - start_triang;
                 triang_time += triang_time_loc.count();
                 if (can_print && debug && j % print_freq == 0) {
-                    printf("\ttriang time loc %.4e, total %.4e\n", triang_time_loc.count(), triang_time);
+                    printf("\ttriang time loc %.4e, total %.4e\n", triang_time_loc.count(),
+                           triang_time);
                 }
             }
 
@@ -586,7 +605,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
 
     }  // end of outer iterations
 
-    printf("GMRES: triang time %.4e, SpMV time %.4e, GS_time %.4e\n", triang_time, SpMV_time, GS_time);
+    printf("GMRES: triang time %.4e, SpMV time %.4e, GS_time %.4e\n", triang_time, SpMV_time,
+           GS_time);
 
     // check final residual
     // --------------------

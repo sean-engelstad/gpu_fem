@@ -3,7 +3,7 @@ A2D_INCLUDE := -I${A2D_DIR}/include
 
 GPU_FEM_DIR = ${HOME}/git/gpu_fem
 GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
-TACS_DIR = ${HOME}/git/tacs
+TACS_DIR = ${HOME}/git/_archive/tacs
 
 # USE_GPU := 1
 USE_GPU := 0
@@ -27,12 +27,12 @@ LAPACK_INCLUDE := -I${LAPACK_DIR}/build/include/
 LAPACK_LIB := -L${LAPACK_DIR}/build/lib/
 LAPACK_LINK := ${LAPACK_LIB} -llapacke -llapack -lblas
 
-# MPI include and lib
+# MPI include and lib, use 'mpicxx -show' to get the include and lib commands
 MPI_INCLUDE = -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
 MPI_LIB = -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi_cxx -lmpi
 
 # metis include and lib
-METIS_DIR = ${TACS_DIR}/extern/metis-5.1.0
+METIS_DIR = ${TACS_DIR}/extern/metis
 METIS_INCLUDE = -I${METIS_DIR}/include/
 METIS_LIB = ${METIS_DIR}/lib/libmetis.a
 

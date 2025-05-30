@@ -25,8 +25,8 @@ int main(int argc, char **argv) {
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
   bool mesh_print = false;
   TACSMeshLoader mesh_loader{comm};
-  // mesh_loader.scanBDFFile("../uCRM/CRM_box_2nd.bdf");
-  mesh_loader.scanBDFFile("../../examples/performance/uCRM-135_wingbox_fine.bdf");
+  mesh_loader.scanBDFFile("../../../examples/uCRM/CRM_box_2nd.bdf");
+  // mesh_loader.scanBDFFile("../../../examples/performance/uCRM-135_wingbox_fine.bdf");
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
   using Geo = Basis::Geo;
 
   constexpr bool has_ref_axis = false;
-  constexpr bool is_nonlinear = true;
+  constexpr bool is_nonlinear = false; // true
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
@@ -57,16 +57,11 @@ int main(int argc, char **argv) {
   auto h_xpts = xpts.createHostVec();
   printf("xpts:");
   printVec<T>(10, h_xpts.getPtr());
-
-  // print out the kmat sparsity pattern
-    printf("pre-reorder rowp:");
-    printVec<int>(10, bsr_data.rowp);
-    printf("pre-reorder cols:");
-    printVec<int>(30, bsr_data.cols);
   
   double fillin = 10.0;  // 10.0
   bsr_data.AMD_reordering();
   bsr_data.compute_nofill_pattern();
+  // bsr_data.compute_ILUk_pattern(7, fillin, print);
   // bsr_data.compute_full_LU_pattern(fillin, print);
 
   assembler.moveBsrDataToDevice();
@@ -91,6 +86,7 @@ int main(int argc, char **argv) {
     int nrows = h_bsr_data.nnodes;
     int ct = 0;
     int MAX_CT = 800;
+    // int MAX_CT = 50;
 
     // print out the kmat sparsity pattern
     printf("nnzb = %d\n", rowp[nrows]);
@@ -102,7 +98,7 @@ int main(int argc, char **argv) {
     printVec<int>(30, h_bsr_data.perm);
 
     // debug stop here for now
-    return;
+    // return;
     
     // print out the kmat values
     for (int i = 0; i < nrows; i++) {
