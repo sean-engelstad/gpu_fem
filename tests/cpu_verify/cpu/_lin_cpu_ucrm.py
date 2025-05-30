@@ -12,7 +12,7 @@ import time
 start_time = time.time()
 
 # Load structural mesh from BDF file
-bdfFile = "../uCRM/examples/CRM_box_2nd.bdf"
+bdfFile = "../../../examples/uCRM/CRM_box_2nd.bdf"
 # bdfFile = "../../../examples/performance/uCRM-135_wingbox_fine.bdf"
 tacs_comm = MPI.COMM_WORLD
 struct_mesh = TACS.MeshLoader(tacs_comm)
@@ -77,8 +77,9 @@ mat = tacs.createSchurMat(ordering)
 
 nz_time = time.time() - start_nz
 # ILUk = 3
-# ILUk = 7 # not enough on fine mesh
-ILUk = 11
+ILUk = 7 # not enough on fine mesh
+# ILUk = 11
+# ILUk = int(1e6)
 # ILUk = 1e6
 pc = TACS.Pc(mat, lev_fill=ILUk) #, lev_fill=ILUk) # for ILU(3), default is full LU or ILU(1000) if not set
 # subspace = 100

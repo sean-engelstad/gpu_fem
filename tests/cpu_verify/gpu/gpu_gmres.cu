@@ -60,9 +60,11 @@ int main(int argc, char **argv) {
   
   double fillin = 10.0;  // 10.0
   bsr_data.AMD_reordering();
+  // bsr_data.RCM_reordering(1);
+  // bsr_data.qorder_reordering(0.5, 1);
   // bsr_data.compute_nofill_pattern();
-  // bsr_data.compute_ILUk_pattern(, fillin, print);
-  bsr_data.compute_full_LU_pattern(fillin, print);
+  bsr_data.compute_ILUk_pattern(7, fillin, print);
+  // bsr_data.compute_full_LU_pattern(fillin, print);
 
   assembler.moveBsrDataToDevice();
   auto end1 = std::chrono::high_resolution_clock::now();
@@ -90,12 +92,12 @@ int main(int argc, char **argv) {
   auto loads = h_loads.createDeviceVec();
   assembler.apply_bcs(loads);
 
-  CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
+  // CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
 
-    // int n_iter = 300, max_iter = 300;
-    // constexpr bool right = true;
-    // T abs_tol = 1e-30, rel_tol = 1e-8; // for left preconditioning
-    // CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+    int n_iter = 300, max_iter = 300;
+    constexpr bool right = true;
+    T abs_tol = 1e-30, rel_tol = 1e-8; // for left preconditioning
+    CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
 
   // free data
   assembler.free();
