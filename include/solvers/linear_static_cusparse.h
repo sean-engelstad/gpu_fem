@@ -604,4 +604,11 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     }
 }
 
+template <typename T>
+void GMRES_HR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
+                    int _n_iter = 100, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
+                    bool can_print = false, bool debug = false, int print_freq = 10) {
+    /* householder orthog, right preconditioned GMRES solver */
+}
+
 };  // namespace CUSPARSE
