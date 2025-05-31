@@ -1,5 +1,6 @@
 #include "_gmres_utils.h"
 #include "_mat_utils.h"
+#include <chrono>
 
 int main() {
     using T = double;
@@ -8,7 +9,7 @@ int main() {
     // -----------
 
     constexpr bool test_mult = false;
-    int N = 10; // 16384
+    int N = 16384; // 16384
     int n_iter = min(N, 200);
     constexpr bool use_precond = true;
     constexpr bool bsr_nz_pattern = true; // default is False
@@ -276,15 +277,24 @@ int main() {
         printf("numerical_zero = %d\n", numerical_zero);
 
         /* perform triangular solve analysis */
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_triang = std::chrono::high_resolution_clock::now();
+
         CHECK_CUSPARSE(cusparseSpSV_analysis(
             cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
             matM_lower, vec_tmp, vec_w, CUDA_R_64F,
             CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL, d_bufferL));
-
         CHECK_CUSPARSE(cusparseSpSV_analysis(
             cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
             matM_upper, vec_tmp, vec_w, CUDA_R_64F,
             CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU, d_bufferU));
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_triang = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> triang_time_loc = end_triang - start_triang;
+        printf("Double CSR triang solve:");
+        printf("\ttriang solve time %.4e\n", triang_time_loc.count());
+
     }
 
     if constexpr (debug && use_precond) {

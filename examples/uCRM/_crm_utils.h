@@ -148,6 +148,9 @@ Assembler makeAeroSurfMesh(int nx = 101, int ny = 101, bool print = true) {
     using Geo = typename Assembler::Geo;
     using Data = typename Assembler::Data;
 
+    double zsob_mid = 3.25;
+    // double zsob_mid = 2.5;
+
     int ncomp = 8;
     int N = nx * ny * ncomp;
     HostVec<T> xa0(3 * N);
@@ -163,7 +166,7 @@ Assembler makeAeroSurfMesh(int nx = 101, int ny = 101, bool print = true) {
         // lower skin plane from root to SOB
         xa0[3 * inode] = 25 + (30.5 - 25) * xfrac;
         xa0[3 * inode + 1] = 3.2 * yfrac;
-        xa0[3 * inode + 2] = 2.5;
+        xa0[3 * inode + 2] = 2.5 + (zsob_mid - 2.5) * yfrac;
 
         // upper skin plane from root to SOB
         xa0[3 * inode + 3 * Nh] = xa0[3 * inode];
@@ -185,9 +188,11 @@ Assembler makeAeroSurfMesh(int nx = 101, int ny = 101, bool print = true) {
         xa0[3 * inode + 12 * Nh + 1] = 3.2 + (36 - 3.2) * xfrac;
         if constexpr (narrow_outboard) {
             // 2.5 to 5.0 at SOB, 4.3 to 4.55 at tip
-            xa0[3 * inode + 12 * Nh + 2] = 2.5 + 2.5 * yfrac + (1.8 - 2.25 * yfrac) * xfrac;
+            double a = 4.3 - zsob_mid;
+            xa0[3 * inode + 12 * Nh + 2] =
+                zsob_mid + (5.0 - zsob_mid) * yfrac + xfrac * (a + (4.55 - a - 5.0) * yfrac);
         } else {
-            xa0[3 * inode + 12 * Nh + 2] = 2.5 + (5.0 - 2.5) * yfrac;
+            xa0[3 * inode + 12 * Nh + 2] = zsob_mid + (5.0 - zsob_mid) * yfrac;
         }
 
         // SB to tip at TE
@@ -195,9 +200,11 @@ Assembler makeAeroSurfMesh(int nx = 101, int ny = 101, bool print = true) {
         xa0[3 * inode + 15 * Nh + 1] = 3.2 + (36 - 3.2) * xfrac;
         if constexpr (narrow_outboard) {
             // 2.5 to 5.0 at SOB, 4.3 to 4.55 at tip
-            xa0[3 * inode + 15 * Nh + 2] = 2.5 + 2.5 * yfrac + (1.8 - 2.25 * yfrac) * xfrac;
+            double a = 4.3 - zsob_mid;
+            xa0[3 * inode + 15 * Nh + 2] =
+                zsob_mid + (5.0 - zsob_mid) * yfrac + xfrac * (a + (4.55 - a - 5.0) * yfrac);
         } else {
-            xa0[3 * inode + 15 * Nh + 2] = 2.5 + (5.0 - 2.5) * yfrac;
+            xa0[3 * inode + 15 * Nh + 2] = zsob_mid + (5.0 - zsob_mid) * yfrac;
         }
 
         // lower skin plane from SOB to tip
@@ -205,9 +212,9 @@ Assembler makeAeroSurfMesh(int nx = 101, int ny = 101, bool print = true) {
         xa0[3 * inode + 1 + 18 * Nh] = 3.2 + (36 - 3.2) * xfrac;
         if constexpr (narrow_outboard) {
             // 2.5 bottom at SOB to 4.3 at tip
-            xa0[3 * inode + 2 + 18 * Nh] = 2.5 + 1.8 * xfrac;
+            xa0[3 * inode + 2 + 18 * Nh] = zsob_mid + (4.3 - zsob_mid) * xfrac;
         } else {
-            xa0[3 * inode + 2 + 18 * Nh] = 2.5;
+            xa0[3 * inode + 2 + 18 * Nh] = zsob_mid;
         }
 
         // upper skin plane from SOB to tip
