@@ -104,7 +104,6 @@ template <typename T, bool use_precond = true, bool right = false>
 void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                  int _n_iter = 100, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
                  bool can_print = false, bool debug = false, int print_freq = 10) {
-
     /* GMRES iterative solve using a BsrMat on GPU with CUDA / CuSparse
         only supports T = double right now, may add float at some point (but float won't converge as
        deeply the residual, only about 1e-7) */
@@ -235,17 +234,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
         a = 1.0, b = 0.0;
 
-        if constexpr (right_precond) {
-            // compute xR0 = LU * x0
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
-            if (debug) CHECK_CUDA(cudaDeviceSynchronize());
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim, d_tmp, &b, d_xR));
-        }
-
         // then subtract Ax from rhs
         if (debug) CHECK_CUDA(cudaDeviceSynchronize());
         auto start_mult = std::chrono::high_resolution_clock::now();
@@ -279,8 +267,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
                                                  descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
                                                  info_U, d_tmp, d_resid, policy_U, pBuffer));
-            
-            if (debug) CHECK_CUDA(cudaDeviceSynchronize()); // take these out for speedup
+
+            if (debug) CHECK_CUDA(cudaDeviceSynchronize());  // take these out for speedup
             auto end_triang = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> triang_time_loc = end_triang - start_triang;
             triang_time += triang_time_loc.count();
@@ -312,7 +300,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
 
         // then begin main GMRES iteration loop!
         for (int j = 0; j < n_iter; j++, total_iter++) {
-
             if constexpr (right_precond) {
                 // U^-1 L^-1 * vj => vj precond solve here
                 a = 1.0;
@@ -384,9 +371,9 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
 
             // now update householder matrix
             for (int i = 0; i < j + 1; i++) {
-
                 // compute w -= <w, vi> * vi
-                CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_w, 1, &d_Vmat[i * N], 1, &H[n_iter * i + j]));
+                CHECK_CUBLAS(
+                    cublasDdot(cublasHandle, N, d_w, 1, &d_Vmat[i * N], 1, &H[n_iter * i + j]));
                 // if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[n_iter * i + j]);
                 a = -H[n_iter * i + j];
                 CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[i * N], 1, d_w, 1));
@@ -498,34 +485,36 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         }
 
         if constexpr (right_precond) {
+            // zero xR
+            CHECK_CUDA(cudaMemset(d_xR, 0.0, N * sizeof(T)));
+
             // now compute matrix product xR = V * y (the preconditioned solution first)
             for (int j = 0; j < jj + 1; j++) {
                 a = h_y[j];
                 CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_Vmat[j * N], 1, d_xR, 1));
             }
-            CHECK_CUDA(cudaDeviceSynchronize());
 
-            // then compute the solution from the preconditioned one x = M^-1 * xR
-            // U^-1 L^-1 * xR => x precond solve here
+            // then compute xR = M^-1 xR (un-preconditions it back to x space)
             a = 1.0;
-            // first L^-1 * w => tmp
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
                                                  descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
                                                  info_L, d_xR, d_tmp, policy_L, pBuffer));
-            CHECK_CUDA(cudaDeviceSynchronize());
-            // U^-1 * tmp => into w
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
                                                  descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
-                                                 info_U, d_tmp, d_x, policy_U, pBuffer));
-            CHECK_CUDA(cudaDeviceSynchronize());
+                                                 info_U, d_tmp, d_xR, policy_U, pBuffer));
+
+            // then update x = x_0 + xR
+            a = 1.0;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_xR, 1, d_x, 1));
         }
 
         if (converged) break;
 
     }  // end of outer iterations
 
-    if (debug) printf("GMRES: triang time %.4e, SpMV time %.4e, GS_time %.4e\n", triang_time, SpMV_time,
-           GS_time);
+    if (debug)
+        printf("GMRES: triang time %.4e, SpMV time %.4e, GS_time %.4e\n", triang_time, SpMV_time,
+               GS_time);
 
     // check final residual
     // --------------------

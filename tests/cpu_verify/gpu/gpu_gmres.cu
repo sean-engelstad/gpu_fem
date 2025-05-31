@@ -25,8 +25,8 @@ int main(int argc, char **argv) {
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
   // bool mesh_print = false;
   TACSMeshLoader mesh_loader{comm};
-  // mesh_loader.scanBDFFile("../../../examples/uCRM/CRM_box_2nd.bdf");
-  mesh_loader.scanBDFFile("../../../examples/performance/uCRM-135_wingbox_fine.bdf");
+  mesh_loader.scanBDFFile("../../../examples/uCRM/CRM_box_2nd.bdf");
+  // mesh_loader.scanBDFFile("../../../examples/performance/uCRM-135_wingbox_fine.bdf");
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
 
   // CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
 
-    int n_iter = 100, max_iter = 100;
+    int n_iter = 100, max_iter = 200;
     constexpr bool right = true;
     T abs_tol = 1e-30, rel_tol = 1e-8; // for left preconditioning
     bool debug = true; // shows timing printouts with thisa
