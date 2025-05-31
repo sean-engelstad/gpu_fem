@@ -61,11 +61,12 @@ int main(int argc, char **argv) {
   double fillin = 10.0;  // 10.0
   bsr_data.AMD_reordering();
   // bsr_data.RCM_reordering(1);
-  // bsr_data.qorder_reordering(0.5, 1);
+  // bsr_data.qorder_reordering(4, 1);
   // bsr_data.compute_nofill_pattern();
-  // int lev_fill = 7;
+  // int lev_fill = 1;
+  int lev_fill = 7;
   // int lev_fill = 11;
-  int lev_fill = 15;
+  // int lev_fill = 15;
   bsr_data.compute_ILUk_pattern(lev_fill, fillin, print);
   // bsr_data.compute_full_LU_pattern(fillin, print);
 
@@ -97,7 +98,7 @@ int main(int argc, char **argv) {
 
   // CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
 
-    int n_iter = 300, max_iter = 300;
+    int n_iter = 100, max_iter = 100;
     constexpr bool right = true;
     T abs_tol = 1e-30, rel_tol = 1e-8; // for left preconditioning
     bool debug = true; // shows timing printouts with thisa

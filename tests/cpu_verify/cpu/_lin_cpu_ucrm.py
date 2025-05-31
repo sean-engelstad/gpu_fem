@@ -70,22 +70,22 @@ ans = tacs.createVec()
 u = tacs.createVec()
 # default is AMD ordering
 start_nz = time.time()
-ordering = TACS.TACS_AMD_ORDER
+# ordering = TACS.TACS_AMD_ORDER
 # ordering = TACS.RCM_ORDER
-# ordering = TACS.ND_ORDER
+ordering = TACS.ND_ORDER
 mat = tacs.createSchurMat(ordering)
 
 nz_time = time.time() - start_nz
-# ILUk = 3
-# ILUk = 7 # not enough on fine mesh
+# ILUk = 1
+ILUk = 7 # not enough on fine mesh
 # ILUk = 11
-ILUk = 15
+# ILUk = 15
 # ILUk = int(1e6)
 # ILUk = 1e6
 pc = TACS.Pc(mat, lev_fill=ILUk) #, lev_fill=ILUk) # for ILU(3), default is full LU or ILU(1000) if not set
 # subspace = 100
 end_nz = time.time()
-subspace = 300
+subspace = 100
 restarts = 0
 rtol = 1e-8
 atol = 1e-30

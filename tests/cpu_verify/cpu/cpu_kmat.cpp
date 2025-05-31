@@ -62,7 +62,10 @@ int main(int argc, char **argv) {
     // Create matrix and vectors
     TACSBVec *res = assembler->createVec();  // The residual
     // TACS_AMD_ORDER);
-    TACSSchurMat *mat = assembler->createSchurMat();  // stiffness matrix
+
+    // TACSAssembler::OrderingType order = TACSAssembler::TACS_AMD_ORDER;
+    TACSAssembler::OrderingType order = TACSAssembler::RCM_ORDER;
+    TACSSchurMat *mat = assembler->createSchurMat(order);  // stiffness matrix
 
     // Increment reference count to the matrix/vectors
     res->incref();

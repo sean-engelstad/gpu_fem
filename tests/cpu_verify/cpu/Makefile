@@ -18,9 +18,10 @@ precond:
 	./cpu_precond.out >> cpu_precond.txt
 
 gmres:
+	rm cpu_gmres.txt || echo "no *.txt files to remove"
 	make cpu_gmres.o
 	${CXX} -o cpu_gmres.out cpu_gmres.o ${TACS_LD_FLAGS}
-	./cpu_gmres.out
+	./cpu_gmres.out >> cpu_gmres.txt
 
 out:
 # writeout CPU precond matrix sparsity

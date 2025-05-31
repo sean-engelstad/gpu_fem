@@ -197,10 +197,6 @@ class BsrData {
         cols_nodiag.clear();
 
         // print out the kmat sparsity pattern
-        printf("pre-reorder rowp:");
-        printVec<int>(10, rowp);
-        printf("pre-reorder cols:");
-        printVec<int>(30, cols);
 
         // compute fillin
         double fill_factor = 5.0;

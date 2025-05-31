@@ -59,7 +59,8 @@ int main(int argc, char **argv) {
   printVec<T>(10, h_xpts.getPtr());
   
   double fillin = 10.0;  // 10.0
-  bsr_data.AMD_reordering();
+  // bsr_data.AMD_reordering();
+  bsr_data.RCM_reordering(1);
   bsr_data.compute_nofill_pattern();
   // bsr_data.compute_ILUk_pattern(7, fillin, print);
   // bsr_data.compute_full_LU_pattern(fillin, print);
