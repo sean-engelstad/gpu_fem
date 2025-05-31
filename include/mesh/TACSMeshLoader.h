@@ -1239,11 +1239,11 @@ void TACSMeshLoader::getAssemblerCreatorData(const int vars_per_node, int &my_nu
     creator->setReorderingType(order_type, mat_type);
 
     if (rank == root) {
-        printf("elem_node_conn:");
-        for (int i = 0; i < 20; i++) {
-            printf("%d,", elem_node_conn[i]);
-        }
-        printf("\n");
+        // printf("elem_node_conn:");
+        // for (int i = 0; i < 20; i++) {
+        //     printf("%d,", elem_node_conn[i]);
+        // }
+        // printf("\n");
 
         // Set the connectivity
         creator->setGlobalConnectivity(num_nodes, num_elements, elem_node_ptr, elem_node_conn,

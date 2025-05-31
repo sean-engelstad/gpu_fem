@@ -945,17 +945,17 @@ void TACSCreator::getAssemblerCreatorData(const int vars_per_node, int &my_num_n
     //                           local_dep_node_weights);
     // }
 
-    printf("local_elem_node_ptr:");
-    for (int i = 0; i < 10; i++) {
-        printf("%d,", local_elem_node_ptr[i]);
-    }
-    printf("\n");
+    // printf("local_elem_node_ptr:");
+    // for (int i = 0; i < 10; i++) {
+    //     printf("%d,", local_elem_node_ptr[i]);
+    // }
+    // printf("\n");
 
-    printf("local_elem_node_conn:");
-    for (int i = 0; i < 10; i++) {
-        printf("%d,", local_elem_node_conn[i]);
-    }
-    printf("\n");
+    // printf("local_elem_node_conn:");
+    // for (int i = 0; i < 10; i++) {
+    //     printf("%d,", local_elem_node_conn[i]);
+    // }
+    // printf("\n");
 
     // Set the connectivity
     // tacs->setElementConnectivity(local_elem_node_ptr, local_elem_node_conn);
@@ -1062,11 +1062,11 @@ void TACSCreator::getAssemblerCreatorData(const int vars_per_node, int &my_num_n
         my_xpts[j] = Xpts_local[j];
     }
 
-    printf("xpts:");
-    for (int i = 0; i < 12; i++) {
-        printf("%.4e,", Xpts_local[i]);
-    }
-    printf("\n");
+    // printf("xpts:");
+    // for (int i = 0; i < 12; i++) {
+    //     printf("%.4e,", Xpts_local[i]);
+    // }
+    // printf("\n");
 
     // Free the bvars/bvals arrays
     delete[] bvars;

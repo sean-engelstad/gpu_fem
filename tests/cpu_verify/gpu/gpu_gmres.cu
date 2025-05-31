@@ -50,13 +50,13 @@ int main(int argc, char **argv) {
   auto start1 = std::chrono::high_resolution_clock::now();
   auto& bsr_data = assembler.getBsrData();
 
-  printf("elem_conn:");
-  printVec<int>(20, bsr_data.elem_conn);
+  // printf("elem_conn:");
+  // printVec<int>(20, bsr_data.elem_conn);
 
-  auto xpts = assembler.getXpts();
-  auto h_xpts = xpts.createHostVec();
-  printf("xpts:");
-  printVec<T>(10, h_xpts.getPtr());
+  // auto xpts = assembler.getXpts();
+  // auto h_xpts = xpts.createHostVec();
+  // printf("xpts:");
+  // printVec<T>(10, h_xpts.getPtr());
   
   double fillin = 10.0;  // 10.0
   bsr_data.AMD_reordering();
