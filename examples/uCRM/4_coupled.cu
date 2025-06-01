@@ -134,9 +134,9 @@ int main(void) {
         assembler, kmat, linear_solve, struct_print);
 
     // test coupled driver
-    testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
-    // assembler, _assembler_aero);
+    // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
+    testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
+    assembler, _assembler_aero);
 
     struct_solver.writeSoln("out/uCRM_coupled_us.vtk");
 

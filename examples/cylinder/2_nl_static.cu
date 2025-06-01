@@ -30,11 +30,14 @@ int main() {
     double L = 1.0;
     double Lr = 3.0;
     double rt = 100.0; // r/t the cylinder slenderness
+    
     double R = L / Lr;
     double thick = R / rt;
 
     // imperfection
     bool imperfection = true;
+    int imp_x = 9, imp_hoop = 10;
+    // int imp_x = 5, imp_hoop = 6;
 
     // mesh settings
     int nxe_0 = 10, nhe_0 = 10;
@@ -46,7 +49,7 @@ int main() {
     double E = 70e9, nu = 0.3;
 
     // make the cylinder
-    auto assembler = createCylinderAssembler<Assembler>(nxe, nhe, L, R, E, nu, thick, imperfection);
+    auto assembler = createCylinderAssembler<Assembler>(nxe, nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
 
     // BSR factorization
     auto& bsr_data = assembler.getBsrData();
@@ -57,7 +60,10 @@ int main() {
     assembler.moveBsrDataToDevice();
 
     // get the loads
-    double Q = imperfection ? 3e4 : 5e4; // load magnitude
+    double perfect_load = 5e4;
+    double KDF = 0.4;
+    double imp_load = KDF * perfect_load;
+    double Q = imperfection ? imp_load : perfect_load; // load magnitude
     constexpr int compressive = true; // compressive or transverse style loads
     T *my_loads = getCylinderLoads<T, Physics, compressive>(nxe, nhe, L, R, Q);
     auto loads = assembler.createVarsVec(my_loads);
@@ -71,9 +77,10 @@ int main() {
     auto vars = assembler.createVarsVec();
 
     // newton solve
-    int num_load_factors = 10, num_newton = 30;
-    T min_load_factor = 0.05, max_load_factor = 1.0, abs_tol = 1e-6,
-        rel_tol = 1e-4;
+    int num_load_factors = 50; // 10 
+    int num_newton = 30;
+    T min_load_factor = 0.05, max_load_factor = 1.0, abs_tol = 1e-8,
+        rel_tol = 1e-8;
     bool write_vtk = true;
     auto solve_func = CUSPARSE::direct_LU_solve<T>;
     std::string outputPrefix = "out/cylinder_";

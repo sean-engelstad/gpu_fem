@@ -59,11 +59,19 @@ class BsrData {
           tr_block_map(nullptr),
           host(host) {
         if (!perm || !iperm) {
-            this->perm = new int32_t[nnodes];
-            this->iperm = new int32_t[nnodes];
-            for (int inode = 0; inode < nnodes; inode++) {
-                this->perm[inode] = inode;
-                this->iperm[inode] = inode;
+            if (this->host) {
+                this->perm = new int32_t[nnodes];
+                this->iperm = new int32_t[nnodes];
+                for (int inode = 0; inode < nnodes; inode++) {
+                    this->perm[inode] = inode;
+                    this->iperm[inode] = inode;
+                }
+            } else {
+                int *h_perm = new int[nnodes];
+                for (int inode = 0; inode < nnodes; inode++) h_perm[inode] = inode;
+                this->perm = DeviceVec<int>(nnodes, h_perm).createHostVec().getPtr();
+                this->iperm = DeviceVec<int>(nnodes, h_perm).createHostVec().getPtr();
+                delete[] h_perm;
             }
         } else {
             this->perm = perm;
@@ -100,6 +108,7 @@ class BsrData {
         /* get the rowp, cols from the element connectivity using sparse utils */
         auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double, 1>(nelems, nnodes,
                                                                          nodes_per_elem, elem_conn);
+
         nnzb = su_mat->nnz;
         rowp = su_mat->rowp;
         cols = su_mat->cols;
@@ -172,7 +181,7 @@ class BsrData {
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         double dt = duration.count() / 1e6;
         if (print) {
-            printf("\tfinished full LU symbolic factorization in %.4e sec\n", dt);
+            printf("\ttook %.4e sec to fillin nnzb %d\n", dt, nnzb);
         }
     }
 
@@ -191,11 +200,61 @@ class BsrData {
         /* computes the sparsity pattern for a full LU for direct LU solve
            with AMD reordering, consider making enum for reordering types here? */
 
+        // remove diagonal from rowp, cols (see TACSAssembler.createSchurMat in TACS CPU)
+        std::vector<int> cols_nodiag;
+        for (int i = 0; i < nnodes; i++) {
+            for (int jp = rowp[i]; jp < rowp[i + 1]; jp++) {
+                int j = cols[jp];
+                if (i != j) cols_nodiag.push_back(j);
+            }
+        }
+        // then remove diag from rowp
+        for (int i = 1; i < nnodes + 1; i++) {
+            rowp[i] -= i;
+        }
+        nnzb = rowp[nnodes];
+        for (int i = 0; i < nnzb; i++) {
+            cols[i] = cols_nodiag[i];
+        }
+        cols_nodiag.clear();
+
+        // print out the kmat sparsity pattern
+
         // compute fillin
         double fill_factor = 5.0;
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
         auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
         // printf("done with BSRMatAMDFactorSymbolicCUDA\n");
+
+        // check if diag missing, if so add it
+        if (cols[0] != 0) {
+            std::vector<int> cols_diag;
+            for (int i = 0; i < nnodes; i++) {
+                int start = cols_diag.size();
+                for (int jp = rowp[i]; jp < rowp[i + 1]; jp++) {
+                    int j = cols[jp];
+                    cols_diag.push_back(j);
+                }
+                cols_diag.push_back(i);  // add diagonal
+                int end = cols_diag.size();
+                std::sort(&cols_diag[start], &cols_diag[end]);
+            }
+            for (int i = 1; i < nnodes + 1; i++) {
+                rowp[i] += i;
+            }
+            nnzb = rowp[nnodes];
+
+            // now call sort from sparse utils
+            // SparseUtils::SortCSRData(nnodes, rowp, cols_diag);
+
+            // now make new array
+            delete[] cols;
+            cols = new int[nnzb];
+            for (int i = 0; i < nnzb; i++) {
+                cols[i] = cols_diag[i];
+            }
+            cols_diag.clear();
+        }
 
         // TODO : not the most efficient since it includes factorization in above too (can fix later
         // if need be) perm = su_mat2->perm; iperm = su_mat2->iperm;
@@ -215,6 +274,10 @@ class BsrData {
         TacsComputeRCMOrder(nnodes, rowp, cols, _new_perm, root_node, num_rcm_iters);
         // flip the new permutation
         for (int k = 0; k < nnodes; k++) {
+            // perm[k] = _new_perm[k];  // not flipped from TACS
+            // iperm[_new_perm[k]] = k;
+
+            // this one actually lowers bandwidth
             perm[_new_perm[k]] = k;  // flipped from TACS
             iperm[k] = _new_perm[k];
         }

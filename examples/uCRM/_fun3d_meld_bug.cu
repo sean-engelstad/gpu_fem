@@ -77,6 +77,8 @@ int main(void) {
   int na = _assembler_aero.get_num_nodes();
   auto h_xa0 = xa0.createHostVec();
 
+  // printToVTK<Assembler, HostVec<T>>(_assembler_aero, h_xa0, "xa0.vtk");
+
   // perform a factorization on the rowPtr, colPtr (before creating matrix)
   auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0

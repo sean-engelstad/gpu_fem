@@ -29,7 +29,7 @@ int main() {
     int n_iter = min(N, 200);
     int max_iter = 100;
     constexpr bool use_precond = true;
-    constexpr bool right = left; // right or left preconditioning
+    constexpr bool right = false; // right or left preconditioning
     T abs_tol = 1e-7, rel_tol = 1e-8;
     bool print = true;
 

@@ -2,6 +2,7 @@
 
 #pragma once
 #include <cstring>
+#include "mesh/legacy/TACSUtilities.h"
 
 // q-ordering (writing it myself),
 // https://arc.aiaa.org/doi/epdf/10.2514/6.2020-3022 how to apply ILU(k) from
@@ -13,7 +14,7 @@
 //      normal prune widths are 2,1,1/2,1/4 (lower prune width results in more
 //      nnz but more stable convergence of iterative solvers like GMRES)
 
-int TacsIntegerComparator(const void *a, const void *b) { return (*(int *)a - *(int *)b); }
+// int TacsIntegerComparator(const void *a, const void *b) { return (*(int *)a - *(int *)b); }
 
 /*!
   Merge two sorted arrays into a single sorted array, in place.
@@ -26,70 +27,70 @@ int TacsIntegerComparator(const void *a, const void *b) { return (*(int *)a - *(
   2. Run through the list backwards placing elements into a[]
   when appropriate.
 */
-int TacsMergeSortedArrays(int na, int *a, int nb, const int *b) {
-    int ndup = 0;
+// int TacsMergeSortedArrays(int na, int *a, int nb, const int *b) {
+//     int ndup = 0;
 
-    int j = 0, i = 0;
-    for (; i < na; i++) {
-        while ((j < nb) && b[j] < a[i]) {
-            j++;
-        }
-        if (j >= nb) {
-            break;
-        }
-        if (a[i] == b[j]) {
-            ndup++;
-        }
-    }
+//     int j = 0, i = 0;
+//     for (; i < na; i++) {
+//         while ((j < nb) && b[j] < a[i]) {
+//             j++;
+//         }
+//         if (j >= nb) {
+//             break;
+//         }
+//         if (a[i] == b[j]) {
+//             ndup++;
+//         }
+//     }
 
-    int len = na + nb - ndup;  // End of the array
-    int end = len - 1;
+//     int len = na + nb - ndup;  // End of the array
+//     int end = len - 1;
 
-    j = nb - 1;
-    i = na - 1;
-    while (i >= 0 && j >= 0) {
-        if (a[i] > b[j]) {
-            a[end] = a[i];
-            end--, i--;
-        } else if (b[j] > a[i]) {
-            a[end] = b[j];
-            end--, j--;
-        } else {  // b[j] == a[i]
-            a[end] = a[i];
-            end--, j--, i--;
-        }
-    }
+//     j = nb - 1;
+//     i = na - 1;
+//     while (i >= 0 && j >= 0) {
+//         if (a[i] > b[j]) {
+//             a[end] = a[i];
+//             end--, i--;
+//         } else if (b[j] > a[i]) {
+//             a[end] = b[j];
+//             end--, j--;
+//         } else {  // b[j] == a[i]
+//             a[end] = a[i];
+//             end--, j--, i--;
+//         }
+//     }
 
-    // Only need to copy over remaining elements from b - if any
-    while (j >= 0) {
-        a[j] = b[j];
-        j--;
-    }
+//     // Only need to copy over remaining elements from b - if any
+//     while (j >= 0) {
+//         a[j] = b[j];
+//         j--;
+//     }
 
-    return len;
-}
+//     return len;
+// }
 
 /*!
   Extend the length of an integer array to a new length of array
 */
-void TacsExtendArray(int **_array, int oldlen, int newlen) {
-    int *oldarray = *_array;
-    int *newarray = new int[newlen];
-    memcpy(newarray, oldarray, oldlen * sizeof(int));
-    delete[] * _array;
-    *_array = newarray;
-}
+// void TacsExtendArray(int **_array, int oldlen, int newlen) {
+//     int *oldarray = *_array;
+//     int *newarray = new int[newlen];
+//     memcpy(newarray, oldarray, oldlen * sizeof(int));
+//     delete[] * _array;
+//     *_array = newarray;
+// }
 
 /*
   Extend the length of a TacsScalar array to a new length
 */
-void TacsExtendArray(double **_array, int oldlen, int newlen) {
-    double *oldarray = *_array;
-    double *newarray = new double[newlen];
-    memcpy(newarray, oldarray, oldlen * sizeof(double));
-    delete[] * _array;
-    *_array = newarray;
-}
+// void TacsExtendArray(double **_array, int oldlen, int newlen) {
+//     double *oldarray = *_array;
+//     double *newarray = new double[newlen];
+//     memcpy(newarray, oldarray, oldlen * sizeof(double));
+//     delete[] * _array;
+//     *_array = newarray;
+// }
 
 /*
   Sort an array and remove duplicate entries from the array. Negative
@@ -109,28 +110,28 @@ void TacsExtendArray(double **_array, int oldlen, int newlen) {
   returns:
   the size of the unique list <= len
 */
-int TacsUniqueSort(int len, int *array) {
-    // Sort the array
-    qsort(array, len, sizeof(int), TacsIntegerComparator);
+// int TacsUniqueSort(int len, int *array) {
+//     // Sort the array
+//     qsort(array, len, sizeof(int), TacsIntegerComparator);
 
-    int i = 0;  // The location from which to take the entires
-    int j = 0;  // The location to place the entries
+//     int i = 0;  // The location from which to take the entires
+//     int j = 0;  // The location to place the entries
 
-    // Remove the negative entries
-    while (i < len && array[i] < 0) i++;
+//     // Remove the negative entries
+//     while (i < len && array[i] < 0) i++;
 
-    for (; i < len; i++, j++) {
-        while ((i < len - 1) && (array[i] == array[i + 1])) {
-            i++;
-        }
+//     for (; i < len; i++, j++) {
+//         while ((i < len - 1) && (array[i] == array[i + 1])) {
+//             i++;
+//         }
 
-        if (i != j) {
-            array[j] = array[i];
-        }
-    }
+//         if (i != j) {
+//             array[j] = array[i];
+//         }
+//     }
 
-    return j;
-}
+//     return j;
+// }
 
 // cuthill-mckee and reverse cuthill-mckee are shown here
 

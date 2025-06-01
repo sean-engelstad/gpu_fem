@@ -1,10 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from _gmres_util import gmres, get_laplace_system
+from _gmres_util import gmres, get_laplace_system, gmres_householder
 import scipy.sparse as spp
 
 # N = 4 # 2 nodes
-N = 64 # 16, 900
+# N = 64 # 16, 900
+N = 16
+# N = 64
 
 A, b = get_laplace_system(N)
 
@@ -13,7 +15,7 @@ plt.figure()
 plt.imshow(Adense)
 plt.savefig("Adense.png", dpi=400)
 
-use_precond = True
+use_precond = False
 precond_case = 2
 
 # really nice ref on GMRES and python PGMRES (preconditioned)
@@ -28,18 +30,28 @@ elif precond_case == 2:
     fill_factor = 1 # 1, 2, 3 ILU(k)
     M = spp.linalg.spilu(A, drop_tol=1e-12, fill_factor=fill_factor) if use_precond else None
 
-x_gmres = gmres(A, b, M=M, restart=100, max_iter=100)
-if N < 100: print(f"{x_gmres=}")
+m = 8
+max_iter = 8
+
+# x_gmres1 = gmres(A, b, M=M, restart=100, max_iter=100)
+x_gmres2 = gmres_householder(A, b, M=M, m=m, max_iter=max_iter)
+# if N < 100: 
+#     diff = x_gmres1 - x_gmres2
+#     print(f"{x_gmres1=}")
+#     print(f"{x_gmres2=}")
+
+
 
 # visualize the loads
 plt.figure()
 n = np.int32(N**0.5)
 b_mat = b.reshape((n,n))
 plt.imshow(b_mat)
-print(f"{b_mat=}")
+# print(f"{b_mat=}")
 plt.savefig("bmat.png", dpi=400)
 
-soln_mat = x_gmres.reshape((n,n))
+# soln_mat = x_gmres1.reshape((n,n))
+soln_mat = x_gmres2.reshape((n,n))
 plt.imshow(soln_mat)
-print(f"{soln_mat=}")
+# print(f"{soln_mat=}")
 plt.savefig("soln_mat.png", dpi=400)
