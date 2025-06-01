@@ -9,6 +9,8 @@
 #include "linear_static/direct_chol.h"
 #include "linear_static/gmres.h"
 #include "linear_static/gmres_dr.h"
+#include "linear_static/hgmres.h"
+#include "linear_static/pcg.h"
 
 #endif  // CUSPARSE
 #endif  // USE_GPU

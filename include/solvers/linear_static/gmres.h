@@ -7,10 +7,10 @@
 #include <chrono>
 #include <iostream>
 
-#include "../cuda_utils.h"
+#include "../../cuda_utils.h"
+#include "_cusparse_utils.h"
+#include "_utils.h"
 #include "cublas_v2.h"
-#include "utils/_cusparse_utils.h"
-#include "utils/_utils.h"
 
 namespace CUSPARSE {
 
@@ -123,9 +123,9 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     if (debug) CHECK_CUDA(cudaDeviceSynchronize());
     auto start_factor = std::chrono::high_resolution_clock::now();
 
-    CUSPARSE::perform_LU_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U, &pBuffer,
-                                       mb, nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
-                                       trans_U, policy_L, policy_U, dir);
+    CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U, &pBuffer,
+                                         mb, nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
+                                         trans_U, policy_L, policy_U, dir);
 
     if (debug) CHECK_CUDA(cudaDeviceSynchronize());
     auto end_factor = std::chrono::high_resolution_clock::now();

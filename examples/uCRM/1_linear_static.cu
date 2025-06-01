@@ -9,7 +9,10 @@
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
 
-int main() {
+int main(int argc, char **argv) {
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
   using T = double;
 
   // problem inputs ----
@@ -20,7 +23,7 @@ int main() {
 
   // uCRM mesh files can be found at:
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
-  TACSMeshLoader<T> mesh_loader{};
+  TACSMeshLoader mesh_loader{comm};
   mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
   // mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
 
@@ -54,7 +57,7 @@ int main() {
     // bsr_data.RCM_reordering();
     bsr_data.AMD_reordering();
     // bsr_data.qorder_reordering(1.0, 10); // qordering not working well for some reason..
-    bsr_data.compute_ILUk_pattern(10, fillin); // 10, 20 (for BiCGStab)
+    bsr_data.compute_ILUk_pattern(13, fillin); // 10, 20 (for BiCGStab)
     // bsr_data.compute_full_LU_pattern(fillin, print);
   }
   assembler.moveBsrDataToDevice();
@@ -91,8 +94,9 @@ int main() {
       T abs_tol = 1e-11, rel_tol = 1e-15;
       bool print = true;
       constexpr bool right = false, modifiedGS = true; // better with modifiedGS true, yeah it is..
-      CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      // CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
       // CUSPARSE::BiCGStab_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
+      CUSPARSE::PCG_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
       // CUSPARSE::GMRES_DR_solve<T, right, modifiedGS>(kmat, loads, soln, 4, 2, 8, abs_tol, rel_tol, print, true, 1);
   }
 

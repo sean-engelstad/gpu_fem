@@ -116,7 +116,6 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
     // also make a temporary array for the preconditioner values
     T *d_vals_ILU0 = DeviceVec<T>(mat.get_nnz()).getPtr();
     // ILU0 equiv to ILU(k) if sparsity pattern has ILU(k)
-    CHECK_CUDA(cudaMalloc((void **)&d_vals_ILU0, mat.get_nnz() * sizeof(T)));
     CHECK_CUDA(
         cudaMemcpy(d_vals_ILU0, d_vals, mat.get_nnz() * sizeof(T), cudaMemcpyDeviceToDevice));
 
