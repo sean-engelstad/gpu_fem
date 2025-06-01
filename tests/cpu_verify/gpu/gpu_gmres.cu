@@ -11,6 +11,7 @@
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
 
+
 int main(int argc, char **argv) {
     // Intialize MPI and declare communicator
     MPI_Init(&argc, &argv);
@@ -59,16 +60,20 @@ int main(int argc, char **argv) {
   // printVec<T>(10, h_xpts.getPtr());
   
   double fillin = 10.0;  // 10.0
-  // bsr_data.AMD_reordering();
-  // bsr_data.RCM_reordering(1);
-  bsr_data.qorder_reordering(0.5, 1);
-  // bsr_data.compute_nofill_pattern();
   int lev_fill = 1;
+  // int lev_fill = 2;
   // int lev_fill = 7;
   // int lev_fill = 11;
   // int lev_fill = 15;
-  bsr_data.compute_ILUk_pattern(lev_fill, fillin, print);
+
+  // bsr_data.AMD_reordering();  
   // bsr_data.compute_full_LU_pattern(fillin, print);
+
+  // bsr_data.RCM_reordering(1);
+  // bsr_data.compute_nofill_pattern();
+
+  bsr_data.qorder_reordering(0.25, 1);
+  bsr_data.compute_ILUk_pattern(lev_fill, fillin, print);
 
   assembler.moveBsrDataToDevice();
   auto end1 = std::chrono::high_resolution_clock::now();
@@ -81,6 +86,14 @@ int main(int argc, char **argv) {
   // assembler.add_residual(res, print); // warmup call
   assembler.add_residual(res, print);
   assembler.add_jacobian(res, kmat, print);
+
+  // // was not very effective unless eta near 1e6
+  // // T eta = 0.0;
+  // T eta = 1e-4; // K += eta * I diag
+  // // T eta = 1e2;
+  // // T eta = 1e6;
+  // kmat.add_diag_nugget(eta);
+
   assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
 
@@ -98,13 +111,18 @@ int main(int argc, char **argv) {
 
   // CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
 
-    int n_iter = 100, max_iter = 100;
+    // int n_iter = 100, max_iter = 100;
+    // int n_iter = 200, max_iter = 200;
+    int n_iter = 100, max_iter = 200;
+    // int n_iter = 300, max_iter = 300;
     constexpr bool right = true;
     T abs_tol = 1e-30, rel_tol = 1e-8; // for left preconditioning
     bool debug = true; // shows timing printouts with thisa
     print = true;
+    // T eta_precond = 0.0;
+    // T eta_precond = 1e-2;
     // CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
-    CUSPARSE::HGMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
+    CUSPARSE::HGMRES_solve<T, true>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
 
   // free data
   assembler.free();

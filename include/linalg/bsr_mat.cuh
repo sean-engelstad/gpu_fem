@@ -139,3 +139,57 @@ __GLOBAL__ void copy_mat_values_kernel(int nnodes, int block_dim,
         }
     }
 }
+
+template <typename T>
+__GLOBAL__ void add_mat_diag_kernel(int nnodes, int block_dim,
+                                  const int *rowp, const int *cols, T *vals, T eta)
+{
+    int this_thread_block_row = blockIdx.x * blockDim.x + threadIdx.x;
+    int irow = this_thread_block_row;
+    int block_dim2 = block_dim * block_dim;
+
+    // t as in t_rowp, t_cols, t_vals stands for target
+
+    if (this_thread_block_row < nnodes)
+    {
+        for (int jp = rowp[irow]; jp < rowp[irow + 1]; jp++)
+        {
+            // TODO : could make this faster by pre-computing nonzero diag spots in vals, with int pointer
+            int b_col = cols[jp]; // block col
+            for (int inz = 0; inz < block_dim2; inz++)
+            {
+                int glob_row = block_dim * irow + inz / block_dim;
+                int glob_col = block_dim * b_col + inz % block_dim;
+                T addition = (glob_row == glob_col) ? eta : 0.0;
+                vals[block_dim2 * jp + inz] += addition;
+            }
+        }
+    }
+}
+
+template <typename T>
+__GLOBAL__ void mult_diag_kernel(int nnodes, int block_dim,
+                                  const int *rowp, const int *cols, T *vals, T eta)
+{
+    int this_thread_block_row = blockIdx.x * blockDim.x + threadIdx.x;
+    int irow = this_thread_block_row;
+    int block_dim2 = block_dim * block_dim;
+
+    // t as in t_rowp, t_cols, t_vals stands for target
+
+    if (this_thread_block_row < nnodes)
+    {
+        for (int jp = rowp[irow]; jp < rowp[irow + 1]; jp++)
+        {
+            // TODO : could make this faster by pre-computing nonzero diag spots in vals, with int pointer
+            int b_col = cols[jp]; // block col
+            for (int inz = 0; inz < block_dim2; inz++)
+            {
+                int glob_row = block_dim * irow + inz / block_dim;
+                int glob_col = block_dim * b_col + inz % block_dim;
+                T muliplication = (glob_row == glob_col) ? (1.0 + eta) : 0.0;
+                vals[block_dim2 * jp + inz] *= muliplication;
+            }
+        }
+    }
+}

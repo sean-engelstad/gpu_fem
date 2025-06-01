@@ -5,8 +5,8 @@ import scipy.sparse as spp
 
 # N = 4 # 2 nodes
 # N = 64 # 16, 900
-# N = 9
-N = 64
+N = 16
+# N = 64
 
 A, b = get_laplace_system(N)
 
@@ -15,7 +15,7 @@ plt.figure()
 plt.imshow(Adense)
 plt.savefig("Adense.png", dpi=400)
 
-use_precond = True
+use_precond = False
 precond_case = 2
 
 # really nice ref on GMRES and python PGMRES (preconditioned)
@@ -30,8 +30,11 @@ elif precond_case == 2:
     fill_factor = 1 # 1, 2, 3 ILU(k)
     M = spp.linalg.spilu(A, drop_tol=1e-12, fill_factor=fill_factor) if use_precond else None
 
-x_gmres1 = gmres(A, b, M=M, restart=100, max_iter=100)
-x_gmres2 = gmres_householder(A, b, M=M, m=100, max_iter=100)
+m = 8
+max_iter = 8
+
+# x_gmres1 = gmres(A, b, M=M, restart=100, max_iter=100)
+x_gmres2 = gmres_householder(A, b, M=M, m=m, max_iter=max_iter)
 # if N < 100: 
 #     diff = x_gmres1 - x_gmres2
 #     print(f"{x_gmres1=}")

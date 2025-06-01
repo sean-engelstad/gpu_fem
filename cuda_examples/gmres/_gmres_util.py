@@ -347,6 +347,8 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
             W[:,j] = wj
             # print(f"w[{j}] = {wj}")
 
+            # print(f"{j=} {W[:,j]=}")
+
             # compute Hessenberg vec
             # -----------------------
             
@@ -362,6 +364,8 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
             else:
                 # zero out part of hvec past j+1
                 H[:j+1,j-1] = hvec[:j+1]
+
+                # print(f"{H[:j+1,j-1]=}")
 
             # if j == 3: 
             #     print(f"{H[:j+1,:j]=}")
@@ -386,22 +390,45 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
 
                 # trying same as before.. except j is j-1
                 for i in range(j-1):
+                    # temp debug
+                    hx = H[i,j-1]; hy = H[i+1,j-1]
+                    c = cs[i]; s = ss[i]
+                    # print(f"{hx=} {hy=} {c=} {s=}")
+                    res1 = c * hx + s * hy
+                    res2 = -s * hx + c * hy
+
                     temp = H[i,j-1]
                     H[i,j-1] = cs[i] * H[i,j-1] + ss[i] * H[i+1,j-1]
                     H[i+1,j-1] = -ss[i] * temp + cs[i] * H[i+1,j-1]
 
-                cs[j-1] = H[j-1,j-1] / np.sqrt(H[j-1,j-1]**2 + H[j,j-1]**2)
-                ss[j-1] = cs[j-1] * H[j,j-1] / H[j-1,j-1]
+                    # print(f"{res1=} {H[i,j-1]=}\n{res2=} {H[i+1,j-1]=}")
 
-                g_temp = g[j-1]
-                g[j-1] *= cs[j-1]
-                g[j] = -ss[j-1] * g_temp
+                # cs[j-1] = H[j-1,j-1] / np.sqrt(H[j-1,j-1]**2 + H[j,j-1]**2)
+                # ss[j-1] = cs[j-1] * H[j,j-1] / H[j-1,j-1]
+
+                r = np.hypot(H[j-1, j-1], H[j, j-1])  # This avoids overflow/underflow
+                cs[j-1] = H[j-1, j-1] / r
+                ss[j-1] = H[j, j-1] / r
+
+                # print(f"{cs[j-1]=} {ss[j-1]=}")
+                # print(f"p2 {H[:j+1,j-1]=}")
+
+                # g_temp = g[j-1]
+                # g[j-1] *= cs[j-1]
+                # g[j] = -ss[j-1] * g_temp
+
+                temp = g[j-1]
+                g[j-1] = cs[j-1] * g[j-1] + ss[j-1] * g[j]
+                g[j] = -ss[j-1] * temp + cs[j-1] * g[j]
                 # print(f"{cs[j]=}")
                 # print(f"{g[j]=}")
                 # print(f"{j=} {g[j]=} {g[j+1]=}")
 
                 H[j-1,j-1] = cs[j-1] * H[j-1,j-1] + ss[j-1] * H[j,j-1]
                 H[j,j-1] = 0.0
+
+                # print(f"{g[j-1]=} {g[j]=}")
+                # print(f"p3 {H[:j+1,j-1]=}")
 
                 # print(f"{H[:j+1,:j]=} after")
                 print(f'g[{j}] = {g[j]}')
@@ -429,7 +456,7 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
 
             # update old v now
             # print(f"v = {v}")
-            print("------------\n")
+            # print("------------\n")
 
             # compute new Arnoldi vec and orthog
             # ----------------------------------
@@ -450,6 +477,12 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
         y = np.linalg.solve(H[:j,:j], g[:j])
         # print(f"{y=}")
 
+        print(f"Hessenberg ({j} x {j}) system\n")
+        for i in range(j):
+            print(f"{H[i,:j]}")
+        print(f"\n{g[:j]=}")
+        print(f"\n{y[:j]=}")
+
         # compute change in solution reusing reflectors
         z = np.zeros(n)
         for i in range(j-1, -1, -1):
@@ -457,15 +490,22 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
             ei = np.zeros(n)
             ei[i] = 1.0
             tmp = y[i] * ei + z
+            print(f"y[{i}]={y[i]}\n\t{tmp=}")
+
             wi = W[:,i]
             z = tmp - 2 * np.dot(tmp, wi) * wi
 
-        # print(f"{z=}")
+        print(f"{z=}")
         # right precond GMRES update here?
         z = M_inv(z)
+        print(f"precond {z=}")
+
+        print(f"pre {x=}")
 
         # update final solution (maybe restarting again)
         x += z
+
+        print(f"post {x=}")
 
         # Compute new residual, don't need to compute in final version here only can put in debug block
         # fine here in python version
