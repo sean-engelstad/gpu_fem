@@ -98,7 +98,8 @@ def apply_givens_rotation(H, cs, ss, k):
 
 def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
     """
-    Implements the restarted GMRES algorithm with numerical stability.
+    Somewhat numerically stable implementation of Modified Gram-Schmidt GMRES
+    see Householder one below. This is also a left-precond GMRES, see right PGMRES below (better)
     
     Parameters:
     A : callable or sparse matrix
@@ -265,5 +266,214 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
             break
     
     print(f"final resid {beta=}")
+
+    return x
+
+def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
+    """
+    Householder GMRES (should be more numerically stable than MGS previous one, Modified Gram-Schmidt).
+    Also using right PGMRES here
+    
+    Parameters:
+    A : callable or sparse matrix
+        Function A(x) or sparse matrix representing the linear system.
+    b : ndarray
+        Right-hand side vector.
+    x0 : ndarray, optional
+        Initial guess (default: zero vector).
+    tol : float, optional
+        Convergence tolerance.
+    max_iter : int, optional
+        Maximum number of iterations.
+    m : int, optional
+        number of search directions before restart
+    M : callable or sparse matrix, optional
+        Preconditioner (default: None).
+    
+    Returns:
+    x : ndarray
+        Approximate solution.
+    """
+
+    # init phase
+    # ----------
+
+    n = int(len(b))
+    if x0 is None:
+        x0 = np.zeros(n)
+    
+    # define the preconditioner
+    if M is None:
+        M_inv = lambda x: x
+    else:
+        # M_inv = spla.LinearOperator((n, n), matvec=lambda x: spla.spsolve(M, x))
+        M_inv = lambda x : M.solve(x)
+
+    x = x0.copy()
+    r = b - A @ x # right PGMRES here
+    beta = np.linalg.norm(r)
+    print(f"{beta=}")
+
+    if beta < tol:
+        return x
+    
+    for _ in range(max_iter // m):
+        # V = np.zeros((n, m+1)) # we don't store V in Householder GMRES
+        W = np.zeros((n, m+1))
+        H = np.zeros((m+1, m))
+        g = np.zeros(m+1)
+        cs = np.zeros(m)
+        ss = np.zeros(m)
+
+        # Start Arnoldi process
+        z = r
+        beta = None # computed in first iteration
+
+        print(f"GMRES : outer iter {_} resid {beta=}")
+        print("begin main search loop\n------------\n")
+
+        for j in range(m + 1): # j == 0 is one prelim step unlike Gram-Schmidt version
+            # compute new Householder unit vector w_j
+            # ---------------------------------------
+
+            vsub = z[j:]
+            sigma = np.linalg.norm(vsub)
+            alpha = -np.sign(vsub[0]) * sigma
+            nsub = vsub.shape[0]
+            e1 = np.array([1.0] + [0.0] * (nsub - 1))
+            u = vsub - alpha * e1
+            wtilde = u / np.linalg.norm(u)
+            wj = np.concatenate([np.zeros(j), wtilde], axis=0)
+            W[:,j] = wj
+            # print(f"w[{j}] = {wj}")
+
+            # compute Hessenberg vec
+            # -----------------------
+            
+            # apply reflector Pj = I - 2 w_j w_j^T to get h_{j-1} here
+            hvec = z - 2.0 * np.dot(wj, z) * wj
+            # print(f"h[{j-1}] = {hvec}")
+
+            # see page 160 of Saad book on Sparse Linear Systems
+            if j == 0:
+                beta = hvec[0]
+                g[0] = beta
+                print(f"{g[0]=} {np.linalg.norm(z)=}")
+            else:
+                # zero out part of hvec past j+1
+                H[:j+1,j-1] = hvec[:j+1]
+
+            # if j == 3: 
+            #     print(f"{H[:j+1,:j]=}")
+            #     exit()
+
+            # double check householder unit vec requirements (debug/devel)
+            # -----------------------------------------------
+            
+            # need h_{j-1} zero for all j+1 entries onwards
+            constr1 = np.abs(np.sum(wj[:(j-1)])) < 1e-10 or (j == 0)
+            constr2 = np.abs(np.sum(hvec[j+1:])) < 1e-10
+            # print(f"{constr1=} {constr2=}")
+            assert(constr1)
+            assert(constr2)
+
+            # perform Givens rotations of Hessenberg to upper triangular
+            # ----------------------------------------------------------
+
+            givens = True # for debugging
+            if j > 0 and givens:
+                # print(f"{H[:j+1,:j]=}")
+
+                # trying same as before.. except j is j-1
+                for i in range(j-1):
+                    temp = H[i,j-1]
+                    H[i,j-1] = cs[i] * H[i,j-1] + ss[i] * H[i+1,j-1]
+                    H[i+1,j-1] = -ss[i] * temp + cs[i] * H[i+1,j-1]
+
+                cs[j-1] = H[j-1,j-1] / np.sqrt(H[j-1,j-1]**2 + H[j,j-1]**2)
+                ss[j-1] = cs[j-1] * H[j,j-1] / H[j-1,j-1]
+
+                g_temp = g[j-1]
+                g[j-1] *= cs[j-1]
+                g[j] = -ss[j-1] * g_temp
+                # print(f"{cs[j]=}")
+                # print(f"{g[j]=}")
+                # print(f"{j=} {g[j]=} {g[j+1]=}")
+
+                H[j-1,j-1] = cs[j-1] * H[j-1,j-1] + ss[j-1] * H[j,j-1]
+                H[j,j-1] = 0.0
+
+                # print(f"{H[:j+1,:j]=} after")
+                print(f'g[{j}] = {g[j]}')
+
+            # Check convergence
+            if abs(g[j]) < tol and j > 0 and givens:
+                print(f"g break at iteration {j}")
+                break
+                
+            # if not givens and j > 4:
+            #     break
+
+
+            # orthog v = P1 * ... * Pj * ej
+            # ----------------------------------
+            ej = np.zeros((n,))
+            ej[j] = 1.0
+            v = ej
+            # print(f"{ej.shape=}")
+
+            # apply the reflectors in reverse
+            for i in range(j, -1, -1):
+                wi = W[:,i]
+                v -= 2.0 * np.dot(wi, v) * wi
+
+            # update old v now
+            # print(f"v = {v}")
+            print("------------\n")
+
+            # compute new Arnoldi vec and orthog
+            # ----------------------------------
+
+            if j <= m:
+                # z := Pj * ... * P1 * A * v
+                # apply the reflectors forwards
+                tmp = M_inv(v) # right precond here
+                z = A @ tmp
+                for i in range(j+1):
+                    wi = W[:,i]
+                    z -= 2.0 * np.dot(wi, z) * wi
+
+        # done with search direction loop, solve Hessenberg triang system
+        # print(f"{H[:j,:j]=}")
+
+        # I think I'm solving one dim too high here..
+        y = np.linalg.solve(H[:j,:j], g[:j])
+        # print(f"{y=}")
+
+        # compute change in solution reusing reflectors
+        z = np.zeros(n)
+        for i in range(j-1, -1, -1):
+            # compute z = Pi * (y[i] * ei + z)
+            ei = np.zeros(n)
+            ei[i] = 1.0
+            tmp = y[i] * ei + z
+            wi = W[:,i]
+            z = tmp - 2 * np.dot(tmp, wi) * wi
+
+        # print(f"{z=}")
+        # right precond GMRES update here?
+        z = M_inv(z)
+
+        # update final solution (maybe restarting again)
+        x += z
+
+        # Compute new residual, don't need to compute in final version here only can put in debug block
+        # fine here in python version
+        r = b - (A @ x)
+        resid_norm = np.linalg.norm(r)
+        if resid_norm < tol:
+            break
+
+    print(f"final resid {resid_norm=}")
 
     return x
