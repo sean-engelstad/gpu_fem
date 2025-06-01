@@ -76,6 +76,11 @@ int main(int argc, char **argv) {
   // assembler.add_residual(res, print); // warmup call
   assembler.add_residual(res, print);
   assembler.add_jacobian(res, kmat, print);
+  
+  // T eta = 0.0;
+  T eta = 1e-4; // K += eta * I diag
+  kmat.add_diag_nugget(eta);
+  
   assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
 

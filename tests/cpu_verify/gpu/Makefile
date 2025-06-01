@@ -7,7 +7,8 @@ default: kmat
 
 kmat:
 	rm gpu_kmat.txt || echo "no *.txt files to remove"
-	make gpu_kmat && ./gpu_kmat.out >> gpu_kmat.txt
+	make gpu_kmat 
+	./gpu_kmat.out >> gpu_kmat.txt
 
 precond:
 	rm gpu_precond.txt || echo "no *.txt files to remove"

@@ -64,7 +64,8 @@ int main(int argc, char **argv) {
     TACSBVec *res = assembler->createVec();  // The residual
 
     // TACSAssembler::OrderingType order = TACSAssembler::TACS_AMD_ORDER;
-    TACSAssembler::OrderingType order = TACSAssembler::RCM_ORDER;
+    // TACSAssembler::OrderingType order = TACSAssembler::RCM_ORDER;
+    TACSAssembler::OrderingType order = TACSAssembler::Q_ORDER;
     TACSSchurMat *mat = assembler->createSchurMat(order);  // stiffness matrix
 
     // Increment reference count to the matrix/vectors
@@ -83,7 +84,8 @@ int main(int argc, char **argv) {
 
     // Allocate the factorization
     double t0 = MPI_Wtime();
-    int lev = 7;
+    // int lev = 7;
+    int lev = 1;
     double fill = 11.0;
     int reorder_schur = 1;
     TACSSchurPc *pc = new TACSSchurPc(mat, lev, fill, reorder_schur);
