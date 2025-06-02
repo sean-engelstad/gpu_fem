@@ -7,8 +7,9 @@ import scipy.sparse as spp
 # N = 64 # 16, 900
 # N = 16
 # N = 9
+N = 144
 # N = 400
-N = 900
+# N = 900
 
 A, b = get_laplace_system(N)
 
@@ -37,7 +38,8 @@ max_iter = 100
 
 x_gmres1 = gmres(A, b, M=M, restart=100, max_iter=100)
 x_gmres2 = gmres_householder(A, b, M=M, m=m, max_iter=max_iter)
-x_gmres3 = gmres_dr(A, b, M=M, m=30, k=10, max_iter=300, tol=1e-8)
+print("-------------\n")
+x_gmres3 = gmres_dr(A, b, M=M, m=30, k=10, max_iter=30, tol=1e-8)
 # x_gmres3 = gmres_dr(A, b, M=M, m=50, k=20, max_iter=300, tol=1e-8)
 # if N < 100: 
 #     diff = x_gmres1 - x_gmres2

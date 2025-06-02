@@ -64,7 +64,7 @@ by || V_{m+1}' * V_{m+1}'^T * (r0 - A * dx) || like before, with now
     || r0 - A * V_m' * y || = || V_{m+1}' * (V_{m+1}'^T r0 - V_{m+1}'^T A * V_m' y) || = || c -
 H_{m+1,m} y || So the reduced basis update y is given by:
 
-    H_{m+1,m}' * y = c,    with c = V_{m+1}'^T r_0 = [V_{k}'^T r_0; 0, 0_{m-k}]
+    H_{m+1,m}' * y = c,    with c = V_{m+1}'^T r_0 = [0_{k-1}; <w, r0>, 0_{m-k}]
 
 And Givens rotations can still be applied to H_{m+1,m}' and c to give an upper triangular system:
 H_{m+1,m}'' * y = g' With final update x = x_0 + V_m' * y and then repeat. The deflated restart is
@@ -75,28 +75,24 @@ triangular system.
 
 namespace CUSPARSE {
 
-template <typename T, bool right = false, bool modifiedGS = true, bool use_precond = true>
+template <typename T, bool use_precond = true>
 void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                     int subspace_size = 30, int deflation_size = 10, int max_iter = 300,
-                    T abs_tol = 1e-8, T rel_tol = 1e-8, bool can_print = false, bool debug = false,
-                    int print_freq = 10) {
+                    T abs_tol = 1e-8, T rel_tol = 1e-8, bool can_print = false,
+                    bool debug = false) {
+    /* deflated GMRES solver with right precond and MGS only */
+
     static_assert(std::is_same<T, double>::value,
                   "Only double precision is written in our code for cuSparse Deflated GMRES");
 
     auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
 
-    // which type of preconditioners
-    constexpr bool left_precond = use_precond && !right;
-    constexpr bool right_precond = use_precond && right;
-
-    // if (can_print) {
-    //     printf("begin cusparse GMRES solve\n");
-    // }
+    if (can_print) {
+        printf("Deflated GMRES ILU solve\n");
+    }
     auto start = std::chrono::high_resolution_clock::now();
 
     // copy important inputs for Bsr structure out of BsrMat
-    // TODO : was trying to make some of these const but didn't accept it in
-    // final solve
     BsrData bsr_data = mat.getBsrData();
     int mb = bsr_data.nnodes;
     int nnzb = bsr_data.nnzb;
@@ -127,7 +123,6 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
     T *d_tmp2 = DeviceVec<T>(soln.getSize()).getPtr();
     T *d_resid = DeviceVec<T>(soln.getSize()).getPtr();
     T *d_w = DeviceVec<T>(soln.getSize()).getPtr();
-    T *d_xR = DeviceVec<T>(soln.getSize()).getPtr();  // for right preconditioning
 
     // create initial cusparse and cublas handles --------------
 
@@ -158,9 +153,6 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
     void *pBuffer = 0;
     const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
                                 policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
-    // tried changing both policy L and U to be USE_LEVEL not really a change
-    // policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
-    // policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
     const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
                               trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
@@ -178,26 +170,21 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
     // Hessenberg linear system data (solved on host because so small and can be done separately on
     // host without any copying needed)
     T *H = new T[(m + 1) * m];  // hessenberg matrix
-    T *g = new T[m + 1];        // hessenberg RHS (Givens rotated)
-    T *cs = new T[m];           // Givens cosines
-    T *ss = new T[m];           // Givens sines
+    T *g = new T[m + 1];        // hessenberg RHS
     T *y = new T[m];            // solution of Hessenberg system for update x = x0 + Vm * y
-    // final Hessenberg system will become mxm (but need extra storage for final Givens application
-    // on m+1 row) H matrix stored with typical row-major format so that mxm matrix is just first
-    // m^2 values
 
     memset(H, 0.0, (m + 1) * m * sizeof(T));
 
     // temp data for the deflation eigenvalue problem
-    T *HTH = new T[m * m];  // temporary matrix to hold H^T H matrix of eig problem
-    T *HT = new T[m * m];   // temp matrix for H^T in eig problem
-    T *alphaR = new T[m], *alphaI = new T[m], *betav = new T[m], *VL = new T[m * m],
-      *VR = new T[m * m];
+    T *Htmp = new T[m * m];   // temp hessenberg for products
+    T *Htmp2 = new T[m * m];  // temp hessenberg for products
+    T *wr = new T[m], *wi = new T[m],
+      *vr = new T[m * m];                 // eigenvalues + eigenvecs in reduced space
     T *Z = DeviceVec<T>(k * m).getPtr();  // device vec of reduced eigenvectors
+    T beta, init_resid;
 
-    // dense Krylov subspace vectors stored on device however
+    // Krylov subspace and full space eigvecs
     T *d_V = DeviceVec<T>((m + 1) * N).getPtr();  // Kryov search directions
-    // temporary storage for deflation eigenvecs (quickly stored back in d_V)
     T *d_Phi = DeviceVec<T>(k * N).getPtr();
 
     bool converged = false;
@@ -206,134 +193,50 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
     if (debug) printf("nrestarts = %d\n", nrestarts);
 
     for (int irestart = 0; irestart < nrestarts; irestart++) {
-        // compute r0 = b - A * x
-        CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
-
-        int mm = m;
-
-        // compute xR0 = L * U * x0 for preconditioned initial guess (if right precond)
-        if constexpr (right_precond) {
-            a = 1.0, b = 0.0;
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
-            a = 1.0, b = 0.0;
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim, d_tmp, &b, d_xR));
-        }
-
-        // then subtract Ax from rhs
-        a = 1.0, b = 0.0;
-        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
-                                      CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
-                                      d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
-        a = -1.0;
-        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
-
-        // get initial residual beta = || r_0 ||, preconditioned if left precond
-        T beta;
-        if constexpr (left_precond) {
-            // if left precond, compute M^-1 r0 = U^-1 L^-1 r0
-            a = 1.0;
-            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
-                                                 descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
-                                                 info_L, d_resid, d_tmp, policy_L, pBuffer));
-            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
-                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
-                                                 info_U, d_tmp, d_resid, policy_U, pBuffer));
-        }
-        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &beta));
-
-        // reset Hessenberg RHS g vec
+        // reset RHS to zero
         memset(g, 0.0, (m + 1) * sizeof(T));
 
-        // zero out V past k for restart cases (for the r0 and m-k new vecs)
-        if (irestart > 0) CHECK_CUDA(cudaMemset(&d_V[k * N], 0.0, (m - k + 1) * N * sizeof(T)));
-
-        // report initial residual
-        if (can_print) printf("GMRES init resid = %.9e\n", beta);
-
-        // standard vs deflated restart section
         if (irestart == 0) {
-            // standard restart, only for first startup
-            // set v0 = r0 / beta and initial g[0] = beta for RHS of Hessenberg system
-            a = 1.0 / beta;
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_resid, 1, &d_V[0], 1));
+            /* compute initial residual */
+            // compute r0 = b - A * x
+            CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
+            a = 1.0, b = 0.0;
+            CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
+                nnzb, &a, descrA, d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
+            a = -1.0;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
 
-            // set initial residual in Hessenberg RHS
+            /* compute first w = r0 / |r0| */
+            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &beta));
+            CHECK_CUDA(cudaMemcpy(d_w, d_resid, N * sizeof(T), cudaMemcpyDeviceToDevice));
+            T inrm_w = 1.0 / beta;
+            CHECK_CUBLAS(cublasDscal(cublasHandle, N, &inrm_w, d_w, 1));
+            // put w as v_0
+            CHECK_CUDA(cudaMemcpy(d_V, d_w, N * sizeof(T), cudaMemcpyDeviceToDevice));
+
+            printf("init resid %.8e\n", beta);
+
+            // RHS for first iteration is just g[0]
             g[0] = beta;
+            init_resid = beta;  // for convergence checks with rel_tol
         } else {
-            // deflated restart
-            // compute k many initial g vectors of RHS since previous eigenvectors may be in same
-            // direction as r0. Namely g0 = V_{m+1}'^T r0, or first k values g[0:k] = V_k'^T * r0
-            // where V_k' are the eigenvectors of previous subspace
-            for (int i = 0; i < k; i++) {
-                // store in g[i] = <v_i, r0>
-                CHECK_CUBLAS(cublasDdot(cublasHandle, N, &d_V[i * N], 1, d_resid, 1, &g[i]));
-                printf("restart g[%d] = %.4e\n", i, g[i]);
-            }
-
-            // also set v_k (0-based) to r0 / beta and then orthogonalize it
-            a = 1.0 / beta;
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_resid, 1, &d_V[k * N], 1));
-
-            // modified GS to orthogonalize r0 against previous search directions (prob unnecessary)
-            for (int i = 0; i < k; i++) {
-                // compute Htmp = <vi, vk>
-                T tmp;
-                CHECK_CUBLAS(cublasDdot(cublasHandle, N, &d_V[k * N], 1, &d_V[i * N], 1, &tmp));
-
-                // vk -= H_{i,j} * vi
-                a = -tmp;
-                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_V[i * N], 1, &d_V[k * N], 1));
-            }
-
-            // now normalize it again vk /= |vk|
-            T nrm;
-            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &nrm));
-            T inrm = 1.0 / nrm;
-            CHECK_CUBLAS(cublasDscal(cublasHandle, N, &inrm, &d_V[k * N], 1));
-
-            // also set g_k = v_k^T r_0
+            // g[k] = <w, r0>, rest of g was zeroed out, this comes from g = V^T r0 and dense part
+            // is zero, past k is zero bc no V there yet and will be orthog to it
+            CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_w, 1, d_resid, 1, &beta));
             g[k] = beta;
         }
 
-        // start at k (0-based) if restart, less new iterations with restarted cases
         int start = irestart == 0 ? 0 : k;
 
         // then begin main GMRES iteration loop!
         for (int j = start; j < m; j++, total_iter++) {
-            // current subspace size if exit early
-            mm = j;
-
             // compute w = A * v
             // -----------------
-            if constexpr (right_precond) {
+            CHECK_CUDA(cudaMemcpy(d_w, &d_V[j * N], N * sizeof(T), cudaMemcpyDeviceToDevice));
+
+            if constexpr (use_precond) {
                 // first compute U^-1 L^-1 vj => tmp
-                a = 1.0;
-                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-                    cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L, d_vals_ILU0, d_rowp,
-                    d_cols, block_dim, info_L, &d_V[j * N], d_tmp, policy_L, pBuffer));
-                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-                    cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U, d_vals_ILU0, d_rowp,
-                    d_cols, block_dim, info_U, d_tmp, d_tmp2, policy_U, pBuffer));
-
-                // then compute A * tmp => w, so in full w = A * M^-1 * vj
-                a = 1.0, b = 0.0;
-                CHECK_CUSPARSE(cusparseDbsrmv(
-                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb,
-                    mb, nnzb, &a, descrA, d_vals, d_rowp, d_cols, block_dim, d_tmp2, &b, d_w));
-            }
-
-            if constexpr (left_precond) {
-                // compute A * vj => w
-                a = 1.0, b = 0.0;
-                CHECK_CUSPARSE(cusparseDbsrmv(
-                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb,
-                    mb, nnzb, &a, descrA, d_vals, d_rowp, d_cols, block_dim, &d_V[j * N], &b, d_w));
-
-                // compute U^-1 * L^-1 * w => w
                 a = 1.0;
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
                     cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L, d_vals_ILU0, d_rowp,
@@ -343,149 +246,99 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
                     d_cols, block_dim, info_U, d_tmp, d_w, policy_U, pBuffer));
             }
 
-            // orthogonalize w against previous search directions (Gram-Schmidt)
-            // -----------------------------------------------------------------
+            // then compute A * tmp => w, so in full w = A * M^-1 * vj
+            a = 1.0, b = 0.0;
+            CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
+                nnzb, &a, descrA, d_vals, d_rowp, d_cols, block_dim, d_w, &b, d_tmp));
+            CHECK_CUDA(cudaMemcpy(d_w, d_tmp, N * sizeof(T), cudaMemcpyDeviceToDevice));
 
-            // TODO : could add householder and modified GS with reorthogonalization here too
-            if constexpr (modifiedGS) {
-                // modified GS is more numerically stable but more flops than classical
-                for (int i = 0; i < j + 1; i++) {
-                    // compute H_{i,j} = <vi, w>
-                    CHECK_CUBLAS(
-                        cublasDdot(cublasHandle, N, d_w, 1, &d_V[i * N], 1, &H[m * i + j]));
-                    if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[m * i + j]);
+            /* modified GS orthogonalization of w against prev vi */
+            for (int i = 0; i < j + 1; i++) {
+                T *vi = &d_V[i * N];
+                // compute H_{i,j} = <vi, w>
+                CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_w, 1, vi, 1, &H[m * i + j]));
+                // if (debug) printf("H[%d,%d] = %.9e\n", i, j, H[m * i + j]);
 
-                    // w -= H_{i,j} * vi
-                    a = -H[m * i + j];
-                    CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_V[i * N], 1, d_w, 1));
-                }
-            } else {
-                // TODO : could implement classical GS like in regular GMRES, but then I need
-                // H on the device.. prob not worth it (classical GS was slower because orthog less
-                // accurate, despite less flops)
-                printf("classical GS not implemented in deflated GMRES yet..\n");
+                // w -= H_{i,j} * vi
+                a = -H[m * i + j];
+                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, vi, 1, d_w, 1));
             }
 
             // compute H_{j+1,j} = || w ||
             CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_w, 1, &H[m * (j + 1) + j]));
 
-            // compute v_{j+1} = w / || w ||
-            a = 1.0 / H[m * (j + 1) + j];  // fine to add in because V mat zeroed out each restart
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_w, 1, &d_V[(j + 1) * N], 1));
+            // normalize w
+            T nrm_w = H[m * (j + 1) + j];
+            T inrm_w = 1.0 / nrm_w;
+            CHECK_CUBLAS(cublasDscal(cublasHandle, N, &inrm_w, d_w, 1));
 
-            // apply Givens rotations to Hessenberg matrix
-            for (int i = 0; i < j; i++) {
-                T temp = H[m * i + j];
-                H[m * i + j] = cs[i] * H[m * i + j] + ss[i] * H[m * (i + 1) + j];
-                H[m * (i + 1) + j] = -ss[i] * temp + cs[i] * H[m * (i + 1) + j];
-            }
-
-            // apply Givens rotations to Hessenberg RHS
-            T H1 = H[m * j + j], H2 = H[m * (j + 1) + j];
-            cs[j] = H1 / sqrt(H1 * H1 + H2 * H2);
-            ss[j] = cs[j] * H2 / H1;
-            g[j + 1] = -ss[j] * g[j];
-            g[j] *= cs[j];
-
-            // compute new entries in the Hessenberg matrix for vj
-            H[m * j + j] = cs[j] * H[m * j + j] + ss[j] * H[m * (j + 1) + j];
-            H[m * (j + 1) + j] = 0.0;
-
-            // printf("H:");
-            // printVec<T>(m * m, H);
-
-            // printf("GMRES iter %d : resid %.9e\n", j, nrm_w);
-            if (can_print && (j % print_freq == 0))
-                printf("GMRES iter %d : resid %.9e\n", j, abs(g[j + 1]));
-
-            if (debug) printf("j=%d, g[j]=%.9e, g[j+1]=%.9e\n", j, g[j], g[j + 1]);
-
-            if (abs(g[j + 1]) < (abs_tol + beta * rel_tol)) {
-                if (can_print)
-                    printf("GMRES converged in %d iterations to %.9e resid\n", j + 1, g[j + 1]);
-                converged = true;
-                break;
-            }
+            // copy w into v_{j+1}
+            CHECK_CUDA(cudaMemcpy(&d_V[(j + 1) * N], d_w, N * sizeof(T), cudaMemcpyDeviceToDevice));
         }  // end of inner loop for Krylov subspace
 
-        // now solve Householder triangular system H * y = g of size mm x mm
-        //     (where mm might be less than m if exit early)
-        for (int i = mm - 1; i >= 0; i--) {
-            T num = g[i];
-            // subtract previous solved y terms
-            for (int j = i + 1; j < mm; j++) {
-                num -= H[m * i + j] * y[j];
-            }
-            y[i] = num / H[m * i + i];
-        }
+        // copy H into Htmp (since it LU factors in place and will mess up later computations)
+        memcpy(Htmp, H, m * m * sizeof(T));
 
-        // printf("y:");
-        // printVec<T>(mm, y);
+        // see cuda_examples/gmres/_gmres_util.py : gmres_dr() method
+        // for some reason solving H[m x m] * y = g[m x 1] works better than least-squares.. revisit
+        // later because supposed to be a least-squares solve of m+1 x m dimension
+        int *ipiv = (int *)malloc(m * sizeof(int));
+        int info = LAPACKE_dgesv(LAPACK_ROW_MAJOR, m, 1, Htmp, m, ipiv, g, 1);
+        // overwrites g to solution y in place
+        memcpy(y, g, m * sizeof(T));
 
         // compute update x = x0 + V * y
         // -----------------------------
 
-        if constexpr (left_precond) {
-            for (int j = 0; j < mm; j++) {
-                a = y[j];
-                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_V[j * N], 1, d_x, 1));
-            }
+        CHECK_CUDA(cudaMemset(d_tmp, 0.0, N * sizeof(T)));
+        for (int j = 0; j < m; j++) {
+            a = y[j];
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_V[j * N], 1, d_tmp, 1));
         }
 
-        if constexpr (right_precond) {
+        if constexpr (use_precond) {
             // now compute matrix product xR = V * y (the preconditioned solution first)
-            for (int j = 0; j < mm; j++) {
-                a = y[j];
-                CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, &d_V[j * N], 1, d_xR, 1));
-            }
 
             // compute U^-1 L^-1 * xR => x
             a = 1.0;
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
                                                  descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
-                                                 info_L, d_xR, d_tmp, policy_L, pBuffer));
+                                                 info_L, d_tmp, d_tmp2, policy_L, pBuffer));
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
                                                  descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
-                                                 info_U, d_tmp, d_x, policy_U, pBuffer));
+                                                 info_U, d_tmp2, d_tmp, policy_U, pBuffer));
         }
+        a = 1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_x, 1));
 
-        // exits here if out of steps or if converged
-        if (converged || !(total_iter < max_iter)) break;
+        /* check residual and convergence here, exit if done */
+        // compute r0 = b - A * x
+        CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
+        a = 1.0, b = 0.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
+                                      d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
+        a = -1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &beta));
+        printf("GMRES-DR [%d]: resid %.8e\n", total_iter, beta);
+        if (beta < (abs_tol + init_resid * rel_tol)) {
+            printf("GMRES-DR converged in %d iters to %.8e resid\n", total_iter, beta);
+            break;
+        }
 
         // compute Ritz eigenvectors for deflated GMRES
         // --------------------------------------------
 
-        // copy H into HT of size mm
-        for (int i = 0; i < mm; i++) {
-            for (int j = 0; j < mm; j++) {
-                HT[mm * i + j] = H[m * j + i];
-            }
-        }
+        // solve H * z = lambda * z regular eigenvalue problem
+        // more numerically stable than least-squares eig value Hbar^T * Hbar * z = lam * H^T * z
+        int info2 = LAPACKE_dgeev(
+            LAPACK_ROW_MAJOR, 'N', 'V', m, H, m, wr, wi, nullptr, m, vr, m  // right eigenvectors
+        );
 
-        // compute H^T H matrix of size m since it didn't converge
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, m, m, m, 1.0, H, m, H, m, 0.0, HTH, m);
-
-        // solve gen eigenvalue problem (HT * H) * Z = lambda * HT * Z
-        // int info;
-        int info = LAPACKE_dggev(LAPACK_ROW_MAJOR, 'N', 'V', m, HTH, m, HT, m, alphaR, alphaI,
-                                 betav, VL, m, VR, m);
-        if (info != 0) {
-            printf("Eigenvalue solve failed with info = %d\n", info);
-        }
-
-        // printf("VR0:");
-        // printVec<T>(m * k, VR);
-
-        // normalize first k Ritz vectors in VR (stored in column major format)
-        for (int i = 0; i < k; i++) {
-            T inrm = 1.0 / (cblas_dnrm2(m, &VR[i * m], 1) + 1e-14);
-            cblas_dscal(m, inrm, &VR[i * m], 1);
-        }
-
-        // load VR => Z_k host to device (column major)
-        CHECK_CUDA(cudaMemcpy(Z, VR, k * m * sizeof(T), cudaMemcpyHostToDevice));
-
-        // printf("here2\n");
+        /* load vr into Z_k host to device (col-major) */
+        CHECK_CUDA(cudaMemcpy(Z, vr, k * m * sizeof(T), cudaMemcpyHostToDevice));
 
         // now compute Phi = V_{m} * Z_k where Z_k is an mxk matrix and then Phi is {Nxk}
         // here cublasDgemv takes in mat that is stored in column-major format (which this is)
@@ -497,76 +350,44 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
         // printf("VR:");
         // printVec<T>(m * k, VR);
 
-        // then copy Phi into d_V again
-        CHECK_CUDA(cudaMemcpy(d_V, d_Phi, k * m * sizeof(T), cudaMemcpyDeviceToDevice));
+        /* compute new Krylov basis */
+        // V[:,:k] = Phik [k x N size]
+        CHECK_CUDA(cudaMemcpy(d_V, d_Phi, k * N * sizeof(T), cudaMemcpyDeviceToDevice));
+        // V[:,k] = V[:,m]
+        CHECK_CUDA(cudaMemcpy(&d_V[k * N], &d_V[m * N], N * sizeof(T), cudaMemcpyDeviceToDevice));
+        // zero out V[:,k+1:]
+        CHECK_CUDA(cudaMemset(&d_V[(k + 1) * N], 0.0, (m - k) * N * sizeof(T)));
 
-        // also compute new starting H matrix on host
+        /* compute new Hessenberg matrix */
+
+        // first copy H into Htmp
+        T beta2 = H[m * m + m - 1];  // beta = H[m,m-1] last entry
         // compute Z_k^T H_{m,m} Z_k for restarted Hessenberg (last k+1 row is zero)
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, k, m, m, 1.0, VR, m, H, m, 0.0, HTH,
-                    m);  // flip transposes on Z because it is col major
-        // then HTH_temp * Zk again respecting row and col major
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, k, k, m, 1.0, HTH, m, VR, m, 0.0, HT,
-                    k);
-
-        // printf("here4\n");
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, k, m, m, 1.0, vr, m, H, m, 0.0, Htmp,
+                    m);  // flip transposes on vr aka Z_k because it is col major
+        // then Htmp * Zk again respecting row and col major
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, k, k, m, 1.0, Htmp, m, vr, m, 0.0,
+                    Htmp2, k);
 
         // zero out H matrix
         memset(H, 0.0, (m + 1) * m * sizeof(T));
 
-        // copy kxk part stored in HT to full rank m+1 x m matrix in H
+        // copy Htmp2 as Hk => H[:k,:k], since Htmp2 stored as kxk above in buffer
         for (int i = 0; i < k; i++) {
             for (int j = 0; j < k; j++) {
-                H[m * i + j] = HT[k * i + j];
+                H[m * i + j] = Htmp2[k * i + j];
             }
         }
 
-        // printf("H[k x k]:");
-        // printVec<T>(k * k, HT);
+        // finally copy out beta * Zk[m,:] into H[k,:k] part, with vr equiv to Zk on host
+        for (int j = 0; j < k; j++) {
+            // recall vr is col-major and this goes over columns
+            H[m * k + j] = beta2 * vr[k * m + j];
+        }
+    }  // end of outer restart loop
 
-        // the k+1th row in restart h_{m+1,m} * em^T Z_k should be zero
-        // the new Hessenberg RHS c = V_{m+1}'^T r_0 is computed in restart (see start of restart
-        // code)
-
-    }  // end of outer iterations
-
-    // check final residual
-    // --------------------
-
-    // compute final residual r(x) = b - Ax
-    CHECK_CUDA(cudaMemcpy(d_resid, d_rhs, N * sizeof(T), cudaMemcpyDeviceToDevice));
-    a = 1.0, b = 0.0;
-    CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
-                                  CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrA,
-                                  d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_tmp));
-    a = -1.0;
-    CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp, 1, d_resid, 1));
-    T final_resid;
-    CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_resid));
-
-    // now apply preconditioner to the residual
-    if constexpr (left_precond) {
-        // zero vec_tmp
-        CHECK_CUDA(cudaMemset(d_tmp, 0.0, N * sizeof(T)));
-
-        // ILU solve U^-1 L^-1 * b
-        // L^-1 * b => tmp
-        a = 1.0;
-        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
-                                             d_vals_ILU0, d_rowp, d_cols, block_dim, info_L,
-                                             d_resid, d_tmp, policy_L, pBuffer));
-
-        // U^-1 * tmp => into rhs
-        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
-                                             d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_tmp,
-                                             d_resid, policy_U, pBuffer));
-    }
-
-    T final_precond_resid;
-    CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_precond_resid));
-
-    if (can_print)
-        printf("GMRES converged to %.4e resid, %.4e precond resid in %d iterations\n", final_resid,
-               final_precond_resid, total_iter);
+    // report final #iters and resid
+    if (can_print) printf("GMRES-DR converged to %.4e resid in %d iterations\n", beta, total_iter);
 
     // cleanup and inverse permute the solution for exit
     // -------------------------------------------------
@@ -585,10 +406,8 @@ void GMRES_DR_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &
     // free resources on host
     free(H);
     free(g);
-    free(cs);
-    free(ss);
-    free(HT);
-    free(HTH);
+    free(Htmp);
+    free(Htmp2);
     free(y);
 
     // TODO : still missing a few free / delete[] statements

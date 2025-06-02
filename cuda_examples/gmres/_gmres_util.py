@@ -547,7 +547,7 @@ def gmres_dr(A, b, x0=None, tol=1e-8, m=30, k=10, max_iter=300, M=None):
     H = np.zeros((m+1, m)) # upper Hessenberg (nearly triang)
     Htmp = np.zeros((m+1, m))
     # would need an Htemp storage here
-    g = np.zeros(m+1)
+    g = np.zeros((m+1,))
     Zk = None
 
     converged = False
@@ -565,8 +565,9 @@ def gmres_dr(A, b, x0=None, tol=1e-8, m=30, k=10, max_iter=300, M=None):
             w = V[:,0]
             start = 0
         else: # restarting with deflation
-            g = V.T @ r0 # basically c = V^T r0 part
+            # g = V[:,:m].T @ r0 # basically c = V^T r0 part
             # could also do g[k] = <w, r0> most of the time, you choose
+            g[k] = np.dot(w, r0)
             start = k
 
         # starts later if deflated
@@ -579,20 +580,26 @@ def gmres_dr(A, b, x0=None, tol=1e-8, m=30, k=10, max_iter=300, M=None):
             # Modified GS, compute new H column
             for i in range(j + 1):
                 H[i, j] = np.dot(V[:, i], w)
+                # print(f"H[{i},{j}]={H[i,j]}")
                 w -= H[i, j] * V[:, i]
 
             # update w => v_{j+1}
             H[j+1, j] = np.linalg.norm(w)
-            V[:, j+1] = w / H[j+1, j]
+            w = w / H[j+1, j]
+            V[:, j+1] = w
 
         # solve the least-squares Hessenberg system (though has dense subblock in it now)
-        y = np.linalg.solve(H[:j+1,:j+1], g[:j+1])
-        # least-squares solution gives worse solution, not sure why (and worse conv)
-        # y = np.linalg.lstsq(H[:j+2,:j+1], g[:j+1])
-        # y, residuals, rank, s = np.linalg.lstsq(H[:j+2,:j+1], g[:j+2], rcond=None)
+        y = np.linalg.solve(H[:m,:], g[:m])
+        # least-squares solution was worse, not sure why (and worse conv)
+        # see prototype gmres_dr below if you want
+        # print(f"{H.shape=} {g.shape=}")
+        # y, *_ = np.linalg.lstsq(H, g, rcond=None)
+
+        # for i in range(m):
+        #     print(f"H[{i},:] = {H[i,:]}")
 
         # Update solution
-        z = V[:,:j+1] @ y
+        z = V[:,:m] @ y
         z = M_inv(z) # right precond
         x += z
 
@@ -607,9 +614,9 @@ def gmres_dr(A, b, x0=None, tol=1e-8, m=30, k=10, max_iter=300, M=None):
         if converged: break
 
         # cleaned up version
-        _, eigvecs = np.linalg.eig(H[:j+1, :j+1])
+        _, eigvecs = np.linalg.eig(H[:m, :])
         Zk = eigvecs[:,:k]
-        Phik = V[:, :j+1] @ Zk
+        Phik = V[:, :m] @ Zk
 
         # set new Krylov basis
         V[:,:k] = Phik
@@ -617,8 +624,8 @@ def gmres_dr(A, b, x0=None, tol=1e-8, m=30, k=10, max_iter=300, M=None):
         V[:,k+1:] = 0.0
 
         # update Hessenberg matrix
-        Htmp = H[:j+1, :j+1].copy()
-        beta = H[j+1, j]
+        Htmp = H[:m, :m].copy()
+        beta = H[m, m-1]
         H[:k,:k] = Zk.T @ Htmp @ Zk
         H[k,:k] = beta * Zk[-1,:]
 
