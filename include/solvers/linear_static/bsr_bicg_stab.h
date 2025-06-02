@@ -22,6 +22,9 @@ template <typename T, bool use_precond = true>
 void BiCGStab_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                     int _n_iter = 100, T abs_tol = 1e-8, T rel_tol = 1e-8, bool can_print = false,
                     bool debug = false, int print_freq = 10) {
+    static_assert(std::is_same<T, double>::value,
+                  "Only double precision is written in our code for cuSparse BiCGStab");
+
     auto start = std::chrono::high_resolution_clock::now();
     auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
 

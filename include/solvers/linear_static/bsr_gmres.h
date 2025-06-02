@@ -14,13 +14,17 @@
 
 namespace CUSPARSE {
 
-template <typename T, bool right = false, bool modifiedGS = true, bool use_precond = true>
+template <typename T, bool right = true, bool modifiedGS = true, bool use_precond = true>
 void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                  int _n_iter = 100, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
                  bool can_print = false, bool debug = false, int print_freq = 10) {
     /* GMRES iterative solve using a BsrMat on GPU with CUDA / CuSparse
         only supports T = double right now, may add float at some point (but float won't
        converge as deeply the residual, only about 1e-7) */
+    static_assert(std::is_same<T, double>::value,
+                  "Only double precision is written in our code for cuSparse BSR GMRES with "
+                  "Modified Gram-Schmidt");
+
     auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
 
     // which type of preconditioners
@@ -538,5 +542,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     if (can_print) {
         printf("\tfinished in %.4e sec\n", dt);
     }
-}
+}  // end of GMRES BSR
+
 };  // namespace CUSPARSE

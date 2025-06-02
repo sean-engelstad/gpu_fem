@@ -16,15 +16,19 @@ namespace CUSPARSE {
 
 template <typename T>
 void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
-                     bool can_print = false) {
+                     bool can_print = true) {
     /* direct LU solve => performs LU factorization then L and U triangular solves.
         Best for solving with same matrix and multiple rhs vectors such as aeroelastic + linear
        structures Although need to check LU factorization held in place correctly and boolean to not
        refactorize maybe */
+
+    static_assert(std::is_same<T, double>::value,
+                  "Only double precision is written in our code for cuSparse direct LU solve");
+
     auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
 
     if (can_print) {
-        printf("begin cusparse direct LU solve\n");
+        printf("direct LU cusparse solve\n");
     }
     auto start = std::chrono::high_resolution_clock::now();
 

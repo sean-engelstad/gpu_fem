@@ -115,8 +115,8 @@ void test_GMRES_plate(std::string ordering, std::string fill_type, bool print = 
     // test get residual in cusparse also (debug)
     assembler.add_jacobian(res, kmat);
     assembler.apply_bcs(kmat);
-    T resid2 = get_resid<T>(kmat, loads, soln);
-    if (print) printf("cusparse resid norm = %.4e\n", resid_norm);
+    // T resid2 = get_resid<T>(kmat, loads, soln);
+    // if (print) printf("cusparse resid norm = %.4e\n", resid2);
 
     // report test result ------------------
     std::string testName = "GMRES plate solve, with ";

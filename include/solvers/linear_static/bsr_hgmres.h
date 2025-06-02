@@ -16,6 +16,9 @@ void HGMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &so
             gmres_householder() of p. 160 Saad, Sparse Linear Systems
      */
 
+    static_assert(std::is_same<T, double>::value,
+                  "Only double precision is written in our code for cuSparse Householder GMRES");
+
     auto start = std::chrono::high_resolution_clock::now();
 
     // apply permutations to incoming vecs (rhs and initial soln x0)

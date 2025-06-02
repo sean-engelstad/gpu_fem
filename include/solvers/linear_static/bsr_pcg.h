@@ -18,6 +18,9 @@ template <typename T, bool right = false, bool modifiedGS = true, bool use_preco
 void PCG_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln, int _n_iter = 100,
                T abs_tol = 1e-8, T rel_tol = 1e-8, bool can_print = false, bool debug = false,
                int print_freq = 10, int _max_iter = -1) {
+    static_assert(std::is_same<T, double>::value,
+                  "Only double precision is written in our code for cuSparse PCG");
+
     /* PCG (Preconditioned Conjugate Gradient) algorithm */
 
     auto start = std::chrono::high_resolution_clock::now();
