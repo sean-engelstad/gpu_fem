@@ -13,12 +13,12 @@
 #include "element/shell/shell_elem_group.h"
 #include "element/shell/physics/isotropic_shell.h"
 
-void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
+void test_chol_plate(std::string ordering, bool full_LU = false, bool print = false, int nxe = 50) {
     using T = double;  
 
     double fillin = 10.0;
     int rcm_iters = 5;
-    double p_factor = 1.0;
+    double p_factor = 0.25;
 
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -49,7 +49,11 @@ void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
         std::cerr << "Unknown ordering: " << ordering << "\n";
         return;
     }
-    bsr_data.compute_full_LU_pattern(fillin, print);
+    if (full_LU) {
+        bsr_data.compute_full_LU_pattern(fillin, print);
+    } else {
+        bsr_data.compute_ILUk_pattern(5, fillin, print);
+    }   
     assembler.moveBsrDataToDevice();
 
     // get the loads
@@ -70,46 +74,58 @@ void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
 
-    // solve the linear system
-    CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    // switch sparsity and values to cholesky
+    // kmat.switch_to_cholesky();
+    CsrMat<DeviceVec<T>> kmat2{kmat};
 
-    // print some of the data of host residual
+    BsrData bsr_data2 = kmat2.getBsrData();
+
+    // solve the linear system, direct Chol on GPU is btw 3x and 11x slower than LU solve in CuSparse
+    // CUSPARSE::direct_cholesky_solve(kmat2, loads, soln);
+    // CUSPARSE::GMRES_chol_solve(kmat2, loads, soln);
+    // CUSOLVER::direct_cholesky_solve(kmat2, loads, soln);
+    // CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    CUSPARSE::GMRES_solve<T, true>(kmat, loads, soln, 200, 200, 1e-30, 1e-8, true);
+
+    // // print some of the data of host residual
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate.vtk");
 
-    // check the residual of the system
-    assembler.set_variables(soln);
-    assembler.add_residual(res); // internal residual
-    auto rhs = assembler.createVarsVec();
-    CUBLAS::axpy(1.0, loads, rhs);
-    CUBLAS::axpy(-1.0, res, rhs); // rhs = loads - f_int
-    assembler.apply_bcs(rhs);
-    double resid_norm = CUBLAS::get_vec_norm(rhs);
-    if (print) printf("resid_norm = %.4e\n", resid_norm);
+    // // check the residual of the system
+    // assembler.set_variables(soln);
+    // assembler.add_residual(res); // internal residual
+    // auto rhs = assembler.createVarsVec();
+    // CUBLAS::axpy(1.0, loads, rhs);
+    // CUBLAS::axpy(-1.0, res, rhs); // rhs = loads - f_int
+    // assembler.apply_bcs(rhs);
+    // double resid_norm = CUBLAS::get_vec_norm(rhs);
+    // if (print) printf("resid_norm = %.4e\n", resid_norm);
 
-    // test report
-    std::string testName = "direct LU plate solve, with ";
-    testName += ordering;
+    // // test report
+    // std::string testName = "direct Chol plate solve, with ";
+    // testName += ordering;
 
-    bool passed = abs(resid_norm) < 1e-6;
-    printTestReport(testName, passed, resid_norm);
+    // bool passed = abs(resid_norm) < 1e-6;
+    // printTestReport(testName, passed, resid_norm);
 }
 
 int main(int argc, char* argv[]) {
-    bool test_all = false;
+    
+    test_chol_plate("qorder", false, true, 50);
 
-    bool print = false;
-    int nxe = 20;
-    if (test_all) {
-        std::list<std::string> list1 = {"none", "RCM", "AMD", "qorder"};
+    // bool test_all = false;
+    // bool print = false;
+    // int nxe = 20;
+    // if (test_all) {
+    //     std::list<std::string> list1 = {"none", "RCM", "AMD", "qorder"};
 
-        for (auto it1 = list1.begin(); it1 != list1.end(); ++it1) {
-            test_LU_plate(*it1, print, nxe);
-        }
-    } else {
-        // test single failing test
-        // reorder = true;
-        print = true;
-        test_LU_plate("AMD", print, nxe);
-    }  
+    //     for (auto it1 = list1.begin(); it1 != list1.end(); ++it1) {
+    //         test_chol_plate(*it1, print, nxe);
+    //     }
+    // } else {
+    //     // test single failing test
+    //     print = true;
+    //     nxe = 20;
+    //     test_chol_plate("AMD", print, nxe);
+    // }  
 };

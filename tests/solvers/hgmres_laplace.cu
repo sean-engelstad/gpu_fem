@@ -1,6 +1,6 @@
 #include "utils/_laplace_utils.h"
 #include "linalg/_linalg.h"
-#include "solvers/_solvers.h"
+#include "solvers/linear_static_cusparse.h"
 #include "../test_commons.h"
 
 int main() {
@@ -25,15 +25,12 @@ int main() {
 
     // case inputs
     // -----------
-    // int N = 64; // 16384
-    // int N = 196;
-    int N = 1024;
     // int N = 16384;
+    int N = 64; // 16384
     int n_iter = min(N, 200);
-    int max_iter = 100;
+    int max_iter = min(N, 200);
     constexpr bool use_precond = true;
-    constexpr bool right = false; // right or left preconditioning
-    T abs_tol = 1e-30, rel_tol = 1e-10;
+    T abs_tol = 1e-7, rel_tol = 1e-8;
     bool print = true;
 
     // NOTE : starting with BSR matrix of block size 1 (just to demonstrate the correct cusparse methods for BSR)
@@ -105,20 +102,13 @@ int main() {
     auto soln_vec = DeviceVec<T>(N, d_x);
 
     bool debug = true;
+    int print_freq = 3;
 
     // now call GMRES algorithm
-    // CUSPARSE::GMRES_solve<T, use_precond, right>(mat, rhs_vec, soln_vec, n_iter, max_iter, abs_tol, rel_tol, print);
-    CUSPARSE::GMRES_DR_solve<T, use_precond>(mat, rhs_vec, soln_vec, 30, 10, 60, abs_tol, rel_tol, print, debug);
+    CUSPARSE::HGMRES_solve<T, use_precond>(mat, rhs_vec, soln_vec, n_iter, max_iter, abs_tol, rel_tol, print, debug, print_freq);
 
     // now check soln error?
-    T max_rel_err = 0.0;
-    bool passed = true;
-    if (N == 64) {
-        max_rel_err = rel_err(soln_vec, true_soln);
-        passed = EXPECT_VEC_NEAR(soln_vec, true_soln);
-    } else {
-        printf("warning test inactive for N != 64\n");
-    }
-    
+    T max_rel_err = rel_err(soln_vec, true_soln);
+    bool passed = EXPECT_VEC_NEAR(soln_vec, true_soln, 1e-6);
     printTestReport("GMRES N=16 Laplace test", passed, max_rel_err);
 }

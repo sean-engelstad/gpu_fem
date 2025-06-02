@@ -12,6 +12,7 @@ class BsrMat {
    public:
     using T = typename Vec_::type;
     using Vec = Vec_;
+    BsrMat() = default;
 #ifdef USE_GPU
     static constexpr dim3 bcs_block = dim3(32);
     static constexpr dim3 nodes_block = dim3(32);
@@ -199,7 +200,7 @@ class BsrMat {
                                                 const int32_t *elem_conn, const T *elem_mat);
 
    private:
-    const BsrData bsr_data;
+    BsrData bsr_data;  // was const before
     Vec values;
 };
 

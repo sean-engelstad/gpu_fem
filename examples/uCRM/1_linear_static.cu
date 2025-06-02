@@ -9,7 +9,10 @@
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
 
-int main() {
+int main(int argc, char **argv) {
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
   using T = double;
 
   // problem inputs ----
@@ -20,7 +23,7 @@ int main() {
 
   // uCRM mesh files can be found at:
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
-  TACSMeshLoader<T> mesh_loader{};
+  TACSMeshLoader mesh_loader{comm};
   mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
   // mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
 
@@ -54,7 +57,7 @@ int main() {
     // bsr_data.RCM_reordering();
     bsr_data.AMD_reordering();
     // bsr_data.qorder_reordering(1.0, 10); // qordering not working well for some reason..
-    bsr_data.compute_ILUk_pattern(10, fillin);
+    bsr_data.compute_ILUk_pattern(13, fillin); // 10, 20 (for BiCGStab)
     // bsr_data.compute_full_LU_pattern(fillin, print);
   }
   assembler.moveBsrDataToDevice();
@@ -87,12 +90,14 @@ int main() {
   if (full_LU) {
       CUSPARSE::direct_LU_solve(kmat, loads, soln);
   } else {
-      int n_iter = 300, max_iter = 300;
-      // T abs_tol = 1e-11, rel_tol = 1e-15;
-      T abs_tol = 1e-8, rel_tol = 1e-8;
+      int n_iter = 200, max_iter = 200;
+      T abs_tol = 1e-11, rel_tol = 1e-15;
       bool print = true;
-      constexpr bool right = true;
-      CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      constexpr bool right = false, modifiedGS = true; // better with modifiedGS true, yeah it is..
+      // CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      // CUSPARSE::BiCGStab_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
+      CUSPARSE::PCG_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
+      // CUSPARSE::GMRES_DR_solve<T, right, modifiedGS>(kmat, loads, soln, 4, 2, 8, abs_tol, rel_tol, print, true, 1);
   }
 
   // print some of the data of host residual
@@ -100,47 +105,47 @@ int main() {
   printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "uCRM.vtk");
 
   // check the residual of the system
-  assembler.set_variables(soln);
-  assembler.add_residual(res);  // internal residual
+  // assembler.set_variables(soln);
+  // assembler.add_residual(res);  // internal residual
+  // // assembler.add_jacobian(res, kmat);
+  // auto rhs = assembler.createVarsVec();
+  // CUBLAS::axpy(1.0, loads, rhs);
+  // CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
+  // assembler.apply_bcs(rhs);
+  // double resid_norm = CUBLAS::get_vec_norm(rhs);
+  // printf("resid_norm = %.4e\n", resid_norm);
+
+  // int block_dim = bsr_data.block_dim;
+  // int *iperm = bsr_data.iperm;
+  // assembler.apply_bcs(res);
+  // auto h_res = res.createPermuteVec(block_dim, iperm).createHostVec();
+  // auto h_rhs = rhs.createPermuteVec(block_dim, iperm).createHostVec();
+  // int NPRINT = 100;
+  // printf("add_res\nr(u): ");
+  // printVec<T>(NPRINT, h_res.getPtr());
+  // printf("r(u)-b: ");
+  // printVec<T>(NPRINT, h_rhs.getPtr());
+
+  // // baseline norm (with zero soln, just loads essentially)
+  // rhs.zeroValues();
+  // CUBLAS::axpy(1.0, loads, rhs);
+  // assembler.apply_bcs(rhs);
+  // double init_norm = CUBLAS::get_vec_norm(rhs);
+  // printf("init_norm = %.4e\n", init_norm);
+
+  // auto h_rhs2 = rhs.createHostVec();
+  // printToVTK<Assembler, HostVec<T>>(assembler, h_rhs2, "uCRM-rhs.vtk");
+
+  // // test get residual here
   // assembler.add_jacobian(res, kmat);
-  auto rhs = assembler.createVarsVec();
-  CUBLAS::axpy(1.0, loads, rhs);
-  CUBLAS::axpy(-1.0, res, rhs);  // rhs = loads - f_int
-  assembler.apply_bcs(rhs);
-  double resid_norm = CUBLAS::get_vec_norm(rhs);
-  printf("resid_norm = %.4e\n", resid_norm);
+  // assembler.apply_bcs(kmat);
+  // T resid2 = CUSPARSE::get_resid<T>(kmat, loads, soln);
+  // printf("cusparse resid norm = %.4e\n", resid2);
 
-  int block_dim = bsr_data.block_dim;
-  int *iperm = bsr_data.iperm;
-  assembler.apply_bcs(res);
-  auto h_res = res.createPermuteVec(block_dim, iperm).createHostVec();
-  auto h_rhs = rhs.createPermuteVec(block_dim, iperm).createHostVec();
-  int NPRINT = 100;
-  printf("add_res\nr(u): ");
-  printVec<T>(NPRINT, h_res.getPtr());
-  printf("r(u)-b: ");
-  printVec<T>(NPRINT, h_rhs.getPtr());
-
-  // baseline norm (with zero soln, just loads essentially)
-  rhs.zeroValues();
-  CUBLAS::axpy(1.0, loads, rhs);
-  assembler.apply_bcs(rhs);
-  double init_norm = CUBLAS::get_vec_norm(rhs);
-  printf("init_norm = %.4e\n", init_norm);
-
-  auto h_rhs2 = rhs.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_rhs2, "uCRM-rhs.vtk");
-
-  // test get residual here
-  assembler.add_jacobian(res, kmat);
-  assembler.apply_bcs(kmat);
-  T resid2 = CUSPARSE::get_resid<T>(kmat, loads, soln);
-  printf("cusparse resid norm = %.4e\n", resid2);
-
-  // debug: run GMRES again starting from scratch to see initial beta
-  int n_iter = 1, max_iter = 1;
-  T abs_tol = 1e-11, rel_tol = 1e-15;
-  CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+  // // debug: run GMRES again starting from scratch to see initial beta
+  // int n_iter = 1, max_iter = 1;
+  // T abs_tol = 1e-11, rel_tol = 1e-15;
+  // CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
 
   // auto h_rhs = rhs.createHostVec();
   // printf("rhs:");
@@ -154,6 +159,6 @@ int main() {
   res.free();
   vars.free();
   h_soln.free();
-  rhs.free();
-  h_rhs.free();
+  // rhs.free();
+  // h_rhs.free();
 };

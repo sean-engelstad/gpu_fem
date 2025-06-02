@@ -12,7 +12,7 @@
 
 int main() {
     // input ----------
-    bool full_LU = true;
+    bool full_LU = false;
 
     // for medium size problems like nxe = 100,
     // the direct LU solve is much faster and has a better residual
@@ -34,8 +34,8 @@ int main() {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    // int nxe = 3;
-    int nxe = 100;
+    int nxe = 40;
+    // int nxe = 100;
     // int nxe = 300;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
@@ -91,8 +91,10 @@ int main() {
     } else {
         int n_iter = 200, max_iter = 400;
         T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = false;
+        bool print = true;
         CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+
+        // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
     }
 
     // print some of the data of host residual

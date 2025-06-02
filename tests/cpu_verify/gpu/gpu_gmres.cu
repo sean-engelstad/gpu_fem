@@ -121,8 +121,9 @@ int main(int argc, char **argv) {
     print = true;
     // T eta_precond = 0.0;
     // T eta_precond = 1e-2;
-    // CUSPARSE::GMRES_solve<T, true, right>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
-    CUSPARSE::HGMRES_solve<T, true>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
+    // CUSPARSE::GMRES_solve<T, right, true, true>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
+    // CUSPARSE::HGMRES_solve<T, true>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
+    CUSPARSE::PCG_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
 
   // free data
   assembler.free();

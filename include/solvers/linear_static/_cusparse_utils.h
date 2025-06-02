@@ -11,15 +11,16 @@
 namespace CUSPARSE {
 
 template <typename T>
-void perform_LU_factorization(cusparseHandle_t handle, cusparseMatDescr_t &descr_L,
-                              cusparseMatDescr_t &descr_U, bsrsv2Info_t &info_L,
-                              bsrsv2Info_t &info_U,
-                              void **pBuffer,  // allows return of allocated pointer
-                              int mb, int nnzb, int blockDim, T *vals, const int *rowp,
-                              const int *cols, const cusparseOperation_t trans_L,
-                              const cusparseOperation_t trans_U,
-                              const cusparseSolvePolicy_t policy_L,
-                              const cusparseSolvePolicy_t policy_U, const cusparseDirection_t dir) {
+void perform_ilu0_factorization(cusparseHandle_t handle, cusparseMatDescr_t &descr_L,
+                                cusparseMatDescr_t &descr_U, bsrsv2Info_t &info_L,
+                                bsrsv2Info_t &info_U,
+                                void **pBuffer,  // allows return of allocated pointer
+                                int mb, int nnzb, int blockDim, T *vals, const int *rowp,
+                                const int *cols, const cusparseOperation_t trans_L,
+                                const cusparseOperation_t trans_U,
+                                const cusparseSolvePolicy_t policy_L,
+                                const cusparseSolvePolicy_t policy_U,
+                                const cusparseDirection_t dir) {
     // performs symbolic and numeric LU or ILU factorization in CUSPARSE
 
     // temp objects for the factorization
@@ -64,7 +65,6 @@ void perform_LU_factorization(cusparseHandle_t handle, cusparseMatDescr_t &descr
     cudaMalloc(pBuffer, pBufferSize);
 
     // perform ILU symbolic factorization on L
-
     CHECK_CUSPARSE(cusparseDbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, vals, rowp, cols,
                                               blockDim, info_M, policy_M, *pBuffer));
     status = cusparseXbsrilu02_zeroPivot(handle, info_M, &structural_zero);
@@ -90,6 +90,69 @@ void perform_LU_factorization(cusparseHandle_t handle, cusparseMatDescr_t &descr
     if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
         printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
     }
+}
+
+template <typename T>
+void perform_ic0_factorization(cusparseHandle_t handle, cusparseSpMatDescr_t &matL,
+                               cusparseSpSVDescr_t &SpSV_L, cusparseSpSVDescr_t &SpSV_LT, int N,
+                               int nnz, int *d_rowp, int *d_cols, T *d_vals,
+                               cusparseDnVecDescr_t &vecB, cusparseDnVecDescr_t &vecY,
+                               cusparseDnVecDescr_t &vecX, void *buffer_L, void *buffer_LT) {
+    /* main incomplete Cholesky factorization script for CSR matrices in new CuSparse API (not BSR
+     * available) */
+
+    /* temp objects needed for factorization only */
+    cusparseMatDescr_t descrA;
+    csric02Info_t info = nullptr;
+    int bufferSize;
+    void *dBuffer = nullptr;
+    size_t bufferSize_L = 0, bufferSize_LT = 0;
+    buffer_L = nullptr, buffer_LT = nullptr;
+
+    // make matrix descriptor used in factorization
+    cusparseCreateMatDescr(&descrA);
+    cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL);
+    cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
+
+    // allocate buffer size and CSR info
+    cusparseCreateCsric02Info(&info);
+    cusparseDcsric02_bufferSize(handle, N, nnz, descrA, d_vals, d_rowp, d_cols, info, &bufferSize);
+    cudaMalloc(&dBuffer, bufferSize);
+
+    // analysis and IC factorization
+    cusparseDcsric02_analysis(handle, N, nnz, descrA, d_vals, d_rowp, d_cols, info,
+                              CUSPARSE_SOLVE_POLICY_NO_LEVEL, dBuffer);
+
+    // Factorization
+    cusparseDcsric02(handle, N, nnz, descrA, d_vals, d_rowp, d_cols, info,
+                     CUSPARSE_SOLVE_POLICY_NO_LEVEL, dBuffer);
+
+    // Lower-triangular matrix matL (from IC0)
+    cusparseCreateCsr(&matL, N, N, nnz, d_rowp, d_cols, d_vals, CUSPARSE_INDEX_32I,
+                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+
+    cusparseSpSV_createDescr(&SpSV_L);
+    cusparseSpSV_createDescr(&SpSV_LT);
+
+    T alpha = 1.0;
+    cusparseSpSV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matL, vecB, vecY,
+                            CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, SpSV_L, &bufferSize_L);
+    cudaMalloc(&buffer_L, bufferSize_L);
+
+    cusparseSpSV_bufferSize(handle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, matL, vecY, vecX,
+                            CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, SpSV_LT, &bufferSize_LT);
+    cudaMalloc(&buffer_LT, bufferSize_LT);
+
+    cusparseSpSV_analysis(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matL, vecB, vecY,
+                          CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, SpSV_L, buffer_L);
+
+    cusparseSpSV_analysis(handle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, matL, vecY, vecX,
+                          CUDA_R_64F, CUSPARSE_SPSV_ALG_DEFAULT, SpSV_LT, buffer_LT);
+
+    // free at end of factorization
+    cudaFree(dBuffer);
+    cusparseDestroyCsric02Info(info);
+    cusparseDestroyMatDescr(descrA);
 }
 
 template <typename T>

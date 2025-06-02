@@ -9,14 +9,17 @@
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
 
-int main() {
+int main(int argc, char **argv) {
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
   using T = double;
 
   auto start0 = std::chrono::high_resolution_clock::now();
 
   // uCRM mesh files can be found at:
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
-  TACSMeshLoader<T> mesh_loader{};
+  TACSMeshLoader mesh_loader{comm};
   mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
   // mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
 
