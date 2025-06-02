@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse.linalg as spla
 import scipy.sparse as spp
+from scipy.linalg import eig
 
 def get_laplace_system(N):
 
@@ -230,7 +231,7 @@ def gmres(A, b, x0=None, tol=1e-8, max_iter=1000, restart=50, M=None):
                 H[j,j] = cs[j] * H[j,j] + ss[j] * H[j+1,j]
                 H[j+1,j] = 0.0
 
-            print(f"iteration {j} : {g[j+1]=}")
+            if (j % 10 == 0): print(f"GMRES [{j}] : {g[j+1]=}")
 
             # Check convergence
             if abs(g[j+1]) < tol:
@@ -329,7 +330,7 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
         z = r
         beta = None # computed in first iteration
 
-        print(f"GMRES : outer iter {_} resid {beta=}")
+        print(f"HGMRES : outer iter {_} resid {beta=}")
         print("begin main search loop\n------------\n")
 
         for j in range(m + 1): # j == 0 is one prelim step unlike Gram-Schmidt version
@@ -431,7 +432,7 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
                 # print(f"p3 {H[:j+1,j-1]=}")
 
                 # print(f"{H[:j+1,:j]=} after")
-                print(f'g[{j}] = {g[j]}')
+                if (j % 10 == 0): print(f'HGMRES [{j}] = {g[j]}')
 
             # Check convergence
             if abs(g[j]) < tol and j > 0 and givens:
@@ -477,11 +478,11 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
         y = np.linalg.solve(H[:j,:j], g[:j])
         # print(f"{y=}")
 
-        print(f"Hessenberg ({j} x {j}) system\n")
-        for i in range(j):
-            print(f"{H[i,:j]}")
-        print(f"\n{g[:j]=}")
-        print(f"\n{y[:j]=}")
+        # print(f"Hessenberg ({j} x {j}) system\n")
+        # for i in range(j):
+        #     print(f"{H[i,:j]}")
+        # print(f"\n{g[:j]=}")
+        # print(f"\n{y[:j]=}")
 
         # compute change in solution reusing reflectors
         z = np.zeros(n)
@@ -490,22 +491,22 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
             ei = np.zeros(n)
             ei[i] = 1.0
             tmp = y[i] * ei + z
-            print(f"y[{i}]={y[i]}\n\t{tmp=}")
+            # print(f"y[{i}]={y[i]}\n\t{tmp=}")
 
             wi = W[:,i]
             z = tmp - 2 * np.dot(tmp, wi) * wi
 
-        print(f"{z=}")
+        # print(f"{z=}")
         # right precond GMRES update here?
         z = M_inv(z)
-        print(f"precond {z=}")
+        # print(f"precond {z=}")
 
-        print(f"pre {x=}")
+        # print(f"pre {x=}")
 
         # update final solution (maybe restarting again)
         x += z
 
-        print(f"post {x=}")
+        # print(f"post {x=}")
 
         # Compute new residual, don't need to compute in final version here only can put in debug block
         # fine here in python version
@@ -515,5 +516,329 @@ def gmres_householder(A, b, x0=None, tol=1e-8, max_iter=1000, m=50, M=None):
             break
 
     print(f"final resid {resid_norm=}")
+
+    return x
+
+def gmres_dr(A, b, x0=None, tol=1e-8, m=30, k=10, max_iter=300, M=None):
+    """
+    deflated GMRES with m subspace size, k deflation eigvecs, max_iter total iterations before exit
+    should reduce orthogonalization cost and reduce memory requirements for larger problems
+    """
+    n = len(b)
+    if x0 is None:
+        x0 = np.zeros(n)
+    
+    if M is None:
+        M_inv = lambda x: x
+    else:
+        # M_inv = spla.LinearOperator((n, n), matvec=lambda x: spla.spsolve(M, x))
+        M_inv = lambda x : M.solve(x)
+
+    x = x0.copy()
+    r0 = M_inv(b - (A @ x))
+    beta = np.linalg.norm(r0)
+    print(f"{beta=}")
+    
+    if beta < tol:
+        return x
+    
+    # save in perm storage, cause we don't want to zero out in each loop, need to thick restart
+    V = np.zeros((n, m+1))
+    H = np.zeros((m+1, m)) # upper Hessenberg (nearly triang)
+    Htmp = np.zeros((m+1, m))
+    # would need an Htemp storage here
+    g = np.zeros(m+1)
+    Zk = None
+
+    converged = False
+
+    total_iter = 0
+    while (total_iter < max_iter):
+        
+        # fine to zero out cs, ss, and g each new restart
+        g *= 0.0
+
+        # Start Arnoldi process
+        if total_iter == 0: # first time through or irestart == 0 basically
+            V[:, 0] = r0 / beta
+            g[0] = beta
+            w = V[:,0]
+            start = 0
+        else: # restarting with deflation
+            g = V.T @ r0 # basically c = V^T r0 part
+            # could also do g[k] = <w, r0> most of the time, you choose
+            start = k
+
+        # starts later if deflated
+        for j in range(start, m):
+            total_iter += 1
+            # right precond
+            w = M_inv(w) 
+            w = A @ V[:, j]
+
+            # Modified GS, compute new H column
+            for i in range(j + 1):
+                H[i, j] = np.dot(V[:, i], w)
+                w -= H[i, j] * V[:, i]
+
+            # update w => v_{j+1}
+            H[j+1, j] = np.linalg.norm(w)
+            V[:, j+1] = w / H[j+1, j]
+
+        # solve the least-squares Hessenberg system (though has dense subblock in it now)
+        y = np.linalg.solve(H[:j+1,:j+1], g[:j+1])
+        # least-squares solution gives worse solution, not sure why (and worse conv)
+        # y = np.linalg.lstsq(H[:j+2,:j+1], g[:j+1])
+        # y, residuals, rank, s = np.linalg.lstsq(H[:j+2,:j+1], g[:j+2], rcond=None)
+
+        # Update solution
+        z = V[:,:j+1] @ y
+        z = M_inv(z) # right precond
+        x += z
+
+        # Compute new residual
+        r0 = b - (A @ x)
+        new_beta = np.linalg.norm(r0)
+        print(f"GMRES-DR [{total_iter}]: resid {new_beta}")
+        if new_beta < tol:
+            break
+
+        # TODO : probably should leave it to resid check to break
+        if converged: break
+
+        # cleaned up version
+        _, eigvecs = np.linalg.eig(H[:j+1, :j+1])
+        Zk = eigvecs[:,:k]
+        Phik = V[:, :j+1] @ Zk
+
+        # set new Krylov basis
+        V[:,:k] = Phik
+        V[:,k] = V[:,m]
+        V[:,k+1:] = 0.0
+
+        # update Hessenberg matrix
+        Htmp = H[:j+1, :j+1].copy()
+        beta = H[j+1, j]
+        H[:k,:k] = Zk.T @ Htmp @ Zk
+        H[k,:k] = beta * Zk[-1,:]
+
+    print(f"final resid {new_beta=} in {total_iter=}")
+
+    return x
+
+def gmres_dr_prototype(A, b, x0=None, tol=1e-8, m=30, k=10, max_iter=300, M=None):
+    """
+    deflated GMRES with m subspace size, k deflation eigvecs, max_iter total iterations before exit
+    should reduce orthogonalization cost and reduce memory requirements for larger problems
+    """
+    n = len(b)
+    if x0 is None:
+        x0 = np.zeros(n)
+    
+    if M is None:
+        M_inv = lambda x: x
+    else:
+        # M_inv = spla.LinearOperator((n, n), matvec=lambda x: spla.spsolve(M, x))
+        M_inv = lambda x : M.solve(x)
+
+    x = x0.copy()
+    r0 = M_inv(b - (A @ x))
+    beta = np.linalg.norm(r0)
+    print(f"{beta=}")
+    
+    if beta < tol:
+        return x
+    
+    # save in perm storage, cause we don't want to zero out in each loop, need to thick restart
+    V = np.zeros((n, m+1))
+    H = np.zeros((m+1, m)) # upper Hessenberg (nearly triang)
+    R = np.zeros((m+1,m)) # upper triangular
+    g = np.zeros(m+1)
+    cs = np.zeros(m)
+    ss = np.zeros(m)
+    Zk = None
+
+    converged = False
+
+    total_iter = 0
+    while (total_iter < max_iter):
+        
+        # fine to zero out cs, ss, and g each new restart
+        g *= 0.0
+        cs *= 0.0
+        ss *= 0.0
+
+        # Start Arnoldi process
+        if total_iter == 0: # first time through or irestart == 0 basically
+            V[:, 0] = r0 / beta
+            g[0] = beta
+            # print(f"{V[:,0]=}")
+            print(f"{g[0]=}")
+            w = V[:,0]
+            start = 0
+        else: # restarting with deflation
+            # compute new starting RHS
+            g = V.T @ r0 # basically c = V^T r0 part
+            # print(f"{g=}")
+            # can just set g[k] = w^T r0
+            # g[k] = np.dot(V[:,k], r0) # equiv to above in this case, I checked
+            # then add r0 as new unit vec
+            # V[:,k] = r0 / np.linalg.norm(r0)
+            start = k
+
+        # starts later if deflated
+        for j in range(start, m):
+            total_iter += 1
+            # right precond
+            w = M_inv(w) 
+            w = A @ V[:, j]
+
+            # Modified GS, compute new H column
+            for i in range(j + 1):
+                H[i, j] = np.dot(V[:, i], w)
+                w -= H[i, j] * V[:, i]
+
+            # copy to Rotated Hessenberg R
+            # R[:j+1,j] = H[:j+1,j]
+
+            # update w => v_{j+1}
+            H[j+1, j] = np.linalg.norm(w)
+            # R[j+1,j] = H[j+1,j] # copy for rotated Hessenberg
+            if H[j+1, j] == 0:
+                print("H break")
+                break
+            V[:, j+1] = w / H[j+1, j]
+
+            # print(f"{V[:,j+1]=}")
+
+            # givens rotations doesn't work after restarts.. (k+1 x k block not triangular)
+
+            # # # perform Givens rotations on R rotated Hessenberg
+            # # # ------------------------------------------------
+
+            # # # apply prev Givens rotations to R
+            # # for i in range(j):
+            # #     temp = R[i,j]
+            # #     R[i,j] = cs[i] * R[i,j] + ss[i] * R[i+1,j]
+            # #     R[i+1,j] = -ss[i] * temp + cs[i] * R[i+1,j]
+
+            # # # compute new Givens rotations
+            # # r = np.hypot(R[j,j], R[j+1,j])
+            # # cs[j] = R[j,j] / r
+            # # ss[j] = R[j+1,j] / r
+
+            # # # update RHS g with Givens
+            # # g_temp = g[j]
+            # # g[j] *= cs[j]
+            # # g[j+1] = -ss[j] * g_temp
+
+            # # # apply new Givens rotation to R, equiv to this
+            # # R[j,j] = r
+            # # R[j+1,j] = 0.0
+
+            # print(f"iteration {j} : {g[j+1]=}")
+
+            # # Check convergence
+            # if abs(g[j+1]) < tol:
+            #     converged = True
+            #     print(f"g break at iteration {j}")
+            #     break
+
+        # debugging check if hessenberg matrix is zero in correct spots
+        # plt.imshow(H[:n+1,:n])
+        # plt.show()
+
+        # Solve the upper triangular system R * y = g
+        # valid for first solve:
+        # y = np.linalg.solve(R[:j+1, :j+1], g[:j+1])
+        # givens doesn't work in thick restart
+        y = np.linalg.solve(H[:j+1,:j+1], g[:j+1])
+
+        # for Arnoldi system check and Eig problem later
+        # one higher since this is exclusive and 0 is starting column
+        Hbarj = H[:j+2,:j+1].copy()
+        Hj = H[:j+1,:j+1].copy()
+        Vj = V[:,:j+1].copy()
+        Vj1 = V[:,:j+2].copy()
+        beta = Hbarj[-1,-1]
+        vlast = Vj1[:,-1:].copy()
+        # print(f"{np.linalg.norm(vlast)=}")
+        # exit()
+        # print(f"{Vj1=} {vlast=}")
+        # print(f"{Hbarj=} {beta=}")
+        # print(f"{Vj1=}")
+
+        # check Arnoldi equation (with right precond)
+        AV = A @ M_inv(Vj)
+        VH = Vj1 @ Hbarj
+        emT = np.zeros((1,j+1))
+        emT[0,-1] = 1.0
+        VH2 = Vj @ Hj
+        # print(f"{vlast.shape=} {emT.shape=} {AV.shape=}")
+        VH2 += beta * vlast @ emT
+        # arnoldi_diff = AV - VH
+        arnoldi_diff = AV - VH2
+        # print(f"{arnoldi_diff=}")
+        arnoldi_resid = np.linalg.norm(arnoldi_diff)
+        # print(f"{arnoldi_resid=}")
+
+        # Update solution
+        z = Vj @ y
+        z = M_inv(z) # right precond
+        x += z
+
+        # Compute new residual
+        r0 = b - (A @ x)
+        new_beta = np.linalg.norm(r0)
+        print(f"{new_beta=}")
+        if new_beta < tol:
+            break
+
+        # TODO : probably should leave it to resid check to break
+        if converged: break
+
+        # otherwise it has not converged, now we start the deflation process
+        # paper says to do this
+        # eigvals, eigvecs = eig(Hbarj.T @ Hbarj, Hj.T)
+        # but this worked way better and has no complex values?
+        eigvals, eigvecs = np.linalg.eig(Hj)
+        Zk_nonortho = eigvecs[:,:k]
+        Zk, _ = np.linalg.qr(Zk_nonortho)
+        Phik = Vj @ Zk
+        # check orthonormal eigvalues
+        ortho_check = Zk.T @ Zk
+        # print(f'{ortho_check=}')
+
+        # update V now to restart with these eigvecs
+        V *= 0.0
+        V[:,:k] = Phik
+        # recompute new H matrix
+        # more numerically efficient to copy R into H then saves comp
+        H *= 0.0
+        H[:k,:k] = Zk.T @ Hj @ Zk
+
+        # k+1th (but 0-based) row = beta * em^T Zk or beta * mth row of Zk (last row)
+        H[k,:k] = beta * Zk[-1,:]
+        Hk = H[:k,:k]
+        Hbark = H[:k+1,:k]
+        V[:,k] = vlast[:,0]
+        # print(f"{H[:k+1,:k]=}")
+
+        # now check A * Phik vs Phik * Hk (where do we need to add residual term)
+        AP = A @ M_inv(V[:,:k])
+        AP2 = A @ Vj @ Zk
+        AP_diff = AP - AP2
+        # print(f"{AP_diff=}")
+        PH1_1 = Phik @ Hk
+        PH1_2 = Vj @ Hj @ Zk
+        PHI1_DIFF = PH1_1 - PH1_2
+        # this above equation is only true in Zk^T Vk^T reduced space (not in full space)
+        # print(f"{PHI1_DIFF=}")
+        # diff = AP - PH
+        # print(f"{AP=}")
+        # print(f"{PH=}") 
+        # print(f"{diff=}")
+
+    print(f"final resid {new_beta=} in {total_iter=}")
 
     return x
