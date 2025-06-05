@@ -9,14 +9,17 @@
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
 
-int main() {
+int main(int argc, char **argv) {
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
   using T = double;
 
   auto start0 = std::chrono::high_resolution_clock::now();
 
   // uCRM mesh files can be found at:
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
-  TACSMeshLoader<T> mesh_loader{};
+  TACSMeshLoader mesh_loader{comm};
   mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
   // mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
 
@@ -50,7 +53,7 @@ int main() {
   int nvars = assembler.get_num_vars();
   int nnodes = assembler.get_num_nodes();
   HostVec<T> h_loads(nvars);
-  double load_mag = 3.0;
+  double load_mag = 15.0; // 9.0 with 40 load steps, now 15.0 with 70 load steps
   double *h_loads_ptr = h_loads.getPtr();
   for (int inode = 0; inode < nnodes; inode++) {
     h_loads_ptr[6 * inode + 2] = load_mag;
@@ -66,15 +69,16 @@ int main() {
   auto vars = assembler.createVarsVec();
 
   // newton solve => go to 10x the 1m up disp from initial loads
-  int num_load_factors = 10, num_newton = 50;
+  int num_load_factors = 70, num_newton = 50;
   T min_load_factor = 0.1, max_load_factor = 23.0, abs_tol = 1e-8,
     rel_tol = 1e-8;
   auto solve_func = CUSPARSE::direct_LU_solve<T>;
+  bool write_vtk = true;
   std::string outputPrefix = "out/uCRM_";
   newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
       solve_func, kmat, loads, soln, assembler, res, rhs, vars,
       num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
-      rel_tol, outputPrefix, print);
+      rel_tol, outputPrefix, print, write_vtk);
 
   // print some of the data of host residual
   auto h_vars = vars.createHostVec();

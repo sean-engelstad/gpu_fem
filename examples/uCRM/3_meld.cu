@@ -57,7 +57,10 @@ void verify_conservation(HostVec<T> h_us, HostVec<T> h_ua, HostVec<T> h_fs, Host
   printf("W_A %.6e, W_S %.6e, rel err %.6e\n", W_A, W_S, W_rel_err);
 }
 
-int main() {
+int main(int argc, char **argv) {
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
   using T = double;
 
   auto start0 = std::chrono::high_resolution_clock::now();
@@ -82,7 +85,7 @@ int main() {
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
   // ----------------------------------------
 
-  TACSMeshLoader<T> mesh_loader{};
+  TACSMeshLoader mesh_loader{comm};
   mesh_loader.scanBDFFile("uCRM-135_wingbox_medium.bdf");
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
   int ns = assembler.get_num_nodes();
@@ -97,7 +100,8 @@ int main() {
   auto h_xs0 = xs0.createHostVec();
   for (int i = 0; i < ns; i++) {
     // h_us[3 * i + 2] = disp_mag;
-    h_us[3 * i + 2] = disp_mag * (std::sin(h_xs0[3*i]/50 * 3.1415 * 4.0));
+    // h_us[3*i+2] = h_xs0[3*i]/50 * disp_mag;
+    h_us[3 * i + 2] = disp_mag * (1.0 - std::sin(h_xs0[3*i]/50 * 3.1415 * 1.0));
   }
   auto us = h_us.createDeviceVec();
 
@@ -121,8 +125,8 @@ int main() {
   double load_mag = 1.0;
   for (int i = 0; i < na; i++) {
     h_fa[3 * i + 2] =
-        load_mag * (std::sin(h_xa0[3 * i] / 50 * 3.1415 * 4.0) *
-                    std::sin(h_xa0[3 * i + 1] / 40 * 3.1415 * 3.0));
+        -load_mag * (std::sin(h_xa0[3 * i] / 50 * 3.1415 * 2.0) *
+                    std::sin(h_xa0[3 * i + 1] / 40 * 3.1415 * 1.0));
   }
   auto fa = h_fa.createDeviceVec();
 
@@ -130,7 +134,8 @@ int main() {
   // -----------------------------
 
   // T beta = 1e-3, Hreg = 1e-8;
-  T beta = 0.1, Hreg = 1e-4;
+  // T beta = 0.1, Hreg = 1e-4;
+  T beta = 1e-1, Hreg = 1e-8;
   int sym = -1, nn = 128;
   static constexpr int NN_PER_BLOCK = 32;
   bool meld_print = true;

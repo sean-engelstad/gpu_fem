@@ -19,7 +19,10 @@
 /**
  solve on CPU with cusparse for debugging
  **/
-int main(void) {
+int main(int argc, char **argv) {
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
   using T = double;
 
   // important user settings
@@ -59,7 +62,7 @@ int main(void) {
   // https://data.niaid.nih.gov/resources?id=mendeley_gpk4zn73xn
   // ----------------------------------------
 
-  TACSMeshLoader<T> mesh_loader{};
+  TACSMeshLoader mesh_loader{comm};
   mesh_loader.scanBDFFile("CRM_box_2nd.bdf");
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
   int ns = assembler.get_num_nodes();
@@ -134,9 +137,9 @@ int main(void) {
         assembler, kmat, linear_solve, struct_print);
 
     // test coupled driver
-    testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    // testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
-    // assembler, _assembler_aero);
+    // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
+    testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
+    assembler, _assembler_aero);
 
     struct_solver.writeSoln("out/uCRM_coupled_us.vtk");
 

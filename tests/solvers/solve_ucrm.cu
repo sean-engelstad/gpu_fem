@@ -9,6 +9,8 @@
 #include "element/shell/shell_elem_group.h"
 #include "../test_commons.h"
 
+// TODO : need to get right GMRES solve working as good as TACS CPU
+
 void test_ucrm(bool full_LU = true, bool print = false, int ILUk = 3) {
     using T = double;
 

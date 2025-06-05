@@ -9,7 +9,7 @@
 
 template <class Assembler>
 Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E, double nu,
-                                  double thick, bool imperfection = false) {
+                                  double thick, bool imperfection = false, int imp_x = 5, int imp_hoop = 4) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -108,7 +108,7 @@ Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E
 
                 // can change settings here
                 T imp_mag = 0.5;
-                T imp_shape = sin(x_hat * 5 * M_PI) * sin(th_hat * 4 * M_PI);
+                T imp_shape = sin(x_hat * imp_x * M_PI) * sin(th_hat * imp_hoop * M_PI);
                 R_mid += thick * imp_mag * imp_shape;
             }
 
