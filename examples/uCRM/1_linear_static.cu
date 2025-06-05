@@ -45,6 +45,18 @@ int main(int argc, char **argv) {
   // make the assembler from the uCRM mesh
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
 
+  int ndvs = assembler.get_num_dvs();
+  printf("ndvs %d\n", ndvs);
+  T thick2 = 1e-2;
+  HostVec<T> h_dvs(ndvs, thick2);
+  auto global_dvs = h_dvs.createDeviceVec();
+  assembler.set_design_variables(global_dvs);
+
+  T mass = assembler._compute_mass();
+  printf("mass %.4e\n", mass);
+
+  return 0;
+
   // BSR factorization
   auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
@@ -55,9 +67,9 @@ int main(int argc, char **argv) {
     bsr_data.compute_full_LU_pattern(fillin, print);
   } else {
     // bsr_data.RCM_reordering();
-    bsr_data.AMD_reordering();
-    // bsr_data.qorder_reordering(1.0, 10); // qordering not working well for some reason..
-    bsr_data.compute_ILUk_pattern(13, fillin); // 10, 20 (for BiCGStab)
+    // bsr_data.AMD_reordering();
+    bsr_data.qorder_reordering(0.5, 1); // qordering not working well for some reason..
+    bsr_data.compute_ILUk_pattern(5, fillin); // 10, 20 (for BiCGStab)
     // bsr_data.compute_full_LU_pattern(fillin, print);
   }
   assembler.moveBsrDataToDevice();
@@ -93,10 +105,10 @@ int main(int argc, char **argv) {
       int n_iter = 200, max_iter = 200;
       T abs_tol = 1e-11, rel_tol = 1e-15;
       bool print = true;
-      constexpr bool right = false, modifiedGS = true; // better with modifiedGS true, yeah it is..
-      // CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+      constexpr bool right = true, modifiedGS = true; // better with modifiedGS true, yeah it is..
+      CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
       // CUSPARSE::BiCGStab_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
-      CUSPARSE::PCG_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
+      // CUSPARSE::PCG_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
       // CUSPARSE::GMRES_DR_solve<T, right, modifiedGS>(kmat, loads, soln, 4, 2, 8, abs_tol, rel_tol, print, true, 1);
   }
 

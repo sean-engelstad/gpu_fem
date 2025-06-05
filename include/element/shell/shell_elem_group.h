@@ -436,6 +436,51 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     }  // add_element_quadpt_gmat_col
 
     template <class Data>
+    __HOST_DEVICE__ static void get_element_quadpt_failure_index(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, T &fail_index) {
+        if (!active_thread) return;
+
+        // data to store in forwards + backwards section
+        T fn[3 * num_nodes];  // node normals
+        T pt[2];              // quadrature point
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+        // in-out of forward & backwards section
+        A2D::Mat<T, 3, 3> u0x, u1x;
+        A2D::SymMat<T, 3> e0ty;
+        A2D::Vec<T, 1> et;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
+
+        // forward scope block for strain energy
+        // ------------------------------------------------
+        {
+            // compute node normals fn
+            ShellComputeNodeNormals<T, Basis>(xpts, fn);
+
+            // compute the interpolated drill strain
+            ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
+                pt, physData.refAxis, xpts, vars, fn, et.get_data());
+
+            // compute directors
+            T d[3 * num_nodes];
+            Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
+            // compute tying strain
+            T ety[Basis::num_all_tying_points];
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
+
+            // compute all shell displacement gradients
+            T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+                pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.get_data(), u1x.get_data(), e0ty);
+
+            Phys::template computeFailureIndex(physData, u0x, u1x, e0ty, et, rhoKS, fail_index);
+
+        }  // end of forward scope block for strain energy
+        // ------------------------------------------------
+    }
+
+    template <class Data>
     __HOST_DEVICE__ static void compute_element_quadpt_sectional_loads(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, T stresses[vars_per_node])
@@ -562,6 +607,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
         // compute shell node normals
         T fn[3 * Basis::num_nodes];  // node normals
+        ShellComputeNodeNormals<T, Basis>(xpts, fn);
 
         // compute detXd to transform dxideta to dA
         T Xxi[3], Xeta[3], nxi[3], neta[3], n0[3];
@@ -576,10 +622,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         // compute detXd finally for jacobian dA conversion
         T detXd = A2D::MatDetCore<T, 3>(Xd);
 
-        // compute integrand
-        T integrand = physData.rho * physData.thick;
-
-        *output = weight * detXd * physData.density * integrand;
+        // compute area density quadpt contribution (then int across area with element sums)
+        *output = weight * detXd * physData.rho * physData.thick;
     }
 
     template <class Data>
@@ -596,6 +640,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
         // compute shell node normals
         T fn[3 * Basis::num_nodes];  // node normals
+        ShellComputeNodeNormals<T, Basis>(xpts, fn);
 
         // compute detXd to transform dxideta to dA
         T Xxi[3], Xeta[3], nxi[3], neta[3], n0[3];
@@ -611,7 +656,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T detXd = A2D::MatDetCore<T, 3>(Xd);
 
         // only one local DV in isotropic shell (panel thickness)
-        dm_dxlocal[0] = weight * detXd * physData.density * physData.rho;
+        dm_dxlocal[0] = weight * detXd * physData.rho;
     }
 
     template <class Data>

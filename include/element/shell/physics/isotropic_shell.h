@@ -90,6 +90,25 @@ class IsotropicShell {
 
     }  // end of computeStrainEnergy
 
+    template <typename T2>
+    __HOST_DEVICE__ static void computeFailureIndex(const Data physData, A2D::Mat<T2, 3, 3> u0x,
+                                                    A2D::Mat<T2, 3, 3> u1x, A2D::SymMat<T2, 3> e0ty,
+                                                    A2D::Vec<T2, 1> et, const T &rhoKS,
+                                                    T &fail_index) {
+        A2D::Vec<T2, 9> E;
+
+        if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
+            A2D::LinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                          et.get_data(), E.get_data());
+        } else {
+            A2D::NonlinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                             et.get_data(), E.get_data());
+        }
+
+        fail_index = physData.evalFailure(rhoKS, E.get_data());
+
+    }  // end of computeFailureIndex
+
     // could template by ADType = ADObj or A2DObj later to allow different
     // derivative levels maybe
     template <typename T2>

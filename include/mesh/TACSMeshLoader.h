@@ -1276,6 +1276,8 @@ void TACSMeshLoader::getAssemblerCreatorData(const int vars_per_node, int &my_nu
 
     // This call must occur on all processor
     // creator->setElements(num_components, elements);
+    creator->setElements(
+        num_components);  // TODO : later have this set ElementAssembler specific data (ElementType)
 
     // // Create the TACSAssembler object
     // ElementAssembler *tacs = creator->createTACS();

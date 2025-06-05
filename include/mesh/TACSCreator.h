@@ -87,6 +87,7 @@ class TACSCreator : public TACSObject {
     // ----------------------------------
     // void setElements(int _num_elems, TACSElement **_elements);
     // void setElementCreator(TACSElement *(*func)(int, int));
+    void setElements(int _num_components) { num_elem_ids = _num_components; };
 
     // Create the TACSAssembler object
     // -------------------------------
@@ -1026,8 +1027,8 @@ void TACSCreator::getAssemblerCreatorData(const int vars_per_node, int &my_num_n
 
     my_num_nodes = num_owned_nodes;
     my_num_elements = num_owned_elements;
-    my_num_components = 0;
-    // my_num_components = num_elem_ids;
+    // my_num_components = 0;
+    my_num_components = num_elem_ids;
 
     int con_size = local_elem_node_ptr[num_owned_elements];
     my_elem_conn = new int[con_size];
@@ -1052,8 +1053,7 @@ void TACSCreator::getAssemblerCreatorData(const int vars_per_node, int &my_num_n
     // deep copy
     my_elem_components = new int[num_owned_elements];
     for (int ielem = 0; ielem < num_owned_elements; ielem++) {
-        // TODO : add element component reads here
-        my_elem_components[ielem] = 0;  // elem_component[ielem];
+        my_elem_components[ielem] = local_elem_id_nums[ielem];
     }
 
     // deep copy
