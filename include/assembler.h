@@ -247,6 +247,42 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(T rho_KS, 
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
+T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, bool smooth) {
+    using Quadrature = typename ElemGroup::Quadrature;
+    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+
+#ifdef USE_GPU
+
+    dim3 block(32, Quadrature::num_quad_pts);
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+
+    // first compute the max failure index (not KS), so we can prevent overflow
+    DeviceVec<T> d_max_fail(1);
+    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+        num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+    T h_max_fail = d_max_fail.createHostVec()[0];
+
+    // then do sum KS max fail
+    DeviceVec<T> d_sum_ksfail(1);
+    compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                          h_max_fail, d_sum_ksfail.getPtr());
+    // add back global non-smooth max (overflow prevention)
+    T sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
+    T h_ksmax_fail = h_max_fail + log(sumexp_ks_fail) / rho_KS;
+
+    if (smooth) {
+        return h_ksmax_fail;
+    } else {
+        return h_max_fail;
+    }
+
+#endif
+};
+
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
 void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu) {
     using Quadrature = typename ElemGroup::Quadrature;
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
@@ -281,14 +317,28 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
 
-    // compute forward KS sum first
-    T sumexp_ksfail;
-    // compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-    //     num_elements, geo_conn, vars_conn, xpts, vars, bcs, physData, rho_KS, &sumexp_ksfail);
+    dim3 block(32, Quadrature::num_quad_pts);
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
 
+    // first compute the max failure index (not KS), so we can prevent overflow
+    DeviceVec<T> d_max_fail(1);
+    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+        num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+    T h_max_fail = d_max_fail.createHostVec()[0];
+
+    // second, do sum ks fail (needed for denom of KS derivs)
+    DeviceVec<T> d_sum_ksfail(1);
+    compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                          h_max_fail, d_sum_ksfail.getPtr());
+    // add back global non-smooth max (overflow prevention)
+    T h_sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
+
+    // now compute the DVsens gradient
     compute_ksfailure_DVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, elem_components, geo_conn, vars_conn, xpts, vars, physData,
-                          rho_KS, sumexp_ksfail, dfdx);
+        <<<grid, block>>>(num_elements, elem_components, geo_conn, vars_conn, xpts, 
+        vars, physData, rho_KS, h_max_fail, h_sumexp_ks_fail, dfdx);
 
 #endif
 };
@@ -306,42 +356,6 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass_DVsens(Vec<T> &dfdx
 
     compute_mass_DVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
         <<<grid, block>>>(num_elements, elem_components, geo_conn, xpts, physData, dfdx);
-
-#endif
-};
-
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, bool smooth) {
-    using Quadrature = typename ElemGroup::Quadrature;
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
-#ifdef USE_GPU
-
-    dim3 block(32, Quadrature::num_quad_pts);
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-
-    // first compute the max failure index (not KS), so we can prevent overflow
-    DeviceVec<T> d_max_fail(1);
-    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
-    T h_max_fail = d_max_fail.createHostVec()[0];
-
-    // then do KS max fail
-    DeviceVec<T> d_ksmax_fail(1);
-    compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
-                          h_max_fail, d_ksmax_fail.getPtr());
-    // add back global non-smooth max (overflow prevention)
-    T sumexp_ks_fail = d_ksmax_fail.createHostVec()[0];
-    T h_ksmax_fail = h_max_fail + log(sumexp_ks_fail) / rho_KS;
-
-    if (smooth) {
-        return h_ksmax_fail;
-    } else {
-        return h_max_fail;
-    }
 
 #endif
 };

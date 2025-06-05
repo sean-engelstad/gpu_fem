@@ -36,10 +36,10 @@ int main(int argc, char **argv) {
   using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-  double E = 70e9, nu = 0.3, thick = 0.02, rho = 2500.0;  // material & thick properties
+  double E = 70e9, nu = 0.3, thick = 0.02, rho = 2500.0, ys = 350e6;  // material & thick properties
 
   // make the assembler from the uCRM mesh
-  auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick, rho));
+  auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick, rho, ys));
 
   // mass debug
   // ---------------------------------
@@ -55,10 +55,6 @@ int main(int argc, char **argv) {
   printf("mass %.4e\n", mass);
 
   // mass gradient
-  DeviceVec<T> dmdx(ndvs);
-  auto h_dmdx1 = dmdx.createHostVec();
-  printf("h_dmdx1[0] = %.4e\n", h_dmdx1[0]);
-
   assembler._compute_mass_DVsens(dmdx);
   auto h_dmdx = dmdx.createHostVec();
 
@@ -86,8 +82,6 @@ int main(int argc, char **argv) {
   // ---------------------------------
   // ---------------------------------
   auto& bsr_data = assembler.getBsrData();
-  double fillin = 10.0;
-  bool print = true;
   bsr_data.AMD_reordering();
   bsr_data.compute_full_LU_pattern();
   assembler.moveBsrDataToDevice();
@@ -96,7 +90,7 @@ int main(int argc, char **argv) {
   int nvars = assembler.get_num_vars();
   int nnodes = assembler.get_num_nodes();
   HostVec<T> h_loads(nvars);
-  double load_mag = 10.0;
+  double load_mag = 100.0;
   double *h_loads_ptr = h_loads.getPtr();
   for (int inode = 0; inode < nnodes; inode++) {
     h_loads_ptr[6 * inode + 2] = load_mag;
@@ -127,8 +121,11 @@ int main(int argc, char **argv) {
   // ---------------------------------
   // ---------------------------------
 
-  // T rhoKS = 10.0;
-  T rhoKS = 10000.0;
+  // set soln vars into the assembler (for KS eval)
+  assembler.set_variables(soln);
+
+  T rhoKS = 100.0;
+  // T rhoKS = 10000.0;
   T max_fail = assembler._compute_ks_failure(rhoKS, true);
   printf("max fail = %.4e\n", max_fail);
 };

@@ -422,164 +422,6 @@ __GLOBAL__ void normalize_states(Vec<T> states, Vec<int> state_cts) {
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_max_failure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
-                                         const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                         const Vec<T> vars, Vec<Data> physData,
-                                         const T rhoKS, T *max_failure_index) {
-    /* prelim kernel to get maximum failure index, before ksMax can be computed */
-    using Geo = typename ElemGroup::Geo;
-    using Basis = typename ElemGroup::Basis;
-    using Phys = typename ElemGroup::Phys;
-    using Quadrature = typename ElemGroup::Quadrature;
-
-    int local_elem = threadIdx.x;
-    int iquad = threadIdx.y;
-    int global_elem = local_elem + blockDim.x * blockIdx.x;
-    bool active_thread = global_elem < num_elements;
-    int local_thread =
-        (blockDim.x * blockDim.y) * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
-
-    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
-    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
-    const int vars_per_node = Phys::vars_per_node;
-    const int num_quad_pts = Quadrature::num_quad_pts;
-
-    const int32_t *_geo_conn = geo_conn.getPtr();
-    const int32_t *_vars_conn = vars_conn.getPtr();
-    const Data *_phys_data = physData.getPtr();
-
-    __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
-    __SHARED__ T block_vars[elems_per_block][vars_per_elem];
-    __SHARED__ Data block_data[elems_per_block];
-
-    int nthread_yz = blockDim.y * blockDim.z;
-    int thread_yz = threadIdx.y * blockDim.z + threadIdx.z;
-    int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
-
-    // load data into block shared mem using some subset of threads
-    const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
-    xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,
-                            Geo::num_nodes, geo_elem_conn, &block_xpts[local_elem][0]);
-
-    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
-    vars.copyElemValuesToShared(active_thread, thread_yz, nthread_yz, Phys::vars_per_node,
-                                Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
-
-    if (active_thread) {
-        if (local_thread < elems_per_block) {
-            int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
-            block_data[local_thread] = _phys_data[global_elem_thread];
-        }
-    }
-    __syncthreads();
-
-    // compute the local element quadpt failure index
-    T quadpt_fail_index = 0.0;
-    ElemGroup::template get_element_quadpt_failure_index<Data>(
-        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, quadpt_fail_index
-    );
-
-    // recall we need to get max(sigma_i) before ks_max(sigma_i) to prevent overflow,
-    //  this kernel does regular max
-    
-    // warp reduction for max in a warp
-    T lane_val = quadpt_fail_index;
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 16));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 8));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 4));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 2));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 1));
-
-    // atomic max back to global
-    if (local_thread % 32 == 0) {
-        // does atomicMax work?
-        atomicMax(max_failure_index, lane_val);
-    }
-
-}  // end of compute_max_failure_kernel
-
-template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
-          template <typename> class Vec>
-__GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
-                                         const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                         const Vec<T> vars, Vec<Data> physData,
-                                         const T rhoKS, const T max_failure_index, T *ksmax_failure_index) {
-    /* prelim kernel to get maximum failure index, before ksMax can be computed */
-    using Geo = typename ElemGroup::Geo;
-    using Basis = typename ElemGroup::Basis;
-    using Phys = typename ElemGroup::Phys;
-    using Quadrature = typename ElemGroup::Quadrature;
-
-    int local_elem = threadIdx.x;
-    int iquad = threadIdx.y;
-    int global_elem = local_elem + blockDim.x * blockIdx.x;
-    bool active_thread = global_elem < num_elements;
-    int local_thread =
-        (blockDim.x * blockDim.y) * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
-
-    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
-    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
-    const int vars_per_node = Phys::vars_per_node;
-    // const int num_quad_pts = Quadrature::num_quad_pts;
-
-    const int32_t *_geo_conn = geo_conn.getPtr();
-    const int32_t *_vars_conn = vars_conn.getPtr();
-    const Data *_phys_data = physData.getPtr();
-
-    __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
-    __SHARED__ T block_vars[elems_per_block][vars_per_elem];
-    __SHARED__ Data block_data[elems_per_block];
-
-    int nthread_yz = blockDim.y * blockDim.z;
-    int thread_yz = threadIdx.y * blockDim.z + threadIdx.z;
-    int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
-
-    // load data into block shared mem using some subset of threads
-    const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
-    xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,
-                            Geo::num_nodes, geo_elem_conn, &block_xpts[local_elem][0]);
-
-    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
-    vars.copyElemValuesToShared(active_thread, thread_yz, nthread_yz, Phys::vars_per_node,
-                                Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
-
-    if (active_thread) {
-        if (local_thread < elems_per_block) {
-            int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
-            block_data[local_thread] = _phys_data[global_elem_thread];
-        }
-    }
-    __syncthreads();
-
-    // compute the local element quadpt failure index
-    T quadpt_fail_index = 0.0;
-    ElemGroup::template get_element_quadpt_failure_index<Data>(
-        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, quadpt_fail_index
-    );
-
-    // use the global non-smooth max to prevent overflow
-    T glob_max = max_failure_index; // non KS max (non-smooth)
-    T exp_quadpt_fail_index = exp(rhoKS * (quadpt_fail_index - glob_max));
-
-    // warp reduction for max in a warp
-    T lane_val = exp_quadpt_fail_index;
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 16));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 8));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 4));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 2));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 1));
-
-    // atomic add back to global
-    if (local_thread % 32 == 0) {
-        atomicAdd(ksmax_failure_index, lane_val);
-    }
-
-}  // end of compute_ksfailure_kernel
-
-template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
-          template <typename> class Vec>
 __GLOBAL__ void compute_mass_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                     const Vec<T> xpts, Vec<Data> physData, T *total_mass) {
     // computes total mass of the structure
@@ -627,9 +469,6 @@ __GLOBAL__ void compute_mass_kernel(const int32_t num_elements, const Vec<int32_
         active_thread, iquad, block_xpts[local_elem], block_data[local_elem], &quadpt_mass);
 
     // printf("quadpt mass %.4e\n", quadpt_mass);
-    if (global_elem == 75 && iquad == 0) {
-        printf("local_mass %.4e\n", quadpt_mass);
-    }
 
     // warp reduction.. across every group of 32 threads
     // much faster than global atomic add
@@ -720,16 +559,173 @@ __GLOBAL__ void compute_mass_DVsens_kernel(const int32_t num_elements,
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
+__GLOBAL__ void compute_max_failure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+                                         const Vec<int32_t> vars_conn, const Vec<T> xpts,
+                                         const Vec<T> vars, Vec<Data> physData,
+                                         const T rhoKS, T *max_failure_index) {
+    /* prelim kernel to get maximum failure index, before ksMax can be computed */
+    using Geo = typename ElemGroup::Geo;
+    using Basis = typename ElemGroup::Basis;
+    using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
+
+    int local_elem = threadIdx.x;
+    int iquad = threadIdx.y;
+    int global_elem = local_elem + blockDim.x * blockIdx.x;
+    bool active_thread = global_elem < num_elements;
+    int local_thread =
+        (blockDim.x * blockDim.y) * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+
+    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+    // const int vars_per_node = Phys::vars_per_node;
+    // const int num_quad_pts = Quadrature::num_quad_pts;
+
+    const int32_t *_geo_conn = geo_conn.getPtr();
+    const int32_t *_vars_conn = vars_conn.getPtr();
+    const Data *_phys_data = physData.getPtr();
+
+    __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
+    __SHARED__ T block_vars[elems_per_block][vars_per_elem];
+    __SHARED__ Data block_data[elems_per_block];
+
+    int nthread_yz = blockDim.y * blockDim.z;
+    int thread_yz = threadIdx.y * blockDim.z + threadIdx.z;
+    // int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
+
+    // load data into block shared mem using some subset of threads
+    const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
+    xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,
+                            Geo::num_nodes, geo_elem_conn, &block_xpts[local_elem][0]);
+
+    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
+    vars.copyElemValuesToShared(active_thread, thread_yz, nthread_yz, Phys::vars_per_node,
+                                Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
+
+    if (active_thread) {
+        if (local_thread < elems_per_block) {
+            int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
+            block_data[local_thread] = _phys_data[global_elem_thread];
+        }
+    }
+    __syncthreads();
+
+    // compute the local element quadpt failure index
+    T quadpt_fail_index = 0.0;
+    ElemGroup::template get_element_quadpt_failure_index<Data>(
+        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
+        block_data[local_elem], rhoKS, quadpt_fail_index
+    );
+
+    // recall we need to get max(sigma_i) before ks_max(sigma_i) to prevent overflow,
+    //  this kernel does regular max
+    
+    // warp reduction for max in a warp
+    T lane_val = quadpt_fail_index;
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 16));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 8));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 4));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 2));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 1));
+
+    // atomic max back to global
+    if (local_thread % 32 == 0) {
+        // does atomicMax work?
+        atomicMax(max_failure_index, lane_val);
+    }
+
+}  // end of compute_max_failure_kernel
+
+template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
+          template <typename> class Vec>
+__GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+                                         const Vec<int32_t> vars_conn, const Vec<T> xpts,
+                                         const Vec<T> vars, Vec<Data> physData,
+                                         const T rhoKS, const T max_failure_index, T *ksmax_failure_index) {
+    /* prelim kernel to get maximum failure index, before ksMax can be computed */
+    using Geo = typename ElemGroup::Geo;
+    using Basis = typename ElemGroup::Basis;
+    using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename ElemGroup::Quadrature;
+
+    int local_elem = threadIdx.x;
+    int iquad = threadIdx.y;
+    int global_elem = local_elem + blockDim.x * blockIdx.x;
+    bool active_thread = global_elem < num_elements;
+    int local_thread =
+        (blockDim.x * blockDim.y) * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+
+    const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+    const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+    // const int vars_per_node = Phys::vars_per_node;
+    // const int num_quad_pts = Quadrature::num_quad_pts;
+
+    const int32_t *_geo_conn = geo_conn.getPtr();
+    const int32_t *_vars_conn = vars_conn.getPtr();
+    const Data *_phys_data = physData.getPtr();
+
+    __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
+    __SHARED__ T block_vars[elems_per_block][vars_per_elem];
+    __SHARED__ Data block_data[elems_per_block];
+
+    int nthread_yz = blockDim.y * blockDim.z;
+    int thread_yz = threadIdx.y * blockDim.z + threadIdx.z;
+    // int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
+
+    // load data into block shared mem using some subset of threads
+    const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
+    xpts.copyElemValuesToShared(active_thread, threadIdx.y, blockDim.y, Geo::spatial_dim,
+                            Geo::num_nodes, geo_elem_conn, &block_xpts[local_elem][0]);
+
+    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
+    vars.copyElemValuesToShared(active_thread, thread_yz, nthread_yz, Phys::vars_per_node,
+                                Basis::num_nodes, vars_elem_conn, &block_vars[local_elem][0]);
+
+    if (active_thread) {
+        if (local_thread < elems_per_block) {
+            int global_elem_thread = local_thread + blockDim.x * blockIdx.x;
+            block_data[local_thread] = _phys_data[global_elem_thread];
+        }
+    }
+    __syncthreads();
+
+    // compute the local element quadpt failure index
+    T quadpt_fail_index = 0.0;
+    ElemGroup::template get_element_quadpt_failure_index<Data>(
+        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
+        block_data[local_elem], rhoKS, quadpt_fail_index
+    );
+
+    // use the global non-smooth max to prevent overflow
+    T glob_max = max_failure_index; // non KS max (non-smooth)
+    T exp_quadpt_fail_index = exp(rhoKS * (quadpt_fail_index - glob_max));
+
+    // warp reduction for max in a warp
+    T lane_val = exp_quadpt_fail_index;
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 16));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 8));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 4));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 2));
+    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 1));
+
+    // atomic add back to global
+    if (local_thread % 32 == 0) {
+        atomicAdd(ksmax_failure_index, lane_val);
+    }
+
+}  // end of compute_ksfailure_kernel
+
+template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
+          template <typename> class Vec>
 __GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
                                                 const Vec<int32_t> elem_components,
                                                 const Vec<int32_t> geo_conn,
                                                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                                const Vec<T> vars, Vec<Data> physData, const int *perm,
-                                                T rho_KS, T sumexp_kfail, Vec<T> dfdx) {
-    // computes average strains in the element (among quadpts)
-    // then KS failure on those strains (could also max among quadpts but that gets more expensive
-    // for optimization potentially) doesn't make sense to use nodal average strains for KS failure
-    // since yield stress is an element data and is not well-defined for nodes
+                                                const Vec<T> vars, Vec<Data> physData, 
+                                                const T rho_KS, const T max_fail, const T sumexp_kfail, 
+                                                Vec<T> dfdx) {
+
+    /* compute dKdx/dx partial derivatives (no indirect state variable sens included) */
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
     using Phys = typename ElemGroup::Phys;
