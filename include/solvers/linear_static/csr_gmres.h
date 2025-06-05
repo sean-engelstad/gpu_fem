@@ -17,7 +17,7 @@ namespace CUSPARSE {
 template <typename T, bool use_precond = true>
 void GMRES_chol_solve(CsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                       int _n_iter = 100, int max_iter = 100, T abs_tol = 1e-8, T rel_tol = 1e-8,
-                      bool can_print = false, bool debug = false, int print_freq = 10) {
+                      bool can_print = true, bool debug = false, int print_freq = 10) {
     /* GMRES CSR with Cholesky preconditioner and MGS orthog only written for left preconditioning
      * rn and zero inital guess, TBD can generalize, but then again it may be fairly slow compared
      * to BSR anyways so not worth it

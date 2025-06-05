@@ -7,6 +7,8 @@
 #include <chrono>
 #include <iostream>
 
+namespace CUSPARSE {
+
 template <typename T, bool precond = true>
 void HGMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln, int _m = 100,
                   int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8, bool can_print = false,
@@ -502,3 +504,4 @@ void HGMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &so
         printf("\tfinished in %.4e sec\n", dt);
     }
 }  // end of HGMRES solve
+};  // namespace CUSPARSE
