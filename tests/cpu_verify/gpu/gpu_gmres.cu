@@ -60,8 +60,11 @@ int main(int argc, char **argv) {
   // printVec<T>(10, h_xpts.getPtr());
   
   double fillin = 10.0;  // 10.0
+  // int lev_fill = 3;
   int lev_fill = 1;
   // int lev_fill = 2;
+  // int lev_fill = 3;
+  // int lev_fill = 6;
   // int lev_fill = 7;
   // int lev_fill = 11;
   // int lev_fill = 15;
@@ -72,7 +75,7 @@ int main(int argc, char **argv) {
   // bsr_data.RCM_reordering(1);
   // bsr_data.compute_nofill_pattern();
 
-  bsr_data.qorder_reordering(0.25, 1);
+  bsr_data.qorder_reordering(0.5, 1);
   bsr_data.compute_ILUk_pattern(lev_fill, fillin, print);
 
   assembler.moveBsrDataToDevice();
@@ -112,8 +115,8 @@ int main(int argc, char **argv) {
   // CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
 
     // int n_iter = 100, max_iter = 100;
-    // int n_iter = 200, max_iter = 200;
-    int n_iter = 100, max_iter = 200;
+    int n_iter = 200, max_iter = 200;
+    // int n_iter = 100, max_iter = 200;
     // int n_iter = 300, max_iter = 300;
     constexpr bool right = true;
     T abs_tol = 1e-30, rel_tol = 1e-8; // for left preconditioning
@@ -123,7 +126,17 @@ int main(int argc, char **argv) {
     // T eta_precond = 1e-2;
     // CUSPARSE::GMRES_solve<T, right, true, true>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
     // CUSPARSE::HGMRES_solve<T, true>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print, debug);
+    // CUSPARSE::GMRES_DR_solve<T, true>(kmat, loads, soln, 30, 10, max_iter, abs_tol, rel_tol, print, debug);
     CUSPARSE::PCG_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
+    // CUSPARSE::BiCGStab_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
+    // CUSPARSE::direct_LU_solve<T>(kmat, loads, soln, print);
+
+    // chol solve
+    // solve the linear system, direct Chol on GPU is btw 3x and 11x slower than LU solve in CuSparse
+    // CsrMat<DeviceVec<T>> kmat2{kmat};
+    // BsrData bsr_data2 = kmat2.getBsrData();
+    // // CUSPARSE::direct_cholesky_solve(kmat2, loads, soln);
+    // CUSPARSE::GMRES_chol_solve(kmat2, loads, soln, n_iter, max_iter);
 
   // free data
   assembler.free();
