@@ -68,8 +68,10 @@ class ElementAssembler {
 
     // optimization utils
     void _compute_adjResProduct(T rho_KS, Vec<T> &psi, Vec<T> &dfdx);
-    void _compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu);
-    void _compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdu);
+    void _compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
+                                    T *_sumexp_fail = nullptr);
+    void _compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
+                                    T *_sumexp_fail = nullptr);
     void _compute_mass_DVsens(Vec<T> &dfdx);
 
     // visualization
@@ -90,7 +92,8 @@ class ElementAssembler {
     void setBsrData(BsrData new_bsr_data) { this->bsr_data = new_bsr_data; }
 
     // private functions
-    T _compute_ks_failure(T rho_KS, bool smooth = true);
+    T _compute_ks_failure(T rho_KS, bool smooth = true, T *_max_fail = nullptr,
+                          T *_sumexp_fail = nullptr);
     T _compute_mass();
 
     void permuteVec(Vec<T> vec) {
@@ -222,123 +225,26 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::moveBsrDataToDevice() {
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(T rho_KS, Vec<T> &psi,
-                                                                      Vec<T> &dfdx) {
-    using Quadrature = typename ElemGroup::Quadrature;
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
-    // apply bcs to the adjoint vector first
-    // so that dRe/dxe doesn't contribute to fixed bc terms
-    psi.apply_bcs();
-
-#ifdef USE_GPU
-
-    dim3 block(32, Quadrature::num_quad_pts);
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-
-    // very similar kernel to the residual call
-    // add into dfdx
-    compute_adjResProduct_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, bsr_data.perm, geo_conn, vars_conn, xpts, vars, physData, psi, dfdx);
-
-#endif
-};
-
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, bool smooth) {
+T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass() {
     using Quadrature = typename ElemGroup::Quadrature;
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
 
 #ifdef USE_GPU
 
-    dim3 block(32, Quadrature::num_quad_pts);
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-
-    // first compute the max failure index (not KS), so we can prevent overflow
-    DeviceVec<T> d_max_fail(1);
-    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
-    T h_max_fail = d_max_fail.createHostVec()[0];
-
-    // then do sum KS max fail
-    DeviceVec<T> d_sum_ksfail(1);
-    compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
-                          h_max_fail, d_sum_ksfail.getPtr());
-    // add back global non-smooth max (overflow prevention)
-    T sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
-    T h_ksmax_fail = h_max_fail + log(sumexp_ks_fail) / rho_KS;
-
-    if (smooth) {
-        return h_ksmax_fail;
-    } else {
-        return h_max_fail;
-    }
-
-#endif
-};
-
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu) {
-    using Quadrature = typename ElemGroup::Quadrature;
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
-#ifdef USE_GPU
+    // temporary mass device pointer (for adding up total mass)
+    DeviceVec<T> d_mass(1);
 
     dim3 block(32, Quadrature::num_quad_pts);
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
 
-    // compute forward KS sum first
-    T sumexp_ksfail;
-    // compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-    //     num_elements, geo_conn, vars_conn, xpts, vars, bcs, physData, rho_KS, &sumexp_ksfail);
+    compute_mass_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, xpts, physData, d_mass.getPtr());
 
-    compute_ksfailure_SVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, bsr_data.perm, geo_conn, vars_conn, xpts, vars, physData,
-                          rho_KS, sumexp_ksfail, dfdu);
+    CHECK_CUDA(cudaDeviceSynchronize());
 
-#endif
-};
-
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdx) {
-    using Quadrature = typename ElemGroup::Quadrature;
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
-#ifdef USE_GPU
-
-    dim3 block(32, Quadrature::num_quad_pts);
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-
-    dim3 block(32, Quadrature::num_quad_pts);
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-
-    // first compute the max failure index (not KS), so we can prevent overflow
-    DeviceVec<T> d_max_fail(1);
-    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
-    T h_max_fail = d_max_fail.createHostVec()[0];
-
-    // second, do sum ks fail (needed for denom of KS derivs)
-    DeviceVec<T> d_sum_ksfail(1);
-    compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
-                          h_max_fail, d_sum_ksfail.getPtr());
-    // add back global non-smooth max (overflow prevention)
-    T h_sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
-
-    // now compute the DVsens gradient
-    compute_ksfailure_DVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, elem_components, geo_conn, vars_conn, xpts, 
-        vars, physData, rho_KS, h_max_fail, h_sumexp_ks_fail, dfdx);
+    T *h_mass = d_mass.createHostVec().getPtr();
+    return h_mass[0];
 
 #endif
 };
@@ -360,6 +266,148 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass_DVsens(Vec<T> &dfdx
 #endif
 };
 
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
+T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, bool smooth, T *_max_fail,
+                                                                T *_sumexp_fail) {
+    using Quadrature = typename ElemGroup::Quadrature;
+
+#ifdef USE_GPU
+
+    const int elems_per_block = 32;
+    dim3 block(Quadrature::num_quad_pts, elems_per_block);
+    int nblocks = (num_elements + block.y - 1) / block.y;
+    dim3 grid(nblocks);
+
+    // first compute the max failure index (not KS), so we can prevent overflow
+    DeviceVec<T> d_max_fail(1);
+    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+        num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+    T h_max_fail = d_max_fail.createHostVec()[0];
+
+    // then do sum KS max fail
+    DeviceVec<T> d_sum_ksfail(1);
+    compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                          h_max_fail, d_sum_ksfail.getPtr());
+    // add back global non-smooth max (overflow prevention)
+    T sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
+    T h_ksmax_fail = h_max_fail + log(sumexp_ks_fail) / rho_KS;
+
+    // copy states (so can reuse for derivatives)
+    if (_max_fail) {
+        *_max_fail = h_max_fail;
+    }
+    if (_sumexp_fail) {
+        *_sumexp_fail = sumexp_ks_fail;
+    }
+
+    // need smooth case for optim
+    if (smooth) {
+        return h_ksmax_fail;
+    } else {
+        return h_max_fail;
+    }
+
+#endif
+};
+
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
+void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdx,
+                                                                          T *_max_fail,
+                                                                          T *_sumexp_fail) {
+    using Quadrature = typename ElemGroup::Quadrature;
+
+#ifdef USE_GPU
+
+    const int elems_per_block = 32;
+    dim3 block(Quadrature::num_quad_pts, elems_per_block);
+    int nblocks = (num_elements + block.y - 1) / block.y;
+    dim3 grid(nblocks);
+
+    // rerun old states from forward (if not provided)
+    T h_max_fail, h_sumexp_ks_fail;
+    if (_max_fail) {
+        h_max_fail = *_max_fail;
+    } else {
+        // first compute the max failure index (not KS), so we can prevent overflow
+        DeviceVec<T> d_max_fail(1);
+        compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+            num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+        h_max_fail = d_max_fail.createHostVec()[0];
+    }
+
+    if (_sumexp_fail) {
+        h_sumexp_ks_fail = *_sumexp_fail;
+    } else {
+        // second, do sum ks fail (needed for denom of KS derivs)
+        DeviceVec<T> d_sum_ksfail(1);
+        compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                              h_max_fail, d_sum_ksfail.getPtr());
+        // add back global non-smooth max (overflow prevention)
+        h_sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
+    }
+
+    // now compute the DVsens gradient
+    compute_ksfailure_DVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, elem_components, geo_conn, vars_conn, xpts, vars, physData,
+                          rho_KS, h_max_fail, h_sumexp_ks_fail, dfdx);
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+#endif
+};
+
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
+void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu,
+                                                                          T *_max_fail,
+                                                                          T *_sumexp_fail) {
+    using Quadrature = typename ElemGroup::Quadrature;
+
+#ifdef USE_GPU
+
+    const int elems_per_block = 32;
+    dim3 block(Quadrature::num_quad_pts, elems_per_block);
+    int nblocks = (num_elements + block.y - 1) / block.y;
+    dim3 grid(nblocks);
+
+    // rerun old states from forward (if not provided)
+    T h_max_fail, h_sumexp_ks_fail;
+    if (_max_fail) {
+        h_max_fail = *_max_fail;
+    } else {
+        // first compute the max failure index (not KS), so we can prevent overflow
+        DeviceVec<T> d_max_fail(1);
+        compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+            num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+        h_max_fail = d_max_fail.createHostVec()[0];
+    }
+
+    if (_sumexp_fail) {
+        h_sumexp_ks_fail = *_sumexp_fail;
+    } else {
+        // second, do sum ks fail (needed for denom of KS derivs)
+        DeviceVec<T> d_sum_ksfail(1);
+        compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                              h_max_fail, d_sum_ksfail.getPtr());
+        // add back global non-smooth max (overflow prevention)
+        h_sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
+    }
+
+    // now compute the SVsens gradient
+    compute_ksfailure_SVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                          h_max_fail, h_sumexp_ks_fail, dfdu);
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+#endif
+};
+
 // doesn't do anything yet, TODO to write it
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
@@ -371,26 +419,25 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionXptSens(MyFunction &f
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass() {
+void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(T rho_KS, Vec<T> &psi,
+                                                                      Vec<T> &dfdx) {
     using Quadrature = typename ElemGroup::Quadrature;
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
 
-#ifdef USE_GPU
+    // apply bcs to the adjoint vector first
+    // so that dRe/dxe doesn't contribute to fixed bc terms
+    psi.apply_bcs();
 
-    // temporary mass device pointer (for adding up total mass)
-    DeviceVec<T> d_mass(1);
+#ifdef USE_GPU
 
     dim3 block(32, Quadrature::num_quad_pts);
     int nblocks = (num_elements + block.x - 1) / block.x;
     dim3 grid(nblocks);
 
-    compute_mass_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, geo_conn, xpts, physData, d_mass.getPtr());
-
-    CHECK_CUDA(cudaDeviceSynchronize());
-
-    T *h_mass = d_mass.createHostVec().getPtr();
-    return h_mass[0];
+    // very similar kernel to the residual call
+    // add into dfdx
+    compute_adjResProduct_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+        num_elements, bsr_data.perm, geo_conn, vars_conn, xpts, vars, physData, psi, dfdx);
 
 #endif
 };

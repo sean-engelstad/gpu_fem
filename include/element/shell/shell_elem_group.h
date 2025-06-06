@@ -436,9 +436,11 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     }  // add_element_quadpt_gmat_col
 
     template <class Data>
-    __HOST_DEVICE__ static void get_element_quadpt_failure_index(
+    __HOST_DEVICE__ static void compute_element_quadpt_adj_res_product(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, T &fail_index) {
+        const T vars[dof_per_elem], const Data physData, const T psi[dof_per_elem], T loc_dv_sens[])
+
+    {
         if (!active_thread) return;
 
         // data to store in forwards + backwards section
@@ -446,10 +448,11 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T pt[2];              // quadrature point
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
 
-        // in-out of forward & backwards section
-        A2D::Mat<T, 3, 3> u0x, u1x;
-        A2D::SymMat<T, 3> e0ty;
-        A2D::Vec<T, 1> et;
+        // intermediate strain states
+        A2D::Mat<T, 3, 3> u0x, u1x, psi_u0x, psi_u1x;
+        A2D::SymMat<T, 3> e0ty, psi_e0ty;
+        A2D::Vec<T, 1> et, psi_et;
+        T scale = 0.0, detXd = 0.0;
         static constexpr bool is_nonlinear = Phys::is_nonlinear;
 
         // forward scope block for strain energy
@@ -471,13 +474,190 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
-            T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+            detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.get_data(), u1x.get_data(), e0ty);
 
-            Phys::template computeFailureIndex(physData, u0x, u1x, e0ty, et, rhoKS, fail_index);
+            // get the scale for disp grad sens of the energy
+            scale = detXd * weight;
 
         }  // end of forward scope block for strain energy
         // ------------------------------------------------
+
+        // hforward scope block for psi[u] => psi[E] the strain level equiv adjoint
+        // ------------------------------------
+        {
+            // compute the interpolated drill strain
+            ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
+                pt, physData.refAxis, xpts, psi, fn, psi_et.get_data());
+
+            // compute directors (linearized Hfwd)
+            T psi_d[3 * num_nodes];
+            Director::template computeDirectorHfwd<vars_per_node, num_nodes>(psi, fn, psi_d);
+
+            // compute tying strain (hfwd version, so linearized)
+            T psi_ety[Basis::num_all_tying_points];
+            computeTyingStrainHfwd<T, Phys, Basis, is_nonlinear>(xpts, fn, psi, psi_d, psi_ety);
+
+            // compute all shell displacement gradients (linearized Hfwd version)
+            ShellComputeDispGradHfwd<T, vars_per_node, Basis, Data>(
+                pt, physData.refAxis, xpts, psi, fn, psi_d, ety, psi_u0x.get_data(),
+                psi_u1x.get_data(), psi_e0ty);
+
+        }  // end of hforward scope block for psi
+        // ------------------------------------
+
+        // want psi[u]^T d^2Pi/du/dx = psi[E]^T d^2Pi/dE/dx
+        // instead of backprop sensitivities, hfwd and compute product on the strains
+        Phys::compute_strain_adjoint_res_product<T>(physData, scale, u0x, u1x, e0ty, et, psi_u0x,
+                                                    psi_u1x, psi_e0ty, psi_et, loc_dv_sens);
+
+    }  // end of method add_element_quadpt_residual
+
+    template <class Data>
+    __HOST_DEVICE__ static void compute_element_quadpt_strains(
+        const int iquad, const T xpts[xpts_per_elem], const T vars[dof_per_elem],
+        const Data &physData, A2D::Mat<T, 3, 3> &u0x, A2D::Mat<T, 3, 3> &u1x,
+        A2D::SymMat<T, 3> &e0ty, A2D::Vec<T, 1> &et) {
+        // data to store in forwards + backwards section
+        T fn[3 * num_nodes];  // node normals
+        T pt[2];              // quadrature point
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
+
+        // forward scope block for strains
+        // ------------------------------------------------
+        {
+            // compute node normals fn
+            ShellComputeNodeNormals<T, Basis>(xpts, fn);
+
+            // compute the interpolated drill strain
+            ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
+                pt, physData.refAxis, xpts, vars, fn, et.get_data());
+
+            // compute directors
+            T d[3 * num_nodes];
+            Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
+            // compute tying strain
+            T ety[Basis::num_all_tying_points];
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
+
+            // compute all shell displacement gradients
+            T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+                pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.get_data(), u1x.get_data(), e0ty);
+
+        }  // end of forward scope block for strains
+        // ------------------------------------------------
+    }
+
+    template <class Data>
+    __HOST_DEVICE__ static void get_element_quadpt_failure_index(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, T &fail_index) {
+        if (!active_thread) return;
+
+        // in-out of forward & backwards section
+        A2D::Mat<T, 3, 3> u0x, u1x;
+        A2D::SymMat<T, 3> e0ty;
+        A2D::Vec<T, 1> et;
+
+        // get strains and then failure index
+        compute_element_quadpt_strains<Data>(iquad, xpts, vars, physData, u0x, u1x, e0ty, et);
+
+        Phys::template computeFailureIndex(physData, u0x, u1x, e0ty, et, rhoKS, fail_index);
+    }
+
+    template <class Data>
+    __HOST_DEVICE__ static void compute_element_quadpt_failure_dv_sens(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, const T &fail_sens,
+        T loc_dv_sens[]) {
+        if (!active_thread) return;
+
+        // in-out of forward & backwards section
+        A2D::Mat<T, 3, 3> u0x, u1x;
+        A2D::SymMat<T, 3> e0ty;
+        A2D::Vec<T, 1> et;
+
+        compute_element_quadpt_strains<Data>(iquad, xpts, vars, physData, u0x, u1x, e0ty, et);
+
+        Phys::template computeFailureIndexDVSens(physData, u0x, u1x, e0ty, et, rhoKS, fail_sens,
+                                                 loc_dv_sens);
+    }
+
+    template <class Data>
+    __HOST_DEVICE__ static void compute_element_quadpt_failure_sv_sens(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, const T &fail_sens,
+        T dfdu_local[]) {
+        if (!active_thread) return;
+
+        // data to store in forwards + backwards section
+        T fn[3 * num_nodes];  // node normals
+        T pt[2];              // quadrature point
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+        // in-out of forward & backwards section
+        A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;
+        A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
+        A2D::ADObj<A2D::Vec<T, 1>> et;
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
+
+        // forward scope block for strain energy
+        // ------------------------------------------------
+        T d[3 * num_nodes];
+        {
+            // compute node normals fn
+            ShellComputeNodeNormals<T, Basis>(xpts, fn);
+
+            // compute the interpolated drill strain
+            ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
+                pt, physData.refAxis, xpts, vars, fn, et.value().get_data());
+
+            // compute directors
+            Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
+            // compute tying strain
+            T ety[Basis::num_all_tying_points];
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
+
+            // compute all shell displacement gradients
+            T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+                pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.value().get_data(),
+                u1x.value().get_data(), e0ty.value());
+
+            Phys::template computeFailureIndexSVSens(physData, u0x, u1x, e0ty, et, rhoKS,
+                                                     fail_sens);
+
+        }  // end of forward scope block for strain energy
+        // ------------------------------------------------
+
+        // beginning of backprop section to final residual derivatives
+        // -----------------------------------------------------
+
+        // compute disp grad sens u0x_bar, u1x_bar, e0ty_bar => res, d_bar,
+        // ety_bar
+        A2D::Vec<T, 3 * num_nodes> d_bar;
+        A2D::Vec<T, Basis::num_all_tying_points> ety_bar;
+        // T ety_bar[Basis::num_all_tying_points];
+        ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
+            pt, physData.refAxis, xpts, vars, fn, u0x.bvalue().get_data(), u1x.bvalue().get_data(),
+            e0ty.bvalue(), dfdu_local, d_bar.get_data(), ety_bar.get_data());
+
+        // backprop tying strain sens ety_bar to d_bar and res
+        computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), dfdu_local,
+                                               d_bar.get_data());
+
+        // directors back to residuals
+        Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(),
+                                                                         dfdu_local);
+
+        // drill strain sens
+        ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
+            pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), dfdu_local);
+
+        // TODO : rotation constraint sens for some director classes (zero for
+        // linear rotation)
     }
 
     template <class Data>
