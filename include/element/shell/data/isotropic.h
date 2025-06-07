@@ -50,10 +50,10 @@ class ShellIsotropicData {
     }
 
     __HOST_DEVICE__ void evalStrainDVSensProduct(const T &scale, const T strain[],
-                                                 const T psi_strain[], T loc_dv_sens[]) {
+                                                 const T psi_strain[], T loc_dv_sens[]) const {
         /* compute psi[E]^T * d^2Pi/dE/dx product at strain level (equiv to back at disp level) */
         T C[6];
-        Data::evalTangentStiffness2D(E, nu, C);
+        evalTangentStiffness2D(E, nu, C);
 
         // dPi/dE = stress[9] vector, here we compute dstress[9] the thickness derivs
         T dstress[9];
@@ -71,13 +71,13 @@ class ShellIsotropicData {
 
         // compute transverse shear components
         T dAs = getTransShearCorrFactor() * C[5];
-        T ddrill = Data::getDrillingRegularization() * dAs;
+        T ddrill = getDrillingRegularization() * dAs;
         dstress[6] = dAs * strain[6];
         dstress[7] = dAs * strain[7];
         dstress[8] = ddrill * strain[8];
 
         // now compute <dstress, psi_strain> as adjoint resid product, only one dv
-        loc_dv_sens[0] = A2D::VecDotCore<T, 9>(psi_strain, dstress);
+        loc_dv_sens[0] = scale * A2D::VecDotCore<T, 9>(psi_strain, dstress);
     }
 
     __HOST_DEVICE__ static T vonMisesFailure2D(const T s[], const T &ys) {
@@ -91,9 +91,9 @@ class ShellIsotropicData {
                (ys * ys) / (vm + 1e-12);  // divide by ys twice so equiv to 1/sqrt()
     }
 
-    __HOST_DEVICE__ static T vonMisesFailureRevSens(const T &scale, const T &ys, const T &vm,
-                                                    const T s[], T sb[]) {
-        T jac = scale / ys / ys / (vm + 1e-12);
+    __HOST_DEVICE__ static void vonMises2DFailureRevSens(const T &scale, const T &ys, const T &vm,
+                                                         const T s[], T sb[]) {
+        T jac = scale / ys / ys / 2.0 / (vm + 1e-12);
         sb[0] = jac * (2 * s[0] - s[1]);
         sb[1] = jac * (2 * s[1] - s[0]);
         sb[2] = jac * 6 * s[2];
@@ -194,9 +194,6 @@ class ShellIsotropicData {
                                                T er[9]) const {
         /* compute dsigma_KS/dstrain */
 
-        // er stands for e reverse (since eb taken)
-        memset(er, 0.0, 9 * sizeof(T));
-
         // forward analysis part
         // ---------------------
         // von Mises failure index, use ks max for to pand bottom stresses
@@ -238,7 +235,7 @@ class ShellIsotropicData {
 
         T dst[3], dsb[3];
         vonMises2DFailureRevSens(dtop, ys, top, st, dst);
-        vonMises2DFailureRevSens(dtop, ys, top, sb, dsb);
+        vonMises2DFailureRevSens(dbot, ys, bot, sb, dsb);
 
         T det[3], deb[3];
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, dst, det);
@@ -246,9 +243,19 @@ class ShellIsotropicData {
 
 #pragma unroll
         for (int i = 0; i < 3; i++) {
-            er[i] = et[i] + eb[i];
-            er[3 + i] = ht * et[i - 3] + hb * eb[i - 3];
+            er[i] = det[i] + deb[i];
+            er[3 + i] = ht * det[i] + hb * deb[i];
         }
+
+        // if (threadIdx.x == 0 && threadIdx.y == 0 && blockIdx.x == 0) {
+        //     printf("ksSum %.4e\n", ksSum);
+        //     printf("scale %.4e\n", scale);
+        //     printf("dtop %.4e, dbot %.4e\n", dtop, dbot);
+        //     printf("dst:");
+        //     printVec<T>(3, dst);
+        //     printf("dsb:");
+        //     printVec<T>(3, dsb);
+        // }
     }
 
     __HOST_DEVICE__ static T getTransShearCorrFactor() { return T(5.0 / 6.0); }

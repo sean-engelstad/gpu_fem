@@ -172,15 +172,82 @@ class IsotropicShell {
                                                  psi_e0ty.get_data(), psi_et.get_data(),
                                                  psi_E.get_data());
         } else {
-            A2D::NonlinearShellStrainForwardCore<T>(psi_u0x.get_data(), psi_u1x.get_data(),
-                                                    psi_e0ty.get_data(), psi_et.get_data(),
-                                                    psi_E.get_data());
+            A2D::NonlinearShellStrainForwardCore<T>(
+                u0x.get_data(), u1x.get_data(), e0ty.get_data(), et.get_data(), psi_u0x.get_data(),
+                psi_u1x.get_data(), psi_e0ty.get_data(), psi_et.get_data(), psi_E.get_data());
         }
 
         // then compute psi_E^T dEbar/dx the strain sensitivity design var sens for each design var
         physData.evalStrainDVSensProduct(scale, E.get_data(), psi_E.get_data(), loc_dv_sens);
 
     }  // end of computeWeakRes
+
+    template <typename T2>
+    __HOST_DEVICE__ static void computeWeakResThickDVSens(const Data &physData, const T &scale,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                          A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                          A2D::ADObj<A2D::Vec<T2, 1>> &et) {
+        // manually for linear isotropic case for now
+        A2D::Vec<T, 9> e, eb, s, sb;
+        auto &u0xF = u0x.value();
+        auto &u0xb = u0x.bvalue();
+        auto &u1xF = u1x.value();
+        auto &u1xb = u1x.bvalue();
+        auto &e0tyF = e0ty.value();
+        auto &e0tyb = e0ty.bvalue();
+        auto &etF = et.value();
+        auto &etb = et.bvalue();
+
+        // linear shell strains
+        // Evaluate the in-plane strains from the tying strain expressions
+        e[0] = e0tyF[0];        // e11
+        e[1] = e0tyF[3];        // e22
+        e[2] = 2.0 * e0tyF[1];  // e12
+
+        // Compute the bending strain
+        e[3] = u1xF[0];            // k11
+        e[4] = u1xF[4];            // k22
+        e[5] = u1xF[1] + u1xF[3];  // k12
+
+        // Add the components of the shear strain
+        e[6] = 2.0 * e0tyF[4];  // e23, transverse shear
+        e[7] = 2.0 * e0tyF[2];  // e13, transverse shear
+        e[8] = etF[0];          // e12 (drill strain)
+
+        printf("e:");
+        printVec<T>(9, e.get_data());
+
+        // forward stresses derivs (dstress/dthick) are dU/dstrain/dx
+        T C[6];
+        Data::evalTangentStiffness2D(physData.E, physData.nu, C);
+        T thick = physData.thick;
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, e.get_data(), s.get_data());
+        A2D::SymMatVecCoreScale3x3<T, true>(thick * thick / 4.0, C, &e.get_data()[3],
+                                            &s.get_data()[3]);
+        T dAs = Data::getTransShearCorrFactor() * C[5];
+        s[6] = dAs * e[6];
+        s[7] = dAs * e[7];
+        T ddrill = Data::getDrillingRegularization() * dAs;
+        s[8] = ddrill * e[8];
+        for (int i = 0; i < 9; i++) eb[i] = scale * s[i];
+
+        // strain derivs back to input disp grad derivs
+        e0tyb[0] += eb[0];        // e1
+        e0tyb[3] += eb[1];        // e22
+        e0tyb[1] += 2.0 * eb[2];  // e12
+
+        // Compute the bending strain
+        u1xb[0] += eb[3];  // k11
+        u1xb[4] += eb[4];  // k22
+        u1xb[1] += eb[5];  // k12
+        u1xb[3] += eb[5];  // k12
+
+        // Add the components of the shear strain
+        e0tyb[4] += 2.0 * eb[6];  // e23, transverse shear
+        e0tyb[2] += 2.0 * eb[7];  // e13, transverse shear
+        etb[0] += eb[8];          // e12 (drill strain)
+    }                             // end of computeWeakRes
 
     template <typename T2>
     __HOST_DEVICE__ static void computeFailureIndex(const Data physData, A2D::Mat<T2, 3, 3> u0x,
@@ -220,10 +287,12 @@ class IsotropicShell {
     }  // end of computeFailureIndexDVSens
 
     template <typename T2>
-    __HOST_DEVICE__ static void computeFailureIndexSVSens(
-        const Data physData, A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x, A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x,
-        A2D::ADObj<A2D::SymMat<T2, 3>> e0ty, A2D::ADObj<A2D::Vec<T2, 1>> et, const T &rhoKS,
-        const T &scale, T dv_sens[]) {
+    __HOST_DEVICE__ static void computeFailureIndexSVSens(const Data physData, const T &rhoKS,
+                                                          const T &scale,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                          A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                          A2D::ADObj<A2D::Vec<T2, 1>> &et) {
         /* compute df/du RHS constribution to ks failure */
         A2D::ADObj<A2D::Vec<T2, 9>> E;
         if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
@@ -240,14 +309,14 @@ class IsotropicShell {
         physData.evalFailureStrainSens(scale, rhoKS, E.value().get_data(), E.bvalue().get_data());
 
         if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
-            A2D::LinearShellStrainReverseCore<T>(u0x.bvalue().get_data(), u1x.bvalue().get_data(),
-                                                 e0ty.bvalue().get_data(), et.bvalue().get_data(),
-                                                 E.bvalue().get_data());
+            A2D::LinearShellStrainReverseCore<T>(E.bvalue().get_data(), u0x.bvalue().get_data(),
+                                                 u1x.bvalue().get_data(), e0ty.bvalue().get_data(),
+                                                 et.bvalue().get_data());
         } else {
             A2D::NonlinearShellStrainReverseCore<T>(
-                u0x.bvalue().get_data(), u1x.bvalue().get_data(), e0ty.bvalue().get_data(),
-                et.bvalue().get_data(), E.bvalue().get_data());
+                E.bvalue().get_data(), u0x.value().get_data(), u1x.value().get_data(),
+                e0ty.value().get_data(), et.value().get_data(), u0x.bvalue().get_data(),
+                u1x.bvalue().get_data(), e0ty.bvalue().get_data(), et.bvalue().get_data());
         }
-
     }  // end of computeFailureIndexDVSens
 };

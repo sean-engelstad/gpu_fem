@@ -67,7 +67,7 @@ class ElementAssembler {
     void evalFunctionAdjResProduct(MyFunction &func);
 
     // optimization utils
-    void _compute_adjResProduct(T rho_KS, Vec<T> &psi, Vec<T> &dfdx);
+    void _compute_adjResProduct(Vec<T> &psi, Vec<T> &dfdx);
     void _compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
                                     T *_sumexp_fail = nullptr);
     void _compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
@@ -419,25 +419,23 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionXptSens(MyFunction &f
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(T rho_KS, Vec<T> &psi,
-                                                                      Vec<T> &dfdx) {
+void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(Vec<T> &psi, Vec<T> &dfdx) {
     using Quadrature = typename ElemGroup::Quadrature;
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
     // apply bcs to the adjoint vector first
     // so that dRe/dxe doesn't contribute to fixed bc terms
-    psi.apply_bcs();
+    // psi.apply_bcs();
 
 #ifdef USE_GPU
 
-    dim3 block(32, Quadrature::num_quad_pts);
-    int nblocks = (num_elements + block.x - 1) / block.x;
+    const int elems_per_block = 32;
+    dim3 block(Quadrature::num_quad_pts, elems_per_block);
+    int nblocks = (num_elements + block.y - 1) / block.y;
     dim3 grid(nblocks);
 
     // very similar kernel to the residual call
     // add into dfdx
     compute_adjResProduct_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, bsr_data.perm, geo_conn, vars_conn, xpts, vars, physData, psi, dfdx);
+        num_elements, elem_components, geo_conn, vars_conn, xpts, vars, physData, psi, dfdx);
 
 #endif
 };
@@ -759,15 +757,16 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionSVSens(MyFunction &fu
     }
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionAdjResProduct(MyFunction &func) {
-    func.check_setup();
-    // add into dfdx that is df/dx += psi^T dR/dx
-    if (func.name == "mass") {
-        // pass non-adjoint function
+// TODO : need to fix and add psi here
+// template <typename T, typename ElemGroup, template <typename> class Vec,
+//           template <typename> class Mat>
+// void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionAdjResProduct(MyFunction &func) {
+//     func.check_setup();
+//     // add into dfdx that is df/dx += psi^T dR/dx
+//     if (func.name == "mass") {
+//         // pass non-adjoint function
 
-    } else if (func.name == "ksfailure") {
-        _compute_ksfailure_adjResProduct(func.rho_KS, func.dv_sens);
-    }
-}
+//     } else if (func.name == "ksfailure") {
+//         _compute_ksfailure_adjResProduct(func.rho_KS, func.dv_sens);
+//     }
+// }

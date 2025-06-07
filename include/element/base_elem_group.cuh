@@ -827,6 +827,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
     __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
     __SHARED__ T block_vars[elems_per_block][vars_per_elem];
     __SHARED__ Data block_data[elems_per_block];
+    __SHARED__ T block_res[elems_per_block][vars_per_elem];
 
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
@@ -875,7 +876,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
     }
 
     if (iquad == 0) {
-        dfdu.addElementValuesFromShared(active_thread, iquad, Quadrature::num_quad_pts, Phys::vars_per_node,
+        dfdu.addElementValuesFromShared(active_thread, 0, 1, Phys::vars_per_node,
                                    Basis::num_nodes, vars_elem_conn,
                                    quadpt_du_sens);
     }
@@ -946,7 +947,7 @@ __GLOBAL__ void compute_adjResProduct_kernel(const int32_t num_elements,
     ElemGroup::template compute_element_quadpt_adj_res_product<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], block_psi[local_elem], quadpt_dv_sens
-    )
+    );
 
     // warp reduction across quadpts
     for (int idv = 0; idv < ndvs_per_comp; idv++) {
