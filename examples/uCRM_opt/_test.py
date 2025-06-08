@@ -1,10 +1,14 @@
 import gpusolver
 import numpy as np
 
-solver = gpusolver.TACSGPUSolver()
+rhoKS = 100.0
+# SF = 1.5
+SF = 1.0
+load_mag = 100.0
+solver = gpusolver.TACSGPUSolver(rhoKS, SF, load_mag)
 ndvs = solver.get_num_dvs()
 
-x = np.array([5e-2]*ndvs)
+x = np.array([2e-2]*ndvs)
 solver.set_design_variables(x)
 solver.solve()
 mass = solver.evalFunction("mass")

@@ -56,6 +56,7 @@ class TACSGPUSolver {
         }
         d_loads = h_loads.createDeviceVec();
         assembler->apply_bcs(d_loads);
+        soln = DeviceVec<T>(nvars);
 
         // 3) Design vars
         ndvs = assembler->get_num_dvs();
@@ -69,19 +70,49 @@ class TACSGPUSolver {
         // 5) Functions
         mass = std::make_unique<DMass>();
         ksfail = std::make_unique<DKSFail>(rhoKS, safety_factor);
+
+        dvs_changed = true;
+        first_solve = true;
     }
 
     void set_design_variables(const std::vector<T> &dvs) {
-        CHECK_CUDA(
-            cudaMemcpy(d_dvs.getPtr(), dvs.data(), ndvs * sizeof(T), cudaMemcpyHostToDevice));
-        solver->set_design_variables(d_dvs);
+        dvs_changed = (dvs.size() != prev_dvs.size());
+        if (!dvs_changed) {
+            for (int i = 0; i < dvs.size(); i++) {
+                if (dvs[i] != prev_dvs[i]) {
+                    dvs_changed = true;
+                    break;
+                }
+            }
+        }
+
+        if (first_solve) {
+            dvs_changed = true;
+        }
+
+        if (dvs_changed) {
+            prev_dvs = dvs;
+            CHECK_CUDA(
+                cudaMemcpy(d_dvs.getPtr(), dvs.data(), ndvs * sizeof(T), cudaMemcpyHostToDevice));
+            solver->set_design_variables(d_dvs);
+        }
     }
 
     int get_num_vars() const { return nvars; }
     int get_num_dvs() const { return ndvs; }
     void writeSolution(const std::string &filename) const { solver->writeSoln(filename); }
 
-    void solve() { solver->solve(d_loads); }
+    void solve() {
+        if (dvs_changed) {
+            printf("design changed, new solve\n");
+            solver->solve(d_loads);
+            solver->copy_solution_out(soln);
+        } else {
+            // reload old state
+            printf("design didn't change, reload vals\n");
+            solver->copy_solution_in(soln);
+        }
+    }
 
     T evalFunction(const std::string &name) {
         if (name == "mass")
@@ -127,4 +158,8 @@ class TACSGPUSolver {
 
     int ndvs = 0, nvars = 0;
     DeviceVec<T> d_loads, d_dvs;
+    std::vector<T> prev_dvs;
+    bool dvs_changed;
+    bool first_solve;
+    DeviceVec<T> soln;
 };

@@ -11,3 +11,4 @@ clean:
 	rm -f *.x
 	rm -f *.f5
 	rm -f *.vtk
+	rm -f out/*.vtk

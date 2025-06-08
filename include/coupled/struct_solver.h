@@ -151,6 +151,13 @@ class TacsLinearStatic : public BaseTacsStatic<T, Assembler> {
         this->assembler.set_variables(this->vars);
     }
 
+    void copy_solution_in(Vec &soln_in) {
+        soln_in.copyValuesTo(this->soln);
+        this->soln.copyValuesTo(this->vars);
+        this->assembler.set_variables(this->vars);
+    }
+    void copy_solution_out(Vec &soln_out) { this->soln.copyValuesTo(soln_out); }
+
     void set_design_variables(Vec &x) {
         this->resetSoln();
         this->assembler.set_design_variables(x);
