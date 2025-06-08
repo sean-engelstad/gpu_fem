@@ -89,12 +89,13 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
 
     // free resources
     cudaFree(pBuffer);
+    cudaFree(d_vals_ILU0);
+    cudaFree(d_temp);
     cusparseDestroyMatDescr(descr_L);
     cusparseDestroyMatDescr(descr_U);
     cusparseDestroyBsrsv2Info(info_L);
     cusparseDestroyBsrsv2Info(info_U);
     cusparseDestroy(handle);
-    cudaFree(d_vals_ILU0);
 
     // now also inverse permute the soln data
     permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
