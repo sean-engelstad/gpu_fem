@@ -90,6 +90,10 @@ void perform_ilu0_factorization(cusparseHandle_t handle, cusparseMatDescr_t &des
     if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
         printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
     }
+
+    // cleanup / free from factorization only
+    cusparseDestroyBsrilu02Info(info_M);
+    cusparseDestroyMatDescr(descr_M);
 }
 
 template <typename T>

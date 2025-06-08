@@ -41,10 +41,13 @@ int main(int argc, char **argv) {
     // Loop over components, creating constituitive object for each
     for (int i = 0; i < num_components; i++) {
         const char *descriptor = mesh->getElementDescript(i);
-        TacsScalar thickness = 0.02;
+        // thinner shell has worse condition #?
+        TacsScalar thickness = 1.0;
+        // TacsScalar thickness = 0.02;
+        // TacsScalar thickness = 0.003;
         int thickness_index = i;
-        TacsScalar min_thickness = 0.01;
-        TacsScalar max_thickness = 0.20;
+        TacsScalar min_thickness = 0.001;
+        TacsScalar max_thickness = 1.20;
         TACSShellConstitutive *con = new TACSIsoShellConstitutive(props, thickness, thickness_index,
                                                                   min_thickness, max_thickness);
 
@@ -84,8 +87,8 @@ int main(int argc, char **argv) {
 
     // Allocate the factorization
     double t0 = MPI_Wtime();
-    // int lev = 7;
-    int lev = 1;
+    int lev = 7;
+    // int lev = 5;
     double fill = 11.0;
     int reorder_schur = 1;
     TACSSchurPc *pc = new TACSSchurPc(mat, lev, fill, reorder_schur);

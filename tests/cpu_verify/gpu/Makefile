@@ -18,6 +18,10 @@ gmres:
 	rm gpu_gmres.txt || echo "no *.txt files to remove"
 	make gpu_gmres && ./gpu_gmres.out >> gpu_gmres.txt
 
+funcs:
+	rm gpu_funcs.txt || echo "no *.txt files to remove"
+	make gpu_funcs && ./gpu_funcs.out
+
 cpu_precond:
 	rm cpu_to_gpu_precond.txt || echo "no *.txt files to remove"
 	make cpu_to_gpu_precond

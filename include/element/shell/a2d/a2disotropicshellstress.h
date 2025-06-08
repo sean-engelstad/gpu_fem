@@ -27,12 +27,12 @@ A2D_FUNCTION void IsotropicShellStressCore(const T& E, const T& nu, const T& thi
 
     // Nij = A * Eij; A = C * thick
     A2D::SymMatVecCoreScale3x3<T, false>(thick, C, strain, stress);
-    // Nij += B * kij; B = C * -thick * tOffset
+    // Nij += B * kij; B = C * -thick^2 * tOffset
     A2D::SymMatVecCoreScale3x3<T, true>(-thick * thick * tOffset, C, &strain[3], stress);
 
-    // Mij = B * Eij; B = C * -thick tOffset
+    // Mij = B * Eij; B = C * -thick^2 tOffset
     A2D::SymMatVecCoreScale3x3<T, false>(-thick * thick * tOffset, C, strain, &stress[3]);
-    // Mij += D * kij; D = t^3/12 * A + tOffset^2 * t^2 * A (the units on second term don't seem
+    // Mij += D * kij; D = t^3/12 * C + tOffset^2 * t^2 * C (the units on second term don't seem
     // correct; error in TACS?)
     T I = thick * thick * thick / 12.0;
     A2D::SymMatVecCoreScale3x3<T, true>(I, C, &strain[3], &stress[3]);

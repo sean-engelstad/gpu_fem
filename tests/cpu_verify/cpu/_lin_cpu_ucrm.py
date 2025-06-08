@@ -26,7 +26,8 @@ kcorr = 5.0 / 6.0  # shear correction factor
 ys = 350e6  # yield stress, Pa
 min_thickness = 0.002
 max_thickness = 0.20
-thickness = 0.02
+# thickness = 0.02
+thickness = 0.001
 
 # Loop over components, creating stiffness and element object for each
 num_components = struct_mesh.getNumComponents()
@@ -70,16 +71,17 @@ ans = tacs.createVec()
 u = tacs.createVec()
 # default is AMD ordering
 start_nz = time.time()
-ordering = TACS.TACS_AMD_ORDER
+# ordering = TACS.TACS_AMD_ORDER
 # ordering = TACS.RCM_ORDER
 # ordering = TACS.ND_ORDER
+ordering = TACS.Q_ORDER
 mat = tacs.createSchurMat(ordering)
 
 nz_time = time.time() - start_nz
-# ILUk = 1
+ILUk = 1
 # ILUk = 3
 # ILUk = 7 # not enough on fine mesh
-ILUk = 11
+# ILUk = 11
 # ILUk = 15
 # ILUk = int(1e6)
 # ILUk = 1e6
