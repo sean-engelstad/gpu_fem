@@ -50,6 +50,12 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     // of LU solve is for repeated linear solves we now just do triangular
     // solves)
     T *d_vals = mat.getPtr();
+    // T *d_vals_ILU0 = d_vals;
+
+    T *d_vals_ILU0 = DeviceVec<T>(mat.get_nnz()).getPtr();
+    // ILU0 equiv to ILU(k) if sparsity pattern has ILU(k)
+    CHECK_CUDA(
+        cudaMemcpy(d_vals_ILU0, d_vals, mat.get_nnz() * sizeof(T), cudaMemcpyDeviceToDevice));
 
     // Initialize the cuda cusparse handle
     cusparseHandle_t handle;
@@ -67,19 +73,19 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
 
     // perform the symbolic and numeric factorization of LU on given sparsity pattern
     CUSPARSE::perform_ilu0_factorization(handle, descr_L, descr_U, info_L, info_U, &pBuffer, mb,
-                                         nnzb, block_dim, d_vals, d_rowp, d_cols, trans_L, trans_U,
-                                         policy_L, policy_U, dir);
+                                         nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
+                                         trans_U, policy_L, policy_U, dir);
 
     // triangular solve L*z = x
     const double alpha = 1.0;
-    CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_vals,
-                                         d_rowp, d_cols, block_dim, info_L, d_rhs, d_temp, policy_L,
-                                         pBuffer));
+    CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_L, mb, nnzb, &alpha, descr_L,
+                                         d_vals_ILU0, d_rowp, d_cols, block_dim, info_L, d_rhs,
+                                         d_temp, policy_L, pBuffer));
 
     // triangular solve U*y = z
-    CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_vals,
-                                         d_rowp, d_cols, block_dim, info_U, d_temp, d_soln,
-                                         policy_U, pBuffer));
+    CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_U, mb, nnzb, &alpha, descr_U,
+                                         d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_temp,
+                                         d_soln, policy_U, pBuffer));
 
     // free resources
     cudaFree(pBuffer);
@@ -88,6 +94,7 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     cusparseDestroyBsrsv2Info(info_L);
     cusparseDestroyBsrsv2Info(info_U);
     cusparseDestroy(handle);
+    cudaFree(d_vals_ILU0);
 
     // now also inverse permute the soln data
     permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);

@@ -47,20 +47,6 @@ class IsotropicShell {
                                                        A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
                                                        A2D::A2DObj<A2D::Vec<T2, 1>> &et);
 
-                                                       template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
-                                                            A2D::Mat<T2, 3, 3> &u0x,
-                                                            A2D::Mat<T2, 3, 3> &u1x,
-                                                            A2D::SymMat<T2, 3> &e0ty,
-                                                            A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S);
-
-                                                            template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
-                                                     A2D::Mat<T2, 3, 3> &u0x,
-                                                     A2D::Mat<T2, 3, 3> &u1x,
-                                                     A2D::SymMat<T2, 3> &e0ty, A2D::Vec<T2, 1> &et,
-                                                     A2D::Vec<T, 9> E);
-
     __HOST_DEVICE__
     static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
                                  T *fail_index);
@@ -146,6 +132,21 @@ class IsotropicShell {
         strain_energy_stack.hproduct();  // computes projected hessians
         // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
     }  // end of JacobianCol
+
+    template <typename T2>
+    __HOST_DEVICE__ static void computeQuadptStresses(const Data &physData, const T &scale,
+                                                      A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                      A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                      A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                      A2D::ADObj<A2D::Vec<T2, 1>> &et,
+                                                      A2D::ADObj<A2D::Vec<T2, 9>> &E,
+                                                      A2D::ADObj<A2D::Vec<T2, 9>> &S) {
+        // use stack to compute shell strains, stresses and then to strain energy
+        auto strain_energy_stack =
+            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
+                           A2D::IsotropicShellStress<T, Data>(
+                               physData.E, physData.nu, physData.thick, physData.tOffset, E, S));
+    }  // end of computeQuadptStrains
 
     template <typename T2>
     __HOST_DEVICE__ static void compute_strain_adjoint_res_product(

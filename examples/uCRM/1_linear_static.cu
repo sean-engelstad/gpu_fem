@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
   using T = double;
 
   // problem inputs ----
-  bool full_LU = false;
+  bool full_LU = true;
   // -------------------
 
   auto start0 = std::chrono::high_resolution_clock::now();
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
   T mass = assembler._compute_mass();
   printf("mass %.4e\n", mass);
 
-  return 0;
+  // return 0;
 
   // BSR factorization
   auto& bsr_data = assembler.getBsrData();

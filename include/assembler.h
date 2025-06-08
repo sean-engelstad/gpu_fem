@@ -58,16 +58,16 @@ class ElementAssembler {
     void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false);
 
     // optimization
-    void initializeFunctions(std::vector<MyFunction> &funcs);
-    void evalFunctions(std::vector<MyFunction> &funcs);
+    void setupFunction(MyFunction &func);
+    void evalFunction(MyFunction &func);
     // used in adjoint solve and total derivatives
     void evalFunctionDVSens(MyFunction &func);
-    void evalFunctionSVSens(MyFunction &func, Vec<T> &dfdu);
+    void evalFunctionSVSens(const MyFunction &func, Vec<T> &dfdu);
     void evalFunctionXptSens(MyFunction &func);
-    void evalFunctionAdjResProduct(MyFunction &func);
+    void evalFunctionAdjResProduct(const Vec<T> &psi, MyFunction &func);
 
     // optimization utils
-    void _compute_adjResProduct(Vec<T> &psi, Vec<T> &dfdx);
+    void _compute_adjResProduct(const Vec<T> &psi, Vec<T> &dfdx);
     void _compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
                                     T *_sumexp_fail = nullptr);
     void _compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
@@ -75,7 +75,8 @@ class ElementAssembler {
     void _compute_mass_DVsens(Vec<T> &dfdx);
 
     // visualization
-    void compute_stresses(DeviceVec<T> &stresses);
+    void compute_visualization_states(Vec<T> &dvs_out, Vec<T> &fail_index, Vec<T> &strains,
+                                      Vec<T> &stresses);
 
     // util functions
     BsrData &getBsrData() { return bsr_data; }
@@ -88,6 +89,11 @@ class ElementAssembler {
     int get_num_components() { return num_components; }
     int get_num_nodes() { return num_vars_nodes; }
     int get_num_elements() { return num_elements; }
+    int get_num_vis_stresses() { return Phys::vars_per_node * num_elements; }
+    void get_elem_components(Vec<int> &elem_comp_out) {
+        elem_components.copyValuesTo(elem_comp_out);
+    }
+
     HostVec<T> createVarsHostVec(T *data, bool randomize);
     void setBsrData(BsrData new_bsr_data) { this->bsr_data = new_bsr_data; }
 
@@ -124,6 +130,7 @@ class ElementAssembler {
         vars.free();
         physData.free();
         bsr_data.free();
+        dvs.free();
     }
 
    private:
@@ -134,7 +141,7 @@ class ElementAssembler {
 
     Vec<int32_t> geo_conn, vars_conn;
     Vec<int> bcs, elem_components;
-    Vec<T> xpts, vars;
+    Vec<T> xpts, vars, dvs;
     Vec<Data> physData;
     BsrData bsr_data;
 };  // end of ElementAssembler class declaration
@@ -165,6 +172,8 @@ ElementAssembler<T, ElemGroup, Vec, Mat>::ElementAssembler(
     bsr_data = BsrData(num_elements, num_vars_nodes, Basis::num_nodes, Phys::vars_per_node,
                        vars_conn.getPtr());
 
+    int ndvs = get_num_dvs();
+
 #ifdef USE_GPU
 
     // convert everything to device vecs
@@ -174,6 +183,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat>::ElementAssembler(
     this->bcs = bcs.createDeviceVec();
     this->physData = physData.createDeviceVec(false);
     this->elem_components = elem_components.createDeviceVec();
+    this->dvs = DeviceVec<T>(ndvs);
 
 #else  // not USE_GPU
 
@@ -184,6 +194,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat>::ElementAssembler(
     this->bcs = bcs;
     this->physData = physData;
     this->elem_components = elem_components;
+    this->dvs = HostVec<T>(ndvs);
 
 #endif  // end of USE_GPU or not USE_GPU check
 }
@@ -314,6 +325,35 @@ T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, bool s
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
+void ElementAssembler<T, ElemGroup, Vec, Mat>::compute_visualization_states(Vec<T> &dvs_out,
+                                                                            Vec<T> &fail_index,
+                                                                            Vec<T> &strains,
+                                                                            Vec<T> &stresses) {
+    using Quadrature = typename ElemGroup::Quadrature;
+
+    dvs.copyValuesTo(dvs_out);
+
+#ifdef USE_GPU
+
+    const int elems_per_block = 32;
+    dim3 block(Quadrature::num_quad_pts, elems_per_block);
+    int nblocks = (num_elements + block.y - 1) / block.y;
+    dim3 grid(nblocks);
+
+    vis_failure_index_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, fail_index);
+
+    vis_strains_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, strains);
+
+    vis_stresses_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, stresses);
+
+#endif
+};
+
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
 void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdx,
                                                                           T *_max_fail,
                                                                           T *_sumexp_fail) {
@@ -419,7 +459,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionXptSens(MyFunction &f
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(Vec<T> &psi, Vec<T> &dfdx) {
+void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(const Vec<T> &psi,
+                                                                      Vec<T> &dfdx) {
     using Quadrature = typename ElemGroup::Quadrature;
     // apply bcs to the adjoint vector first
     // so that dRe/dxe doesn't contribute to fixed bc terms
@@ -532,6 +573,8 @@ template <typename T, typename ElemGroup, template <typename> class Vec,
 void ElementAssembler<T, ElemGroup, Vec, Mat>::set_design_variables(Vec<T> &newDVs) {
 // call kernel function to update the physData of each element, component by component
 #ifdef USE_GPU
+
+    newDVs.copyValuesTo(dvs);
 
     constexpr int elems_per_block = 32;
     dim3 block(elems_per_block);
@@ -673,57 +716,25 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::compute_stresses(DeviceVec<T> &stresses) {
-    using Quadrature = typename ElemGroup::Quadrature;
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
-// input is either a device array when USE_GPU or a host array if not USE_GPU
-#ifdef USE_GPU
-    dim3 block = ElemGroup::stress_block;
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-
-    auto stress_cts = DeviceVec<int>(num_vars_nodes);
-
-    compute_sectional_loads_kernel<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, bcs, physData,
-                          bsr_data.perm, stresses, stress_cts);
-
-    // normalize the stresses and compute KS stress
-    dim3 block2(32);
-    dim3 grid2(num_vars_nodes);
-
-    normalize_states<T, ElemGroup><<<grid2, block2>>>(stresses, stress_cts);
-
-    CHECK_CUDA(cudaDeviceSynchronize());
-#else   // USE_GPU
-    // ElemGroup::template add_residual_cpu<Data, Vec>(
-    //     num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
-#endif  // USE_GPU
-};
-
-template <typename T, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::initializeFunctions(std::vector<MyFunction> &funcs) {
+void ElementAssembler<T, ElemGroup, Vec, Mat>::setupFunction(MyFunction &func) {
     // setup num DVs, xpt of new mesh potentially
     int num_dvs = get_num_dvs();
     int num_xpts = get_num_xpts();
-
-    for (const auto &func : funcs) {
-        func.init_sens(num_dvs, num_xpts);
-    }
+    func.init_sens(num_dvs, num_xpts);
 }
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctions(std::vector<MyFunction> &funcs) {
-    for (const auto &func : funcs) {
-        func.check_setup();
-        if (func.name == "mass") {
-            func.value = _compute_mass();
-        } else if (func.name == "ksfailure") {
-            func.value = _compute_ks_failure(func.rho_KS);
+void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunction(MyFunction &func) {
+    func.check_setup();
+    if (func.name == "mass") {
+        func.value = _compute_mass();
+    } else if (func.name == "ksfailure") {
+        auto *ks_func = dynamic_cast<KSFailure<T, Vec> *>(&func);
+        if (!ks_func) {
+            throw std::runtime_error("Invalid function type: expected KSFailure");
         }
+        ks_func->value = _compute_ks_failure(ks_func->rho_KS);
     }
 }
 
@@ -734,39 +745,42 @@ template <typename T, typename ElemGroup, template <typename> class Vec,
 void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionDVSens(MyFunction &func) {
     // df/dx partial term (not total derivative
     func.check_setup();
-    func.dv_sens.zeroValues();
     if (func.name == "mass") {
         _compute_mass_DVsens(func.dv_sens);
 
     } else if (func.name == "ksfailure") {
-        _compute_ks_failure_DVsens(func.rho_KS, func.dv_sens);
+        auto *ks_func = dynamic_cast<KSFailure<T, Vec> *>(&func);
+        if (!ks_func) {
+            throw std::runtime_error("Invalid function type: expected KSFailure");
+        }
+        _compute_ks_failure_DVsens(ks_func->rho_KS, func.dv_sens);
     }
 }
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionSVSens(MyFunction &func, Vec<T> &dfdu) {
+void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionSVSens(const MyFunction &func,
+                                                                  Vec<T> &dfdu) {
     // df/du partial term
     func.check_setup();
-    dfdu.zeroValues();
     if (func.name == "mass") {
         // pass non-adjoint function
 
     } else if (func.name == "ksfailure") {
-        _compute_ks_failure_SVsens(func.rho_KS, dfdu);
+        // Attempt safe downcast
+        auto *ks_func = dynamic_cast<const KSFailure<T, Vec> *>(&func);
+        if (!ks_func) {
+            throw std::runtime_error("Invalid function type: expected KSFailure");
+        }
+        _compute_ks_failure_SVsens(ks_func->rho_KS, dfdu);
     }
 }
 
-// TODO : need to fix and add psi here
-// template <typename T, typename ElemGroup, template <typename> class Vec,
-//           template <typename> class Mat>
-// void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionAdjResProduct(MyFunction &func) {
-//     func.check_setup();
-//     // add into dfdx that is df/dx += psi^T dR/dx
-//     if (func.name == "mass") {
-//         // pass non-adjoint function
-
-//     } else if (func.name == "ksfailure") {
-//         _compute_ksfailure_adjResProduct(func.rho_KS, func.dv_sens);
-//     }
-// }
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
+void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionAdjResProduct(const Vec<T> &psi,
+                                                                         MyFunction &func) {
+    func.check_setup();
+    // add into dfdx that is df/dx += psi^T dR/dx
+    _compute_adjResProduct(psi, func.dv_sens);
+}
