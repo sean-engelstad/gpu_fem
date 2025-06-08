@@ -26,7 +26,7 @@ class TACSGPUSolver {
     using DMass = Mass<T, DeviceVec>;
     using DKSFail = KSFailure<T, DeviceVec>;
 
-    TACSGPUSolver(double rhoKS = 100.0, double load_mag = 100.0) {
+    TACSGPUSolver(double rhoKS = 100.0, double safety_factor = 1.5, double load_mag = 100.0) {
         // 1) Build mesh & assembler
         int mpi_inited = 0;
         MPI_Initialized(&mpi_inited);
@@ -68,7 +68,7 @@ class TACSGPUSolver {
 
         // 5) Functions
         mass = std::make_unique<DMass>();
-        ksfail = std::make_unique<DKSFail>(rhoKS);
+        ksfail = std::make_unique<DKSFail>(rhoKS, safety_factor);
     }
 
     void set_design_variables(const std::vector<T> &dvs) {

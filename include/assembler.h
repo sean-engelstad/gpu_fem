@@ -68,9 +68,9 @@ class ElementAssembler {
 
     // optimization utils
     void _compute_adjResProduct(const Vec<T> &psi, Vec<T> &dfdx);
-    void _compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
+    void _compute_ks_failure_SVsens(T rho_KS, T safetyFactor, Vec<T> &dfdu, T *_max_fail = nullptr,
                                     T *_sumexp_fail = nullptr);
-    void _compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdu, T *_max_fail = nullptr,
+    void _compute_ks_failure_DVsens(T rho_KS, T safetyFactor, Vec<T> &dfdu, T *_max_fail = nullptr,
                                     T *_sumexp_fail = nullptr);
     void _compute_mass_DVsens(Vec<T> &dfdx);
 
@@ -98,7 +98,7 @@ class ElementAssembler {
     void setBsrData(BsrData new_bsr_data) { this->bsr_data = new_bsr_data; }
 
     // private functions
-    T _compute_ks_failure(T rho_KS, bool smooth = true, T *_max_fail = nullptr,
+    T _compute_ks_failure(T rho_KS, T safetyFactor, bool smooth = true, T *_max_fail = nullptr,
                           T *_sumexp_fail = nullptr);
     T _compute_mass();
 
@@ -279,7 +279,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass_DVsens(Vec<T> &dfdx
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, bool smooth, T *_max_fail,
+T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, T safetyFactor,
+                                                                bool smooth, T *_max_fail,
                                                                 T *_sumexp_fail) {
     using Quadrature = typename ElemGroup::Quadrature;
 
@@ -292,15 +293,16 @@ T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, bool s
 
     // first compute the max failure index (not KS), so we can prevent overflow
     DeviceVec<T> d_max_fail(1);
-    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-        num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+    compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                          safetyFactor, d_max_fail.getPtr());
     T h_max_fail = d_max_fail.createHostVec()[0];
 
     // then do sum KS max fail
     DeviceVec<T> d_sum_ksfail(1);
     compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
         <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
-                          h_max_fail, d_sum_ksfail.getPtr());
+                          safetyFactor, h_max_fail, d_sum_ksfail.getPtr());
     // add back global non-smooth max (overflow prevention)
     T sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
     T h_ksmax_fail = h_max_fail + log(sumexp_ks_fail) / rho_KS;
@@ -354,7 +356,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::compute_visualization_states(Vec<
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_KS, Vec<T> &dfdx,
+void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_KS, T safetyFactor,
+                                                                          Vec<T> &dfdx,
                                                                           T *_max_fail,
                                                                           T *_sumexp_fail) {
     using Quadrature = typename ElemGroup::Quadrature;
@@ -373,8 +376,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_
     } else {
         // first compute the max failure index (not KS), so we can prevent overflow
         DeviceVec<T> d_max_fail(1);
-        compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-            num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+        compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                              safetyFactor, d_max_fail.getPtr());
         h_max_fail = d_max_fail.createHostVec()[0];
     }
 
@@ -385,7 +389,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_
         DeviceVec<T> d_sum_ksfail(1);
         compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
-                              h_max_fail, d_sum_ksfail.getPtr());
+                              safetyFactor, h_max_fail, d_sum_ksfail.getPtr());
         // add back global non-smooth max (overflow prevention)
         h_sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
     }
@@ -393,7 +397,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_
     // now compute the DVsens gradient
     compute_ksfailure_DVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
         <<<grid, block>>>(num_elements, elem_components, geo_conn, vars_conn, xpts, vars, physData,
-                          rho_KS, h_max_fail, h_sumexp_ks_fail, dfdx);
+                          rho_KS, safetyFactor, h_max_fail, h_sumexp_ks_fail, dfdx);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -402,7 +406,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_KS, Vec<T> &dfdu,
+void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_KS, T safetyFactor,
+                                                                          Vec<T> &dfdu,
                                                                           T *_max_fail,
                                                                           T *_sumexp_fail) {
     using Quadrature = typename ElemGroup::Quadrature;
@@ -421,8 +426,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_
     } else {
         // first compute the max failure index (not KS), so we can prevent overflow
         DeviceVec<T> d_max_fail(1);
-        compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
-            num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS, d_max_fail.getPtr());
+        compute_max_failure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
+                              safetyFactor, d_max_fail.getPtr());
         h_max_fail = d_max_fail.createHostVec()[0];
     }
 
@@ -433,7 +439,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_
         DeviceVec<T> d_sum_ksfail(1);
         compute_ksfailure_kernel<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
-                              h_max_fail, d_sum_ksfail.getPtr());
+                              safetyFactor, h_max_fail, d_sum_ksfail.getPtr());
         // add back global non-smooth max (overflow prevention)
         h_sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
     }
@@ -441,7 +447,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_
     // now compute the SVsens gradient
     compute_ksfailure_SVsens_kernel<T, ElemGroup, Data, elems_per_block, Vec>
         <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, rho_KS,
-                          h_max_fail, h_sumexp_ks_fail, dfdu);
+                          safetyFactor, h_max_fail, h_sumexp_ks_fail, dfdu);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -734,7 +740,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunction(MyFunction &func) {
         if (!ks_func) {
             throw std::runtime_error("Invalid function type: expected KSFailure");
         }
-        ks_func->value = _compute_ks_failure(ks_func->rho_KS);
+        ks_func->value = _compute_ks_failure(ks_func->rho_KS, ks_func->safetyFactor);
     }
 }
 
@@ -753,7 +759,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionDVSens(MyFunction &fu
         if (!ks_func) {
             throw std::runtime_error("Invalid function type: expected KSFailure");
         }
-        _compute_ks_failure_DVsens(ks_func->rho_KS, func.dv_sens);
+        _compute_ks_failure_DVsens(ks_func->rho_KS, ks_func->safetyFactor, func.dv_sens);
     }
 }
 
@@ -765,14 +771,13 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionSVSens(const MyFuncti
     func.check_setup();
     if (func.name == "mass") {
         // pass non-adjoint function
-
     } else if (func.name == "ksfailure") {
         // Attempt safe downcast
         auto *ks_func = dynamic_cast<const KSFailure<T, Vec> *>(&func);
         if (!ks_func) {
             throw std::runtime_error("Invalid function type: expected KSFailure");
         }
-        _compute_ks_failure_SVsens(ks_func->rho_KS, dfdu);
+        _compute_ks_failure_SVsens(ks_func->rho_KS, ks_func->safetyFactor, dfdu);
     }
 }
 

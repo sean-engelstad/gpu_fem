@@ -254,7 +254,7 @@ class IsotropicShell {
     __HOST_DEVICE__ static void computeFailureIndex(const Data physData, A2D::Mat<T2, 3, 3> u0x,
                                                     A2D::Mat<T2, 3, 3> u1x, A2D::SymMat<T2, 3> e0ty,
                                                     A2D::Vec<T2, 1> et, const T &rhoKS,
-                                                    T &fail_index) {
+                                                    const T &safetyFactor, T &fail_index) {
         A2D::Vec<T2, 9> E;
 
         if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
@@ -265,14 +265,15 @@ class IsotropicShell {
                                              et.get_data(), E.get_data());
         }
 
-        fail_index = physData.evalFailure(rhoKS, E.get_data());
+        fail_index = physData.evalFailure(rhoKS, safetyFactor, E.get_data());
 
     }  // end of computeFailureIndex
 
     template <typename T2>
     __HOST_DEVICE__ static void computeFailureIndexDVSens(
         const Data physData, A2D::Mat<T2, 3, 3> u0x, A2D::Mat<T2, 3, 3> u1x,
-        A2D::SymMat<T2, 3> e0ty, A2D::Vec<T2, 1> et, const T &rhoKS, const T &scale, T dv_sens[]) {
+        A2D::SymMat<T2, 3> e0ty, A2D::Vec<T2, 1> et, const T &rhoKS, const T &safetyFactor,
+        const T &scale, T dv_sens[]) {
         /* compute df/dx constribution to ks failure */
         A2D::Vec<T2, 9> E;
         if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
@@ -283,13 +284,13 @@ class IsotropicShell {
                                              et.get_data(), E.get_data());
         }
 
-        physData.evalFailureDVSens(rhoKS, E.get_data(), scale, dv_sens);
+        physData.evalFailureDVSens(rhoKS, safetyFactor, E.get_data(), scale, dv_sens);
 
     }  // end of computeFailureIndexDVSens
 
     template <typename T2>
     __HOST_DEVICE__ static void computeFailureIndexSVSens(const Data physData, const T &rhoKS,
-                                                          const T &scale,
+                                                          const T &safetyFactor, const T &scale,
                                                           A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
                                                           A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
                                                           A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
@@ -307,7 +308,8 @@ class IsotropicShell {
         }
 
         // go from E forward to E backwards (the strain)
-        physData.evalFailureStrainSens(scale, rhoKS, E.value().get_data(), E.bvalue().get_data());
+        physData.evalFailureStrainSens(scale, rhoKS, safetyFactor, E.value().get_data(),
+                                       E.bvalue().get_data());
 
         if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
             A2D::LinearShellStrainReverseCore<T>(E.bvalue().get_data(), u0x.bvalue().get_data(),

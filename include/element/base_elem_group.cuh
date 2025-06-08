@@ -557,7 +557,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ void compute_max_failure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                          const Vec<T> vars, Vec<Data> physData,
-                                         const T rhoKS, T *max_failure_index) {
+                                         const T rhoKS, const T safetyFactor, T *max_failure_index) {
     /* prelim kernel to get maximum failure index, before ksMax can be computed */
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
@@ -605,7 +605,7 @@ __GLOBAL__ void compute_max_failure_kernel(const int32_t num_elements, const Vec
     T quadpt_fail_index = 0.0;
     ElemGroup::template get_element_quadpt_failure_index<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, quadpt_fail_index
+        block_data[local_elem], rhoKS, safetyFactor, quadpt_fail_index
     );
 
     // recall we need to get max(sigma_i) before ks_max(sigma_i) to prevent overflow,
@@ -678,10 +678,10 @@ __GLOBAL__ void vis_failure_index_kernel(const int32_t num_elements, const Vec<i
 
     // compute the local element quadpt failure index
     T quadpt_fail_index = 0.0;
-    T rhoKS = 100.0; // for within the quadpt
+    T rhoKS = 100.0, safetyFactor = 1.0; // for within the quadpt
     ElemGroup::template get_element_quadpt_failure_index<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, quadpt_fail_index
+        block_data[local_elem], rhoKS, safetyFactor, quadpt_fail_index
     );
 
     // recall we need to get max(sigma_i) before ks_max(sigma_i) to prevent overflow,
@@ -859,7 +859,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
 __GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                          const Vec<T> vars, Vec<Data> physData,
-                                         const T rhoKS, const T max_failure_index, T *ksmax_failure_index) {
+                                         const T rhoKS, const T safetyFactor, const T max_failure_index, T *ksmax_failure_index) {
     /* kernel to get ksmax, need previous max_failure_index to prevent overflow */
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
@@ -907,7 +907,7 @@ __GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<i
     T quadpt_fail_index = 0.0;
     ElemGroup::template get_element_quadpt_failure_index<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, quadpt_fail_index
+        block_data[local_elem], rhoKS, safetyFactor, quadpt_fail_index
     );
 
     // use the global non-smooth max to prevent overflow
@@ -936,7 +936,7 @@ __GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
                                                 const Vec<int32_t> geo_conn,
                                                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                                 const Vec<T> vars, Vec<Data> physData, 
-                                                const T rhoKS, const T max_fail, const T sumexp_kfail, 
+                                                const T rhoKS, const T safetyFactor, const T max_fail, const T sumexp_kfail, 
                                                 Vec<T> dfdx) {
 
     /* compute dKdx/dx partial derivatives (no indirect state variable sens included) */
@@ -989,7 +989,7 @@ __GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
     T quadpt_fail_index = 0.0;
     ElemGroup::template get_element_quadpt_failure_index<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, quadpt_fail_index
+        block_data[local_elem], rhoKS, safetyFactor, quadpt_fail_index
     );
 
     // now compute sensitivities
@@ -1001,7 +1001,7 @@ __GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
 
     ElemGroup::template compute_element_quadpt_failure_dv_sens<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, df_dksfail_elem, quadpt_dv_sens
+        block_data[local_elem], rhoKS, safetyFactor, df_dksfail_elem, quadpt_dv_sens
     );
 
     // warp reduction across quadpts
@@ -1027,7 +1027,7 @@ template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
-                                                const Vec<T> vars, Vec<Data> physData, T rhoKS,
+                                                const Vec<T> vars, Vec<Data> physData, T rhoKS, const T safetyFactor, 
                                                 T max_fail, T sumexp_kfail, Vec<T> dfdu) {
     /* compute SV sens */
     using Geo = typename ElemGroup::Geo;
@@ -1077,7 +1077,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
     T quadpt_fail_index = 0.0;
     ElemGroup::template get_element_quadpt_failure_index<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, quadpt_fail_index
+        block_data[local_elem], rhoKS, safetyFactor, quadpt_fail_index
     );
 
     // now compute sensitivities
@@ -1089,7 +1089,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
 
     ElemGroup::template compute_element_quadpt_failure_sv_sens<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], rhoKS, df_dksfail_elem, quadpt_du_sens
+        block_data[local_elem], rhoKS, safetyFactor, df_dksfail_elem, quadpt_du_sens
     );
 
     // warp reduction across quadpts

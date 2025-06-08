@@ -80,26 +80,27 @@ class ShellIsotropicData {
         loc_dv_sens[0] = scale * A2D::VecDotCore<T, 9>(psi_strain, dstress);
     }
 
-    __HOST_DEVICE__ static T vonMisesFailure2D(const T s[], const T &ys) {
-        return sqrt(s[0] * s[0] + s[1] * s[1] - s[0] * s[1] + 3.0 * s[2] * s[2]) / ys;
+    __HOST_DEVICE__ static T vonMisesFailure2D(const T s[], const T &ys, const T &sf) {
+        return sqrt(s[0] * s[0] + s[1] * s[1] - s[0] * s[1] + 3.0 * s[2] * s[2]) / ys *
+               sf;  // sf is safety factor
     }
 
     __HOST_DEVICE__ static T vonMisesFailure2DSens(const T s[], const T ds[], const T &ys,
-                                                   const T &vm) {
+                                                   const T &sf, const T &vm) {
         return (s[0] * ds[0] + s[1] * ds[1] - 0.5 * (s[0] * ds[1] + s[1] * ds[0]) +
-                3 * s[2] * ds[2]) /
-               (ys * ys) / (vm + 1e-12);  // divide by ys twice so equiv to 1/sqrt()
+                3 * s[2] * ds[2]) *
+               sf * sf / (ys * ys) / (vm + 1e-12);  // divide by ys twice so equiv to 1/sqrt()
     }
 
-    __HOST_DEVICE__ static void vonMises2DFailureRevSens(const T &scale, const T &ys, const T &vm,
-                                                         const T s[], T sb[]) {
-        T jac = scale / ys / ys / 2.0 / (vm + 1e-12);
+    __HOST_DEVICE__ static void vonMises2DFailureRevSens(const T &scale, const T &ys, const T &sf,
+                                                         const T &vm, const T s[], T sb[]) {
+        T jac = scale * sf * sf / ys / ys / 2.0 / (vm + 1e-12);
         sb[0] = jac * (2 * s[0] - s[1]);
         sb[1] = jac * (2 * s[1] - s[0]);
         sb[2] = jac * 6 * s[2];
     }
 
-    __HOST_DEVICE__ T evalFailure(const T &rhoKS, const T e[9]) const {
+    __HOST_DEVICE__ T evalFailure(const T &rhoKS, const T &safetyFactor, const T e[9]) const {
         // von Mises failure index, use ks max for to pand bottom stresses
         T et[3], eb[3];
         T ht = (0.5 - tOffset) * thick;
@@ -120,8 +121,8 @@ class ShellIsotropicData {
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, et, st);
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, eb, sb);
 
-        T top = vonMisesFailure2D(st, ys);
-        T bot = vonMisesFailure2D(sb, ys);
+        T top = vonMisesFailure2D(st, ys, safetyFactor);
+        T bot = vonMisesFailure2D(sb, ys, safetyFactor);
 
         // get max first
         T max = (top > bot) ? top : bot;
@@ -131,8 +132,8 @@ class ShellIsotropicData {
         return max + log(ksSum) / rhoKS;
     }
 
-    __HOST_DEVICE__ void evalFailureDVSens(const T &rhoKS, const T e[9], const T &scale,
-                                           T dv_sens[]) const {
+    __HOST_DEVICE__ void evalFailureDVSens(const T &rhoKS, const T &safetyFactor, const T e[9],
+                                           const T &scale, T dv_sens[]) const {
         /* compute dsigma_KS/dthick */
 
         // forward analysis part
@@ -157,8 +158,8 @@ class ShellIsotropicData {
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, et, st);
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, eb, sb);
 
-        T top = vonMisesFailure2D(st, ys);
-        T bot = vonMisesFailure2D(sb, ys);
+        T top = vonMisesFailure2D(st, ys, safetyFactor);
+        T bot = vonMisesFailure2D(sb, ys, safetyFactor);
 
         // get max first
         T max = (top > bot) ? top : bot;
@@ -184,14 +185,14 @@ class ShellIsotropicData {
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, det, dst);
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, deb, dsb);
 
-        T dtop = vonMisesFailure2DSens(st, dst, ys, top);
-        T dbot = vonMisesFailure2DSens(sb, dsb, ys, bot);
+        T dtop = vonMisesFailure2DSens(st, dst, ys, safetyFactor, top);
+        T dbot = vonMisesFailure2DSens(sb, dsb, ys, safetyFactor, bot);
 
         dv_sens[0] = scale / ksSum * (eTop * dtop + eBot * dbot);
     }
 
-    __HOST_DEVICE__ void evalFailureStrainSens(const T &scale, const T &rhoKS, const T e[9],
-                                               T er[9]) const {
+    __HOST_DEVICE__ void evalFailureStrainSens(const T &scale, const T &rhoKS,
+                                               const T &safetyFactor, const T e[9], T er[9]) const {
         /* compute dsigma_KS/dstrain */
 
         // forward analysis part
@@ -216,8 +217,8 @@ class ShellIsotropicData {
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, et, st);
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, eb, sb);
 
-        T top = vonMisesFailure2D(st, ys);
-        T bot = vonMisesFailure2D(sb, ys);
+        T top = vonMisesFailure2D(st, ys, safetyFactor);
+        T bot = vonMisesFailure2D(sb, ys, safetyFactor);
 
         // get max first
         T max = (top > bot) ? top : bot;
@@ -234,8 +235,8 @@ class ShellIsotropicData {
         T dbot = eBot * scale / ksSum;
 
         T dst[3], dsb[3];
-        vonMises2DFailureRevSens(dtop, ys, top, st, dst);
-        vonMises2DFailureRevSens(dbot, ys, bot, sb, dsb);
+        vonMises2DFailureRevSens(dtop, ys, safetyFactor, top, st, dst);
+        vonMises2DFailureRevSens(dbot, ys, safetyFactor, bot, sb, dsb);
 
         T det[3], deb[3];
         A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, dst, det);

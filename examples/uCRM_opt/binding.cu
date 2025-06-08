@@ -8,8 +8,9 @@ namespace py = pybind11;
 PYBIND11_MODULE(gpusolver, m) {
     py::class_<TACSGPUSolver>(m, "TACSGPUSolver")
         // only expose (rhoKS, load_mag)
-        .def(py::init<double, double>(),
+        .def(py::init<double, double, double>(),
              py::arg("rhoKS")    = 100.0,
+             py::arg("safety_factor") = 1.5,
              py::arg("load_mag") = 100.0)
         .def("set_design_variables", &TACSGPUSolver::set_design_variables)
         .def("get_num_vars",         &TACSGPUSolver::get_num_vars)

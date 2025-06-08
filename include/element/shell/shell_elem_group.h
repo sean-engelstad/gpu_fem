@@ -648,7 +648,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     template <class Data>
     __HOST_DEVICE__ static void get_element_quadpt_failure_index(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, T &fail_index) {
+        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, const T &safetyFactor,
+        T &fail_index) {
         if (!active_thread) return;
 
         // in-out of forward & backwards section
@@ -659,14 +660,15 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         // get strains and then failure index
         compute_element_quadpt_strains<Data>(iquad, xpts, vars, physData, u0x, u1x, e0ty, et);
 
-        Phys::template computeFailureIndex(physData, u0x, u1x, e0ty, et, rhoKS, fail_index);
+        Phys::template computeFailureIndex(physData, u0x, u1x, e0ty, et, rhoKS, safetyFactor,
+                                           fail_index);
     }
 
     template <class Data>
     __HOST_DEVICE__ static void compute_element_quadpt_failure_dv_sens(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, const T &fail_sens,
-        T loc_dv_sens[]) {
+        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, const T &safetyFactor,
+        const T &fail_sens, T loc_dv_sens[]) {
         if (!active_thread) return;
 
         // in-out of forward & backwards section
@@ -676,15 +678,15 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
         compute_element_quadpt_strains<Data>(iquad, xpts, vars, physData, u0x, u1x, e0ty, et);
 
-        Phys::template computeFailureIndexDVSens(physData, u0x, u1x, e0ty, et, rhoKS, fail_sens,
-                                                 loc_dv_sens);
+        Phys::template computeFailureIndexDVSens(physData, u0x, u1x, e0ty, et, rhoKS, safetyFactor,
+                                                 fail_sens, loc_dv_sens);
     }
 
     template <class Data>
     __HOST_DEVICE__ static void compute_element_quadpt_failure_sv_sens(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, const T &fail_sens,
-        T dfdu_local[]) {
+        const T vars[dof_per_elem], const Data &physData, const T &rhoKS, const T &safetyFactor,
+        const T &fail_sens, T dfdu_local[]) {
         if (!active_thread) return;
 
         // data to store in forwards + backwards section
@@ -724,7 +726,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         }  // end of forward scope block for strain energy
         // ------------------------------------------------
 
-        Phys::template computeFailureIndexSVSens<T>(physData, rhoKS, fail_sens, u0x, u1x, e0ty, et);
+        Phys::template computeFailureIndexSVSens<T>(physData, rhoKS, safetyFactor, fail_sens, u0x,
+                                                    u1x, e0ty, et);
 
         // beginning of backprop section to final residual derivatives
         // -----------------------------------------------------
