@@ -11,4 +11,9 @@ mass = solver.evalFunction("mass")
 ksfail = solver.evalFunction("ksfailure")
 print(f"{mass=:.4e} {ksfail=:.4e}")
 
-solver.writeSolution("uCRM.vtk")
+mass_grad = solver.evalFunctionSens("mass")
+print(f"{mass_grad[:5]=}")
+ksfail_grad = solver.evalFunctionSens("ksfailure")
+print(f"{ksfail_grad[:5]=}")
+
+solver.writeSolution("out/uCRM.vtk")
