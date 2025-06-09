@@ -5,11 +5,14 @@
 #include "coupled/_coupled.h"
 #include "linalg/_linalg.h"
 #include "solvers/_solvers.h"
+#include "_plate_utils.h"
 
 // shell imports
 #include "assembler.h"
 #include "element/shell/physics/isotropic_shell.h"
 #include "element/shell/shell_elem_group.h"
+
+// copied and modified from ../uCRM/_src/optim.h (uCRM optimization example)
 
 class TACSGPUSolver {
    public:
@@ -26,17 +29,16 @@ class TACSGPUSolver {
     using DMass = Mass<T, DeviceVec>;
     using DKSFail = KSFailure<T, DeviceVec>;
 
-    TACSGPUSolver(double rhoKS = 100.0, double safety_factor = 1.5, double load_mag = 100.0) {
+    TACSGPUSolver(double rhoKS = 100.0, double safety_factor = 1.5, double load_mag = 100.0,
+        int nxe = 100, int nx_comp = 5, int ny_comp = 5) {
         // 1) Build mesh & assembler
-        int mpi_inited = 0;
-        MPI_Initialized(&mpi_inited);
-        if (!mpi_inited) {
-            MPI_Init(nullptr, nullptr);
-        }
-
-        TACSMeshLoader mesh{MPI_COMM_WORLD};
-        mesh.scanBDFFile("CRM_box_2nd.bdf");
-        Assembler local_asm = Assembler::createFromBDF(mesh, Data(70e9, 0.3, 0.02, 2500.0, 350e6));
+        assert(nxe % nx_comp == 0); // evenly divisible by number of elems_per_comp
+        int nye = nxe;
+        assert(nye % ny_comp == 0);
+        int nxe_per_comp = nxe / nx_comp, nye_per_comp = nye / ny_comp;
+        double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005, rho = 2500, ys = 250e6;
+        
+        Assembler local_asm = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
         // factor & move to GPU
         {
             auto &bsr = local_asm.getBsrData();
@@ -49,13 +51,11 @@ class TACSGPUSolver {
         // 2) Build loads
         nvars = assembler->get_num_vars();
         int nn = assembler->get_num_nodes();
-        HostVec<T> h_loads(nvars);
-        auto ptr = h_loads.getPtr();
-        for (int i = 0; i < nn; i++) {
-            ptr[6 * i + 2] = load_mag;
-        }
-        d_loads = h_loads.createDeviceVec();
+        T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, load_mag);
+        d_loads = assembler->createVarsVec(my_loads);
         assembler->apply_bcs(d_loads);
+
+
         soln = DeviceVec<T>(nvars);
 
         // 3) Design vars
@@ -76,6 +76,7 @@ class TACSGPUSolver {
     }
 
     void set_design_variables(const std::vector<T> &dvs) {
+        /* check if dvs changed before running new analysis (make sure this works right) */
         dvs_changed = (dvs.size() != prev_dvs.size());
         if (!dvs_changed) {
             for (int i = 0; i < dvs.size(); i++) {
@@ -86,10 +87,11 @@ class TACSGPUSolver {
             }
         }
 
-        if (first_solve) {
-            dvs_changed = true;
-            first_solve = false;
-        }
+        // if (first_solve) {
+        //     dvs_changed = true;
+        //     first_solve = false;
+        // }
+        dvs_changed = true; // debug
 
         if (dvs_changed) {
             prev_dvs = dvs;
@@ -106,6 +108,12 @@ class TACSGPUSolver {
     void solve() {
         if (dvs_changed) {
             printf("design changed, new solve\n");
+
+            // debugging
+            // auto h_loads = d_loads.createHostVec();
+            // printf("h_loads:");
+            // printVec<T>(h_loads.getSize(), h_loads.getPtr());
+
             solver->solve(d_loads);
             solver->copy_solution_out(soln);
         } else {

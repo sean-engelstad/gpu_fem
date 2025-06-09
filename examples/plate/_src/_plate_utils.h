@@ -9,7 +9,8 @@
 
 template <class Assembler>
 Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E, double nu,
-                               double thick) {
+                               double thick, double rho = 2500, double ys = 350e6,
+                               int nxe_per_comp = 1, int nye_per_comp = 1) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -36,6 +37,9 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         on pos x2 edge: dof 3
         on pos x1 edge: dof 3
     */
+
+    assert(nxe % nxe_per_comp == 0); 
+    assert(nye % nye_per_comp == 0);
 
     // number of nodes per direction
     int nnx = nxe + 1;
@@ -130,15 +134,36 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
 
     // printf("checkpoint 4 - post xpts\n");
 
-    HostVec<Data> physData(num_elements, Data(E, nu, thick));
+    HostVec<Data> physData(num_elements, Data(E, nu, thick, rho, ys));
 
     // printf("checkpoint 5 - create physData\n");
 
+    // make elem_components
+    int num_xcomp = nxe / nxe_per_comp;
+    int num_ycomp = nye / nye_per_comp;
+    int num_components = num_xcomp * num_ycomp;
+
+    HostVec<int> elem_components(num_elements);
+    for (int iye = 0; iye < nye; iye++) {
+        for (int ixe = 0; ixe < nxe; ixe++) {
+            int ielem = nxe * iye + ixe;
+            int ix_comp = ixe / nxe_per_comp;
+            int iy_comp = iye / nye_per_comp;
+
+            int icomp = num_xcomp * iy_comp + ix_comp;
+
+            elem_components[ielem] = icomp;
+        }
+    }
+
     // make the assembler
     Assembler assembler(num_nodes, num_nodes, num_elements, geo_conn, vars_conn, xpts, bcs,
-                        physData);
+                        physData, num_components, elem_components);
 
     // printf("checkpoint 6 - create assembler\n");
+    // printf("num_components = %d\n", num_components);
+    // printf("elem_components:");
+    // printVec<int>(elem_components.getSize(), elem_components.getPtr());
 
     return assembler;
 }
@@ -372,4 +397,11 @@ HostVec<T> makeCustomDisp(HostVec<T> &x0, T scale) {
     }
 
     return u;
+}
+
+// Helper function to convert string to lowercase (in-place)
+void to_lowercase(char* str) {
+    for (; *str; ++str) {
+        *str = std::tolower(*str);
+    }
 }
