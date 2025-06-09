@@ -1,3 +1,6 @@
+import sys
+sys.path.append("_src/") # contains gpusolver
+
 import gpusolver
 import numpy as np
 from pyoptsparse import SNOPT, Optimization
@@ -204,7 +207,7 @@ snoptimizer = SNOPT(
         "Major iterations limit": 1000, #1000, # 1000,
         "Minor iterations limit": 150000000,
         "Iterations limit": 100000000,
-        # "Major step limit": 5e-2, # these causes l to turn on a lot
+        "Major step limit": 5e-2, # these causes l to turn on a lot
         "Nonderivative linesearch": True,
         "Linesearch tolerance": 0.9,
         # "Difference interval": 1e-6,

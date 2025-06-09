@@ -368,3 +368,10 @@ Assembler makeFun3dAeroSurfMeshFromDat(std::string filename, double **xyz_forces
 
     return assembler;
 }
+
+// Helper function to convert string to lowercase (in-place)
+void to_lowercase(char* str) {
+    for (; *str; ++str) {
+        *str = std::tolower(*str);
+    }
+}

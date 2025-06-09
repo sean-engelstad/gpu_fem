@@ -1,14 +1,12 @@
 include ../../Makefile.in
 
-FILES := 1_linear_static 2_nl_static 3_meld 4_coupled
+PY_EXT = $(shell python3-config --extension-suffix)
 
-default: 1_linear_static
+default: 1_static
 
-nonlinear: 2_nl_static
-
-meld: 3_meld
-
-aeroelastic: 4_coupled
+# prepares the *.so file for pybind to run optimizations
+optim:
+	cd _src && ${GPU_CXX} ${GPU_CC_FLAGS} -DUSE_GPU -shared -Xcompiler "-fPIC -Wno-deprecated-declarations" -Xcompiler ${CC_FLAGS} -DUSE_CUSPARSE ${INCLUDE_FLAGS} ${PYBIND11_INCLUDE} -std=c++17 binding.cu -o gpusolver$(PY_EXT) ${LINK}	
 
 clean:
 	rm *.out || echo "no *.out files to remove"

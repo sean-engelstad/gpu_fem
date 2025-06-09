@@ -35,7 +35,7 @@ class TACSGPUSolver {
         }
 
         TACSMeshLoader mesh{MPI_COMM_WORLD};
-        mesh.scanBDFFile("../uCRM/CRM_box_2nd.bdf");
+        mesh.scanBDFFile("CRM_box_2nd.bdf");
         Assembler local_asm = Assembler::createFromBDF(mesh, Data(70e9, 0.3, 0.02, 2500.0, 350e6));
         // factor & move to GPU
         {

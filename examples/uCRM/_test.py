@@ -1,3 +1,6 @@
+import sys
+sys.path.append("_src/") # contains gpusolver
+
 import gpusolver
 import numpy as np
 
