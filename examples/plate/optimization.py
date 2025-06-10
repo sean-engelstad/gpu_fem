@@ -12,8 +12,8 @@ solver = gpusolver.TACSGPUSolver(
     safety_factor=1.5,
     load_mag=30.0,
     nxe=100,
-    nx_comp=5,
-    ny_comp=5,
+    nx_comp=25, #5
+    ny_comp=25, #5
 )
 
 # init dvs
@@ -104,7 +104,7 @@ snoptimizer = SNOPT(
         "Major feasibility tolerance": 1e-5,
         "Major optimality tolerance": 1e-3,
         "Verify level": verify_level, #-1,
-        "Major iterations limit": 1000, #1000, # 1000,
+        "Major iterations limit": int(1e4), #1000, # 1000,
         "Minor iterations limit": 150000000,
         "Iterations limit": 100000000,
         "Major step limit": 5e-2, # these causes l to turn on a lot
@@ -132,5 +132,5 @@ sol = snoptimizer(
 print(f"{sol.xStar=}")
 
 solver.solve()
-solver.writeSolution("out/uCRM_opt.vtk")
+solver.writeSolution("out/plate_opt.vtk")
 solver.free()

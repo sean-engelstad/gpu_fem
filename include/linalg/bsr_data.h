@@ -474,14 +474,7 @@ class BsrData {
 
         // before transferring to device, compute the symbolic maps for the GPU
         // call here instead of at the end of each symbolic factorization change
-        _compute_symbolic_maps_for_gpu();
-
-        int *d_elem_conn = nullptr;
-#ifdef USE_GPU
-        CHECK_CUDA(cudaMalloc((void **)&d_elem_conn, nodes_per_elem * nelems * sizeof(int)));
-        CHECK_CUDA(cudaMemcpy(d_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int),
-                              cudaMemcpyHostToDevice));
-#endif
+        if (elem_conn) _compute_symbolic_maps_for_gpu();
 
         BsrData new_bsr;  // bypass main constructor so we don't end up making host data
         new_bsr.nnzb = this->nnzb;
@@ -492,19 +485,29 @@ class BsrData {
         new_bsr.host = false;
 
         // create HostVec wrapper objects in CUDA, transfer to device and get ptr for new object
+        if (elem_conn) {
+            int *d_elem_conn = nullptr;
+#ifdef USE_GPU
+            CHECK_CUDA(cudaMalloc((void **)&d_elem_conn, nodes_per_elem * nelems * sizeof(int)));
+            CHECK_CUDA(cudaMemcpy(d_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int),
+                                  cudaMemcpyHostToDevice));
+#endif
+            HostVec<int> h_elem_ind_map(n_eim, elem_ind_map), h_tr_rowp(nnodes + 1, tr_rowp),
+                h_tr_cols(nnzb, tr_cols), h_tr_block_map(nnzb, tr_block_map);
+            new_bsr.elem_ind_map = h_elem_ind_map.createDeviceVec().getPtr();
+            new_bsr.tr_rowp = h_tr_rowp.createDeviceVec().getPtr();
+            new_bsr.tr_cols = h_tr_cols.createDeviceVec().getPtr();
+            new_bsr.tr_block_map = h_tr_block_map.createDeviceVec().getPtr();
+            new_bsr.elem_conn = d_elem_conn;
+        }
+
         HostVec<int> h_rowp(nnodes + 1, rowp), h_cols(nnzb, cols), h_perm(nnodes, perm),
-            h_iperm(nnodes, iperm), h_elem_ind_map(n_eim, elem_ind_map),
-            h_tr_rowp(nnodes + 1, tr_rowp), h_tr_cols(nnzb, tr_cols),
-            h_tr_block_map(nnzb, tr_block_map);
+            h_iperm(nnodes, iperm);
         new_bsr.rowp = h_rowp.createDeviceVec().getPtr();
         new_bsr.cols = h_cols.createDeviceVec().getPtr();
         new_bsr.perm = h_perm.createDeviceVec().getPtr();
         new_bsr.iperm = h_iperm.createDeviceVec().getPtr();
-        new_bsr.elem_ind_map = h_elem_ind_map.createDeviceVec().getPtr();
-        new_bsr.tr_rowp = h_tr_rowp.createDeviceVec().getPtr();
-        new_bsr.tr_cols = h_tr_cols.createDeviceVec().getPtr();
-        new_bsr.tr_block_map = h_tr_block_map.createDeviceVec().getPtr();
-        new_bsr.elem_conn = d_elem_conn;
+
         new_bsr.nelems = nelems;
         new_bsr.nodes_per_elem = nodes_per_elem;
         new_bsr.n_eim = n_eim;

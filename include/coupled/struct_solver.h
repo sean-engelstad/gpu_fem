@@ -166,7 +166,7 @@ class TacsLinearStatic : public BaseTacsStatic<T, Assembler> {
 
     void _update_assembly() {
         /* update kmat with new design */
-        printf("updating assembly\n");
+        if (this->print) printf("updating assembly\n");
         this->assembler.add_jacobian(this->res, this->kmat);
         this->assembler.apply_bcs(this->kmat);
     }
