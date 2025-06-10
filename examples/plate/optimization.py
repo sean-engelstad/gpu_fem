@@ -1,20 +1,24 @@
+import sys
+sys.path.append("_src/") # contains gpusolver
+
 import gpusolver
 import numpy as np
 from pyoptsparse import SNOPT, Optimization
 import os
 
-# setup GPU solver and other init dvs, etc.
-rhoKS = 100.0 # 100.0
-SF = 1.5 # safety factor
-# load_mag = 100.0
-load_mag = 30.0
-solver = gpusolver.TACSGPUSolver(rhoKS, SF, load_mag)
+# setup GPU solver
+solver = gpusolver.TACSGPUSolver(
+    rhoKS=100.0,
+    safety_factor=1.5,
+    load_mag=30.0,
+    nxe=100,
+    nx_comp=25, #5
+    ny_comp=25, #5
+)
+
+# init dvs
 ndvs = solver.get_num_dvs()
-# x0 = np.array([5e-2]*ndvs)
-# need to start infeasible otherwise SNOPT will exit early once tries to go infeasible
-# x0 = np.array([2e-2]*ndvs)
-x0 = np.array([6e-2] * ndvs)
-# solver.set_design_variables(x0) # don't call here messes up
+x0 = np.array([1e-2]*ndvs)
 
 def get_functions(xdict):
     # update design
@@ -67,8 +71,29 @@ opt_problem.addVarGroup(
     value=x0,
     scale=np.array([1e2]*ndvs),
 )
-opt_problem.addObj('mass', scale=1e-3)
+opt_problem.addObj('mass', scale=1e-1)
 opt_problem.addCon("ksfailure", scale=1.0, upper=1.0)
+
+# adjacency constraints (linear so reduces size of opt problem)
+# ---------------------
+def adj_vec(i, j):
+    vec = np.zeros((1,ndvs), dtype=np.double)
+    vec[0,i] = 1.0
+    vec[0,j] = -1.0
+    return vec
+
+# add adjacency constraints
+# for icomp in range(25):
+#     # TODO
+# opt_problem.addCon(
+#         f"SOB-{iconstr}",
+#         lower=-1.5e-3,
+#         upper=1.5e-3,
+#         scale=1e2,
+#         linear=True,
+#         wrt=['vars'],
+#         jac={'vars': adj_vec(icomp, icomp+1)}
+#     )
 
 # verify_level = -1
 verify_level = 0
@@ -79,7 +104,7 @@ snoptimizer = SNOPT(
         "Major feasibility tolerance": 1e-5,
         "Major optimality tolerance": 1e-3,
         "Verify level": verify_level, #-1,
-        "Major iterations limit": 1000, #1000, # 1000,
+        "Major iterations limit": int(1e4), #1000, # 1000,
         "Minor iterations limit": 150000000,
         "Iterations limit": 100000000,
         "Major step limit": 5e-2, # these causes l to turn on a lot
@@ -104,6 +129,8 @@ sol = snoptimizer(
     hotStart="out/myhist.hst" if hot_start else None,
 )
 
+print(f"{sol.xStar=}")
+
 solver.solve()
-solver.writeSolution("out/uCRM_opt.vtk")
+solver.writeSolution("out/plate_opt.vtk")
 solver.free()

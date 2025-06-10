@@ -912,15 +912,15 @@ __GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<i
 
     // use the global non-smooth max to prevent overflow
     T glob_max = max_failure_index; // non KS max (non-smooth)
-    T exp_quadpt_fail_index = exp(rhoKS * (quadpt_fail_index - glob_max));
+    T exp_quadpt_fail_index = active_thread ? exp(rhoKS * (quadpt_fail_index - glob_max)) : 0.0;
 
     // warp reduction for max in a warp
     T lane_val = exp_quadpt_fail_index;
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 16));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 8));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 4));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 2));
-    lane_val = max(lane_val, __shfl_down_sync(0xFFFFFFFF, lane_val, 1));
+    lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 16);
+    lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 8);
+    lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 4);
+    lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 2);
+    lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 1);
 
     // atomic add back to global
     if (local_thread % 32 == 0) {
@@ -1054,7 +1054,6 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
     __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
     __SHARED__ T block_vars[elems_per_block][vars_per_elem];
     __SHARED__ Data block_data[elems_per_block];
-    __SHARED__ T block_res[elems_per_block][vars_per_elem];
 
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
@@ -1091,7 +1090,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], rhoKS, safetyFactor, df_dksfail_elem, quadpt_du_sens
     );
-
+    
     // warp reduction across quadpts
     for (int idof = 0; idof < vars_per_elem; idof++) {
         T lane_val = quadpt_du_sens[idof];

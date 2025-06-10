@@ -419,6 +419,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_
     int nblocks = (num_elements + block.y - 1) / block.y;
     dim3 grid(nblocks);
 
+    // dfdu.zeroValues();
+
     // rerun old states from forward (if not provided)
     T h_max_fail, h_sumexp_ks_fail;
     if (_max_fail) {

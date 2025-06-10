@@ -91,6 +91,7 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     cudaFree(pBuffer);
     cudaFree(d_vals_ILU0);
     cudaFree(d_temp);
+    cudaFree(d_rhs);
     cusparseDestroyMatDescr(descr_L);
     cusparseDestroyMatDescr(descr_U);
     cusparseDestroyBsrsv2Info(info_L);
