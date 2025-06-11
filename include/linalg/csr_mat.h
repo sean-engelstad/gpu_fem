@@ -78,10 +78,11 @@ class CsrMat {
         T *new_hvals = new T[new_nnz];
         std::copy(new_vals.begin(), new_vals.end(), new_hvals);
 
-        // Allocate device memory & deep copy
-#ifdef USE_GPU
         int *d_rowp = nullptr;
         int *d_cols = nullptr;
+
+        // Allocate device memory & deep copy
+#ifdef USE_GPU
 
         cudaMalloc(&d_rowp, sizeof(int) * (nrows + 1));
         cudaMemcpy(d_rowp, new_hrowp, sizeof(int) * (nrows + 1), cudaMemcpyHostToDevice);

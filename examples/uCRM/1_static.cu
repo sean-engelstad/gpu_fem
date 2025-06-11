@@ -79,7 +79,7 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true) {
     // int lev_fill = 1;
     // int lev_fill = 5;
 
-    bsr_data.qorder_reordering(0.5, 1); // qordering not working well for some reason..
+    bsr_data.qorder_reordering(0.5, 1, /*print*/true, /*debug*/true); // qordering not working well for some reason..
     bsr_data.compute_ILUk_pattern(lev_fill, fillin); // 10, 20 (for BiCGStab)
     // bsr_data.compute_full_LU_pattern(fillin, print);
   }

@@ -10,6 +10,7 @@ def plot_sparse_matrix(name):
     print(f"working on {name}")
     rowPtr = read_from_csv(f"csv/rowp.csv").astype(np.int32)
     colPtr = read_from_csv(f"csv/cols.csv").astype(np.int32)
+    print("done reading mat")
 
     # plot the sparsity now, maybe compute bandwidth
     nnodes = rowPtr.shape[0] - 1
@@ -17,8 +18,20 @@ def plot_sparse_matrix(name):
     vals = np.ones((nnzb,), dtype=np.double)
 
     cpp_csr = sp.sparse.csr_matrix((vals, colPtr, rowPtr), shape=(nnodes, nnodes))
-    cpp_block_dense = cpp_csr.toarray()
-    sns.heatmap(cpp_block_dense)
+    # cpp_block_dense = cpp_csr.toarray()
+    # sns.heatmap(cpp_block_dense)
+
+    plt.spy(cpp_csr, markersize=0.5)
+
+    # width = 3000
+    # width = 1000
+
+
+    width = 6000
+    istart = 15000
+    plt.xlim(istart, istart + width)
+    plt.ylim(istart + width, istart)
+
     # plt.show()
     plt.savefig(f"img/{name}.png", dpi=400)
     plt.close('all')
@@ -26,6 +39,6 @@ def plot_sparse_matrix(name):
 
 if __name__ == "__main__":
     # plot_sparse_matrix("orig")
-    plot_sparse_matrix("RCM")
+    plot_sparse_matrix("out")
     # plot_sparse_matrix("qorder")
     # plot_sparse_matrix("ILU")
