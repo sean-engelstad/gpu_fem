@@ -319,10 +319,11 @@ class BsrData {
         std::random_device rd;  // random number generator
         std::mt19937 g(rd());
         // since iperm is used for sparsity change now, qperm modifies that
-        std::vector<int> q_perm(perm, perm + nnodes);
+        // std::vector<int> q_perm(perm, perm + nnodes);
+        std::vector<int> q_perm(iperm, iperm + nnodes);
         for (int iprune = 0; iprune < num_prunes; iprune++) {
             int lower = prune_width * iprune;
-            int upper = std::min(lower + prune_width, nnodes);
+            int upper = std::min(lower + prune_width, nnodes-1);
             std::shuffle(q_perm.begin() + lower, q_perm.begin() + upper, g);
         }
 
@@ -335,12 +336,12 @@ class BsrData {
 
         // update final permutation and iperm (deep copy)
         for (int i = 0; i < nnodes; i++) {
-            perm[i] = q_perm[i];
-            iperm[q_perm[i]] = i;
+            // perm[i] = q_perm[i];
+            // iperm[q_perm[i]] = i;
 
             // try swapping perm, iperm
-            // iperm[i] = q_perm[i];
-            // perm[q_perm[i]] = i;
+            iperm[i] = q_perm[i];
+            perm[q_perm[i]] = i;
         }
     }
 
