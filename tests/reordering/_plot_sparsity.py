@@ -27,13 +27,13 @@ def plot_sparse_matrix(name):
     # width = 1000
 
 
-    width = 6000
-    istart = 15000
-    plt.xlim(istart, istart + width)
-    plt.ylim(istart + width, istart)
+    # width = 6000
+    # istart = 15000
+    # plt.xlim(istart, istart + width)
+    # plt.ylim(istart + width, istart)
 
     # plt.show()
-    plt.savefig(f"img/{name}.png", dpi=400)
+    plt.savefig(f"img/sparsity/{name}.png", dpi=400)
     plt.close('all')
     print(f"\tdone with {name}")
 

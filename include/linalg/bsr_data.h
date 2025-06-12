@@ -287,7 +287,8 @@ class BsrData {
         if (_new_perm) delete[] _new_perm;
     }
 
-    __HOST__ void qorder_reordering(double p_factor, int rcm_iters = 5, bool print = true, bool debug = false) {
+    __HOST__ void qorder_reordering(double p_factor, int rcm_iters = 5, bool print = true,
+                                    bool debug = false) {
         /*  qordering combines RCM reordering to reduce bandwidth with random reordering
                 to reduce chain lengths in ILU factorization for more stable ILU decomp numerically
                 this also should improve GMRES convergence
@@ -327,7 +328,7 @@ class BsrData {
 
         for (int iprune = 0; iprune < num_prunes; iprune++) {
             int lower = prune_width * iprune;
-            int upper = std::min(lower + prune_width, nnodes-1);
+            int upper = std::min(lower + prune_width, nnodes - 1);
             std::shuffle(q_perm.begin() + lower, q_perm.begin() + upper, g);
         }
 
@@ -361,8 +362,7 @@ class BsrData {
 
             compute_nofill_pattern();
             int bandwidth_2 = getBandWidth(nnodes, nnzb, rowp, cols);
-            printf("qordering changes bandwidth from %d to %d\n", bandwidth_1,
-                bandwidth_2);
+            printf("qordering changes bandwidth from %d to %d\n", bandwidth_1, bandwidth_2);
         }
 
         // also reset the rowp, cols to original (was changed after reordering computation to check
@@ -375,12 +375,34 @@ class BsrData {
 
     __HOST__ void random_reordering() {
         /*  random reordering should have really small chain lengths
-        */
-        std::random_device rd;  // random number generator
-        std::mt19937 g(42);
+         */
+        // std::random_device rd;  // random number generator
+        // std::mt19937 g(42);
         // since iperm is used for sparsity change now, qperm modifies that
-        std::vector<int> q_perm(perm, perm + nnodes);
-        std::shuffle(q_perm.begin(), q_perm.end(), g);
+        // std::vector<int> q_perm(perm, perm + nnodes);
+        // std::shuffle(q_perm.begin(), q_perm.end(), g);
+
+        bool *rem = new bool[nnodes];
+        memset(rem, true, nnodes * sizeof(bool));
+
+        std::vector<int> q_perm;
+        for (int inode = 0; inode < nnodes; inode++) {
+            // choose random one of remaining nodes
+            int rand_node = rand() % (nnodes - inode);
+            // get the remaing node
+            int ct = 0;
+            for (int jnode = 0; jnode < nnodes; jnode++) {
+                if (rem[jnode]) {
+                    if (ct == rand_node) {
+                        q_perm.push_back(jnode);
+                        rem[jnode] = false;
+                    }
+                    ct++;
+                }
+            }
+        }
+
+        delete[] rem;
 
         printf("random reodering\n");
 
@@ -423,32 +445,39 @@ class BsrData {
     __HOST__ void get_chain_lengths(double chain_lengths[]) {
         // write out the chain lengths for the current sparsity
         // from p. 9 of Kyle Anderson's node numbering paper
-        
+
         // start from bottom right of matrix, read dependencies on upper diagonal matrix
         for (int inode = nnodes - 1; inode >= 0; inode--) {
             // since it's a sym pattern (easier to read the row not column for this inode)
             // and count dependencies with that (lower triangular part)
             bool *affected_rows = new bool[nnodes];
             memset(affected_rows, false, nnodes * sizeof(bool));
-            affected_rows[inode] = 1;
-            std::vector<int> crows(inode);
+            affected_rows[inode] = true;
+            std::vector<int> crows = {inode};
 
+            int round = 0;
             while (!crows.empty()) {
-                // go through each entry in 
+                // go through each entry in
                 std::vector<int> new_crows;
 
                 for (int crow : crows) {
-                    // reading through lower triang backsubstitution error because sym and easier to do
-                    for (int jp = rowp[crow]; jp < rowp[crow+1]; jp++) {
+                    // reading through lower triang backsubstitution error because sym and easier to
+                    // do
+                    for (int jp = rowp[crow]; jp < rowp[crow + 1]; jp++) {
                         int col = cols[jp];
-                        if (!affected_rows[col] && col < inode) {
+                        // printf("node %d, row %d, col %d\n", inode, crow, col);
+                        if (!affected_rows[col] && col < crow) {
                             affected_rows[col] = true;
                             new_crows.push_back(col);
                         }
                     }
                 }
-                
+
+                // printf("node %d, round %d of affected rows: ", inode, round);
+                // printVec<int>(new_crows.size(), new_crows.data());
+
                 crows = new_crows;
+                round++;
             }
 
             // compute sum of affected rows
@@ -457,7 +486,15 @@ class BsrData {
                 if (affected_rows[i]) dep++;
             }
 
-            chain_lengths[inode] = (double)dep / (inode+1); // fraction of dependencies here
+            // // printf("affected rows for node %d: ", inode);
+            // for (int i = 0; i < nnodes; i++) {
+            //     printf("%d,", (int)affected_rows[i]);
+            // }
+            // printf("\n");
+
+            delete[] affected_rows;
+
+            chain_lengths[inode] = (double)dep / (inode + 1);  // fraction of dependencies here
             // printf("chain length at inode %d = %.3f\n", inode, chain_lengths[inode]);
             // return;
         }

@@ -1,6 +1,10 @@
+/* check ucrm preconditioner effect on vector (part of Kyle Anderson's paper) */
 
 #include "linalg/_linalg.h"
 #include "mesh/TACSMeshLoader.h"
+#include "mesh/vtk_writer.h"
+#include "solvers/_solvers.h"
+#include "../../examples/uCRM/_src/crm_utils.h"
 
 // shell imports
 #include "assembler.h"
@@ -32,7 +36,7 @@ void compute_ucrm_reordering(MPI_Comm& comm, std::string ordering, std::string f
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
+    double E = 70e9, nu = 0.3, thick = 0.02;  // material & thick properties
 
     // make the assembler from the uCRM mesh
     auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
@@ -81,6 +85,64 @@ void compute_ucrm_reordering(MPI_Comm& comm, std::string ordering, std::string f
     double chain_lengths[bsr_data.nnodes];
     bsr_data.get_chain_lengths(chain_lengths);
     write_to_csv<double>(bsr_data.nnodes, chain_lengths, "csv/chain_lengths.csv");
+
+    // now try applying chain lengths to the vector (with direct LU solve M^-1 v, becomes direct LU only if full LU pattern otherwise it's just M^-1 b)
+    // -----------------------------
+
+    assembler.moveBsrDataToDevice();
+
+    // get the loads
+    int nvars = assembler.get_num_vars();
+    int nnodes = assembler.get_num_nodes();
+    HostVec<T> h_loads(nvars);
+    double load_mag = 1e-5;
+    double *h_loads_ptr = h_loads.getPtr();
+    for (int idof = 0; idof < 6 * nnodes; idof++) {
+        h_loads_ptr[idof] = load_mag + 100.0 * load_mag * ((double) rand() / RAND_MAX);
+    }
+    auto rhs = h_loads.createDeviceVec();
+    assembler.apply_bcs(rhs);
+
+    // setup kmat and initial vecs
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto soln = assembler.createVarsVec();
+    auto res = assembler.createVarsVec();
+    auto vars = assembler.createVarsVec();
+
+    // assemble the kmat
+    assembler.set_variables(vars);
+    assembler.add_jacobian(res, kmat);
+    assembler.apply_bcs(res);
+    assembler.apply_bcs(kmat);
+
+    // direct LU solve
+    CUSPARSE::direct_LU_solve<T>(kmat, rhs, soln);
+
+    // copy solution back to host and writeout vectors
+    auto h_soln = soln.createHostVec();
+    write_to_csv<double>(6 * bsr_data.nnodes, h_loads.getPtr(), "csv/unprecond_vec.csv");
+    write_to_csv<double>(6 * bsr_data.nnodes, h_soln.getPtr(), "csv/precond_vec.csv");
+
+    // // assemble the kmat
+    // assembler.set_variables(vars);
+    // assembler.add_jacobian(res, kmat);
+    // assembler.apply_bcs(res);
+    // assembler.apply_bcs(kmat);
+
+    load_mag = 1e2;
+    memset(h_loads_ptr, 0.0, 6 * nnodes * sizeof(T));
+    for (int inode = 0; inode < nnodes; inode++) {
+        h_loads_ptr[6 * inode + 2] = load_mag;
+    }
+    auto d_loads = h_loads.createDeviceVec();
+    assembler.apply_bcs(d_loads);
+
+    // now try a GMRES solve (should be fine to restart since kmat values copied to do direct LU)
+    soln.zeroValues();
+    int n_iter = 200, max_iter = 200;
+    T abs_tol = 1e-8, rel_tol = 1e-8;
+    constexpr bool right = true, modifiedGS = true; // better with modifiedGS true, yeah it is..
+    CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, d_loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
 }
 
 int main(int argc, char* argv[]) {

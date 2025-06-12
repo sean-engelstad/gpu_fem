@@ -138,6 +138,12 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true, double qorder_p = 0.5, in
     h_bsr_data.qorder_reordering(qorder_p, 1);
     h_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
   }
+
+  // get chain lengths and write that out
+  double chain_lengths[h_bsr_data.nnodes];
+  h_bsr_data.get_chain_lengths(chain_lengths);
+  write_to_csv<double>(h_bsr_data.nnodes, chain_lengths, "../csv/chain_lengths.csv");
+
   printf("2\n");
   auto bsr_data = h_bsr_data.createDeviceBsrData();
   printf("3\n");
@@ -177,13 +183,9 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true, double qorder_p = 0.5, in
   }
 
   // put bsr values on the device
-  printf("4\n");
   auto h_vals_vec = HostVec<T>(h_bsr_data.nnzb * 36, h_fill_vals);
   auto d_vals = h_vals_vec.createDeviceVec();
-  printf("5\n");
-
   auto kmat = BsrMat<DeviceVec<T>>(bsr_data, d_vals);
-  printf("6\n");
 
   // create the loads to apply to it
   HostVec<T> h_loads(nrows);
@@ -222,9 +224,9 @@ int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
     MPI_Comm comm = MPI_COMM_WORLD;
     // solve_linear(comm, /*full_LU*/ true, /*qorder_p=*/ 0.5, /*fill_level=*/ 1);
-    // solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 0);
+    solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 0);
     // solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 1);
-    solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 9);
+    // solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 9);
 
     MPI_Finalize();
     return 0;

@@ -1,4 +1,4 @@
-#include "../../examples/plate/_plate_utils.h"
+#include "../../examples/plate/_src/_plate_utils.h"
 #include "linalg/_linalg.h"
 #include "mesh/TACSMeshLoader.h"
 #include "mesh/vtk_writer.h"
@@ -84,7 +84,8 @@ int main(int argc, char* argv[]) {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    int nxe = 10;
+    // int nxe = 3;
+    int nxe = 100;
     int nye = nxe;
     double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
@@ -99,6 +100,8 @@ int main(int argc, char* argv[]) {
         bsr_data.AMD_reordering();
     } else if (ordering == "qorder") {
         bsr_data.qorder_reordering(p_factor, rcm_iters);
+    } else if (ordering == "random") {
+        bsr_data.random_reordering();
     } else if (ordering != "none") {
         std::cerr << "Unknown ordering: " << ordering << "\n";
         return 1;
@@ -118,6 +121,11 @@ int main(int argc, char* argv[]) {
 
     write_to_csv<int>(bsr_data.nnodes + 1, bsr_data.rowp, "csv/rowp.csv");
     write_to_csv<int>(bsr_data.nnzb, bsr_data.cols, "csv/cols.csv");
+
+    // get chain lengths and write that out
+    double chain_lengths[bsr_data.nnodes];
+    bsr_data.get_chain_lengths(chain_lengths);
+    write_to_csv<double>(bsr_data.nnodes, chain_lengths, "csv/chain_lengths.csv");
 
     return 0;
 }
