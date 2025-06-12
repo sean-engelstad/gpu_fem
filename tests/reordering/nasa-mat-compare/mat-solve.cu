@@ -207,7 +207,9 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true, double qorder_p = 0.5, in
   } else {
       int n_iter = 200, max_iter = 200;
       T abs_tol = 1e-8, rel_tol = 1e-8;
+      // T abs_tol = 1e-13, rel_tol = 1e-13;
       bool print = true;
+      // constexpr bool right = false, modifiedGS = true; // better with modifiedGS true, yeah it is..
       constexpr bool right = true, modifiedGS = true; // better with modifiedGS true, yeah it is..
       CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
   }
@@ -224,8 +226,8 @@ int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
     MPI_Comm comm = MPI_COMM_WORLD;
     // solve_linear(comm, /*full_LU*/ true, /*qorder_p=*/ 0.5, /*fill_level=*/ 1);
-    solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 0);
-    // solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 1);
+    // solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 0);
+    solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 1);
     // solve_linear(comm, /*full_LU*/ false, /*qorder_p=*/ 0.5, /*fill_level=*/ 9);
 
     MPI_Finalize();
