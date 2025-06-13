@@ -494,6 +494,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
 
     using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     res.zeroValues();
 
@@ -519,13 +520,44 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
         // shell_elem_add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
         //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
     } else {
-        dim3 block = ElemGroup::res_block;
-        int nblocks = (num_elements + block.x - 1) / block.x;
-        dim3 grid(nblocks);
-        constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+        // const int elems_per_block = 32;
+        // dim3 block(elems_per_block, Quadrature::num_quad_pts);
+        // int nblocks = (num_elements + block.x - 1) / block.x;
+        // dim3 grid(nblocks);
+        // add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 
-        add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        // v2 quadpts every 4 threads now + warp reduction
+        // const int elems_per_block = 32;  // 32;
+        // dim3 block(Quadrature::num_quad_pts, elems_per_block);
+        // int nblocks = (num_elements + block.y - 1) / block.y;
+        // dim3 grid(nblocks);
+        // add_residual_gpu_v2<T, ElemGroup, Data, elems_per_block, Vec>
+        //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+
+        // v3
+        // const int elems_per_block = 32;  // 32;
+        // dim3 block(Quadrature::num_quad_pts, elems_per_block);
+        // int nblocks = (num_elements + block.y - 1) / block.y;
+        // dim3 grid(nblocks);
+        // add_residual_gpu_v3<T, ElemGroup, Data, elems_per_block, Vec>
+        //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+
+        // v5 - try changing elems per block (still v2 kernel best)
+        const int elems_per_block = 32;  // 32;
+        dim3 block(Quadrature::num_quad_pts, elems_per_block);
+        int nblocks = (num_elements + block.y - 1) / block.y;
+        dim3 grid(nblocks);
+        add_residual_gpu_v2<T, ElemGroup, Data, elems_per_block, Vec>
             <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+
+        // v6 - don't parallelize over quadpts
+        // const int elems_per_block = 32;  // 32;
+        // dim3 block(elems_per_block);
+        // int nblocks = (num_elements + block.x - 1) / block.x;
+        // dim3 grid(nblocks);
+        // add_residual_gpu_v6<T, ElemGroup, Data, elems_per_block, Vec>
+        //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
     }
 
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -560,6 +592,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
     using Mat = Mat_<Vec<T>>;
+    using Quadrature = typename ElemGroup::Quadrature;
 
     res.zeroValues();
     mat.zeroValues();
@@ -567,13 +600,58 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
 
-    dim3 block = ElemGroup::jac_block;
-    int nblocks = (num_elements + block.x - 1) / block.x;
-    dim3 grid(nblocks);
-    constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
+    // dim3 block = ElemGroup::jac_block;
+    // int nblocks = (num_elements + block.x - 1) / block.x;
+    // dim3 grid(nblocks);
+    // constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
 
-    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    // v1 or baseline
+    // const int elems_per_block = 1;
+    // dim3 block(elems_per_block, 24, Quadrature::num_quad_pts);
+    // int nblocks = (num_elements + block.x - 1) / block.x;
+    // dim3 grid(nblocks);
+    // add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    //     num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+
+    // v2
+    // const int elems_per_block = 1;
+    // dim3 block(Quadrature::num_quad_pts, 24, elems_per_block);
+    // int nblocks = (num_elements + block.z - 1) / block.z;
+    // dim3 grid(nblocks);
+    // add_jacobian_gpu_v2<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    //     num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+
+    // v3
+    // const int elems_per_block = 1;
+    // dim3 block(Quadrature::num_quad_pts, 24, elems_per_block);
+    // int nblocks = (num_elements + block.z - 1) / block.z;
+    // dim3 grid(nblocks);
+    // add_jacobian_gpu_v3<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    //     num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+
+    // // v4 - no adding into resid
+    const int elems_per_block = 1;
+    dim3 block(Quadrature::num_quad_pts, 24, elems_per_block);
+    int nblocks = (num_elements + block.z - 1) / block.z;
+    dim3 grid(nblocks);
+    add_jacobian_gpu_v4<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
         num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+
+    // v5 - change block size (same as v4 kernel)
+    // const int elems_per_block = 1;
+    // dim3 block(Quadrature::num_quad_pts, 24, elems_per_block);
+    // int nblocks = (num_elements + block.z - 1) / block.z;
+    // dim3 grid(nblocks);
+    // add_jacobian_gpu_v4<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    //     num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+
+    // v6 - change block size (same as v4 kernel)
+    // const int elems_per_block = 1;
+    // dim3 block(1, 24, elems_per_block);
+    // int nblocks = (num_elements + block.z - 1) / block.z;
+    // dim3 grid(nblocks);
+    // add_jacobian_gpu_v6<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    //     num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
 
     CHECK_CUDA(cudaDeviceSynchronize());
 
