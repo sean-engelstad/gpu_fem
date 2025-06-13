@@ -69,8 +69,9 @@ u = tacs.createVec()
 mat = tacs.createSchurMat()
 # ILUk = 3
 # ILUk = 8
+ILUk = 0
 # ILUk = 10
-ILUk = 100000 # full fillin
+# ILUk = 100000 # full fillin
 pc = TACS.Pc(mat, lev_fill=ILUk) # for ILU(3), default is full LU or ILU(1000) if not set
 # subspace = 100
 subspace = 200
