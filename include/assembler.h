@@ -55,7 +55,7 @@ class ElementAssembler {
     void set_design_variables(Vec<T> &newDVs);
     void add_energy(T *glob_U, bool can_print = false);
     void add_residual(Vec<T> &res, bool can_print = false);
-    void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false);
+    void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false, bool include_res = false);
 
     // optimization
     void setupFunction(MyFunction &func);
@@ -652,14 +652,14 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
     dim3 block = ElemGroup::res_block;
-    int nblocks = (num_elements + block.x - 1) / block.x;
+    int nblocks = (num_elements + block.y - 1) / block.y;
     dim3 grid(nblocks);
-    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+    constexpr int32_t elems_per_block = ElemGroup::res_block.y;
 
     add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
         <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 
-    CHECK_CUDA(cudaDeviceSynchronize());
+    if (can_print) CHECK_CUDA(cudaDeviceSynchronize());
 #else   // USE_GPU
     ElemGroup::template add_residual_cpu<Data, Vec>(num_elements, geo_conn, vars_conn, xpts, vars,
                                                     physData, res);
@@ -680,8 +680,8 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat_>
 void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
-    Vec<T> &res, Mat_<Vec<T>> &mat,
-    bool can_print) {  // TODO : make this Vec here..
+    Vec<T> &res, Mat_<Vec<T>> &mat, bool can_print,
+    bool include_res) {  // TODO : make this Vec here..
     auto start = std::chrono::high_resolution_clock::now();
     if (can_print) {
         printf("begin add_jacobian\n");
@@ -691,21 +691,24 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     using Data = typename Phys::Data;
     using Mat = Mat_<Vec<T>>;
 
-    res.zeroValues();
+    if (include_res) {
+        add_residual(res, can_print);
+    }
+
     mat.zeroValues();
 
 // input is either a device array when USE_GPU or a host array if not USE_GPU
 #ifdef USE_GPU
 
     dim3 block = ElemGroup::jac_block;
-    int nblocks = (num_elements + block.x - 1) / block.x;
+    int nblocks = (num_elements + block.z - 1) / block.z;
     dim3 grid(nblocks);
-    constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
+    constexpr int32_t elems_per_block = ElemGroup::jac_block.z;
 
     add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
-        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, res, mat);
+        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, mat);
 
-    CHECK_CUDA(cudaDeviceSynchronize());
+    if (can_print) CHECK_CUDA(cudaDeviceSynchronize());
 
 #else  // CPU data
     // maybe a way to call add_residual_kernel as same method on CPU

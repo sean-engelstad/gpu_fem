@@ -176,6 +176,32 @@ class BsrMat {
         }
     }
 
+    __DEVICE__
+    void addElementMatRow(const bool active_thread, const int elem_block_row, const int inner_row,
+                          const int ielem, const int start, const int stride,
+                          const int dof_per_node, const int nodes_per_elem,
+                          const int32_t *elem_conn, const T *elem_row) {
+        /* add row from elem stiffness matrix (adding by row is coalesced, while col is not) */
+
+        // int dof_per_elem = dof_per_node * nodes_per_elem,
+        int block_dim = bsr_data.block_dim, blocks_per_elem = nodes_per_elem * nodes_per_elem;
+        int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
+        int dof_per_elem = dof_per_node * nodes_per_elem;
+        const index_t *elem_ind_map = bsr_data.elem_ind_map;
+        const index_t *loc_elem_ind_map = &elem_ind_map[blocks_per_elem * ielem];
+        T *valPtr = values.getPtr();
+
+        for (int idof = start; idof < dof_per_elem; idof += stride) {
+            int elem_block_col = idof / dof_per_node;
+            int elem_block = nodes_per_elem * elem_block_row + elem_block_col;
+            int glob_block_ind = loc_elem_ind_map[elem_block];
+            int inner_col = idof % dof_per_node;
+            int ival = nnz_per_block * glob_block_ind + block_dim * inner_row + inner_col;
+
+            atomicAdd(&valPtr[ival], elem_row[idof]);
+        }
+    }
+
 #endif  // USE_GPU
 
     template <typename I>

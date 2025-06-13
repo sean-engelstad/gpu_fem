@@ -29,11 +29,9 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 // TODO : way to make this more general if num_quad_pts is not a multiple of 3?
 // some if constexpr stuff on type of Basis?
 #ifdef USE_GPU
-    static constexpr dim3 energy_block = dim3(32, num_quad_pts, 1);
-    static constexpr dim3 res_block = dim3(32, num_quad_pts, 1);
-    // static constexpr dim3 res_block = dim3(64, num_quad_pts, 1);
-    static constexpr dim3 jac_block = dim3(1, dof_per_elem, num_quad_pts);
-    // static constexpr dim3 jac_block = dim3(dof_per_elem, num_quad_pts);
+    static constexpr dim3 energy_block = dim3(num_quad_pts, 32, 1);
+    static constexpr dim3 res_block = dim3(num_quad_pts, 32, 1);
+    static constexpr dim3 jac_block = dim3(num_quad_pts, dof_per_elem, 1);
 #endif  // USE_GPU
 
     template <class Data>
@@ -174,10 +172,9 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     }  // end of method add_element_quadpt_residual
 
     template <class Data>
-    __HOST_DEVICE__ static void add_element_quadpt_jacobian_col(
+    __HOST_DEVICE__ static void add_element_quadpt_jacobian_col_no_resid(
         const bool active_thread, const int iquad, const int ivar, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data physData, T res[dof_per_elem],
-        T matCol[dof_per_elem]) {
+        const T vars[dof_per_elem], const Data physData, T matCol[dof_per_elem]) {
         // keep in mind max of ~256 floats on single thread
 
         if (!active_thread) return;
@@ -245,21 +242,15 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
         // breverse (1st order derivs)
         A2D::Vec<T, Basis::num_all_tying_points> ety_bar;  // zeroes out on init
-        {
-            A2D::Vec<T, 3 * num_nodes> d_bar;  // zeroes out on init
-            ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
+        if constexpr (is_nonlinear) {
+            A2D::Vec<T, 3 * num_nodes> d_bar;     // zeroes out on init
+            constexpr bool back_to_dbar = false;  // change to
+            ShellComputeDispGradSens_NoResid<T, vars_per_node, Basis, Data, back_to_dbar>(
                 pt, physData.refAxis, xpts, vars, fn, u0x.bvalue().get_data(),
-                u1x.bvalue().get_data(), e0ty.bvalue(), res, d_bar.get_data(), ety_bar.get_data());
+                u1x.bvalue().get_data(), e0ty.bvalue(), d_bar.get_data(), ety_bar.get_data());
 
-            computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar.get_data(), res,
-                                                   d_bar.get_data());
-
-            Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(),
-                                                                             res);
-
-            ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
-                pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
-
+            // TODO : if also computing nonlinear rotation will need an extra compute director sens
+            // call here
         }  // end of breverse scope (1st order derivs)
 
         // hreverse (2nd order derivs)
