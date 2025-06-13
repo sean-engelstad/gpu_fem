@@ -48,6 +48,13 @@ __GLOBAL__ void vec_add_kernel(Vec<T> v1, Vec<T> v2, Vec<T> v3) {
     }
 }
 
+template <typename T>
+__GLOBAL__ void vec_add_value_kernel(int N, T *data, int ind, T value) {
+    if (ind < N) {
+        atomicAdd(&data[ind], value);
+    }
+}
+
 template <typename T, template <typename> class Vec>
 __GLOBAL__ void removeRotationalDOF_kernel(int N1, int N2, T *v1, T *v2) {
     int thread_start = blockDim.x * blockIdx.x + threadIdx.x;

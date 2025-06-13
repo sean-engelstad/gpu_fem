@@ -96,7 +96,7 @@ void test_LU_plate(std::string ordering, bool print = false, int nxe = 50) {
 }
 
 int main(int argc, char* argv[]) {
-    bool test_all = true;
+    bool test_all = false;
 
     bool print = false;
     int nxe = 20;
@@ -108,8 +108,8 @@ int main(int argc, char* argv[]) {
         }
     } else {
         // test single failing test
-        reorder = true;
+        // reorder = true;
         print = true;
-        test_LU_plate("RCM", print, nxe);
+        test_LU_plate("AMD", print, nxe);
     }  
 };

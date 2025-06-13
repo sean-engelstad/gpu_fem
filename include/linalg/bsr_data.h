@@ -59,11 +59,19 @@ class BsrData {
           tr_block_map(nullptr),
           host(host) {
         if (!perm || !iperm) {
-            this->perm = new int32_t[nnodes];
-            this->iperm = new int32_t[nnodes];
-            for (int inode = 0; inode < nnodes; inode++) {
-                this->perm[inode] = inode;
-                this->iperm[inode] = inode;
+            if (this->host) {
+                this->perm = new int32_t[nnodes];
+                this->iperm = new int32_t[nnodes];
+                for (int inode = 0; inode < nnodes; inode++) {
+                    this->perm[inode] = inode;
+                    this->iperm[inode] = inode;
+                }
+            } else {
+                int *h_perm = new int[nnodes];
+                for (int inode = 0; inode < nnodes; inode++) h_perm[inode] = inode;
+                this->perm = DeviceVec<int>(nnodes, h_perm).createHostVec().getPtr();
+                this->iperm = DeviceVec<int>(nnodes, h_perm).createHostVec().getPtr();
+                delete[] h_perm;
             }
         } else {
             this->perm = perm;
@@ -73,11 +81,34 @@ class BsrData {
 
     /* length of values array */
     __HOST_DEVICE__ int32_t getNumValues() const { return nnzb * block_dim * block_dim; }
+    __HOST__ void set_new_sparsity(int new_nnzb, int *new_rowp, int *new_cols) {
+        nnzb = new_nnzb;
+        // remove old data
+        if (!this->host) {
+#ifdef USE_GPU
+            // delete data on device
+            if (rowp) cudaFree(rowp);
+            if (cols) cudaFree(cols);
+#endif  // USE_GPU
+        } else {
+            // delete data on host
+            if (rowp) delete[] rowp;
+            if (cols) delete[] cols;
+        }
+// need to deep copy here
+#ifdef USE_GPU
+        cudaMalloc(&rowp, sizeof(int) * (nnodes + 1));
+        cudaMemcpy(rowp, new_rowp, sizeof(int) * (nnodes + 1), cudaMemcpyDeviceToDevice);
+        cudaMalloc(&cols, sizeof(int) * nnzb);
+        cudaMemcpy(cols, new_cols, sizeof(int) * nnzb, cudaMemcpyDeviceToDevice);
+#endif  // USE_GPU
+    }
 
     __HOST__ void _get_row_col_ptrs_sparse() {
         /* get the rowp, cols from the element connectivity using sparse utils */
         auto su_mat = SparseUtils::BSRMatFromConnectivityCUDA<double, 1>(nelems, nnodes,
                                                                          nodes_per_elem, elem_conn);
+
         nnzb = su_mat->nnz;
         rowp = su_mat->rowp;
         cols = su_mat->cols;
@@ -169,11 +200,61 @@ class BsrData {
         /* computes the sparsity pattern for a full LU for direct LU solve
            with AMD reordering, consider making enum for reordering types here? */
 
+        // remove diagonal from rowp, cols (see TACSAssembler.createSchurMat in TACS CPU)
+        std::vector<int> cols_nodiag;
+        for (int i = 0; i < nnodes; i++) {
+            for (int jp = rowp[i]; jp < rowp[i + 1]; jp++) {
+                int j = cols[jp];
+                if (i != j) cols_nodiag.push_back(j);
+            }
+        }
+        // then remove diag from rowp
+        for (int i = 1; i < nnodes + 1; i++) {
+            rowp[i] -= i;
+        }
+        nnzb = rowp[nnodes];
+        for (int i = 0; i < nnzb; i++) {
+            cols[i] = cols_nodiag[i];
+        }
+        cols_nodiag.clear();
+
+        // print out the kmat sparsity pattern
+
         // compute fillin
         double fill_factor = 5.0;
         auto su_mat = SparseUtils::BSRMat<double, 1, 1>(nnodes, nnodes, nnzb, rowp, cols, nullptr);
         auto su_mat2 = BSRMatAMDFactorSymbolicCUDA(su_mat, fill_factor);
         // printf("done with BSRMatAMDFactorSymbolicCUDA\n");
+
+        // check if diag missing, if so add it
+        if (cols[0] != 0) {
+            std::vector<int> cols_diag;
+            for (int i = 0; i < nnodes; i++) {
+                int start = cols_diag.size();
+                for (int jp = rowp[i]; jp < rowp[i + 1]; jp++) {
+                    int j = cols[jp];
+                    cols_diag.push_back(j);
+                }
+                cols_diag.push_back(i);  // add diagonal
+                int end = cols_diag.size();
+                std::sort(&cols_diag[start], &cols_diag[end]);
+            }
+            for (int i = 1; i < nnodes + 1; i++) {
+                rowp[i] += i;
+            }
+            nnzb = rowp[nnodes];
+
+            // now call sort from sparse utils
+            // SparseUtils::SortCSRData(nnodes, rowp, cols_diag);
+
+            // now make new array
+            delete[] cols;
+            cols = new int[nnzb];
+            for (int i = 0; i < nnzb; i++) {
+                cols[i] = cols_diag[i];
+            }
+            cols_diag.clear();
+        }
 
         // TODO : not the most efficient since it includes factorization in above too (can fix later
         // if need be) perm = su_mat2->perm; iperm = su_mat2->iperm;
@@ -393,14 +474,7 @@ class BsrData {
 
         // before transferring to device, compute the symbolic maps for the GPU
         // call here instead of at the end of each symbolic factorization change
-        _compute_symbolic_maps_for_gpu();
-
-        int *d_elem_conn = nullptr;
-#ifdef USE_GPU
-        CHECK_CUDA(cudaMalloc((void **)&d_elem_conn, nodes_per_elem * nelems * sizeof(int)));
-        CHECK_CUDA(cudaMemcpy(d_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int),
-                              cudaMemcpyHostToDevice));
-#endif
+        if (elem_conn) _compute_symbolic_maps_for_gpu();
 
         BsrData new_bsr;  // bypass main constructor so we don't end up making host data
         new_bsr.nnzb = this->nnzb;
@@ -411,19 +485,29 @@ class BsrData {
         new_bsr.host = false;
 
         // create HostVec wrapper objects in CUDA, transfer to device and get ptr for new object
+        if (elem_conn) {
+            int *d_elem_conn = nullptr;
+#ifdef USE_GPU
+            CHECK_CUDA(cudaMalloc((void **)&d_elem_conn, nodes_per_elem * nelems * sizeof(int)));
+            CHECK_CUDA(cudaMemcpy(d_elem_conn, elem_conn, nodes_per_elem * nelems * sizeof(int),
+                                  cudaMemcpyHostToDevice));
+#endif
+            HostVec<int> h_elem_ind_map(n_eim, elem_ind_map), h_tr_rowp(nnodes + 1, tr_rowp),
+                h_tr_cols(nnzb, tr_cols), h_tr_block_map(nnzb, tr_block_map);
+            new_bsr.elem_ind_map = h_elem_ind_map.createDeviceVec().getPtr();
+            new_bsr.tr_rowp = h_tr_rowp.createDeviceVec().getPtr();
+            new_bsr.tr_cols = h_tr_cols.createDeviceVec().getPtr();
+            new_bsr.tr_block_map = h_tr_block_map.createDeviceVec().getPtr();
+            new_bsr.elem_conn = d_elem_conn;
+        }
+
         HostVec<int> h_rowp(nnodes + 1, rowp), h_cols(nnzb, cols), h_perm(nnodes, perm),
-            h_iperm(nnodes, iperm), h_elem_ind_map(n_eim, elem_ind_map),
-            h_tr_rowp(nnodes + 1, tr_rowp), h_tr_cols(nnzb, tr_cols),
-            h_tr_block_map(nnzb, tr_block_map);
+            h_iperm(nnodes, iperm);
         new_bsr.rowp = h_rowp.createDeviceVec().getPtr();
         new_bsr.cols = h_cols.createDeviceVec().getPtr();
         new_bsr.perm = h_perm.createDeviceVec().getPtr();
         new_bsr.iperm = h_iperm.createDeviceVec().getPtr();
-        new_bsr.elem_ind_map = h_elem_ind_map.createDeviceVec().getPtr();
-        new_bsr.tr_rowp = h_tr_rowp.createDeviceVec().getPtr();
-        new_bsr.tr_cols = h_tr_cols.createDeviceVec().getPtr();
-        new_bsr.tr_block_map = h_tr_block_map.createDeviceVec().getPtr();
-        new_bsr.elem_conn = d_elem_conn;
+
         new_bsr.nelems = nelems;
         new_bsr.nodes_per_elem = nodes_per_elem;
         new_bsr.n_eim = n_eim;
@@ -444,7 +528,7 @@ class BsrData {
             if (tr_rowp) cudaFree(tr_rowp);
             if (tr_cols) cudaFree(tr_cols);
             if (tr_block_map) cudaFree(tr_block_map);
-#endif  // USE_GPU
+#endif
         } else {
             // delete data on host
             if (rowp) delete[] rowp;

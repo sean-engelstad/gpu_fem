@@ -12,6 +12,7 @@ class BsrMat {
    public:
     using T = typename Vec_::type;
     using Vec = Vec_;
+    BsrMat() = default;
 #ifdef USE_GPU
     static constexpr dim3 bcs_block = dim3(32);
     static constexpr dim3 nodes_block = dim3(32);
@@ -61,6 +62,42 @@ class BsrMat {
         apply_mat_bcs_cols_kernel<T, DeviceVec>
             <<<grid, block>>>(bcs, tr_rowp, tr_cols, tr_block_map, iperm, nnodes, valPtr,
                               blocks_per_elem, nnz_per_block, block_dim);
+        CHECK_CUDA(cudaDeviceSynchronize());
+#endif  // USE_GPU
+    }
+
+    __HOST__ void add_diag_nugget(T eta) {
+        /* apply bcs to the matrix values (rows + cols) */
+        const index_t *rowPtr = bsr_data.rowp, *colPtr = bsr_data.cols;
+        int nnodes = bsr_data.nnodes, block_dim = bsr_data.block_dim;
+        int ndiag = bsr_data.nnodes * bsr_data.block_dim;
+        T *valPtr = values.getPtr();
+
+#ifdef USE_GPU
+        dim3 block(32);
+        int nblocks = (ndiag + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+
+        // adds eta * I to the diag where eta > 0 is a scalar
+        add_mat_diag_kernel<T><<<grid, block>>>(nnodes, block_dim, rowPtr, colPtr, valPtr, eta);
+        CHECK_CUDA(cudaDeviceSynchronize());
+#endif  // USE_GPU
+    }
+
+    __HOST__ void mult_diag_nugget(T eta) {
+        /* apply bcs to the matrix values (rows + cols) */
+        const index_t *rowPtr = bsr_data.rowp, *colPtr = bsr_data.cols;
+        int nnodes = bsr_data.nnodes, block_dim = bsr_data.block_dim;
+        int ndiag = bsr_data.nnodes * bsr_data.block_dim;
+        T *valPtr = values.getPtr();
+
+#ifdef USE_GPU
+        dim3 block(32);
+        int nblocks = (ndiag + block.x - 1) / block.x;
+        dim3 grid(nblocks);
+
+        // adds eta * I to the diag where eta > 0 is a scalar
+        mult_diag_kernel<T><<<grid, block>>>(nnodes, block_dim, rowPtr, colPtr, valPtr, eta);
         CHECK_CUDA(cudaDeviceSynchronize());
 #endif  // USE_GPU
     }
@@ -188,7 +225,7 @@ class BsrMat {
                                                 const int32_t *elem_conn, const T *elem_mat);
 
    private:
-    const BsrData bsr_data;
+    BsrData bsr_data;  // was const before
     Vec values;
 };
 

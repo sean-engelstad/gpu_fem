@@ -1,4 +1,4 @@
-
+#pragma once
 #include "cuda_utils.h"
 
 // add_residual kernel

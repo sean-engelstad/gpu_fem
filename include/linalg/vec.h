@@ -210,6 +210,13 @@ class DeviceVec : public BaseVec<T> {
     //     }
     // }
 
+    void add_value(int ind, T value) {
+/* mostly for derivative FD tests + debugging */
+#ifdef USE_GPU
+        vec_add_value_kernel<T><<<1, 1>>>(this->N, this->data, ind, value);
+#endif
+    }
+
     static void add_vec(DeviceVec<T> vec1, DeviceVec<T> vec2, DeviceVec<T> vec3) {
 // add us to xs0
 #ifdef USE_GPU
