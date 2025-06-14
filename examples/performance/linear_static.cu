@@ -119,6 +119,13 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
         if (debug) printf("resid_norm = %.4e\n", resid_norm);
     }
 
+    // temp print
+    int ndof = assembler.get_num_vars();
+    int nnodes = assembler.get_num_nodes();
+    int nelems = assembler.get_num_elements();
+    int nnz = kmat.get_nnz();
+    printf("ndof %d, nnodes %d, nelems %d, nnz %d\n", ndof, nnodes, nelems, nnz);
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> tot_time = end - start;
 
@@ -136,7 +143,7 @@ int main(int argc, char **argv) {
     std::string solve_method = "LU";
     bool just_assembly = false;
     int ILU_k = 3;
-    std::string ordering = "RCM";
+    std::string ordering = "AMD";
     std::string test_type = "just_assembly"; // #solve
     bool debug = false, write_vtk = false;
 

@@ -182,6 +182,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
     __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
     __SHARED__ T block_vars[elems_per_block][vars_per_elem];
     __SHARED__ Data block_data[elems_per_block];
+    // __SHARED__ T block_col_buffer[4][36]; // 4 element blocks at a time
 
     int nthread_xy = blockDim.x * blockDim.y;
     int thread_xy = threadIdx.y * blockDim.x + threadIdx.x;
@@ -212,24 +213,29 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
         active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], local_mat_col);
 
+    /* memory write to global (no shared needed) */
+
     // warp reduction over quadpts for jac
+    int lane = local_thread % 32;
+    int group_start = (lane / 4) * 4;
     for (int idof = 0; idof < vars_per_elem; idof++) {
         T lane_val = local_mat_col[idof];
         lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 2);
         lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 1);
+
+        // warp broadcast
+        lane_val = __shfl_sync(0xFFFFFFFF, lane_val, group_start);
         local_mat_col[idof] = lane_val;
     }
 
-    if (iquad == 0) {
-        int nderiv = blockDim.y;
-        int elem_block_row = ideriv / Phys::vars_per_node;
-        int elem_inner_row = ideriv % Phys::vars_per_node;
-        mat.addElementMatRow(active_thread, elem_block_row, elem_inner_row, global_elem, ideriv, nderiv,
-            Phys::vars_per_node, Basis::num_nodes, vars_elem_conn, local_mat_col);
-    }
+    int elem_block_row = ideriv / Phys::vars_per_node;
+    int elem_inner_row = ideriv % Phys::vars_per_node;
+    mat.addElementMatRow(active_thread, elem_block_row, elem_inner_row, global_elem, iquad, Quadrature::num_quad_pts,
+        Phys::vars_per_node, Basis::num_nodes, vars_elem_conn, local_mat_col);
+        
 }  // end of add_jacobian_gpu
 
-// add_jacobian_gpu kernel
+// set_design_variables_gpu kernel
 // -------------------
 template <typename T, int32_t elems_per_block, class Data, 
           template <typename> class Vec>
