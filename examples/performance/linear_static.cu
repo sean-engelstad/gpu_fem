@@ -34,7 +34,8 @@
 void time_linear_static(int nxe, std::string ordering, std::string fill_type, bool LU_solve = true, int ILU_k = 5,
                         double p_factor = 1.0, bool print = true, bool write_vtk = false, bool debug = false,
                         bool just_assembly = false, std::string test_type = "solve") {
-    using T = double;
+    // using T = double;
+    using T = float;
 
     int rcm_iters = 5;
     auto start = std::chrono::high_resolution_clock::now();
@@ -95,28 +96,31 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     assembler.apply_bcs(res); // very fast
     assembler.apply_bcs(kmat); // very fast
 
-    if (!just_assembly) {
-        if (LU_solve) {
-            CUSPARSE::direct_LU_solve(kmat, loads, soln);
-        } else {
-            int n_iter = 200, max_iter = 400;
-            T abs_tol = 1e-11, rel_tol = 1e-14;
-            CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, debug);
-        }
+    // only solve on double type
+    if constexpr (std::is_same<T, double>::value) {
+        if (!just_assembly) {
+            if (LU_solve) {
+                CUSPARSE::direct_LU_solve(kmat, loads, soln);
+            } else {
+                int n_iter = 200, max_iter = 400;
+                T abs_tol = 1e-11, rel_tol = 1e-14;
+                CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, debug);
+            }
 
-        if (write_vtk) {
-            auto h_soln = soln.createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "plate.vtk");
-        }
+            if (write_vtk) {
+                auto h_soln = soln.createHostVec();
+                printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "plate.vtk");
+            }
 
-        assembler.set_variables(soln);
-        assembler.add_residual(res);
-        auto rhs = assembler.createVarsVec();
-        CUBLAS::axpy(1.0, loads, rhs);
-        CUBLAS::axpy(-1.0, res, rhs);
-        assembler.apply_bcs(rhs);
-        double resid_norm = CUBLAS::get_vec_norm(rhs);
-        if (debug) printf("resid_norm = %.4e\n", resid_norm);
+            assembler.set_variables(soln);
+            assembler.add_residual(res);
+            auto rhs = assembler.createVarsVec();
+            // CUBLAS::axpy(1.0, loads, rhs);
+            // CUBLAS::axpy(-1.0, res, rhs);
+            // assembler.apply_bcs(rhs);
+            // double resid_norm = CUBLAS::get_vec_norm(rhs);
+            // if (debug) printf("resid_norm = %.4e\n", resid_norm);
+        }
     }
 
     // temp print
