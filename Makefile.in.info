@@ -17,7 +17,10 @@ CXX = g++
 CC_FLAGS = -Wno-deprecated-declarations
 CUSPARSE_LINK = -lcublas -lcusparse -lcudart -lcusolver
 # GPU_CC_FLAGS := -O2 -arch=sm_86
-GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_86 #-w
+# fast math use fuse intrinsics (fast) but can reduce precision, 
+#   however with T = double the flag doesn't do anything
+# GPU_CC_FLAGS := -O3 --use_fast_math -arch=sm_86 #-w
+GPU_CC_FLAGS = -O3 -arch=sm_86
 DEBUG_GPU_CC_FLAGS := -g ${GPU_CC_FLAGS}
 
 # --relocatable-device-code=false -flto 

@@ -93,6 +93,10 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     assembler.add_residual(res, print);
     bool include_res = false; // false
     assembler.add_jacobian(res, kmat, print, include_res);
+
+    // run again sometimes can be a little faster the second time
+    assembler.add_residual(res, print);
+    assembler.add_jacobian(res, kmat, print, include_res);
     assembler.apply_bcs(res); // very fast
     assembler.apply_bcs(kmat); // very fast
 
@@ -100,11 +104,11 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     if constexpr (std::is_same<T, double>::value) {
         if (!just_assembly) {
             if (LU_solve) {
-                CUSPARSE::direct_LU_solve(kmat, loads, soln);
+                CUSPARSE::direct_LU_solve(kmat, loads, soln, print);
             } else {
-                int n_iter = 200, max_iter = 400;
+                int n_iter = 100, max_iter = 100;
                 T abs_tol = 1e-11, rel_tol = 1e-14;
-                CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, debug);
+                CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
             }
 
             if (write_vtk) {
@@ -190,6 +194,6 @@ int main(int argc, char **argv) {
     std::string fill_type = (solve_method == "LU") ? "LU" : "ILUk";
     bool LU = (solve_method == "LU");
 
-    time_linear_static(nxe, ordering, fill_type, LU, ILU_k, 1.0, true, write_vtk, debug, just_assembly, test_type);
+    time_linear_static(nxe, ordering, fill_type, LU, ILU_k, 0.5, true, write_vtk, debug, just_assembly, test_type);
     return 0;
 }

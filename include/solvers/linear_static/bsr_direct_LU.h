@@ -101,6 +101,8 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     // now also inverse permute the soln data
     permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
 
+    if (can_print) CHECK_CUDA(cudaDeviceSynchronize());  // for timing
+
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
