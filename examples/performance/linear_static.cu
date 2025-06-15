@@ -100,6 +100,8 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     assembler.apply_bcs(res); // very fast
     assembler.apply_bcs(kmat); // very fast
 
+    // investigate below linear solve on A100 NVIDIA GPU architecture
+
     // only solve on double type
     if constexpr (std::is_same<T, double>::value) {
         if (!just_assembly) {
