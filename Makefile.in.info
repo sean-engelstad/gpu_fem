@@ -1,9 +1,14 @@
-A2D_DIR := ${HOME}/git/_archive/a2d
+# on local
+HOME_DIR = ${HOME}
+# on NAS
+# HOME_DIR = # swbuild or different dir
+
+A2D_DIR := ${HOME_DIR}/git/_archive/a2d
 A2D_INCLUDE := -I${A2D_DIR}/include
 
-GPU_FEM_DIR = ${HOME}/git/gpu_fem
+GPU_FEM_DIR = ${HOME_DIR}/git/gpu_fem
 GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
-TACS_DIR = ${HOME}/git/_archive/tacs
+TACS_DIR = ${HOME_DIR}/git/_archive/tacs
 
 # USE_GPU := 1
 USE_GPU := 0
@@ -20,11 +25,11 @@ DEBUG_GPU_CC_FLAGS := -g ${GPU_CC_FLAGS}
 # GPU_CC_FLAGS := ${GPU_CC_FLAGS} -Xptxas -dlcm=ca -Xptxas -O3
 
 # sparse-utils repo (smdogroup) and lapack, metis, etc.
-SPARSE_UTILS_INCLUDE = -I${HOME}/git/_archive/sparse-utils/include/
+SPARSE_UTILS_INCLUDE = -I${HOME_DIR}/git/_archive/sparse-utils/include/
 
 PYBIND11_INCLUDE = -I/usr/include/python3.10 -I/home/seanfireball1/myenv/lib/python3.10/site-packages/pybind11/include
 
-LAPACK_DIR := ${HOME}/git/archive/lapack
+LAPACK_DIR := ${HOME_DIR}/git/archive/lapack
 LAPACK_INCLUDE := -I${LAPACK_DIR}/build/include/
 LAPACK_LIB := -L${LAPACK_DIR}/build/lib/
 LAPACK_LINK := ${LAPACK_LIB} -llapacke -llapack -lblas
@@ -32,6 +37,10 @@ LAPACK_LINK := ${LAPACK_LIB} -llapacke -llapack -lblas
 # MPI include and lib, use 'mpicxx -show' to get the include and lib commands
 MPI_INCLUDE = -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi
 MPI_LIB = -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi_cxx -lmpi
+
+# on NAS
+# MPI_INCLUDE = -I/nasa/nvidia/hpc_sdk/toss4/Linux_x86_64/23.11/comm_libs/openmpi/openmpi-3.1.5/include
+# MPI_LIB = -L/nasa/nvidia/hpc_sdk/toss4/Linux_x86_64/23.11/comm_libs/openmpi/openmpi-3.1.5/lib -lmpi
 
 # metis include and lib
 METIS_DIR = ${TACS_DIR}/extern/metis
