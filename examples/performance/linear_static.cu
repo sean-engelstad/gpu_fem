@@ -34,8 +34,8 @@
 void time_linear_static(int nxe, std::string ordering, std::string fill_type, bool LU_solve = true, int ILU_k = 5,
                         double p_factor = 1.0, bool print = true, bool write_vtk = false, bool debug = false,
                         bool just_assembly = false, std::string test_type = "solve") {
-    // using T = double;
-    using T = float;
+    using T = double;
+    // using T = float;
 
     int rcm_iters = 5;
     auto start = std::chrono::high_resolution_clock::now();

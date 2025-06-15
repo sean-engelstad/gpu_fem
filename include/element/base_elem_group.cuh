@@ -137,23 +137,8 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], local_res);
 
-    // warp reduction across quadpts (v1)
-    // for (int idof = 0; idof < vars_per_elem; idof++) {
-    //     T lane_val = local_res[idof];
-    //     // warp reduction across 4 threads (need to update how to do this for triangle elements later)
-    //     lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 2);
-    //     lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 1);
-
-    //     local_res[idof] = lane_val;
-    // }
-
-    // if (iquad == 0) {
-    //     res.addElementValuesFromShared(active_thread, 0, 1, Phys::vars_per_node,
-    //                                 Basis::num_nodes, vars_elem_conn,
-    //                                 local_res);
-    // }
-
-    // v2
+    int lane = local_thread % 32;
+    int group_start = (lane / 4) * 4;
     for (int idof = 0; idof < vars_per_elem; idof++) {
         T lane_val = local_res[idof];
         lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 2);
