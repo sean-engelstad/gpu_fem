@@ -58,6 +58,9 @@ class ElementAssembler {
     void add_residual(Vec<T> &res, bool can_print = false);
     void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false, bool include_res = false);
 
+    // helpers or setup calls
+    void compute_shell_transforms();
+
     // optimization
     void setupFunction(MyFunction &func);
     void evalFunction(MyFunction &func);
@@ -134,6 +137,11 @@ class ElementAssembler {
         dvs.free();
 
         if (BufferOptions::res) res_buffer.free();
+        if (BufferOptions::shell_data) {
+            Tmat.free();
+            XdinvT.free();
+            detXd.free();
+        }
     }
 
    private:
@@ -149,6 +157,7 @@ class ElementAssembler {
     BsrData bsr_data;
 
     // buffers (optional)
+    Vec<T> Tmat, XdinvT, detXd;  // shell transforms
     Vec<T> res_buffer;
 };  // end of ElementAssembler class declaration
 
@@ -207,6 +216,19 @@ ElementAssembler<T, ElemGroup, Vec, Mat, BufferOptions_>::ElementAssembler(
     this->dvs = HostVec<T>(ndvs);
 
 #endif  // end of USE_GPU or not USE_GPU check
+
+    // now call any setup kernels (if buffer options needed here)
+    // actually makes us hit shared-mem limits (and decreases occupancy)
+    // if (BufferOptions::shell_data) {
+    //     int dim = Geo::spatial_dim;
+    //     int dim2 = dim * dim;
+    //     int nrot_per_elem = Basis::Quadrature::num_quad_pts * dim2;
+    //     this->Tmat = DeviceVec<T>(num_elements * nrot_per_elem);
+    //     this->XdinvT = DeviceVec<T>(num_elements * nrot_per_elem);
+    //     this->detXd = DeviceVec<T>(num_elements * Basis::Quadrature::num_quad_pts);
+
+    //     compute_shell_transforms();
+    // }
 }
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
@@ -667,7 +689,12 @@ void ElementAssembler<T, ElemGroup, Vec, Mat, BufferOptions_>::add_residual(Vec<
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::res_block.y;
 
-    add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+    // baseline
+    // add_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+    //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+
+    // new shell method (faster for shells)
+    add_residual_shell_gpu<T, ElemGroup, Data, elems_per_block, Vec>
         <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 
     if (can_print) CHECK_CUDA(cudaDeviceSynchronize());
@@ -716,7 +743,11 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_, BufferOptions_>::add_jacobian(
     dim3 grid(nblocks);
     constexpr int32_t elems_per_block = ElemGroup::jac_block.z;
 
-    add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    // add_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+    //     num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, mat);
+
+    // temporarily testing with a shell specific kernel
+    add_jacobian_shell_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
         num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, vars, physData, mat);
 
     if (can_print) CHECK_CUDA(cudaDeviceSynchronize());
@@ -733,6 +764,40 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_, BufferOptions_>::add_jacobian(
     std::chrono::duration<double> add_jac_time = stop - start;
     if (can_print) {
         printf("\tfinished add_jacobian in %.4e sec\n", add_jac_time.count());
+    }
+};
+
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat, typename BufferOptions_>
+void ElementAssembler<T, ElemGroup, Vec, Mat, BufferOptions_>::compute_shell_transforms() {
+    auto start = std::chrono::high_resolution_clock::now();
+    bool can_print = true;
+    if (can_print) {
+        printf("begin compute shell transforms gpu\n");
+    }
+
+    using Phys = typename ElemGroup::Phys;
+    using Data = typename Phys::Data;
+
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+    dim3 block = ElemGroup::res_block;
+    int nblocks = (num_elements + block.y - 1) / block.y;
+    dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::res_block.y;
+
+    // baseline
+    compute_shell_transforms_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, xpts, physData, Tmat, XdinvT, detXd);
+
+    if (can_print) CHECK_CUDA(cudaDeviceSynchronize());
+#endif  // USE_GPU
+
+    // print timing data
+    auto stop = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> shell_transform_time = stop - start;
+    if (can_print) {
+        printf("\tfinished compute_shell_transforms in %.4e\n", shell_transform_time.count());
     }
 };
 

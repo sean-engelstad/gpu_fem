@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../base_elem_group.h"
+#include "_shell_types.h"
 #include "a2dcore.h"
 #include "a2dshell.h"
 #include "basis.h"
@@ -105,6 +106,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T pt[2];              // quadrature point
         T d[3 * num_nodes];   // needed for reverse mode, nonlinear case
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
+        T detXd;
 
         // in-out of forward & backwards section
         A2D::ADObj<A2D::Mat<T, 3, 3>> u0x, u1x;
@@ -117,10 +119,14 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         {
             // compute node normals fn
             ShellComputeNodeNormals<T, Basis>(xpts, fn);
-
             // compute the interpolated drill strain
             ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
                 pt, physData.refAxis, xpts, vars, fn, et.value().get_data());
+
+            // TODO : have to compoute detXd here later
+
+            // TODO : split up calls here more by bending and tying strains (disp grad does some
+            // tying strain computations right now)
 
             // compute directors
             Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
@@ -130,18 +136,18 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
             // compute all shell displacement gradients
-            T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+            detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.value().get_data(),
                 u1x.value().get_data(), e0ty.value());
 
-            // get the scale for disp grad sens of the energy
-            T scale = detXd * weight;
-
-            // compute energy + energy-dispGrad sensitivites with physics
-            Phys::template computeWeakRes<T>(physData, scale, u0x, u1x, e0ty, et);
-
         }  // end of forward scope block for strain energy
-        // ------------------------------------------------
+           // ------------------------------------------------
+
+        // get the scale for disp grad sens of the energy
+        T scale = detXd * weight;
+
+        // compute energy + energy-dispGrad sensitivites with physics
+        Phys::template computeWeakRes<T>(physData, scale, u0x, u1x, e0ty, et);
 
         // beginning of backprop section to final residual derivatives
         // -----------------------------------------------------
@@ -150,6 +156,11 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         // ety_bar
         A2D::Vec<T, 3 * num_nodes> d_bar;
         A2D::Vec<T, Basis::num_all_tying_points> ety_bar;
+
+        // drill strain sens
+        ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
+            pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
+
         // T ety_bar[Basis::num_all_tying_points];
         ShellComputeDispGradSens<T, vars_per_node, Basis, Data>(
             pt, physData.refAxis, xpts, vars, fn, u0x.bvalue().get_data(), u1x.bvalue().get_data(),
@@ -161,10 +172,6 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
         // directors back to residuals
         Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(), res);
-
-        // drill strain sens
-        ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
-            pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
 
         // TODO : rotation constraint sens for some director classes (zero for
         // linear rotation)
@@ -185,6 +192,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         T scale;              // scale for energy derivatives
         T d[3 * num_nodes];   // need directors in reverse for nonlinear strains
         T weight = Quadrature::getQuadraturePoint(iquad, pt);
+        T detXd;
 
         // in-out of forward & backwards section
         A2D::A2DObj<A2D::Mat<T, 3, 3>> u0x, u1x;
@@ -204,7 +212,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
             T ety[Basis::num_all_tying_points];
             computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
 
-            T detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
+            detXd = ShellComputeDispGrad<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, d, ety, u0x.value().get_data(),
                 u1x.value().get_data(), e0ty.value());
 
@@ -257,6 +265,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         {
             A2D::Vec<T, Basis::num_all_tying_points> ety_hat;  // zeroes out on init
             A2D::Vec<T, 3 * num_nodes> d_hat;                  // zeroes out on init
+
             ShellComputeDispGradHrev<T, vars_per_node, Basis, Data>(
                 pt, physData.refAxis, xpts, vars, fn, u0x.hvalue().get_data(),
                 u1x.hvalue().get_data(), e0ty.hvalue(), matCol, d_hat.get_data(),
@@ -273,6 +282,330 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 pt, physData.refAxis, xpts, vars, fn, et.hvalue().get_data(), matCol);
         }  // end of hreverse scope (2nd order derivs)
     }      // add_element_quadpt_jacobian_col
+
+    template <class Data>
+    __HOST_DEVICE__ static void compute_shell_transform_data(const bool active_thread,
+                                                             const int iquad,
+                                                             const T xpts[xpts_per_elem],
+                                                             const Data physData, T Tmat[],
+                                                             T XdinvT[], T &detXd) {
+        /* compute shell transform matrices at each quadpt, not fully optimized since I just need */
+        if (!active_thread) return;
+        T pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+        // get the shell node normal at the quadpt
+        T dXdxi[3], dXdeta[3], n0[3];
+        Basis::template interpFieldsGrad<3, 3>(pt, xpts, dXdxi, dXdeta);
+        T tmp[3];
+        A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
+        T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
+        A2D::VecScaleCore<T, 3>(1.0 / norm, tmp, n0);
+
+        _compute_shell_transforms<T, Data, Basis>(pt, physData.refAxis, xpts, n0, Tmat, XdinvT,
+                                                  detXd);
+    }
+
+    template <class Data>
+    __DEVICE__ static void compute_shell_transforms2(const bool active_thread, const int iquad,
+                                                     const T xpts[], Data physData, T Tmat[],
+                                                     T XdinvT[], T &detXd) {
+        if (!active_thread) return;
+        T pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+        // get Tmat (if not available)
+        {
+            // compute the computational coord gradients of Xpts for xi, eta
+            T dXdxi[3], dXdeta[3];
+            Basis::template interpFieldsGrad<3, 3>(pt, xpts, dXdxi, dXdeta);
+
+            // compute shell normal
+            T n0[3], tmp[3];
+            A2D::VecCrossCore<T>(dXdxi, dXdeta, tmp);
+            T norm = sqrt(A2D::VecDotCore<T, 3>(tmp, tmp));
+            A2D::VecScaleCore<T, 3>(1.0 / norm, tmp, n0);
+
+            // assemble Xd frame
+            T Xd[9];
+            Basis::assembleFrame(dXdxi, dXdeta, n0, Xd);
+
+            // compute the shell transform based on the ref axis in Data object
+            ShellComputeTransform<T, Data>(physData.refAxis, dXdxi, dXdeta, n0, Tmat);
+
+            // get XdinvT too
+            T Xdinv[9];
+            A2D::MatInvCore<T, 3>(Xd, Xdinv);
+            detXd = A2D::MatDetCore<T, 3>(Xd);
+            A2D::MatMatMultCore3x3<T>(Xdinv, Tmat, XdinvT);
+        }
+    }
+
+    template <class Data>
+    __HOST_DEVICE__ static void add_element_quadpt_drill_residual(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data physData, const T Tmat[], const T XdinvT[],
+        const T &detXd, T res[dof_per_elem])
+
+    {
+        /* low register method to get drill strain residual only */
+        if (!active_thread) return;
+
+        // data to store in forwards + backwards section
+        T pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+        // in-out of forward & backwards section
+        A2D::ADObj<A2D::Vec<T, 1>> et;
+
+        // forward scope block
+        {
+            // assemble u0xn frame
+            T u0x_1, u0x_3;
+            {
+                T u0x[9];
+                // compute midplane disp field gradients
+                T u0xi[3], u0eta[3];
+                Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, u0xi, u0eta);
+
+                A2D::Vec<T, 3> zero;
+                Basis::assembleFrame(u0xi, u0eta, zero.get_data(), u0x);
+
+                // u0x' = T^T * u0x * XdinvT (but only [1], [3] entries of that)
+                u0x_1 = A2D::Mat3x3MatTripleProduct<T>(0, 1, Tmat, u0x, XdinvT);
+                u0x_3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, u0x, XdinvT);
+            }
+
+            T C1, C3;
+            {
+                // interpolate rotation vars to this quadpt (linear rotation only)
+                T rots[6];
+                Basis::template interpFieldsOffset<vars_per_node, 3, 3>(pt, vars, &rots[3]);
+
+                // compute the rotation matrix
+                T C[9];
+                Director::template computeRotationMat<vars_per_node, 1>(rots, C);
+
+                C3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, C, Tmat);
+                C1 = -C3;
+            }
+
+            // compute drill strains
+            et.value()[0] = 0.5 * (C3 + u0x_3 - u0x_1 - C1);
+        }
+
+        // get the scale for disp grad sens of the energy
+        T scale = detXd * weight;
+
+        // compute energy strain residual
+        // Phys::template computeWeakRes<T>(physData, scale, u0x, u1x, e0ty, et);
+        T drill;
+        {  // TODO : could just compute G here separately.., less data
+            T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
+            Data::evalTangentStiffness2D(E, nu, C);
+            T As = Data::getTransShearCorrFactor() * thick * C[5];
+            drill = Data::getDrillingRegularization() * As;
+            et.bvalue()[0] = scale * drill * et.value()[0];  // backprop from strain energy
+        }
+
+        // beginning of backprop section to final residual derivatives
+        // ----------------------------------------------------
+        T etb = et.bvalue()[0];
+        // backprop through rotation mat
+        {
+            T C3b = 0.5 * etb, C1b = -0.5 * etb;
+            T Cb[9];
+            memset(Cb, 0.0, 9 * sizeof(T));
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, Tmat, C3b, Cb);
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, Tmat, C1b, Cb);
+
+            T rot_sens[6];
+            Director::template computeRotationMatSens<vars_per_node, 1>(Cb, rot_sens);
+
+            Basis::template interpFieldsOffsetSens<vars_per_node, 3, 3>(pt, &rot_sens[3], res);
+        }
+
+        // backprop through u0x disp grad
+        {
+            T u0xb3 = 0.5 * etb;
+            T u0xb1 = -u0xb3;
+
+            T u0xb[9];
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, XdinvT, u0xb3, u0xb);
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, XdinvT, u0xb1, u0xb);
+
+            // transpose u0xb
+#pragma unroll
+            for (int i = 0; i < 3; i++) {
+#pragma unroll
+                for (int j = 0; j < i; j++) {
+                    T tmp = u0xb[3 * i + j];
+                    u0xb[3 * i + j] = u0xb[3 * j + i];
+                    u0xb[3 * j + i] = tmp;
+                }
+            }
+
+            Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0xb[0], &u0xb[3],
+                                                                        res);
+        }
+
+        // TODO : rotation constraint sens for some director classes (zero for
+        // linear rotation)
+
+    }  // end of method add_element_quadpt_residual
+
+    template <class Data>
+    __HOST_DEVICE__ static void add_element_quadpt_drill_jacobian_col(
+        const bool active_thread, const int iquad, const int ideriv, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data physData, const T Tmat[], const T XdinvT[],
+        const T &detXd, T mat_col[dof_per_elem]) {
+        /* low register method to get drill strain residual only */
+        if (!active_thread) return;
+
+        // data to store in forwards + backwards section
+        T pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+        constexpr bool nonlinear_rotation =
+            false;  // set this in physics later, not settable yet (so assumes linear rot)
+
+        // in-out of forward & backwards section
+        A2D::A2DObj<A2D::Vec<T, 1>> et;
+
+        // forward scope block
+        {
+            // assemble u0xn frame
+            T u0x_1, u0x_3;
+            {
+                T u0x[9];
+                // compute midplane disp field gradients
+                T u0xi[3], u0eta[3];
+                Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, u0xi, u0eta);
+
+                A2D::Vec<T, 3> zero;
+                Basis::assembleFrame(u0xi, u0eta, zero.get_data(), u0x);
+
+                // u0x' = T^T * u0x * XdinvT (but only [1], [3] entries of that)
+                u0x_1 = A2D::Mat3x3MatTripleProduct<T>(0, 1, Tmat, u0x, XdinvT);
+                u0x_3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, u0x, XdinvT);
+            }
+
+            T C1, C3;
+            {
+                // interpolate rotation vars to this quadpt (linear rotation only)
+                T rots[6];
+                Basis::template interpFieldsOffset<vars_per_node, 3, 3>(pt, vars, &rots[3]);
+
+                // compute the rotation matrix
+                T C[9];
+                Director::template computeRotationMat<vars_per_node, 1>(rots, C);
+
+                C3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, C, Tmat);
+                C1 = -C3;
+            }
+
+            // compute drill strains
+            et.value()[0] = 0.5 * (C3 + u0x_3 - u0x_1 - C1);
+        }
+
+        // hforward scope block (TODO : would store pvalue of C for hrev part)
+        if constexpr (nonlinear_rotation) {
+            A2D::Vec<T, dof_per_elem> p_vars;
+            p_vars[ideriv] = 1.0;  // p_vars is unit vector for current column to compute
+            // assemble u0xn frame
+            T u0x_1, u0x_3;
+            {
+                T u0x[9];
+                // compute midplane disp field gradients
+                T u0xi[3], u0eta[3];
+                Basis::template interpFieldsGrad<vars_per_node, 3>(pt, p_vars, u0xi, u0eta);
+
+                A2D::Vec<T, 3> zero;
+                Basis::assembleFrame(u0xi, u0eta, zero.get_data(), u0x);
+
+                // u0x' = T^T * u0x * XdinvT (but only [1], [3] entries of that)
+                u0x_1 = A2D::Mat3x3MatTripleProduct<T>(0, 1, Tmat, u0x, XdinvT);
+                u0x_3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, u0x, XdinvT);
+            }
+
+            T C1, C3;
+            {
+                // interpolate rotation vars to this quadpt (linear rotation only)
+                T rots[6];
+                Basis::template interpFieldsOffset<vars_per_node, 3, 3>(pt, p_vars, &rots[3]);
+
+                // compute the rotation matrix
+                T C[9];
+                Director::template computeRotationMat<vars_per_node, 1>(rots, C);
+
+                C3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, C, Tmat);
+                C1 = -C3;
+            }
+
+            // compute drill strains
+            et.pvalue()[0] = 0.5 * (C3 + u0x_3 - u0x_1 - C1);
+        }  // end of hforward block
+
+        // get the scale for disp grad sens of the energy
+        T scale = detXd * weight;
+
+        // compute energy strain residual
+        // Phys::template computeWeakRes<T>(physData, scale, u0x, u1x, e0ty, et);
+        T drill;
+        {  // TODO : could just compute G here separately.., less data
+            T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
+            Data::evalTangentStiffness2D(E, nu, C);
+            T As = Data::getTransShearCorrFactor() * thick * C[5];
+            drill = Data::getDrillingRegularization() * As;
+            // this is basically computing the output level proj Hessian (that we can now backprop)
+            et.hvalue()[0] = scale * drill * et.pvalue()[0];  // backprop from strain energy
+        }
+
+        // TODO : would need first order backprop if nonlinear rot later
+
+        // hrev section (projected hessians)
+        // ----------------------------------------------------
+        T eth = et.hvalue()[0];
+        // backprop through rotation mat (TODO : missing nonlinear rot part)
+        {
+            T C3b = 0.5 * eth, C1b = -0.5 * eth;
+            T Cb[9];
+            memset(Cb, 0.0, 9 * sizeof(T));
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, Tmat, C3b, Cb);
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, Tmat, C1b, Cb);
+
+            T rot_sens[6];
+            Director::template computeRotationMatSens<vars_per_node, 1>(Cb, rot_sens);
+
+            Basis::template interpFieldsOffsetSens<vars_per_node, 3, 3>(pt, &rot_sens[3], mat_col);
+        }
+
+        // backprop through u0x disp grad
+        {
+            T u0xb3 = 0.5 * eth;
+            T u0xb1 = -u0xb3;
+
+            T u0xb[9];
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, XdinvT, u0xb3, u0xb);
+            A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, XdinvT, u0xb1, u0xb);
+
+            // transpose u0xb
+#pragma unroll
+            for (int i = 0; i < 3; i++) {
+#pragma unroll
+                for (int j = 0; j < i; j++) {
+                    T tmp = u0xb[3 * i + j];
+                    u0xb[3 * i + j] = u0xb[3 * j + i];
+                    u0xb[3 * j + i] = tmp;
+                }
+            }
+
+            Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0xb[0], &u0xb[3],
+                                                                        mat_col);
+        }
+
+        // TODO : rotation constraint sens for some director classes (zero for
+        // linear rotation)
+
+    }  // end of method add_element_quadpt_residual
 
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_gmat_col(

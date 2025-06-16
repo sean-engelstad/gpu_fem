@@ -19,91 +19,6 @@ class ShellQuadBasis {
     static constexpr int32_t num_tying_components = 5;  // five gij components for tying strains
     static constexpr int32_t num_all_tying_points = 4 * mitcLevel2 + mitcLevel3;
 
-    // function declarations (for ease of use)
-    // -------------------------------------------------------
-
-    /**
-    __HOST_DEVICE__ static constexpr int32_t num_tying_points(int icomp);
-    __HOST_DEVICE__ static constexpr int32_t tying_point_offsets(int icomp);
-    class LinearQuadGeo;
-    __HOST_DEVICE__ static void lagrangeLobatto1D(const T u, T *N);
-
-    template <int tyingOrder>
-    __HOST_DEVICE__ static void lagrangeLobatto1D_tying(const T u, T *N);
-
-    __HOST_DEVICE__ static void lagrangeLobatto1DGrad(const T u, T *N, T *Nd);
-    __HOST_DEVICE__ static void lagrangeLobatto2D(const T xi, const T eta, T *N);
-    __HOST_DEVICE__ static void lagrangeLobatto2DGrad(const T xi, const T eta, T *N, T *dNdxi,
-                                                      T *dNdeta);
-    __HOST_DEVICE__ static void assembleFrame(const T a[], const T b[], const T c[], T frame[]);
-    __HOST_DEVICE__ static void extractFrame(const T frame[], T a[], T b[], T c[]);
-    __HOST_DEVICE__ static void getNodePoint(const int n, T pt[]);
-
-    template <int vars_per_node, int num_fields>
-    __HOST_DEVICE__ static void interpFields(const T pt[], const T values[], T field[]);
-
-    template <int vars_per_node, int num_fields>
-    __HOST_DEVICE__ static void interpFieldsGrad(const T pt[], const T values[], T dxi[], T deta[]);
-
-    template <int vars_per_node, int num_fields>
-    __HOST_DEVICE__ static void interpFieldsTranspose(const T pt[], const T field_bar[],
-                                                      T values_bar[]);
-
-    template <int vars_per_node, int num_fields>
-    __HOST_DEVICE__ static void interpFieldsGradTranspose(const T pt[], const T dxi_bar[],
-                                                          const T deta_bar[], T values_bar[]);
-
-    __HOST_DEVICE__ static void getTyingKnots(T red_knots[], T full_knots[]);
-
-    template <int icomp>
-    __HOST_DEVICE__ static void getTyingPoint(const int n, T pt[]);
-    template <int icomp>
-    __HOST_DEVICE__ static void getTyingInterp(const T pt[], T N[]);
-
-     * defined below / outside the class
-     *
-     * template <typename T, class Basis>
-     * __HOST_DEVICE__ static void interpTyingStrain(const T pt[], const T ety[], T gty[]);
-     *
-     * template <typename T, class Basis>
-     * __HOST_DEVICE__ static void interpTyingStrain(const T pt[], const T ety[], T gty[])
-     *
-     * template <typename T, class Basis>
-     * __HOST_DEVICE__ static void interpTyingStrainTranspose(const T pt[], const T gty_bar[],
-                                                       T ety_bar[])
-     *
-     * template <typename T, int vars_per_node, class Basis, class Data>
-     * __HOST_DEVICE__ T ShellComputeDispGrad(const T pt[], const T refAxis[], const T xpts[],
-     *            const T vars[], const T fn[], const T d[], const T ety[],
-     *            T u0x[], T u1x[], A2D::SymMat<T, 3> &e0ty)
-     *
-     * template <typename T, int vars_per_node, class Basis, class Data>
-     * __HOST_DEVICE__ void ShellComputeDispGradHfwd(const T pt[], const T refAxis[], const T
-     * xpts[],
-     *                                          const T p_vars[], const T fn[], const T p_d[],
-     *                                        const T p_ety[], T p_u0x[], T p_u1x[],
-     *                                        A2D::SymMat<T, 3> &p_e0ty)
-     *
-     *
-     * template <typename T, int vars_per_node, class Basis, class Data>
-     * __HOST_DEVICE__ void ShellComputeDispGradSens(const T pt[], const T refAxis[], const T
-     * xpts[],
-     *      const T vars[], const T fn[], const T u0x_bar[],
-     *                           const T u1x_bar[], A2D::SymMat<T, 3> &e0ty_bar,
-     *                           T res[], T d_bar[], T ety_bar[])
-     *
-     * template <typename T, int vars_per_node, class Basis, class Data>
-     * __HOST_DEVICE__ void ShellComputeDispGradHrev(const T pt[], const T refAxis[], const T
-     * xpts[],
-     *      const T vars[], const T fn[], const T h_u0x[],
-     *                                        const T h_u1x[], A2D::SymMat<T, 3> &h_e0ty,
-     *                                        T matCol[], T h_d[], T h_ety[])
-     *
-     */
-
-    // -------------------------------------------------------
-    // end of function declarations
-
     __HOST_DEVICE__ static constexpr int32_t num_tying_points(int icomp) {
         // g11, g22, g12, g23, g13, g33=0 (not included g33)
         int32_t _num_tying_points[] = {mitcLevel2, mitcLevel2, mitcLevel3, mitcLevel2, mitcLevel2};
@@ -230,6 +145,32 @@ class ShellQuadBasis {
             field[ifield] = 0.0;
             for (int inode = 0; inode < num_nodes; inode++) {
                 field[ifield] += N[inode] * values[inode * vars_per_node + ifield];
+            }
+        }
+    }  // end of interpFields method
+
+    template <int vars_per_node, int num_fields, int offset>
+    __HOST_DEVICE__ static void interpFieldsOffset(const T pt[], const T values[], T field[]) {
+        T N[num_nodes];
+        lagrangeLobatto2D(pt[0], pt[1], N);
+
+        for (int ifield = 0; ifield < num_fields; ifield++) {
+            field[ifield] = 0.0;
+            for (int inode = 0; inode < num_nodes; inode++) {
+                field[ifield] += N[inode] * values[inode * vars_per_node + ifield + offset];
+            }
+        }
+    }  // end of interpFields method
+
+    template <int vars_per_node, int num_fields, int offset>
+    __HOST_DEVICE__ static void interpFieldsOffsetSens(const T pt[], const T field_bar[],
+                                                       T values_bar[]) {
+        T N[num_nodes];
+        lagrangeLobatto2D(pt[0], pt[1], N);
+
+        for (int ifield = 0; ifield < num_fields; ifield++) {
+            for (int inode = 0; inode < num_nodes; inode++) {
+                values_bar[inode * vars_per_node + ifield + offset] += N[inode] * field_bar[ifield];
             }
         }
     }  // end of interpFields method

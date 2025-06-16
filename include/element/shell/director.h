@@ -53,25 +53,16 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
     template <int vars_per_node, int num_nodes>
     __HOST_DEVICE__ static void computeRotationMat(const T vars[], T C[]) {
         const T *q = &vars[offset];
-        for (int inode = 0; inode < num_nodes; inode++) {
-            // C = I - q^x
-            setMatSkew(-1.0, q, C);
-            C[0] = C[4] = C[8] = 1.0;
-
-            C += 9;
-            q += vars_per_node;
-        }
+        // C = I - q^x
+        setMatSkew(-1.0, q, C);
+        C[0] = C[4] = C[8] = 1.0;
     }
 
     template <int vars_per_node, int num_nodes>
     __HOST_DEVICE__ static void computeRotationMatSens(const T C_bar[], T res[]) {
         T *r = &res[offset];
-        for (int inode = 0; inode < num_nodes; inode++) {
-            // C = I - q^x
-            setMatSkewSens(-1.0, C_bar, r);
-            C_bar += 9;
-            r += vars_per_node;
-        }
+        // C = I - q^x
+        setMatSkewSens(-1.0, C_bar, r);
     }
 
     __HOST_DEVICE__ static T evalDrillStrain(const T u0x[], const T Ct[]) {
