@@ -21,40 +21,6 @@ class IsotropicShell {
     static constexpr bool is_nonlinear = isNonlinear;
     static constexpr int num_dvs = 1;
 
-    // function declarations
-    // -------------------------------------------------------
-
-    /**
-    template <typename T2>
-    __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
-                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
-                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x,
-                                                    A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
-                                                    A2D::ADObj<A2D::Vec<T2, 1>> et,
-                                                    A2D::ADObj<T2> &Uelem);
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeWeakRes(const Data &physData, const T &scale,
-                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                               A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
-                                               A2D::ADObj<A2D::Vec<T2, 1>> &et);
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeWeakJacobianCol(const Data &physData, const T &scale,
-                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                                       A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
-                                                       A2D::A2DObj<A2D::Vec<T2, 1>> &et);
-
-    __HOST_DEVICE__
-    static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
-                                 T *fail_index);
-     */
-
-    // -------------------------------------------------------
-    // end of function declarations
-
     template <typename T2>
     __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
                                                     A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
