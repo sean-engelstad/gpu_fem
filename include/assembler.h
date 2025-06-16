@@ -694,8 +694,18 @@ void ElementAssembler<T, ElemGroup, Vec, Mat, BufferOptions_>::add_residual(Vec<
     //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
 
     // new shell method (faster for shells)
-    add_residual_shell_gpu<T, ElemGroup, Data, elems_per_block, Vec>
-        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+    // add_residual_shell_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+    //     <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+
+    // try running two kernels at once in different streams
+    cudaStream_t stream1, stream2;
+    cudaStreamCreate(&stream1);
+    cudaStreamCreate(&stream2);
+    add_residual_shell_gpu<T, ElemGroup, Data, elems_per_block, Vec, 1>  // drill strains
+        <<<grid, block, 0, stream1>>>(num_elements, geo_conn, vars_conn, xpts, vars, physData, res);
+    add_residual_shell_gpu<T, ElemGroup, Data, elems_per_block, Vec, 2>  // bending + tying
+        strains<<<grid, block, 0, stream2>>>(num_elements, geo_conn, vars_conn, xpts, vars,
+                                             physData, res);
 
     if (can_print) CHECK_CUDA(cudaDeviceSynchronize());
 #else   // USE_GPU

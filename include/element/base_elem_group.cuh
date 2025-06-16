@@ -158,7 +158,7 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
 
 template <typename T, class ElemGroup, class Data,
           int32_t elems_per_block = 1,
-          template <typename> class Vec>
+          template <typename> class Vec, int strain_case = 1>
 __GLOBAL__ void add_residual_shell_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                  const Vec<int32_t> vars_conn, const Vec<T> xpts, 
                                  const Vec<T> vars, Vec<Data> physData, Vec<T> res) {
@@ -216,9 +216,21 @@ __GLOBAL__ void add_residual_shell_gpu(const int32_t num_elements, const Vec<int
     ElemGroup::template compute_shell_transforms2<Data>(active_thread, iquad, block_xpts[local_elem], block_data[local_elem], Tmat, XdinvT, detXd);
 
     // customized split up or concurrent evaluation of each shell strain
-    ElemGroup::template add_element_quadpt_drill_residual<Data>(
+    // constexpr int strain_case = 2;
+    if constexpr (strain_case == 1) {
+        // drill
+        ElemGroup::template add_element_quadpt_drill_residual<Data>(
             active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
             block_data[local_elem], Tmat, XdinvT, detXd, local_res);
+    }
+
+    if constexpr (strain_case == 2) {
+        // bending
+    ElemGroup::template add_element_quadpt_bending_residual<Data>(
+        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
+        block_data[local_elem], Tmat, XdinvT, detXd, local_res);
+    }
+                  
 
     int lane = local_thread % 32;
     int group_start = (lane / 4) * 4;
@@ -390,7 +402,12 @@ __GLOBAL__ static void add_jacobian_shell_gpu(int32_t vars_num_nodes, int32_t nu
     ElemGroup::template compute_shell_transforms2<Data>(active_thread, iquad, block_xpts[local_elem], block_data[local_elem], Tmat, XdinvT, detXd);
 
     // just drill strain eval
-    ElemGroup::template add_element_quadpt_drill_jacobian_col<Data>(
+    // ElemGroup::template add_element_quadpt_drill_jacobian_col<Data>(
+    //     active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
+    //     block_data[local_elem], Tmat, XdinvT, detXd, local_mat_col);
+
+    // just bending strain eval
+    ElemGroup::template add_element_quadpt_bending_jacobian_col<Data>(
         active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], Tmat, XdinvT, detXd, local_mat_col);
 

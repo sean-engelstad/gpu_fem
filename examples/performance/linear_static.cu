@@ -37,6 +37,9 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     using T = double;
     // using T = float;
 
+    static constexpr bool is_nonlinear = false;
+    // static constexpr bool is_nonlinear = true;
+
     int rcm_iters = 5;
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -44,7 +47,7 @@ void time_linear_static(int nxe, std::string ordering, std::string fill_type, bo
     using Director = LinearizedRotation<T>;
     using Basis = ShellQuadBasis<T, Quad, 2>;
     using Geo = Basis::Geo;
-    constexpr bool has_ref_axis = false, is_nonlinear = false;
+    constexpr bool has_ref_axis = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
