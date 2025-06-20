@@ -340,8 +340,13 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         }
     }
 
+    __DEVICE__ static void compute_shell_normals(const bool active_thread, const T xpts[], T fn[]) {
+        if (!active_thread) return;
+        ShellComputeNodeNormals<T, Basis>(xpts, fn);
+    }
+
     template <class Data>
-    __HOST_DEVICE__ static void add_element_quadpt_drill_residual(
+    __HOST_DEVICE__ __noinline__ static void add_element_quadpt_drill_residual(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, const T Tmat[], const T XdinvT[],
         const T &detXd, T res[dof_per_elem])
@@ -454,7 +459,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     }  // end of method add_element_quadpt_residual
 
     template <class Data>
-    __HOST_DEVICE__ static void add_element_quadpt_drill_jacobian_col(
+    __HOST_DEVICE__ __noinline__ static void add_element_quadpt_drill_jacobian_col(
         const bool active_thread, const int iquad, const int ideriv, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, const T Tmat[], const T XdinvT[],
         const T &detXd, T mat_col[dof_per_elem]) {
@@ -608,7 +613,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     }  // end of method add_element_quadpt_residual
 
     template <class Data>
-    __HOST_DEVICE__ static void add_element_quadpt_bending_residual(
+    __HOST_DEVICE__ __noinline__ static void add_element_quadpt_bending_residual(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, const T Tmat[], const T XdinvT[],
         const T &detXd, T res[dof_per_elem]) {
@@ -796,7 +801,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     }
 
     template <class Data>
-    __HOST_DEVICE__ static void add_element_quadpt_bending_jacobian_col(
+    __HOST_DEVICE__ __noinline__ static void add_element_quadpt_bending_jacobian_col(
         const bool active_thread, const int iquad, const int ideriv, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, const T Tmat[], const T XdinvT[],
         const T &detXd, T mat_col[dof_per_elem]) {
@@ -1064,6 +1069,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
         constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
 
+        // A2D::Vec<T, 12> d_bar;
         T d_bar[3];
         // scope for u0d_barT
         {
@@ -1100,6 +1106,227 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
 
             ShellComputeNodeNormals<T, Basis>(xpts, fn);  // recompute fn here
             Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar, mat_col);
+        }
+    }
+
+    template <class Data>
+    __HOST_DEVICE__ static void add_element_quadpt_tying_residual(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data physData, const T XdinvT[], const T &detXd,
+        T res[dof_per_elem]) {  // const T fn[xpts_per_elem],
+        /* add in-plane and transverse tying strain contributions from g11, g13 strains */
+        if (!active_thread) return;
+
+        // data to store in forwards + backwards section
+        T quad_pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, quad_pt);
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
+
+        T fn[12];
+        ShellComputeNodeNormals<T, Basis>(xpts, fn);
+
+        // compute normals and directors
+        T d[12];
+        Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
+        A2D::ADObj<A2D::SymMat<T, 3>> e0ty;
+
+        {  // forward part
+            T ety[9];
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
+
+            A2D::SymMat<T, 3> gty;
+            interpTyingStrain<T, Basis>(quad_pt, ety, gty.get_data());
+            A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
+        }
+
+        {
+            auto &e0tyf = e0ty.value();
+
+            // now compute in-plane and transverse tying strains
+            {
+                // first compute in-plane and transverse shear strains
+                T e0[3], etr[2];
+                e0[0] = e0tyf[0];         // e11
+                e0[1] = e0tyf[3];         // e22
+                e0[2] = 2.0 * e0tyf[1];   // e12
+                etr[0] = 2.0 * e0tyf[4];  // e23, transverse shear
+                etr[1] = 2.0 * e0tyf[2];  // e13, transverse shear
+
+                // now compute the equiv stresses (as backprop strains)
+                T e0b[3], etrb[2];
+                {
+                    T eb[3], C[6];
+                    Data::evalTangentStiffness2D(physData.E, physData.nu, C);
+                    T thick = physData.thick;
+                    // in-plane A matrix term
+                    A2D::SymMatVecCoreScale3x3<T, false>(thick, C, e0, e0b);
+                    // skip B matrix term for now (assume thickOffset = 0)
+                    // transverse shear part
+                    T As = Data::getTransShearCorrFactor() * thick * C[5];
+                    etrb[1] = As * etr[1];
+                }
+
+                // now backprop back to e0tyb
+                auto &e0tyb = e0ty.bvalue();
+                e0tyb[0] = e0b[0];
+                e0tyb[2] = 2.0 * etrb[1];
+            }
+        }  // end of physics part and backprop to gtyb
+
+        A2D::Vec<T, 12> d_bar;
+        {  // now backprop through frame rotation
+            A2D::SymMat<T, 3> gty_bar;
+            A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(),
+                                                gty_bar.get_data());
+
+            T ety_bar[9];  // backprop unrotated tying strain
+            interpTyingStrainTranspose<T, Basis>(quad_pt, gty_bar.get_data(), ety_bar);
+
+            computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar, res,
+                                                   d_bar.get_data());
+        }
+
+        Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(), res);
+    }
+
+    template <class Data>
+    __HOST_DEVICE__ static void add_element_quadpt_tying_jacobian_col(
+        const bool active_thread, const int iquad, const int ideriv, const T xpts[xpts_per_elem],
+        const T vars[dof_per_elem], const Data physData, const T XdinvT[], const T &detXd,
+        T matCol[dof_per_elem]) {  // const T fn[xpts_per_elem],
+        /* add in-plane and transverse tying strain contributions from g11, g13 strains */
+        if (!active_thread) return;
+
+        // data to store in forwards + backwards section
+        T quad_pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, quad_pt);
+        static constexpr bool is_nonlinear = Phys::is_nonlinear;
+
+        T fn[12];
+        ShellComputeNodeNormals<T, Basis>(xpts, fn);
+
+        // compute normals and directors
+        T d[12];
+        Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
+        A2D::A2DObj<A2D::SymMat<T, 3>> e0ty;
+
+        {  // forward part
+            T ety[9];
+            computeTyingStrain<T, Phys, Basis, is_nonlinear>(xpts, fn, vars, d, ety);
+
+            A2D::SymMat<T, 3> gty;
+            interpTyingStrain<T, Basis>(quad_pt, ety, gty.get_data());
+            A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
+        }
+
+        // hforward section (pvalue's)
+        A2D::Vec<T, dof_per_elem> p_vars;
+        p_vars[ideriv] = 1.0;  // p_vars is unit vector for current column to compute
+        T p_d[3 * num_nodes];
+        {
+            Director::template computeDirectorHfwd<vars_per_node, num_nodes>(p_vars.get_data(), fn,
+                                                                             p_d);
+
+            T p_ety[9];
+            computeTyingStrainHfwd<T, Phys, Basis>(xpts, fn, vars, d, p_vars.get_data(), p_d,
+                                                   p_ety);
+
+            A2D::SymMat<T, 3> p_gty;
+            interpTyingStrain<T, Basis>(quad_pt, p_ety, p_gty.get_data());
+            A2D::SymMatRotateFrame<T, 3>(XdinvT, p_gty, e0ty.pvalue());
+        }
+
+        {
+            auto &e0tyf = e0ty.value();
+
+            // now compute in-plane and transverse tying strains
+            {
+                // first compute in-plane and transverse shear strains
+                T e0[3], etr[2];
+                e0[0] = e0tyf[0];         // e11
+                e0[1] = e0tyf[3];         // e22
+                e0[2] = 2.0 * e0tyf[1];   // e12
+                etr[0] = 2.0 * e0tyf[4];  // e23, transverse shear
+                etr[1] = 2.0 * e0tyf[2];  // e13, transverse shear
+
+                // now compute the equiv stresses (as backprop strains)
+                T e0b[3], etrb[2];
+                {
+                    T eb[3], C[6];
+                    Data::evalTangentStiffness2D(physData.E, physData.nu, C);
+                    T thick = physData.thick;
+                    // in-plane A matrix term
+                    A2D::SymMatVecCoreScale3x3<T, false>(thick, C, e0, e0b);
+                    // skip B matrix term for now (assume thickOffset = 0)
+                    // transverse shear part
+                    T As = Data::getTransShearCorrFactor() * thick * C[5];
+                    etrb[1] = As * etr[1];
+                }
+
+                // now backprop back to e0tyb
+                auto &e0tyb = e0ty.bvalue();
+                e0tyb[0] = e0b[0];
+                e0tyb[2] = 2.0 * etrb[1];
+            }
+
+            auto &e0typ = e0ty.pvalue();
+
+            // hforward part
+            {
+                // first compute in-plane and transverse shear strains
+                T e0[3], etr[2];
+                e0[0] = e0typ[0];         // e11
+                e0[1] = e0typ[3];         // e22
+                e0[2] = 2.0 * e0typ[1];   // e12
+                etr[0] = 2.0 * e0typ[4];  // e23, transverse shear
+                etr[1] = 2.0 * e0typ[2];  // e13, transverse shear
+
+                // now compute the equiv stresses (as backprop strains)
+                T e0b[3], etrb[2];
+                {
+                    T eb[3], C[6];
+                    Data::evalTangentStiffness2D(physData.E, physData.nu, C);
+                    T thick = physData.thick;
+                    // in-plane A matrix term
+                    A2D::SymMatVecCoreScale3x3<T, false>(thick, C, e0, e0b);
+                    // skip B matrix term for now (assume thickOffset = 0)
+                    // transverse shear part
+                    T As = Data::getTransShearCorrFactor() * thick * C[5];
+                    etrb[1] = As * etr[1];
+                }
+
+                // now backprop back to e0tyb
+                auto &e0tyh = e0ty.hvalue();
+                e0tyh[0] = e0b[0];
+                e0tyh[2] = 2.0 * etrb[1];
+            }
+        }  // end of physics part and backprop to gtyb
+
+        // first order backprop
+        A2D::Vec<T, 9> ety_bar;  // zeroes out on init
+        if constexpr (is_nonlinear) {
+            A2D::SymMat<T, 3> gty_bar;
+            A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(),
+                                                gty_bar.get_data());
+            interpTyingStrainTranspose<T, Basis>(quad_pt, gty_bar.get_data(), ety_bar.get_data());
+        }
+
+        {  // now backprop through frame rotation
+            A2D::SymMat<T, 3> gty_h;
+            A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.hvalue().get_data(), gty_h.get_data());
+
+            T ety_h[9];  // backprop unrotated tying strain
+            interpTyingStrainTranspose<T, Basis>(quad_pt, gty_h.get_data(), ety_h);
+
+            A2D::Vec<T, 12> d_hat;  // zeroes out on init
+            computeTyingStrainHrev<T, Phys, Basis>(xpts, fn, vars, d, p_vars.get_data(), p_d,
+                                                   ety_bar.get_data(), ety_h, matCol,
+                                                   d_hat.get_data());
+
+            Director::template computeDirectorHrev<vars_per_node, num_nodes>(fn, d_hat.get_data(),
+                                                                             matCol);
         }
     }
 
@@ -1218,8 +1445,8 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), matCol);
 
             // backprop tying strain sens ety_bar to d_bar and res
-            computeTyingStrainSens<Phys, Basis>(xpts, fn, vars, d, ety_bar, matCol,
-                                                d_bar.get_data());
+            computeTyingStrainSens<T, Phys, Basis>(xpts, fn, vars, d, ety_bar, matCol,
+                                                   d_bar.get_data());
 
             // directors back to residuals
             Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(),

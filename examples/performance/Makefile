@@ -1,7 +1,8 @@
 include ../../Makefile.in
 
-GPU_CC_FLAGS := -O3 -arch=sm_86
+# GPU_CC_FLAGS := -O3 -arch=sm_86
 # GPU_CC_FLAGS := -O3 -arch=sm_86 -Xptxas=-v -maxrregcount=128
+GPU_CC_FLAGS := -O3 -arch=sm_86 -lineinfo -Xptxas=-v
 
 default: linear_static
 	./linear_static.out --just_assembly # for testing assembly right now

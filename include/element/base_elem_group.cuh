@@ -189,6 +189,7 @@ __GLOBAL__ void add_residual_shell_gpu(const int32_t num_elements, const Vec<int
     __SHARED__ T block_xpts[elems_per_block][nxpts_per_elem];
     __SHARED__ T block_vars[elems_per_block][vars_per_elem];
     __SHARED__ Data block_data[elems_per_block];
+    // __SHARED__ T block_normals[elems_per_block][nxpts_per_elem];
 
     // load data into block shared mem using some subset of threads
     const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
@@ -215,20 +216,32 @@ __GLOBAL__ void add_residual_shell_gpu(const int32_t num_elements, const Vec<int
     T Tmat[9], XdinvT[9], detXd;
     ElemGroup::template compute_shell_transforms2<Data>(active_thread, iquad, block_xpts[local_elem], block_data[local_elem], Tmat, XdinvT, detXd);
 
+    // ElemGroup::compute_shell_normals(active_thread, block_xpts[local_elem], block_normals[local_elem]);
+
     // customized split up or concurrent evaluation of each shell strain
     // constexpr int strain_case = 2;
-    if constexpr (strain_case == 1) {
+    constexpr bool no_inline = true;
+
+    if constexpr (strain_case == 1 || no_inline) {
         // drill
         ElemGroup::template add_element_quadpt_drill_residual<Data>(
             active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
             block_data[local_elem], Tmat, XdinvT, detXd, local_res);
     }
 
-    if constexpr (strain_case == 2) {
+    if constexpr (strain_case == 2 || no_inline) {
         // bending
-    ElemGroup::template add_element_quadpt_bending_residual<Data>(
-        active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
-        block_data[local_elem], Tmat, XdinvT, detXd, local_res);
+        ElemGroup::template add_element_quadpt_bending_residual<Data>(
+            active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
+            block_data[local_elem], Tmat, XdinvT, detXd, local_res);
+    }
+
+    if constexpr (strain_case == 3 || no_inline) {
+        // tying
+        // add_element_quadpt_tying_residual
+        ElemGroup::template add_element_quadpt_tying_residual<Data>(
+            active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],
+            block_data[local_elem], XdinvT, detXd,  local_res); // block_normals[local_elem],
     }
                   
 
@@ -336,7 +349,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
 }  // end of add_jacobian_gpu
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block,
-          template <typename> class Vec, class Mat>
+          template <typename> class Vec, class Mat, int strain_case = 3>
 __GLOBAL__ static void add_jacobian_shell_gpu(int32_t vars_num_nodes, int32_t num_elements,
                                         Vec<int32_t> geo_conn, Vec<int32_t> vars_conn, Vec<T> xpts,
                                         Vec<T> vars, Vec<Data> physData, Mat mat) {
@@ -401,15 +414,29 @@ __GLOBAL__ static void add_jacobian_shell_gpu(int32_t vars_num_nodes, int32_t nu
     T Tmat[9], XdinvT[9], detXd;
     ElemGroup::template compute_shell_transforms2<Data>(active_thread, iquad, block_xpts[local_elem], block_data[local_elem], Tmat, XdinvT, detXd);
 
-    // just drill strain eval
-    // ElemGroup::template add_element_quadpt_drill_jacobian_col<Data>(
-    //     active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
-    //     block_data[local_elem], Tmat, XdinvT, detXd, local_mat_col);
+    constexpr bool no_inline = true;
 
-    // just bending strain eval
-    ElemGroup::template add_element_quadpt_bending_jacobian_col<Data>(
+    if constexpr (strain_case == 1 || no_inline) {
+        // drill
+        ElemGroup::template add_element_quadpt_drill_jacobian_col<Data>(
+            active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
+            block_data[local_elem], Tmat, XdinvT, detXd, local_mat_col);
+    }
+
+    if constexpr (strain_case == 2 || no_inline) {
+        // bending
+        ElemGroup::template add_element_quadpt_bending_jacobian_col<Data>(
         active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
         block_data[local_elem], Tmat, XdinvT, detXd, local_mat_col);
+    }
+
+    if constexpr (strain_case == 3 || no_inline) {
+        // tying
+        ElemGroup::template add_element_quadpt_tying_jacobian_col<Data>(
+            active_thread, iquad, ideriv, block_xpts[local_elem], block_vars[local_elem],
+            block_data[local_elem], XdinvT, detXd,  local_mat_col); // block_normals[local_elem],
+    }
+    
 
     /* memory write to global (no shared needed) */
 
