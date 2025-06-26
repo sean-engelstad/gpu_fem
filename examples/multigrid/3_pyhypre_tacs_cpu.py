@@ -17,7 +17,7 @@ if __name__=="__main__":
     # get TACS matrix and convert to CSR since pyAMG only supports CSR
     # (this may mean it is slower or less accurate than a BSR version)
     # -----------------------------------
-    tacs_bsr_mat, rhs = get_tacs_matrix()
+    tacs_bsr_mat, rhs, xpts = get_tacs_matrix()
     tacs_csr_mat = tacs_bsr_mat.tocsr()
     
     blocksize = 6

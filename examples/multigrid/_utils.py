@@ -2,6 +2,7 @@ import numpy as np
 import os
 from mpi4py import MPI
 from tacs import TACS, elements, constitutive
+import scipy
 
 def get_tacs_matrix():
 
@@ -45,6 +46,10 @@ def get_tacs_matrix():
     res = tacs.createVec()
     mat = tacs.createSchurMat()
 
+    xpts_vec = tacs.createNodeVec()
+    tacs.getNodes(xpts_vec)
+    xpts_arr = xpts_vec.getArray()
+
     # Create the forces
     forces = tacs.createVec()
     force_array = forces.getArray()
@@ -64,4 +69,45 @@ def get_tacs_matrix():
     # print(f"{A_bsr=} {type(A_bsr)=}")
 
     # TODO : just get serial A part in a minute
-    return A_bsr, force_array
+    return A_bsr, force_array, xpts_arr
+
+def reduced_indices(A):
+    # takes in A a csr matrix
+    A.eliminate_zeros()
+
+    dof = []
+    for k in range(A.shape[0]):
+        if (
+            A.indptr[k + 1] - A.indptr[k] == 1
+            and A.indices[A.indptr[k]] == k
+            and np.isclose(A.data[A.indptr[k]], 1.0)
+        ):
+            # This is a constrained DOF
+            pass
+        else:
+            # Store the free DOF index
+            dof.append(k)
+    return dof
+
+def delete_rows_and_columns(A, dof=None):
+    if dof is None:
+        dof = reduced_indices(A)
+
+    iptr = [0]
+    cols = []
+    data = []
+
+    indices = -np.ones(A.shape[0])
+    indices[dof] = np.arange(len(dof))
+
+    for i in dof:
+        for jp in range(A.indptr[i], A.indptr[i + 1]):
+            j = A.indices[jp]
+
+            if indices[j] >= 0:
+                cols.append(indices[j])
+                data.append(A.data[jp])
+
+        iptr.append(len(cols))
+
+    return scipy.sparse.csr_matrix((data, cols, iptr), shape=(len(dof), len(dof)))
