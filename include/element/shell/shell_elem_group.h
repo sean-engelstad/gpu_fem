@@ -95,9 +95,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_residual(
         const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data physData, T res[dof_per_elem])
-
-    {
+        const T vars[dof_per_elem], const Data physData, T res[dof_per_elem]) {
         // keep in mind max of ~256 floats on single thread
 
         if (!active_thread) return;
@@ -172,6 +170,49 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         // linear rotation)
 
     }  // end of method add_element_quadpt_residual
+
+    template <class Data>
+    __HOST_DEVICE__ static void add_element_quadpt_mass_residual(
+        const bool active_thread, const int iquad, const T xpts[xpts_per_elem],
+        const T accel[dof_per_elem], const Data physData, T res[dof_per_elem]) {
+        if (!active_thread) return;
+
+        T fn[3 * num_nodes];       // node normals
+        T pt[2];                   // quadrature point
+        T scale;                   // scale for energy derivatives
+        T d_accel[3 * num_nodes];  // need director accel in reverse for nonlinear strains
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+
+        ShellComputeNodeNormals<T, Basis>(xpts, fn);
+        T detXd = getDetXd<T, Basis>(pt, xpts, fn);
+        scale = weight * detXd;
+        Director::template computeDirector<vars_per_node, num_nodes>(accel, fn, d_accel);
+
+        T moments[3];
+        Phys::template getMassMoments(physData, moments);
+
+        // evaluate the second time derivatives (interpolated to the quadpt)
+        T u0_accel[3], d0_accel[3];
+        Basis::template interpFields<vars_per_node, 3>(pt, accel, u0_accel);
+        Basis::template interpFields<3, 3>(pt, d_accel, d0_accel);
+
+        // now backprop from kinetic energy
+        A2D::Vec<T, 3> du0_accel;
+        A2D::VecAddCore<T, 3>(scale * moments[0], u0_accel, du0_accel.get_data());
+        A2D::VecAddCore<T, 3>(scale * moments[1], d0_accel, du0_accel.get_data());
+        Basis::template interpFieldsTranspose<vars_per_node, 3>(pt, du0_accel.get_data(), res);
+
+        A2D::Vec<T, 3> dd0_accel;
+        A2D::Vec<T, 12> dd_accel;  // director accel backprop
+        A2D::VecAddCore<T, 3>(scale * moments[1], u0_accel, dd0_accel.get_data());
+        A2D::VecAddCore<T, 3>(scale * moments[2], d0_accel, dd0_accel.get_data());
+        Basis::template interpFieldsTranspose<vars_per_node, 3>(pt, dd0_accel.get_data(),
+                                                                dd_accel.get_data());
+
+        // backprop through directors to residual
+        Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, dd_accel.get_data(),
+                                                                         res);
+    }
 
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_jacobian_col(
@@ -282,6 +323,26 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
                 pt, physData.refAxis, xpts, vars, fn, et.hvalue().get_data(), matCol);
         }  // end of hreverse scope (2nd order derivs)
     }      // add_element_quadpt_jacobian_col
+
+    template <class Data>
+    __HOST_DEVICE__ static void add_element_quadpt_mass_jacobian_col(
+        const bool active_thread, const int iquad, const int ivar, const T xpts[xpts_per_elem],
+        const T accel[dof_per_elem], const Data physData, T res[dof_per_elem],
+        T matCol[dof_per_elem]) {
+        // since it's linear, it should be very similar to the residual, just that we're doing
+        // projected hessians, so you need to do the residual on a p_vars input basically
+
+        A2D::Vec<T, dof_per_elem> p_vars;
+        p_vars[ivar] = 1.0;
+        // this should be equivalent to assuming KE = 1/2 accel^T M acce (global and for each
+        // element) resid = M * accel and to get a column of M you can plug in a cartesian basis vec
+        // to the residual, resid(ej) = M * ej
+
+        add_element_quadpt_mass_residual(active_thread, iquad, xpts, accel, physData,
+                                         res);  // take this out later in speedup assembly kernels
+        add_element_quadpt_mass_residual(active_thread, iquad, xpts, p_vars.get_data(), physData,
+                                         matCol);
+    }
 
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_gmat_col(

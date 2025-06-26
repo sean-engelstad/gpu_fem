@@ -133,6 +133,18 @@ class IsotropicShell {
         // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
     }  // end of JacobianCol
 
+    __HOST_DEVICE__ static void getMassMoments(const Data &physData, T moments[]) {
+        // for mass residual + jacobian (unsteady analyses)
+        const T &rho = physData.rho;
+        const T &t = physData.thick;
+        const T &tOffset = physData.tOffset;
+
+        // taken from TACSIsoShellConstitutive.cpp (evalMassMoments)
+        moments[0] = rho * t;
+        moments[1] = -rho * t * t * tOffset;
+        moments[2] = rho * t * t * t * (tOffset * tOffset + 1.0 / 12.0);
+    }
+
     template <typename T2>
     __HOST_DEVICE__ static void computeQuadptStresses(const Data &physData, const T &scale,
                                                       A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
