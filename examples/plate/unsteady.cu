@@ -19,7 +19,7 @@
     if --iterative is not used, full_LU direct solve instead
 */
 
-void solve_unsteady(bool full_LU, int nxe) {
+void solve_unsteady(int nxe) {
     using T = double;   
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -35,8 +35,9 @@ void solve_unsteady(bool full_LU, int nxe) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     int nye = nxe;
-    double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005, rho = 2500, ys = 350e6;
-    int nxe_per_comp = nxe / 5, nye_per_comp = nye/5; // for now (should have 25 grids)
+    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005, rho = 2500, ys = 350e6;
+    // int nxe_per_comp = nxe / 5, nye_per_comp = nye/5; // for now (should have 25 grids)
+    int nxe_per_comp = 1, nye_per_comp = 1;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
     // BSR symbolic factorization
@@ -44,95 +45,98 @@ void solve_unsteady(bool full_LU, int nxe) {
     auto& bsr_data = assembler.getBsrData();
     double fillin = 10.0;  // 10.0
     bool print = true;
-    if (full_LU) {
-        bsr_data.AMD_reordering();
-        bsr_data.compute_full_LU_pattern(fillin, print);
-    } else {
-        /*
-        RCM and reorderings actually hurt GMRES performance on the plate case
-        because the matrix already has a nice banded structure => RCM increases bandwidth (which means it just doesn't work well for this problem
-        as it's whole point is to decrease matrix bandwidth)
-        */
-
-        bsr_data.AMD_reordering();
-        // bsr_data.RCM_reordering();
-        // bsr_data.qorder_reordering(1.0);
-        
-        bsr_data.compute_ILUk_pattern(5, fillin);
-        // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
-    }
-    // printf("perm:");
-    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
     assembler.moveBsrDataToDevice();
 
-    // get the loads
+    // get some static loads
     double Q = 1.0; // load magnitude
-    // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
-    T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
+    T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
+
+    int ndof = assembler.get_num_vars();
 
     // setup kmat and initial vecs
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
     auto mass_mat = createBsrMat<Assembler, VecType<T>>(assembler);
-    auto soln = assembler.createVarsVec();
     auto res = assembler.createVarsVec();
-    auto vars = assembler.createVarsVec();
 
     // assemble mass matrix
     assembler.add_mass_jacobian(res, mass_mat, true);
-    return;
+    assembler.apply_bcs(mass_mat);
+
+    // auto h_bsr_data = bsr_data.createHostBsrData();
+    // int *rowp = h_bsr_data.rowp;
+    // int *cols = h_bsr_data.cols;
+    // int nnodes = assembler.get_num_nodes();
+    // T *h_vals = mass_mat.getVec().createHostVec().getPtr();
+    // for (int i = 0; i < nnodes; i++) {
+    //     for (int jp = rowp[i]; jp < rowp[i+1]; jp++) {
+    //         int j = cols[jp];
+    //         for (int ii = 0; ii < 36; ii++) {
+    //             int grow = 6 * i + ii / 6;
+    //             int gcol = 6 * j + ii % 6;
+    //             printf("Mass mat[%d,%d] = %.4e\n", grow, gcol, h_vals[36 * jp + ii]);
+    //         }
+    //     }
+    // }
+
+    // return;
+
+    // print some values from the mass matrix
+    // auto mass_vals = mass_mat.getVec();
+    // // auto h_mass_vals = mass_vals.createHostVec();
+    // // printVec<T>(100, h_mass_vals.getPtr());
 
     // assemble the kmat
     assembler.add_jacobian(res, kmat);
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
 
-    // solve the linear system
-    if (full_LU) {
-        CUSPARSE::direct_LU_solve(kmat, loads, soln);
-    } else {
-        int n_iter = 200, max_iter = 400;
-        T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = true;
-        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
+    // time settings
+    int num_timesteps = 1000;
+    double dt = 0.01;
 
-        // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
+    // compute the forces on the structure
+    T *h_forces = new T[ndof * num_timesteps];
+    memset(h_forces, 0.0, ndof * num_timesteps * sizeof(T));
+    for (int itime = 0; itime < num_timesteps; itime++) {
+        // copy from static loads to unsteady loads
+        memcpy(&h_forces[itime * ndof], my_loads, ndof * sizeof(T));
+        T time = dt * itime;
+        T omega = 1.431;
+        // T omega = 4.0;
+        T scale = 10.0 * std::sin(3.14159 * omega * time);
+        cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
     }
+    auto forces = HostVec<T>(ndof * num_timesteps, h_forces).createDeviceVec();
 
-    // print some of the data of host residual
-    auto h_soln = soln.createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate.vtk");
+    // printf("h_forces");
+    // printVec<T>(ndof, h_forces);
+    // return;
 
-    // check the residual of the system
-    assembler.set_variables(soln);
-    assembler.add_residual(res); // internal residual
-    auto rhs = assembler.createVarsVec();
-    CUBLAS::axpy(1.0, loads, rhs);
-    CUBLAS::axpy(-1.0, res, rhs); // rhs = loads - f_int
-    assembler.apply_bcs(rhs);
-    double resid_norm = CUBLAS::get_vec_norm(rhs);
-    printf("resid_norm = %.4e\n", resid_norm);
+    // create the linear gen alpha integrator
+    auto integrator = LGAIntegrator(mass_mat, kmat, forces, ndof, num_timesteps, dt);
+
+    // now solve and write to vtk
+    print = true;
+    integrator.solve(print);
+    int stride = 2;
+    integrator.writeToVTK<Assembler>(assembler, "out/plate_dyn", stride);
 }
 
 int main(int argc, char **argv) {
     // input ----------
     bool run_linear = true;
-    bool full_LU = true;
-    int nxe = 10;  // default value
+    int nxe = 30;  // default value
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
         char* arg = argv[i];
         to_lowercase(arg);
 
-        if (strcmp(arg, "linear") == 0) {
-            run_linear = true;
-        } else if (strcmp(arg, "nonlinear") == 0) {
-            run_linear = false;
-        } else if (strcmp(arg, "--iterative") == 0) {
-            full_LU = false;
-        } else if (strcmp(arg, "--nxe") == 0) {
+        if (strcmp(arg, "--nxe") == 0) {
             if (i + 1 < argc) {
                 nxe = std::atoi(argv[++i]);
             } else {
@@ -147,7 +151,7 @@ int main(int argc, char **argv) {
     }
 
     if (run_linear) {
-        solve_unsteady(full_LU, nxe);
+        solve_unsteady(nxe);
     } else {
         printf("this function doesn't exists for solve_unsteady_nonlinear yet..\n");
         return 0;

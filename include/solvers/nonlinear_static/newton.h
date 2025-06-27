@@ -5,8 +5,8 @@
 #include <sstream>
 #include <string>
 
-#include "linear_static/_utils.h"
 #include "mesh/vtk_writer.h"
+#include "solvers/linear_static/_utils.h"
 
 template <class Mat, class Vec>
 using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool);

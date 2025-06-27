@@ -206,8 +206,7 @@ class ShellElementGroup : public BaseElementGroup<ShellElementGroup<T, Director_
         A2D::Vec<T, 12> dd_accel;  // director accel backprop
         A2D::VecAddCore<T, 3>(scale * moments[1], u0_accel, dd0_accel.get_data());
         A2D::VecAddCore<T, 3>(scale * moments[2], d0_accel, dd0_accel.get_data());
-        Basis::template interpFieldsTranspose<vars_per_node, 3>(pt, dd0_accel.get_data(),
-                                                                dd_accel.get_data());
+        Basis::template interpFieldsTranspose<3, 3>(pt, dd0_accel.get_data(), dd_accel.get_data());
 
         // backprop through directors to residual
         Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, dd_accel.get_data(),
