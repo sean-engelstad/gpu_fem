@@ -256,6 +256,8 @@ class NLGAIntegrator {
             cudaMemcpy(rhs, &forces[ndof * itime], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
     }
 
+    void _update_jacobian(int itime) {}
+
     void _initialize(Mat &mass_mat, Mat &kmat) {
         // initialize CUDA LU data so we can hold the LU factor in place
         // assumes kmat and mass_mat have full LU sparsity
