@@ -124,6 +124,8 @@ void solve_unsteady(int nxe) {
     integrator.solve(print);
     int stride = 2;
     integrator.writeToVTK<Assembler>(assembler, "out/plate_dyn", stride);
+
+    integrator.free();
 }
 
 int main(int argc, char **argv) {

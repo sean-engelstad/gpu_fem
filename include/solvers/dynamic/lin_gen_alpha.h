@@ -20,6 +20,8 @@ Choosing to use the HHT-alpha variant of gen-alpha such that:
 #include "linalg/vec.h"
 #include "mesh/vtk_writer.h"
 
+#ifdef USE_GPU
+
 class LGAIntegrator {
     // LGAIntergrator stands for Linear Gen-Alpha Integrator
    public:
@@ -46,6 +48,7 @@ class LGAIntegrator {
         temp = temp_vec.getPtr();
         rhs_vec = Vec(ndof);
         rhs = rhs_vec.getPtr();
+        res_vec = Vec(ndof);
 
         forces = _forces.getPtr();
 
@@ -75,7 +78,6 @@ class LGAIntegrator {
 
     void iterate(int itime, bool can_print = true) {
         /* first compute the residual as the rhs for new update */
-
         auto start = std::chrono::high_resolution_clock::now();
 
         if (itime >= (num_timesteps - 1)) {
@@ -97,12 +99,12 @@ class LGAIntegrator {
         CHECK_CUDA(
             cudaMemcpy(rhs, &forces[ndof * itime], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
 
+        // permute the loads at this timestep
+        rhs_vec.permuteData(block_dim, iperm);
+
         // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
         int i = itime % 2;
         int f = (itime + 1) % 2;
-
-        // permute the loads at this timestep
-        rhs_vec.permuteData(block_dim, iperm);
 
         // print rhs vec
         // T *h_temp = new T[ndof];
@@ -211,8 +213,22 @@ class LGAIntegrator {
         }
     }
 
-    void free() {
-        // TBD
+    void free() { /* free all CUDA objects */
+        CHECK_CUDA(cudaFree(pBuffer));
+        CHECK_CUDA(cudaFree(disp));
+        CHECK_CUDA(cudaFree(vel));
+        CHECK_CUDA(cudaFree(accel));
+        CHECK_CUDA(cudaFree(forces));
+        CHECK_CUDA(cudaFree(update));
+        CHECK_CUDA(cudaFree(temp));
+        CHECK_CUDA(cudaFree(rhs));
+        CHECK_CUDA(cudaFree(LUvals));
+        cusparseDestroyMatDescr(descr_L);
+        cusparseDestroyMatDescr(descr_U);
+        cusparseDestroyMatDescr(descr_M);
+        cusparseDestroyMatDescr(descr_K);
+        cusparseDestroyBsrsv2Info(info_L);
+        cusparseDestroyBsrsv2Info(info_U);
     }
 
    private:
@@ -289,7 +305,7 @@ class LGAIntegrator {
     int *d_rowp, *d_cols;
     T *disp, *vel, *accel, *forces;
     T *update, *temp, *rhs;
-    Vec rhs_vec, temp_vec;
+    Vec rhs_vec, temp_vec, res_vec;
 
     // matrix data
     T *Mvals, *Kvals, *LUvals;
@@ -312,3 +328,5 @@ class LGAIntegrator {
     cusparseMatDescr_t descr_M = 0;  // mass matrix descriptor for SpMV
     cusparseMatDescr_t descr_K = 0;  // stiffness matrix descriptor for SpMV
 };
+
+#endif
