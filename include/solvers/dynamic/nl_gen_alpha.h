@@ -20,6 +20,8 @@ Choosing to use the HHT-alpha variant of gen-alpha such that:
 #include "linalg/vec.h"
 #include "mesh/vtk_writer.h"
 
+#ifdef USE_GPU
+
 template <class Mat, class Vec>
 using LinearSolver = void (*)(Mat &, Vec &, Vec &, bool);
 
@@ -32,15 +34,15 @@ class NLGAIntegrator {
     using Vec = DeviceVec<T>;
     using Mat = BsrMat<DeviceVec<T>>;
 
-    NLGAIntegrator(LinearSolver &linear_solve, Assembler &assembler, Mat &mass_mat, Mat &kmat,
+    NLGAIntegrator(LinearSolver<Mat,Vec> &linear_solve, Assembler &assembler, Mat &mass_mat, Mat &kmat,
                    Vec &_forces, int num_dof, int num_timesteps, double dt, int print_freq_ = 10, 
-                   T rel_tol = 1e-8, T abs_tol = 1e-8, int max_newton_steps = 30)
+                   T rel_tol = 1e-8, T abs_tol = 1e-8, int max_newton_steps = 30, bool linear_print = false)
         : ndof(num_dof),
           num_timesteps(num_timesteps),
           dt(dt),
           linear_solve(linear_solve),
           max_newton_steps(max_newton_steps), rel_tol(rel_tol), abs_tol(abs_tol),
-          mass_mat(mass_mat), kmat(kmat),
+          mass_mat(mass_mat), kmat(kmat), linear_print(linear_print),
           assembler(assembler) {
         // intialize the disps, vel and accelerations
         assert(_forces.getSize() == (num_timesteps * ndof));
@@ -52,12 +54,15 @@ class NLGAIntegrator {
         accel = Vec(2 * ndof).getPtr();
 
         // util vectors
-        accel_update_vec = Vec(ndof);
-        accel_update = accel_update_vec.getPtr();
+        delta_accel_update_vec = Vec(ndof);
+        delta_accel_update = delta_accel_update_vec.getPtr();
         temp_vec = Vec(ndof);
         temp = temp_vec.getPtr();
         rhs_vec = Vec(ndof);
         rhs = rhs_vec.getPtr();
+
+        delta_accel_vec = Vec(ndof);
+        delta_accel = delta_accel_vec.getPtr();
 
         forces = _forces.getPtr();
 
@@ -98,6 +103,9 @@ class NLGAIntegrator {
             return;
         }
 
+        // zero out accel update at new timestep
+        delta_accel_update_vec.zeroValues();
+
         int ct = 0;
         for (int inewton = 0; inewton < max_newton_steps; inewton++, ct++) {
             // assemble the jacobian again (with new displacements)
@@ -109,9 +117,11 @@ class NLGAIntegrator {
             bool converged = _check_convergence(itime, inewton);
             if (converged) break;
 
-            // linear solve
-            linear_solve(A, accel_update_vec, rhs_vec);
-            // no need to apply disp update again as when converged exits after update
+            // linear solve to update delta_accel (change in accel from prev to next timestep)
+            delta_accel_update_vec.zeroValues(); 
+            linear_solve(A, rhs_vec, delta_accel_update_vec, linear_print);
+            T a = 1.0;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, delta_accel_update, 1, delta_accel, 1));
         }
 
          /* write log output to terminal */
@@ -132,7 +142,6 @@ class NLGAIntegrator {
         }
     }
 
-    template <class Assembler>
     void writeToVTK(Assembler &assembler, std::string base_filename, int stride = 1) {
         printf("here1\n");
         auto h_temp = temp_vec.createHostVec();
@@ -154,21 +163,20 @@ class NLGAIntegrator {
 
     void free() {
         /* free all CUDA objects */
-        CHECK_CUDA(cudaFree(pBuffer));
         CHECK_CUDA(cudaFree(disp));
         CHECK_CUDA(cudaFree(vel));
         CHECK_CUDA(cudaFree(accel));
         CHECK_CUDA(cudaFree(forces));
-        CHECK_CUDA(cudaFree(update));
+        CHECK_CUDA(cudaFree(delta_accel_update));
+        CHECK_CUDA(cudaFree(delta_accel));
         CHECK_CUDA(cudaFree(temp));
         CHECK_CUDA(cudaFree(rhs));
-        CHECK_CUDA(cudaFree(LUvals));
-        cusparseDestroyMatDescr(descr_L);
-        cusparseDestroyMatDescr(descr_U);
+        CHECK_CUDA(cudaFree(Avals));
         cusparseDestroyMatDescr(descr_M);
         cusparseDestroyMatDescr(descr_K);
-        cusparseDestroyBsrsv2Info(info_L);
-        cusparseDestroyBsrsv2Info(info_U);
+        cusparseDestroyMatDescr(descr_A);
+        cusparseDestroy(cusparseHandle);
+        cublasDestroy(cublasHandle);
     }
 
    private:
@@ -180,7 +188,6 @@ class NLGAIntegrator {
 
         // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
         int i = itime % 2;
-        int f = (itime + 1) % 2;
 
         T a = dt;
         CHECK_CUBLAS(
@@ -190,7 +197,7 @@ class NLGAIntegrator {
             cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1, &disp[(itime + 1) * ndof], 1));
         a = dt * dt * beta;
         CHECK_CUBLAS(
-            cublasDaxpy(cublasHandle, ndof, &a, accel_update, 1, &disp[(itime + 1) * ndof], 1));
+            cublasDaxpy(cublasHandle, ndof, &a, delta_accel, 1, &disp[(itime + 1) * ndof], 1));
     }
 
     void _update_vel(int itime) {
@@ -205,14 +212,19 @@ class NLGAIntegrator {
         T a = dt;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1, &vel[f * ndof], 1));
         a = dt * gamma;
-        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, accel_update, 1, &vel[f * ndof], 1));
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, delta_accel, 1, &vel[f * ndof], 1));
     }
 
     void _update_accel(int itime) {
-        // a_{n+1} = a_n + accel_update
+        // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
+        int i = itime % 2;
+        int f = (itime + 1) % 2;
+
+        // a_{n+1} = a_n + delta_accel_update
         CHECK_CUDA(
             cudaMemcpy(&accel[f * ndof], &accel[i * ndof], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
-        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, accel_update, 1, &accel[f * ndof], 1));
+        T a = 1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, delta_accel, 1, &accel[f * ndof], 1));
     }
 
     void _apply_loads(int itime) {
@@ -228,14 +240,13 @@ class NLGAIntegrator {
     }
 
     void _update_rhs(int itime) {
-        rhs.zeroValues();
+        rhs_vec.zeroValues();
         _apply_loads(itime);
         // permute the loads to the solve permutation order (were unpermuted originally and in vis ordering)
         rhs_vec.permuteData(block_dim, iperm);
 
         // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
         int i = itime % 2;
-        int f = (itime + 1) % 2;
 
         // now add disp, vel, accel terms into the RHS (aka the current residual for accel update)
         // 1) subtract in alpha_m * M * a_n
@@ -263,7 +274,11 @@ class NLGAIntegrator {
             cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
             &a, descr_K, Kvals, d_rowp, d_cols, block_dim, &disp[ndof * itime], &b, rhs));
 
-        // double check we're not missing any terms here
+        // now also add the accel update terms here (so nonlinear part converges)
+        a = -1.0, b = 1.0; // subtract A * delta_accel, reuse descr_K (same mat type, just diff values)
+        CHECK_CUSPARSE(cusparseDbsrmv(
+            cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
+            &a, descr_A, Avals, d_rowp, d_cols, block_dim, delta_accel, &b, rhs));
     }
 
     bool _check_convergence(int itime, int inewton) {
@@ -272,6 +287,8 @@ class NLGAIntegrator {
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, ndof, rhs, 1, &resid_norm));
 
         if (inewton == 0) init_resid_norm = resid_norm;
+
+        printf("time %d, newton %d : resid %.4e\n", itime, inewton, resid_norm);
 
         T ub = init_resid_norm * rel_tol + abs_tol;
         return resid_norm < ub;
@@ -294,11 +311,14 @@ class NLGAIntegrator {
         assembler.set_variables(temp_vec);
 
         /* then update the stiffness and mass matrices (don't really need to update mass matrix though) */
-        assembler.add_jacobian(res, kmat);
-        assembler.add_mass_jacobian(res, mass_mat);
+        assembler.add_jacobian(temp_vec, kmat);
+        assembler.add_mass_jacobian(temp_vec, mass_mat);
+        assembler.apply_bcs(kmat);
+        assembler.apply_bcs(mass_mat);
 
         // now update the A matrix l.c. of M and K for accel updates LHS solve
-        double a = 1 - alpha_m;  // first we add (1-alpha_m) * M
+        A.zeroValues();
+        a = 1 - alpha_m;  // first we add (1-alpha_m) * M
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, mat_nnz, &a, Mvals, 1, Avals, 1));
         a = (1 - alpha_f) * dt * dt * beta;  // first we add (1-alpha_f) * dt * dt * beta * K
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, mat_nnz, &a, Kvals, 1, Avals, 1));
@@ -322,7 +342,7 @@ class NLGAIntegrator {
         // copy device pointers out of the matrices
         Mvals = mass_mat.getPtr();
         Kvals = kmat.getPtr();
-        Avec = Vec(mat_nnz);
+        auto Avec = Vec(mat_nnz);
         Avals = Avec.getPtr();
 
         // create the A matrix for LHS of accel update
@@ -331,6 +351,19 @@ class NLGAIntegrator {
         // create handles for CUDA - cusparse and cublas
         CHECK_CUBLAS(cublasCreate(&cublasHandle));
         CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+
+        // create a matrix descriptors for SpMV
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descr_M));  // first for mass matrix
+        CHECK_CUSPARSE(cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO));
+
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descr_K));  // second for stiffness matrix
+        CHECK_CUSPARSE(cusparseSetMatType(descr_K, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descr_K, CUSPARSE_INDEX_BASE_ZERO));
+
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descr_A));  // second for stiffness matrix
+        CHECK_CUSPARSE(cusparseSetMatType(descr_A, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descr_A, CUSPARSE_INDEX_BASE_ZERO));
     }
 
     // timestep and gen-alpha info
@@ -339,21 +372,22 @@ class NLGAIntegrator {
     T alpha_f, alpha_m, beta, gamma;
     T abs_tol, rel_tol;
     T init_resid_norm;
+    bool linear_print;
 
     // general vec data
     int block_dim, mat_nnz, ndof, nnzb, mb;
     int *perm, *iperm;
     int *d_rowp, *d_cols;
     T *disp, *vel, *accel, *forces;
-    T *accel_update, *temp, *rhs;
-    Vec rhs_vec, temp_vec, accel_update_vec;
+    T *delta_accel_update, *temp, *rhs, *delta_accel;
+    Vec rhs_vec, temp_vec, delta_accel_update_vec, delta_accel_vec;
 
     // matrix data
     T *Mvals, *Kvals, *Avals;
     Mat mass_mat, kmat, A;
 
     // linear solver
-    LinearSolver linear_solve;
+    LinearSolver<Mat,Vec> linear_solve;
 
     // Assembler
     Assembler assembler;
@@ -365,4 +399,7 @@ class NLGAIntegrator {
     // CUDA data for M and K matrices for mat-mul and residual estimates
     cusparseMatDescr_t descr_M = 0;  // mass matrix descriptor for SpMV
     cusparseMatDescr_t descr_K = 0;  // stiffness matrix descriptor for SpMV
+    cusparseMatDescr_t descr_A = 0;
 };
+
+#endif // USE_GPU

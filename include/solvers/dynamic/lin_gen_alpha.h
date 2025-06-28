@@ -229,6 +229,8 @@ class LGAIntegrator {
         cusparseDestroyMatDescr(descr_K);
         cusparseDestroyBsrsv2Info(info_L);
         cusparseDestroyBsrsv2Info(info_U);
+        cusparseDestroy(cusparseHandle);
+        cublasDestroy(cublasHandle);
     }
 
    private:

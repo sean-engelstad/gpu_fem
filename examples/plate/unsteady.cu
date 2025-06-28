@@ -10,14 +10,21 @@
 #include "element/shell/physics/isotropic_shell.h"
 
 /* command line args:
-    [linear|nonlinear] [--iterative] [--nxe int]
+    [linear|nonlinear] [--nxe int] 
     * currently nxe must be multiple of 5
+
+    // old arg, // [--iterative]
 
     examples:
     ./static.out linear --iterative --nxe 10    to run linear, GMRES solve with nxe=10
     ./static.out nonlinear   to run nonlinear
     if --iterative is not used, full_LU direct solve instead
 */
+
+template <typename T>
+void vec_scale(int N, T scale, T *myvec) {
+    for (int i = 0; i < N; i++) myvec[i] *= scale;
+}
 
 void solve_unsteady_linear(int nxe) {
     using T = double;   
@@ -85,7 +92,8 @@ void solve_unsteady_linear(int nxe) {
         T omega = 1.431;
         // T omega = 4.0;
         T scale = 10.0 * std::sin(3.14159 * omega * time);
-        cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
+        // cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
+        vec_scale(ndof, scale, &h_forces[itime * ndof]);
     }
     auto forces = HostVec<T>(ndof * num_timesteps, h_forces).createDeviceVec();
 
@@ -171,38 +179,49 @@ void solve_unsteady_nonlinear(int nxe) {
         T omega = 1.431;
         // T omega = 4.0;
         T scale = 10.0 * std::sin(3.14159 * omega * time);
-        cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
+        // cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
+        vec_scale(ndof, scale, &h_forces[itime * ndof]);
     }
     auto forces = HostVec<T>(ndof * num_timesteps, h_forces).createDeviceVec();
 
     int print_freq = 10, max_newton_steps = 30;
     T rel_tol = 1e-8, abs_tol = 1e-8;
+    bool lin_print = false;
 
     // create the linear gen alpha integrator
     auto solve_func = CUSPARSE::direct_LU_solve<T>;
-    auto integrator = NLGAIntegrator<Assembler>(solve_func, assembler, mass_mat, kmat, 
-        forces, ndof, num_timesteps, dt, max_newton_steps);
+    auto integrator = NLGAIntegrator<Assembler>(
+        solve_func, assembler, mass_mat, kmat, 
+        forces, ndof, num_timesteps, dt, print_freq, 
+        rel_tol, abs_tol, max_newton_steps, lin_print);
 
     // now solve and write to vtk
     print = true;
     integrator.solve(print);
     int stride = 2;
-    integrator.writeToVTK<Assembler>(assembler, "out/plate_dyn", stride);
+    integrator.writeToVTK(assembler, "out/plate_dyn", stride);
 
     integrator.free();
 }
 
 int main(int argc, char **argv) {
     // input ----------
-    bool run_linear = true;
-    int nxe = 30;  // default value
+    bool run_linear = false;
+    // bool full_LU = true;
+    int nxe = 10;  // default value
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
         char* arg = argv[i];
         to_lowercase(arg);
 
-        if (strcmp(arg, "--nxe") == 0) {
+        if (strcmp(arg, "linear") == 0) {
+            run_linear = true;
+        } else if (strcmp(arg, "nonlinear") == 0) {
+            run_linear = false;
+        // } else if (strcmp(arg, "--iterative") == 0) {
+        //     full_LU = false;
+        } else if (strcmp(arg, "--nxe") == 0) {
             if (i + 1 < argc) {
                 nxe = std::atoi(argv[++i]);
             } else {

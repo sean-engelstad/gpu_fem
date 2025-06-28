@@ -27,3 +27,4 @@
 
 // dynamic
 #include "dynamic/lin_gen_alpha.h"
+#include "dynamic/nl_gen_alpha.h"
