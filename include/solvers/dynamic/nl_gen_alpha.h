@@ -33,11 +33,14 @@ class NLGAIntegrator {
     using Mat = BsrMat<DeviceVec<T>>;
 
     NLGAIntegrator(LinearSolver &linear_solve, Assembler &assembler, Mat &mass_mat, Mat &kmat,
-                   Vec &_forces, int num_dof, int num_timesteps, double dt, int print_freq_ = 10)
+                   Vec &_forces, int num_dof, int num_timesteps, double dt, int print_freq_ = 10, 
+                   T rel_tol = 1e-8, T abs_tol = 1e-8, int max_newton_steps = 30)
         : ndof(num_dof),
           num_timesteps(num_timesteps),
           dt(dt),
           linear_solve(linear_solve),
+          max_newton_steps(max_newton_steps), rel_tol(rel_tol), abs_tol(abs_tol),
+          mass_mat(mass_mat), kmat(kmat),
           assembler(assembler) {
         // intialize the disps, vel and accelerations
         assert(_forces.getSize() == (num_timesteps * ndof));
@@ -49,7 +52,8 @@ class NLGAIntegrator {
         accel = Vec(2 * ndof).getPtr();
 
         // util vectors
-        update = Vec(ndof).getPtr();
+        accel_update_vec = Vec(ndof);
+        accel_update = accel_update_vec.getPtr();
         temp_vec = Vec(ndof);
         temp = temp_vec.getPtr();
         rhs_vec = Vec(ndof);
@@ -69,7 +73,7 @@ class NLGAIntegrator {
 
         print_freq = print_freq_;
 
-        _initialize(mass_mat, kmat);
+        _initialize();
     }
 
     void solve(bool can_print = true) {
@@ -94,78 +98,28 @@ class NLGAIntegrator {
             return;
         }
 
-        for (int inewton = 0; inewton < num_newton_steps; inewton++) {
+        int ct = 0;
+        for (int inewton = 0; inewton < max_newton_steps; inewton++, ct++) {
             // assemble the jacobian again (with new displacements)
-            _update_disp(itime);
+            _apply_full_update(itime);
             _update_jacobian(itime);
+            _update_rhs(itime);
 
-            // compute initial residual
-            rhs_vec.zeroValues();
-            _apply_loads(itime);
+            // check convergence
+            bool converged = _check_convergence(itime, inewton);
+            if (converged) break;
 
-            // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
-            int i = itime % 2;
-            int f = (itime + 1) % 2;
-
-            // permute the loads at this timestep
-            rhs_vec.permuteData(block_dim, iperm);
-
-            // 1) subtract in alpha_m * M * a_n
-            a = -alpha_m;
-            T b = 1.0;
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_M, Mvals, d_rowp, d_cols, block_dim, &accel[ndof * i], &b, rhs));
-
-            // 2) subtract in (1-alpha_f) * (1/2 - beta) * dt^2 * K * an
-            a = -1.0 * (1.0 - alpha_f) * (0.5 - beta) * dt * dt, b = 1.0;
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_K, Kvals, d_rowp, d_cols, block_dim, &accel[ndof * i], &b, rhs));
-
-            // 3) subtract in (1-alpha_f) * dt * K * vn
-            a = -1.0 * (1.0 - alpha_f) * dt, b = 1.0;
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_K, Kvals, d_rowp, d_cols, block_dim, &vel[ndof * i], &b, rhs));
-
-            // 4) subtract in K * disp_n
-            a = -1.0, b = 1.0;
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descr_K, Kvals, d_rowp, d_cols, block_dim, &disp[ndof * itime], &b, rhs));
-
-            /* then compute the new accel with the LU solve */
-            a = 1.0;
-            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a,
-                                                 descr_L, LUvals, d_rowp, d_cols, block_dim, info_L,
-                                                 rhs, temp, policy_L, pBuffer));
-            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a,
-                                                 descr_U, LUvals, d_rowp, d_cols, block_dim, info_U,
-                                                 temp, &accel[f * ndof], policy_U, pBuffer));
-
-            /* and update the disps
-                  (it is still inv permuted, not ready for disp here.. see later) */
-            // d_{n+1} = d_n + dt * v_n + dt^2 * (1/2-beta) * a_n + dt^2 * beta * a_{n+1}
-            CHECK_CUDA(cudaMemcpy(&disp[(itime + 1) * ndof], &disp[itime * ndof], ndof * sizeof(T),
-                                  cudaMemcpyDeviceToDevice));
-            a = dt;
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &vel[i * ndof], 1,
-                                     &disp[(itime + 1) * ndof], 1));
-            a = dt * dt * (0.5 - beta);
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1,
-                                     &disp[(itime + 1) * ndof], 1));
-            a = dt * dt * beta;
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &accel[f * ndof], 1,
-                                     &disp[(itime + 1) * ndof], 1));
-
-            /* write log output to terminal */
-            auto stop = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<double> iterate_time = stop - start;
-            if (itime % print_freq == 0 && can_print)
-                printf("LGAIntegrator : step %d / %d in %.4e sec\n", itime + 1, num_timesteps,
-                       iterate_time.count());
+            // linear solve
+            linear_solve(A, accel_update_vec, rhs_vec);
+            // no need to apply disp update again as when converged exits after update
         }
+
+         /* write log output to terminal */
+        auto stop = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> iterate_time = stop - start;
+        if (itime % print_freq == 0 && can_print)
+            printf("LGAIntegrator : step %d / %d in %.4e sec and %d newton steps\n", itime + 1, num_timesteps,
+                    iterate_time.count(), ct);
     }
 
     std::string _getTimeString(int itime) {
@@ -223,6 +177,11 @@ class NLGAIntegrator {
          */
         CHECK_CUDA(cudaMemcpy(&disp[(itime + 1) * ndof], &disp[itime * ndof], ndof * sizeof(T),
                               cudaMemcpyDeviceToDevice));
+
+        // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
+        int i = itime % 2;
+        int f = (itime + 1) % 2;
+
         T a = dt;
         CHECK_CUBLAS(
             cublasDaxpy(cublasHandle, ndof, &a, &vel[i * ndof], 1, &disp[(itime + 1) * ndof], 1));
@@ -235,13 +194,25 @@ class NLGAIntegrator {
     }
 
     void _update_vel(int itime) {
-        // v_{n+1} = v_n + dt * (1-gamma) * a_n + dt * gamma * a_{n+1}
+        // v_{n+1} = v_n + dt * a_n + dt * gamma * delta a_n
+
+        // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
+        int i = itime % 2;
+        int f = (itime + 1) % 2;
+
         CHECK_CUDA(
             cudaMemcpy(&vel[f * ndof], &vel[i * ndof], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
-        T a = dt * (1 - gamma);
+        T a = dt;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1, &vel[f * ndof], 1));
         a = dt * gamma;
-        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &accel[f * ndof], 1, &vel[f * ndof], 1));
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, accel_update, 1, &vel[f * ndof], 1));
+    }
+
+    void _update_accel(int itime) {
+        // a_{n+1} = a_n + accel_update
+        CHECK_CUDA(
+            cudaMemcpy(&accel[f * ndof], &accel[i * ndof], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, accel_update, 1, &accel[f * ndof], 1));
     }
 
     void _apply_loads(int itime) {
@@ -256,9 +227,84 @@ class NLGAIntegrator {
             cudaMemcpy(rhs, &forces[ndof * itime], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
     }
 
-    void _update_jacobian(int itime) {}
+    void _update_rhs(int itime) {
+        rhs.zeroValues();
+        _apply_loads(itime);
+        // permute the loads to the solve permutation order (were unpermuted originally and in vis ordering)
+        rhs_vec.permuteData(block_dim, iperm);
 
-    void _initialize(Mat &mass_mat, Mat &kmat) {
+        // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
+        int i = itime % 2;
+        int f = (itime + 1) % 2;
+
+        // now add disp, vel, accel terms into the RHS (aka the current residual for accel update)
+        // 1) subtract in alpha_m * M * a_n
+        T a = -alpha_m;
+        T b = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descr_M,
+                                      Mvals, d_rowp, d_cols, block_dim, &accel[ndof * i], &b, rhs));
+
+        // 2) subtract in (1-alpha_f) * 1/2 * dt^2 * K * an
+        a = -0.5 * (1.0 - alpha_f) * dt * dt, b = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descr_K,
+                                      Kvals, d_rowp, d_cols, block_dim, &accel[ndof * i], &b, rhs));
+
+        // 3) subtract in (1-alpha_f) * dt * K * vn
+        a = -1.0 * (1.0 - alpha_f) * dt, b = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descr_K,
+                                      Kvals, d_rowp, d_cols, block_dim, &vel[ndof * i], &b, rhs));
+
+        // 4) subtract in K * disp_n
+        a = -1.0, b = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(
+            cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
+            &a, descr_K, Kvals, d_rowp, d_cols, block_dim, &disp[ndof * itime], &b, rhs));
+
+        // double check we're not missing any terms here
+    }
+
+    bool _check_convergence(int itime, int inewton) {
+        /* check the norm of the rhs (the residual for accel update) */
+        T resid_norm;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, ndof, rhs, 1, &resid_norm));
+
+        if (inewton == 0) init_resid_norm = resid_norm;
+
+        T ub = init_resid_norm * rel_tol + abs_tol;
+        return resid_norm < ub;
+    }
+
+    void _apply_full_update(int itime) {
+        /* update the disp, velocity and acceleration from the accel update */
+        _update_disp(itime);
+        _update_vel(itime);
+        _update_accel(itime);
+    }
+
+    void _update_jacobian(int itime) {
+        /* assuming disp update already performed, we now set in the l.c. of disp aka disp* as below */
+        temp_vec.zeroValues();
+        T a = 1 - alpha_f;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &disp[(itime + 1) * ndof], 1, temp, 1));
+        a = alpha_f;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &disp[itime * ndof], 1, temp, 1));
+        assembler.set_variables(temp_vec);
+
+        /* then update the stiffness and mass matrices (don't really need to update mass matrix though) */
+        assembler.add_jacobian(res, kmat);
+        assembler.add_mass_jacobian(res, mass_mat);
+
+        // now update the A matrix l.c. of M and K for accel updates LHS solve
+        double a = 1 - alpha_m;  // first we add (1-alpha_m) * M
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, mat_nnz, &a, Mvals, 1, Avals, 1));
+        a = (1 - alpha_f) * dt * dt * beta;  // first we add (1-alpha_f) * dt * dt * beta * K
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, mat_nnz, &a, Kvals, 1, Avals, 1));
+    }
+
+    void _initialize() {
         // initialize CUDA LU data so we can hold the LU factor in place
         // assumes kmat and mass_mat have full LU sparsity
 
@@ -276,6 +322,11 @@ class NLGAIntegrator {
         // copy device pointers out of the matrices
         Mvals = mass_mat.getPtr();
         Kvals = kmat.getPtr();
+        Avec = Vec(mat_nnz);
+        Avals = Avec.getPtr();
+
+        // create the A matrix for LHS of accel update
+        A = BsrMat(bsr_data, Avec);
 
         // create handles for CUDA - cusparse and cublas
         CHECK_CUBLAS(cublasCreate(&cublasHandle));
@@ -284,8 +335,10 @@ class NLGAIntegrator {
 
     // timestep and gen-alpha info
     double dt;
-    int num_timesteps, print_freq;
+    int num_timesteps, print_freq, max_newton_steps;
     T alpha_f, alpha_m, beta, gamma;
+    T abs_tol, rel_tol;
+    T init_resid_norm;
 
     // general vec data
     int block_dim, mat_nnz, ndof, nnzb, mb;
@@ -293,10 +346,11 @@ class NLGAIntegrator {
     int *d_rowp, *d_cols;
     T *disp, *vel, *accel, *forces;
     T *accel_update, *temp, *rhs;
-    Vec rhs_vec, temp_vec;
+    Vec rhs_vec, temp_vec, accel_update_vec;
 
     // matrix data
-    T *Mvals, *Kvals, *LUvals;
+    T *Mvals, *Kvals, *Avals;
+    Mat mass_mat, kmat, A;
 
     // linear solver
     LinearSolver linear_solve;
@@ -307,16 +361,6 @@ class NLGAIntegrator {
     // general CUDA data
     cusparseHandle_t cusparseHandle;
     cublasHandle_t cublasHandle;
-
-    // CUDA data for LU factor of (alpha * M + beta * K)^-1 approx U^-1 L^-1
-    cusparseMatDescr_t descr_L = 0, descr_U = 0;
-    bsrsv2Info_t info_L = 0, info_U = 0;
-    void *pBuffer = 0;
-    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
-                                policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
-    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
-                              trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
-    const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
 
     // CUDA data for M and K matrices for mat-mul and residual estimates
     cusparseMatDescr_t descr_M = 0;  // mass matrix descriptor for SpMV

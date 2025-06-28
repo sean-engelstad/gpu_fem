@@ -19,7 +19,7 @@
     if --iterative is not used, full_LU direct solve instead
 */
 
-void solve_unsteady(int nxe) {
+void solve_unsteady_linear(int nxe) {
     using T = double;   
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
@@ -66,29 +66,6 @@ void solve_unsteady(int nxe) {
     assembler.add_mass_jacobian(res, mass_mat, true);
     assembler.apply_bcs(mass_mat);
 
-    // auto h_bsr_data = bsr_data.createHostBsrData();
-    // int *rowp = h_bsr_data.rowp;
-    // int *cols = h_bsr_data.cols;
-    // int nnodes = assembler.get_num_nodes();
-    // T *h_vals = mass_mat.getVec().createHostVec().getPtr();
-    // for (int i = 0; i < nnodes; i++) {
-    //     for (int jp = rowp[i]; jp < rowp[i+1]; jp++) {
-    //         int j = cols[jp];
-    //         for (int ii = 0; ii < 36; ii++) {
-    //             int grow = 6 * i + ii / 6;
-    //             int gcol = 6 * j + ii % 6;
-    //             printf("Mass mat[%d,%d] = %.4e\n", grow, gcol, h_vals[36 * jp + ii]);
-    //         }
-    //     }
-    // }
-
-    // return;
-
-    // print some values from the mass matrix
-    // auto mass_vals = mass_mat.getVec();
-    // // auto h_mass_vals = mass_vals.createHostVec();
-    // // printVec<T>(100, h_mass_vals.getPtr());
-
     // assemble the kmat
     assembler.add_jacobian(res, kmat);
     assembler.apply_bcs(res);
@@ -128,6 +105,93 @@ void solve_unsteady(int nxe) {
     integrator.free();
 }
 
+void solve_unsteady_nonlinear(int nxe) {
+    using T = double;   
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    using Basis = ShellQuadBasis<T, Quad, 2>;
+    using Geo = Basis::Geo;
+
+    constexpr bool has_ref_axis = false;
+    constexpr bool is_nonlinear = true;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+
+    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+
+    int nye = nxe;
+    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005, rho = 2500, ys = 350e6;
+    // int nxe_per_comp = nxe / 5, nye_per_comp = nye/5; // for now (should have 25 grids)
+    int nxe_per_comp = 1, nye_per_comp = 1;
+    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+
+    // BSR symbolic factorization
+    // must pass by ref to not corrupt pointers
+    auto& bsr_data = assembler.getBsrData();
+    double fillin = 10.0;  // 10.0
+    bool print = true;
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
+    assembler.moveBsrDataToDevice();
+
+    // get some static loads
+    double Q = 1.0; // load magnitude
+    T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
+    auto loads = assembler.createVarsVec(my_loads);
+    assembler.apply_bcs(loads);
+
+    int ndof = assembler.get_num_vars();
+
+    // setup kmat and initial vecs
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto mass_mat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto res = assembler.createVarsVec();
+
+    // assemble mass matrix
+    assembler.add_mass_jacobian(res, mass_mat, true);
+    assembler.apply_bcs(mass_mat);
+
+    // assemble the kmat
+    assembler.add_jacobian(res, kmat);
+    assembler.apply_bcs(res);
+    assembler.apply_bcs(kmat);
+
+    // time settings
+    int num_timesteps = 1000;
+    double dt = 0.01;
+
+    // compute the forces on the structure
+    T *h_forces = new T[ndof * num_timesteps];
+    memset(h_forces, 0.0, ndof * num_timesteps * sizeof(T));
+    for (int itime = 0; itime < num_timesteps; itime++) {
+        // copy from static loads to unsteady loads
+        memcpy(&h_forces[itime * ndof], my_loads, ndof * sizeof(T));
+        T time = dt * itime;
+        T omega = 1.431;
+        // T omega = 4.0;
+        T scale = 10.0 * std::sin(3.14159 * omega * time);
+        cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
+    }
+    auto forces = HostVec<T>(ndof * num_timesteps, h_forces).createDeviceVec();
+
+    int print_freq = 10, max_newton_steps = 30;
+    T rel_tol = 1e-8, abs_tol = 1e-8;
+
+    // create the linear gen alpha integrator
+    auto solve_func = CUSPARSE::direct_LU_solve<T>;
+    auto integrator = NLGAIntegrator<Assembler>(solve_func, assembler, mass_mat, kmat, 
+        forces, ndof, num_timesteps, dt, max_newton_steps);
+
+    // now solve and write to vtk
+    print = true;
+    integrator.solve(print);
+    int stride = 2;
+    integrator.writeToVTK<Assembler>(assembler, "out/plate_dyn", stride);
+
+    integrator.free();
+}
+
 int main(int argc, char **argv) {
     // input ----------
     bool run_linear = true;
@@ -153,11 +217,9 @@ int main(int argc, char **argv) {
     }
 
     if (run_linear) {
-        solve_unsteady(nxe);
+        solve_unsteady_linear(nxe);
     } else {
-        printf("this function doesn't exists for solve_unsteady_nonlinear yet..\n");
-        return 0;
-        // solve_unsteady_nonlinear(nxe);
+        solve_unsteady_nonlinear(nxe);
     }
     return 0;
 };
