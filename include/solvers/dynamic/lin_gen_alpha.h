@@ -264,7 +264,7 @@ class LGAIntegrator {
         double a = 1 - alpha_m;  // first we add (1-alpha_m) * M
         printf("a %.4e for adding Mmat to LUvals\n", a);
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, mat_nnz, &a, Mvals, 1, LUvals, 1));
-        a = (1 - alpha_f) * dt * dt * beta;  // first we add (1-alpha_f) * dt * dt * beta * K
+        a = 0.5 * (1 - alpha_f) * dt * dt * beta;  // first we add (1-alpha_f) * dt * dt * beta * K
         printf("a %.4e for adding Kmat to LUvals\n", a);
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, mat_nnz, &a, Kvals, 1, LUvals, 1));
 
