@@ -38,7 +38,7 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         on pos x1 edge: dof 3
     */
 
-    assert(nxe % nxe_per_comp == 0); 
+    assert(nxe % nxe_per_comp == 0);
     assert(nye % nye_per_comp == 0);
 
     // number of nodes per direction
@@ -400,7 +400,7 @@ HostVec<T> makeCustomDisp(HostVec<T> &x0, T scale) {
 }
 
 // Helper function to convert string to lowercase (in-place)
-void to_lowercase(char* str) {
+void to_lowercase(char *str) {
     for (; *str; ++str) {
         *str = std::tolower(*str);
     }
