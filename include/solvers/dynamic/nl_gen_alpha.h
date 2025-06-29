@@ -93,6 +93,9 @@ class NLGAIntegrator {
 
     void solve(bool can_print = true) {
         /* full primal solve method here */
+        disp_star_vec.zeroValues();
+        accel_star_vec.zeroValues();
+
         // iterate one less time than the number of timesteps (since )
         for (int itime = 0; itime < num_timesteps - 1; itime++) {
             iterate(itime, can_print);
@@ -113,7 +116,9 @@ class NLGAIntegrator {
             return;
         }
 
-        _init_guess(itime);
+        // don't reset guess, just keep guess from last timestep (best soln rn) => 
+        // the previous init_guess code caused divergence (so some bug in it)
+        // _init_guess(itime); 
         update_vec.zeroValues();
 
         int ct = 0;
@@ -201,42 +206,41 @@ class NLGAIntegrator {
     void _init_guess(int itime) {
         /* init disp_star and accel_star (for linear case) */
         disp_star_vec.zeroValues();
-
-        // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
-        int i = itime % 2;
-        int f = (itime + 1) % 2;
-
-        // compute d_{n+1} = d_n + v_n * dt + 1/2 * dt^2 * a_n (init guess)
-        CHECK_CUDA(cudaMemcpy(&disp[(itime + 1) * ndof], &disp[itime * ndof], ndof * sizeof(T),
-                              cudaMemcpyDeviceToDevice));
-        T a = dt;
-        CHECK_CUBLAS(
-            cublasDaxpy(cublasHandle, ndof, &a, &vel[i * ndof], 1, &disp[(itime + 1) * ndof], 1));
-        a = 0.5 * dt * dt;
-        CHECK_CUBLAS(
-            cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1, &disp[(itime + 1) * ndof], 1));
-        
-        // now compute disp_star = (1-alpha_f) * d_{n+1} + alpha_f * d_n
-        a = alpha_f;
-        CHECK_CUBLAS(
-            cublasDaxpy(cublasHandle, ndof, &a, &disp[itime * ndof], 1, disp_star, 1));
-        a = 1.0 - alpha_f;
-        CHECK_CUBLAS(
-            cublasDaxpy(cublasHandle, ndof, &a, &disp[(itime+1) * ndof], 1, disp_star, 1));
-
-        // now compute a_{n+1} as a_n init guess
-        CHECK_CUDA(
-            cudaMemcpy(&accel[f * ndof], &accel[i * ndof], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
-
         accel_star_vec.zeroValues();
+
+        // // circular indices for i (accel of prev timestep) vs f (accel of next timestep)
+        // int i = itime % 2;
+        // int f = (itime + 1) % 2;
+
+        // // compute d_{n+1} = d_n + v_n * dt + 1/2 * dt^2 * a_n (init guess)
+        // CHECK_CUDA(cudaMemcpy(&disp[(itime + 1) * ndof], &disp[itime * ndof], ndof * sizeof(T),
+        //                       cudaMemcpyDeviceToDevice));
+        // T a = dt;
+        // CHECK_CUBLAS(
+        //     cublasDaxpy(cublasHandle, ndof, &a, &vel[i * ndof], 1, &disp[(itime + 1) * ndof], 1));
+        // a = 0.5 * dt * dt;
+        // CHECK_CUBLAS(
+        //     cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1, &disp[(itime + 1) * ndof], 1));
+        
+        // // now compute disp_star = (1-alpha_f) * d_{n+1} + alpha_f * d_n
+        // a = alpha_f;
+        // CHECK_CUBLAS(
+        //     cublasDaxpy(cublasHandle, ndof, &a, &disp[itime * ndof], 1, disp_star, 1));
+        // a = 1.0 - alpha_f;
+        // CHECK_CUBLAS(
+        //     cublasDaxpy(cublasHandle, ndof, &a, &disp[(itime+1) * ndof], 1, disp_star, 1));
+
+        // // now compute a_{n+1} as a_n init guess
+        // CHECK_CUDA(
+        //     cudaMemcpy(&accel[f * ndof], &accel[i * ndof], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
     
-        // then compute accel_star init guess
-        a = alpha_m;
-        CHECK_CUBLAS(
-            cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1, accel_star, 1));
-        a = 1.0 - alpha_m;
-        CHECK_CUBLAS(
-            cublasDaxpy(cublasHandle, ndof, &a, &accel[f * ndof], 1, accel_star, 1));
+        // // then compute accel_star init guess
+        // a = alpha_m;
+        // CHECK_CUBLAS(
+        //     cublasDaxpy(cublasHandle, ndof, &a, &accel[i * ndof], 1, accel_star, 1));
+        // a = 1.0 - alpha_m;
+        // CHECK_CUBLAS(
+        //     cublasDaxpy(cublasHandle, ndof, &a, &accel[f * ndof], 1, accel_star, 1));
     }
 
     void _update_guess(int itime) {
@@ -286,6 +290,11 @@ class NLGAIntegrator {
         // permute the loads to the solve permutation order (were unpermuted originally and in vis ordering)
         rhs_vec.permuteData(block_dim, iperm);
 
+        // for debugging
+        // T load_norm;
+        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, ndof, rhs, 1, &load_norm));
+        // printf("\tload norm = %.4e\n", load_norm);
+
         // then subtract M * accel_star
         T a = -1.0, b = 1.0;
         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
@@ -307,8 +316,6 @@ class NLGAIntegrator {
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &forces[(itime + 1) * ndof], 1, rhs, 1));
         a = alpha_f;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, ndof, &a, &forces[itime * ndof], 1, rhs, 1));
-        CHECK_CUDA(
-            cudaMemcpy(rhs, &forces[ndof * itime], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
     }
 
     bool _check_convergence(int itime, int inewton) {

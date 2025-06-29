@@ -158,7 +158,8 @@ void solve_unsteady_nonlinear(int nxe) {
 
     // time settings
     int num_timesteps = 100;
-    double dt = 0.1;
+    // double dt = 0.1;
+    double dt = 0.01;
 
     // compute the forces on the structure
     T *h_forces = new T[ndof * num_timesteps];
