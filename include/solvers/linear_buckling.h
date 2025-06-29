@@ -1,1 +1,0 @@
-// TODO : make linear buckling solver

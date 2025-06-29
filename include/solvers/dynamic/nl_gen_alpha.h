@@ -1,6 +1,6 @@
 #pragma once
 /*
-CUDA BSR double-precision solver for Linear elastic unsteady solve (with Gen-alpha method)
+CUDA BSR double-precision solver for nonlinear elastic unsteady solve (with Gen-alpha method)
 
 Generalized-alpha method for structural dynamics solutions
     "A Time Integration Algorithm for Structural Dynamics With Improved Numerical Dissipation: The
