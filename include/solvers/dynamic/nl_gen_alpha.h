@@ -84,6 +84,7 @@ class NLGAIntegrator {
 
         printf("alpha_f %.3f, alpha_m %.3f, beta %.3f, gamma %.3f\n", alpha_f, alpha_m, beta,
                gamma);
+        printf("ovr_alpha = %.4e\n", ovr_alpha);
 
         print_freq = print_freq_;
 
@@ -95,6 +96,8 @@ class NLGAIntegrator {
         // iterate one less time than the number of timesteps (since )
         for (int itime = 0; itime < num_timesteps - 1; itime++) {
             iterate(itime, can_print);
+
+            // if (itime == 1) break;
         }
         printf("done with solve\n");
     }
@@ -113,6 +116,7 @@ class NLGAIntegrator {
         }
 
         _init_guess(itime);
+        update_vec.zeroValues();
 
         int ct = 0;
         for (int inewton = 0; inewton < max_newton_steps; inewton++, ct++) {
@@ -127,7 +131,38 @@ class NLGAIntegrator {
 
             // linear solve to update delta_accel (change in accel from prev to next timestep)
             update_vec.zeroValues(); 
+
+            // rhs 
+            rhs_vec.permuteData(block_dim, perm); // put back in vis order
+
             linear_solve(A, rhs_vec, update_vec, linear_print);
+
+            rhs_vec.permuteData(block_dim, iperm); // put back in solve order
+            update_vec.permuteData(block_dim, iperm); // put back in solve order
+
+            // check A * rhs_vec = update_vec (debug)
+            // CHECK_CUDA(cudaMemcpy(temp, rhs, ndof * sizeof(T), cudaMemcpyDeviceToDevice));
+            // T a = -1.0, b = 1.0;
+            // CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+            //                             CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descr_M,
+            //                             Avals, d_rowp, d_cols, block_dim, update, &b, temp));
+            // // debug
+            // T lin_solve_resid_norm;
+            // CHECK_CUBLAS(cublasDnrm2(cublasHandle, ndof, temp, 1, &lin_solve_resid_norm));
+            // printf("\tlin_solve_resid_norm %.4e\n", lin_solve_resid_norm);
+            // update_vec.permuteData(block_dim, iperm); // put back in solve order
+
+
+            // debug check (with no jacobian update, update guess and rhs and check the load norm)
+            // bool debug = itime == 1;
+            // if (debug) {
+            //     printf("------------------------\n");
+            //     printf("check linear system solved with no NL update\n");
+            //     _update_jacobian(itime); // does reassemble change anything?
+            //     _update_guess(itime);
+            //     _update_rhs(itime);
+            // }
+            // if (itime == 1) return;
         }
 
         _compute_next_timesteps(itime);
@@ -218,6 +253,8 @@ class NLGAIntegrator {
         // now compute a_{n+1} as a_n init guess
         CHECK_CUDA(
             cudaMemcpy(&accel[f * ndof], &accel[i * ndof], ndof * sizeof(T), cudaMemcpyDeviceToDevice));
+
+        accel_star_vec.zeroValues();
     
         // then compute accel_star init guess
         a = alpha_m;
@@ -235,6 +272,7 @@ class NLGAIntegrator {
         T a = 1.0;
         CHECK_CUBLAS(
             cublasDaxpy(cublasHandle, ndof, &a, update, 1, disp_star, 1));
+            
 
         // update also applied to accel_star since they are lin dependent
         a = ovr_alpha;
@@ -244,8 +282,12 @@ class NLGAIntegrator {
 
     void _update_jacobian(int itime) {
         /* update nonlinear K matrix and M and then the full jacobian (l.c. of K and M) */
-        
+
+        // change back to vis order temporarily to set variables into assembler
+        disp_star_vec.permuteData(block_dim, perm);
         assembler.set_variables(disp_star_vec);
+        disp_star_vec.permuteData(block_dim, iperm);
+
         assembler.add_jacobian(temp_vec, kmat);
         assembler.add_mass_jacobian(temp_vec, mass_mat);
         assembler.apply_bcs(kmat);
@@ -302,9 +344,9 @@ class NLGAIntegrator {
 
         if (inewton == 0) init_resid_norm = resid_norm;
 
-        printf("time %d, newton %d : resid %.4e\n", itime, inewton, resid_norm);
+        printf("\tnewton %d : resid %.4e\n", inewton, resid_norm);
 
-        T ub = init_resid_norm * rel_tol + abs_tol;
+        T ub = abs(init_resid_norm) * rel_tol + abs_tol;
         return resid_norm < ub;
     }
 

@@ -156,18 +156,9 @@ void solve_unsteady_nonlinear(int nxe) {
     auto mass_mat = createBsrMat<Assembler, VecType<T>>(assembler);
     auto res = assembler.createVarsVec();
 
-    // assemble mass matrix
-    assembler.add_mass_jacobian(res, mass_mat, true);
-    assembler.apply_bcs(mass_mat);
-
-    // assemble the kmat
-    assembler.add_jacobian(res, kmat);
-    assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
-
     // time settings
-    int num_timesteps = 1000;
-    double dt = 0.01;
+    int num_timesteps = 100;
+    double dt = 0.1;
 
     // compute the forces on the structure
     T *h_forces = new T[ndof * num_timesteps];
@@ -184,8 +175,8 @@ void solve_unsteady_nonlinear(int nxe) {
     }
     auto forces = HostVec<T>(ndof * num_timesteps, h_forces).createDeviceVec();
 
-    int print_freq = 10, max_newton_steps = 30;
-    T rel_tol = 1e-8, abs_tol = 1e-8;
+    int print_freq = 1, max_newton_steps = 30;
+    T rel_tol = 1e-15, abs_tol = 1e-8;
     bool lin_print = false;
 
     // create the linear gen alpha integrator
@@ -200,7 +191,6 @@ void solve_unsteady_nonlinear(int nxe) {
     integrator.solve(print);
     int stride = 2;
     integrator.writeToVTK(assembler, "out/plate_dyn", stride);
-
     integrator.free();
 }
 

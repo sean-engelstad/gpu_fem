@@ -12,17 +12,21 @@
 
 
 /* command line args:
-    [linear|nonlinear] [--iterative]
+    [linear|nonlinear]
 
     examples:
-    ./1_static.out linear      to run linear
-    ./1_static.out nonlinear   to run nonlinear
-    add the option --iterative to make it switch from full_LU (only for linear)
+    ./3_unsteady.out linear      to run linear
+    ./3_unsteady.out nonlinear   to run nonlinear
 */
 
 // helper functions
 // ----------------
 // ----------------
+
+template <typename T>
+void vec_scale(int N, T scale, T *myvec) {
+    for (int i = 0; i < N; i++) myvec[i] *= scale;
+}
 
 void solve_linear(MPI_Comm &comm, bool full_LU = true) {
   using T = double;
@@ -67,17 +71,8 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true) {
   auto& bsr_data = assembler.getBsrData();
   double fillin = 10.0;  // 10.0
   bool print = true;
-  if (full_LU) {
-    bsr_data.AMD_reordering();
-    // bsr_data.qorder_reordering(1.0);
-    bsr_data.compute_full_LU_pattern(fillin, print);
-  } else {
-    // bsr_data.RCM_reordering();
-    // bsr_data.AMD_reordering();
-    bsr_data.qorder_reordering(0.5, 1); // qordering not working well for some reason..
-    bsr_data.compute_ILUk_pattern(5, fillin); // 10, 20 (for BiCGStab)
-    // bsr_data.compute_full_LU_pattern(fillin, print);
-  }
+  bsr_data.AMD_reordering();
+  bsr_data.compute_full_LU_pattern(fillin, print);
   assembler.moveBsrDataToDevice();
 
   // get the loads
@@ -92,44 +87,51 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true) {
   auto loads = h_loads.createDeviceVec();
   assembler.apply_bcs(loads);
 
-  // setup kmat and initial vecs
-  auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-  auto soln = assembler.createVarsVec();
-  auto res = assembler.createVarsVec();
-  auto vars = assembler.createVarsVec();
+  int ndof = assembler.get_num_vars();
 
-  // assemble the kmat
-  assembler.set_variables(vars);
-  assembler.add_jacobian(res, kmat);
-  assembler.apply_bcs(res);
-  assembler.apply_bcs(kmat);
+    // setup kmat and initial vecs
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto mass_mat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto res = assembler.createVarsVec();
 
-  // solve the linear system
-  if (full_LU) {
-      CUSPARSE::direct_LU_solve(kmat, loads, soln);
-  } else {
-      int n_iter = 200, max_iter = 200;
-      T abs_tol = 1e-11, rel_tol = 1e-15;
-      bool print = true;
-      constexpr bool right = true, modifiedGS = true; // better with modifiedGS true, yeah it is..
-      CUSPARSE::GMRES_solve<T, right, modifiedGS>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
-      // CUSPARSE::BiCGStab_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
-      // CUSPARSE::PCG_solve<T>(kmat, loads, soln, n_iter, abs_tol, rel_tol, print);
-      // CUSPARSE::GMRES_DR_solve<T, right, modifiedGS>(kmat, loads, soln, 4, 2, 8, abs_tol, rel_tol, print, true, 1);
-  }
+    // assemble mass matrix
+    assembler.add_mass_jacobian(res, mass_mat, true);
+    assembler.apply_bcs(mass_mat);
 
-  // print some of the data of host residual
-  auto h_soln = soln.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/uCRM.vtk");
+    // assemble the kmat
+    assembler.add_jacobian(res, kmat);
+    assembler.apply_bcs(res);
+    assembler.apply_bcs(kmat);
 
-  // free data
-  assembler.free();
-  h_loads.free();
-  kmat.free();
-  soln.free();
-  res.free();
-  vars.free();
-  h_soln.free();
+    // time settings
+    int num_timesteps = 1000;
+    double dt = 0.01;
+
+    // compute the forces on the structure
+    T *h_forces = new T[ndof * num_timesteps];
+    memset(h_forces, 0.0, ndof * num_timesteps * sizeof(T));
+    for (int itime = 0; itime < num_timesteps; itime++) {
+        // copy from static loads to unsteady loads
+        memcpy(&h_forces[itime * ndof], h_loads_ptr, ndof * sizeof(T));
+        T time = dt * itime;
+        T omega = 1.431;
+        // T omega = 4.0;
+        T scale = 10.0 * std::sin(3.14159 * omega * time);
+        // cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
+        vec_scale(ndof, scale, &h_forces[itime * ndof]);
+    }
+    auto forces = HostVec<T>(ndof * num_timesteps, h_forces).createDeviceVec();
+
+    // create the linear gen alpha integrator
+    auto integrator = LGAIntegrator(mass_mat, kmat, forces, ndof, num_timesteps, dt);
+
+    // now solve and write to vtk
+    print = true;
+    integrator.solve(print);
+    int stride = 2;
+    integrator.writeToVTK<Assembler>(assembler, "out/ucrm_dyn", stride);
+
+    integrator.free();
 }
 
 void solve_nonlinear(MPI_Comm &comm) {
@@ -173,7 +175,7 @@ void solve_nonlinear(MPI_Comm &comm) {
   int nvars = assembler.get_num_vars();
   int nnodes = assembler.get_num_nodes();
   HostVec<T> h_loads(nvars);
-  double load_mag = 15.0; // 9.0 with 40 load steps, now 15.0 with 70 load steps
+  double load_mag = 1.0; // 9.0 with 40 load steps, now 15.0 with 70 load steps
   double *h_loads_ptr = h_loads.getPtr();
   for (int inode = 0; inode < nnodes; inode++) {
     h_loads_ptr[6 * inode + 2] = load_mag;
@@ -181,38 +183,49 @@ void solve_nonlinear(MPI_Comm &comm) {
   auto loads = h_loads.createDeviceVec();
   assembler.apply_bcs(loads);
 
-  // setup kmat and initial vecs
-  auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-  auto soln = assembler.createVarsVec();
-  auto res = assembler.createVarsVec();
-  auto rhs = assembler.createVarsVec();
-  auto vars = assembler.createVarsVec();
+  int ndof = assembler.get_num_vars();
 
-  // newton solve => go to 10x the 1m up disp from initial loads
-  int num_load_factors = 70, num_newton = 50;
-  T min_load_factor = 0.1, max_load_factor = 23.0, abs_tol = 1e-8,
-    rel_tol = 1e-8;
-  auto solve_func = CUSPARSE::direct_LU_solve<T>;
-  bool write_vtk = true;
-  std::string outputPrefix = "out/uCRM_";
-  newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
-      solve_func, kmat, loads, soln, assembler, res, rhs, vars,
-      num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
-      rel_tol, outputPrefix, print, write_vtk);
+    // setup kmat and initial vecs
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto mass_mat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto res = assembler.createVarsVec();
 
-  // print some of the data of host residual
-  auto h_vars = vars.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_vars, "out/uCRM_nl.vtk");
+    // time settings
+    int num_timesteps = 1000;
+    double dt = 0.01;
 
-  // free data
-  assembler.free();
-  h_loads.free();
-  kmat.free();
-  soln.free();
-  res.free();
-  vars.free();
-  h_vars.free();
-  rhs.free();
+    // compute the forces on the structure
+    T *h_forces = new T[ndof * num_timesteps];
+    memset(h_forces, 0.0, ndof * num_timesteps * sizeof(T));
+    for (int itime = 0; itime < num_timesteps; itime++) {
+        // copy from static loads to unsteady loads
+        memcpy(&h_forces[itime * ndof], h_loads_ptr, ndof * sizeof(T));
+        T time = dt * itime;
+        T omega = 1.431;
+        // T omega = 4.0;
+        T scale = 1.0 * std::sin(3.14159 * omega * time);
+        // cblas_dscal(ndof, scale, &h_forces[itime * ndof], 1);
+        vec_scale(ndof, scale, &h_forces[itime * ndof]);
+    }
+    auto forces = HostVec<T>(ndof * num_timesteps, h_forces).createDeviceVec();
+
+    int print_freq = 10, max_newton_steps = 30;
+    T rel_tol = 1e-15, abs_tol = 1e-8;
+    bool lin_print = false;
+
+    // create the linear gen alpha integrator
+    auto solve_func = CUSPARSE::direct_LU_solve<T>;
+    auto integrator = NLGAIntegrator<Assembler>(
+        solve_func, assembler, mass_mat, kmat, 
+        forces, ndof, num_timesteps, dt, print_freq, 
+        rel_tol, abs_tol, max_newton_steps, lin_print);
+
+    // now solve and write to vtk
+    print = true;
+    integrator.solve(print);
+    int stride = 2;
+    integrator.writeToVTK(assembler, "out/ucrm_dyn", stride);
+    integrator.free();
 }
 
 int main(int argc, char **argv) {
@@ -227,7 +240,6 @@ int main(int argc, char **argv) {
     MPI_Comm comm = MPI_COMM_WORLD;
 
     bool run_linear = false;
-    bool full_LU = true;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -238,8 +250,6 @@ int main(int argc, char **argv) {
             run_linear = true;
         } else if (strcmp(arg, "nonlinear") == 0) {
             run_linear = false;
-        } else if (strcmp(arg, "--iterative") == 0) {
-            full_LU = false;
         } else {
             int rank;
             MPI_Comm_rank(comm, &rank);
@@ -253,7 +263,7 @@ int main(int argc, char **argv) {
     }
   
     if (run_linear) {
-        solve_linear(comm, full_LU);
+        solve_linear(comm);
     } else {
         solve_nonlinear(comm);
     }
