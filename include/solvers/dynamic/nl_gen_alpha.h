@@ -96,8 +96,6 @@ class NLGAIntegrator {
         // iterate one less time than the number of timesteps (since )
         for (int itime = 0; itime < num_timesteps - 1; itime++) {
             iterate(itime, can_print);
-
-            // if (itime == 1) break;
         }
         printf("done with solve\n");
     }
@@ -139,30 +137,6 @@ class NLGAIntegrator {
 
             rhs_vec.permuteData(block_dim, iperm); // put back in solve order
             update_vec.permuteData(block_dim, iperm); // put back in solve order
-
-            // check A * rhs_vec = update_vec (debug)
-            // CHECK_CUDA(cudaMemcpy(temp, rhs, ndof * sizeof(T), cudaMemcpyDeviceToDevice));
-            // T a = -1.0, b = 1.0;
-            // CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
-            //                             CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descr_M,
-            //                             Avals, d_rowp, d_cols, block_dim, update, &b, temp));
-            // // debug
-            // T lin_solve_resid_norm;
-            // CHECK_CUBLAS(cublasDnrm2(cublasHandle, ndof, temp, 1, &lin_solve_resid_norm));
-            // printf("\tlin_solve_resid_norm %.4e\n", lin_solve_resid_norm);
-            // update_vec.permuteData(block_dim, iperm); // put back in solve order
-
-
-            // debug check (with no jacobian update, update guess and rhs and check the load norm)
-            // bool debug = itime == 1;
-            // if (debug) {
-            //     printf("------------------------\n");
-            //     printf("check linear system solved with no NL update\n");
-            //     _update_jacobian(itime); // does reassemble change anything?
-            //     _update_guess(itime);
-            //     _update_rhs(itime);
-            // }
-            // if (itime == 1) return;
         }
 
         _compute_next_timesteps(itime);
