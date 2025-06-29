@@ -69,6 +69,7 @@ void solve_linear(bool full_LU, int nxe) {
     double Q = 1.0; // load magnitude
     // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
     T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
+
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
 

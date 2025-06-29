@@ -22,4 +22,9 @@
 #endif  // CUSPARSE
 #endif  // USE_GPU
 
-#include "nonlinear_static.h"
+// nonlinear static
+#include "nonlinear_static/newton.h"
+
+// dynamic
+#include "dynamic/lin_gen_alpha.h"
+#include "dynamic/nl_gen_alpha.h"

@@ -52,10 +52,14 @@ class ElementAssembler {
 #endif
 
     void set_variables(Vec<T> &newVars);
+    void set_acceleration(Vec<T> &newAccel);
     void set_design_variables(Vec<T> &newDVs);
     void add_energy(T *glob_U, bool can_print = false);
     void add_residual(Vec<T> &res, bool can_print = false);
     void add_jacobian(Vec<T> &res, Mat &mat, bool can_print = false);
+
+    void add_mass_residual(Vec<T> &res, bool can_print = false);
+    void add_mass_jacobian(Vec<T> &res, Mat &mat, bool can_print = false);
 
     // optimization
     void setupFunction(MyFunction &func);
@@ -142,6 +146,7 @@ class ElementAssembler {
     Vec<int32_t> geo_conn, vars_conn;
     Vec<int> bcs, elem_components;
     Vec<T> xpts, vars, dvs;
+    Vec<T> accel;
     Vec<Data> physData;
     BsrData bsr_data;
 };  // end of ElementAssembler class declaration
@@ -165,6 +170,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat>::ElementAssembler(
 
     int32_t num_vars = get_num_vars();
     this->vars = Vec<T>(num_vars);
+    this->accel = Vec<T>(num_vars);
 
     // on host (TODO : if need to deep copy entries to device?)
     // TODO : should probably do factorization explicitly instead of
@@ -578,6 +584,14 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::set_variables(Vec<T> &newVars) {
 
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
+void ElementAssembler<T, ElemGroup, Vec, Mat>::set_acceleration(Vec<T> &newAccel) {
+    /* set the accel state variables ddot(u) => assembler */
+    // if accel was never set before, now we will include unsteady terms in residual
+    newAccel.copyValuesTo(this->accel);
+}
+
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
 void ElementAssembler<T, ElemGroup, Vec, Mat>::set_design_variables(Vec<T> &newDVs) {
 // call kernel function to update the physData of each element, component by component
 #ifdef USE_GPU
@@ -719,6 +733,83 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     std::chrono::duration<double> add_jac_time = stop - start;
     if (can_print) {
         printf("\tfinished add_jacobian in %.4e sec\n", add_jac_time.count());
+    }
+};
+
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat>
+void ElementAssembler<T, ElemGroup, Vec, Mat>::add_mass_residual(Vec<T> &res, bool can_print) {
+    auto start = std::chrono::high_resolution_clock::now();
+    if (can_print) {
+        printf("begin add_mass_residual\n");
+    }
+
+    using Phys = typename ElemGroup::Phys;
+    using Data = typename Phys::Data;
+
+    res.zeroValues();
+
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+    dim3 block = ElemGroup::res_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::res_block.x;
+
+    add_mass_residual_gpu<T, ElemGroup, Data, elems_per_block, Vec>
+        <<<grid, block>>>(num_elements, geo_conn, vars_conn, xpts, accel, physData, res);
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+#endif  // USE_GPU
+
+    // permute residual (new => old rows see tests/reordering/README.md)
+    // this->permuteVec(res);
+
+    // print timing data
+    auto stop = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> add_resid_time = stop - start;
+    if (can_print) {
+        printf("\tfinished in %.4e\n", add_resid_time.count());
+    }
+};
+
+//  template <class ExecParameters>
+template <typename T, typename ElemGroup, template <typename> class Vec,
+          template <typename> class Mat_>
+void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_mass_jacobian(
+    Vec<T> &res, Mat_<Vec<T>> &mat,
+    bool can_print) {  // TODO : make this Vec here..
+    auto start = std::chrono::high_resolution_clock::now();
+    if (can_print) {
+        printf("begin add_mass_jacobian\n");
+    }
+
+    using Phys = typename ElemGroup::Phys;
+    using Data = typename Phys::Data;
+    using Mat = Mat_<Vec<T>>;
+
+    res.zeroValues();
+    mat.zeroValues();
+
+// input is either a device array when USE_GPU or a host array if not USE_GPU
+#ifdef USE_GPU
+
+    dim3 block = ElemGroup::jac_block;
+    int nblocks = (num_elements + block.x - 1) / block.x;
+    dim3 grid(nblocks);
+    constexpr int32_t elems_per_block = ElemGroup::jac_block.x;
+
+    add_mass_jacobian_gpu<T, ElemGroup, Data, elems_per_block, Vec, Mat><<<grid, block>>>(
+        num_vars_nodes, num_elements, geo_conn, vars_conn, xpts, accel, physData, res, mat);
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+#endif
+
+    // print timing data
+    auto stop = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> add_jac_time = stop - start;
+    if (can_print) {
+        printf("\tfinished in %.4e sec\n", add_jac_time.count());
     }
 };
 
