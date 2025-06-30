@@ -46,6 +46,7 @@ A2D_FUNCTION void IsotropicShellStressCore(const T& E, const T& nu, const T& thi
 
     // drill stress M12
     T drill = Data::getDrillingRegularization() * As;
+
     stress[8] = drill * strain[8];
 }
 

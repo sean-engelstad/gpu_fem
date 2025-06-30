@@ -79,6 +79,21 @@ class DenseMat {
             }
         }
     }
+
+    __DEVICE__ void addElementMatRow(const bool active_thread, const int elem_block_row, const int elem_inner_row, 
+        const int ielem, const int start, const int stride, const int dof_per_node, const int nodes_per_elem, 
+        const int *elem_conn, const T local_row[]) {
+        if (!active_thread) return;
+        int dof_per_elem = dof_per_node * nodes_per_elem;
+        int global_row = elem_conn[elem_block_row] * dof_per_node + elem_inner_row;
+
+        for (int jdof = start; jdof < dof_per_elem; jdof += stride) {
+            int local_jnode = jdof / dof_per_node;
+            int global_col = elem_conn[local_jnode] * dof_per_node + (jdof % dof_per_node);
+            atomicAdd(&data[N * global_row + global_col],
+                        local_row[jdof]);
+        }
+    }
 #endif  // USE_GPU
 
     template <typename I>

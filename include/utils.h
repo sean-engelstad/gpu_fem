@@ -8,6 +8,18 @@
 #include "cuda_utils.h"
 #include "stdlib.h"
 
+template <bool res_ = true, bool shell_data_ = true>
+struct BufferOptions {
+    // using buffers (decided at compile time) gives a tradeoff in a faster assembly but increased
+    // storage requirements
+    static constexpr bool res = res_;
+    static constexpr bool shell_data = shell_data_;
+
+    // old buffers that didn't help much: xpts, vars, kelem (kelem may but too much memory prob)
+
+    // TODO : parts to compute buffer size here
+};
+
 template <typename T>
 __HOST_DEVICE__ void printVec(const int N, const T *vec);
 

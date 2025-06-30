@@ -176,6 +176,79 @@ class BsrMat {
         }
     }
 
+    __DEVICE__
+    void addElementMatRow(const bool active_thread, const int elem_block_row, const int inner_row,
+                          const int ielem, const int start, const int stride,
+                          const int dof_per_node, const int nodes_per_elem,
+                          const int32_t *elem_conn, const T *elem_row) {
+        /* add row from elem stiffness matrix (adding by row is coalesced, while col is not) */
+
+        // int dof_per_elem = dof_per_node * nodes_per_elem,
+        int block_dim = bsr_data.block_dim, blocks_per_elem = nodes_per_elem * nodes_per_elem;
+        int nnz_per_block = bsr_data.block_dim * bsr_data.block_dim;
+        int dof_per_elem = dof_per_node * nodes_per_elem;
+        const index_t *elem_ind_map = bsr_data.elem_ind_map;
+        const index_t *loc_elem_ind_map = &elem_ind_map[blocks_per_elem * ielem];
+        T *valPtr = values.getPtr();
+
+        for (int idof = start; idof < dof_per_elem; idof += stride) {
+            int elem_block_col = idof / dof_per_node;
+            int elem_block = nodes_per_elem * elem_block_row + elem_block_col;
+            int glob_block_ind = loc_elem_ind_map[elem_block];
+            int inner_col = idof % dof_per_node;
+            int ival = nnz_per_block * glob_block_ind + block_dim * inner_row + inner_col;
+
+            atomicAdd(&valPtr[ival], elem_row[idof]);
+        }
+    }
+
+    __DEVICE__
+    void addElementNodalBlock(const bool active_thread, const int elem_block_row,
+                              const int elem_block_col, const int ielem, const int start,
+                              const int stride, const int dof_per_node, const int nodes_per_elem,
+                              const T *shared_nodal_block) {
+        /* add row from elem stiffness matrix (adding by row is coalesced, while col is not) */
+
+        int block_dim2 = bsr_data.block_dim * bsr_data.block_dim,
+            blocks_per_elem = nodes_per_elem * nodes_per_elem;
+        const index_t *elem_ind_map = bsr_data.elem_ind_map;
+        const index_t *loc_elem_ind_map = &elem_ind_map[blocks_per_elem * ielem];
+        int elem_block = nodes_per_elem * elem_block_row + elem_block_col;
+        int glob_block_ind = loc_elem_ind_map[elem_block];
+        T *valPtr = values.getPtr();
+        T *val = &valPtr[block_dim2 * glob_block_ind];
+
+        // stride should be 32 a full warp (so we get coalesced writes)
+        for (int iblock = 0; iblock < block_dim2; iblock += stride) {
+            atomicAdd(&val[iblock], shared_nodal_block[iblock]);
+        }
+    }
+
+    __DEVICE__
+    void coalescedBsrWrite(const bool active_thread, const int elem_block_row,
+                           const int elem_block_col, const int ielem, const int nodes_per_elem,
+                           int inn_block_ind, const T &thread_val) {
+        /* add coalesced parts of a single node block to global */
+        // if (active_thread) {
+        int block_dim2 = bsr_data.block_dim * bsr_data.block_dim,
+            blocks_per_elem = nodes_per_elem * nodes_per_elem;
+        const index_t *elem_ind_map = bsr_data.elem_ind_map;
+        const index_t *loc_elem_ind_map = &elem_ind_map[blocks_per_elem * ielem];
+        int elem_block = nodes_per_elem * elem_block_row + elem_block_col;
+        int glob_block_ind = loc_elem_ind_map[elem_block];
+        T *valPtr = values.getPtr();
+        T *val = &valPtr[block_dim2 * glob_block_ind];
+
+        // if (blockIdx.x == 0) {
+        //     // write out the thread idx and global mem writes (check nearly coalesced)
+        //     int thread_ind = threadIdx.x + blockDim.x * threadIdx.y;
+        //     int glob_mem = block_dim2 * glob_block_ind + inn_block_ind;
+        //     printf("thread %d, global mem %d\n", thread_ind, glob_mem);
+        // }
+
+        atomicAdd(&val[inn_block_ind], thread_val);
+        // }
+    }
 #endif  // USE_GPU
 
     template <typename I>

@@ -1,8 +1,8 @@
 #pragma once
 #include "a2dcore.h"
-#include "a2dshell.h"
+#include "element/shell/a2dshell.h"
+#include "element/shell/shell_utils.h"
 #include "quadrature.h"
-#include "shell_utils.h"
 
 template <typename T, class Quadrature_, int order = 2>
 class ShellQuadBasis {
@@ -282,15 +282,17 @@ class ShellQuadBasis {
     __HOST_DEVICE__ static T interpFieldsGradDotProduct(const T pt[], const T vals1[],
                                                         const T vals2[]) {
         T out = 0.0;
-        // #pragma unroll
+#pragma unroll
         for (int inode = 0; inode < num_nodes; inode++) {
-            T Ni = lagrangeLobatto2DGradLight<direc1>(inode, pt[0], pt[1]);
-            // #pragma unroll
-            for (int jnode = 0; jnode < num_nodes; jnode++) {
-                T Nj = Ni * lagrangeLobatto2DGradLight<direc2>(jnode, pt[0], pt[1]);
+            {
+                T Ni = lagrangeLobatto2DGradLight<direc1>(inode, pt[0], pt[1]);
                 // #pragma unroll
-                for (int ifield = 0; ifield < num_fields; ifield++) {
-                    out += Nj * vals1[inode * vpn1 + ifield] * vals2[jnode * vpn2 + ifield];
+                for (int jnode = 0; jnode < num_nodes; jnode++) {
+                    T Nj = Ni * lagrangeLobatto2DGradLight<direc2>(jnode, pt[0], pt[1]);
+                    // #pragma unroll
+                    for (int ifield = 0; ifield < num_fields; ifield++) {
+                        out += Nj * vals1[inode * vpn1 + ifield] * vals2[jnode * vpn2 + ifield];
+                    }
                 }
             }
         }
@@ -542,18 +544,6 @@ class ShellQuadBasis {
         }
     }  // end of getTyingInterp
 };     // end of class ShellQuadBasis
-
-template <typename T, class Basis>
-__HOST_DEVICE__ T getDetXd(const T pt[], const T xpts[], const T fn[]) {
-    T n0[3], Xxi[3], Xeta[3];
-    Basis::template interpFields<3, 3>(pt, fn, n0);
-    Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
-
-    // assemble frames dX/dxi in comp coord
-    T Xd[9];
-    Basis::assembleFrame(Xxi, Xeta, n0, Xd);
-    return A2D::MatDetCore<T, 3>(Xd);
-}
 
 // Basis related utils
 template <typename T, class Basis>

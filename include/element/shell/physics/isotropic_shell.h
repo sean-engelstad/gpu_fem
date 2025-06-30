@@ -21,40 +21,6 @@ class IsotropicShell {
     static constexpr bool is_nonlinear = isNonlinear;
     static constexpr int num_dvs = 1;
 
-    // function declarations
-    // -------------------------------------------------------
-
-    /**
-    template <typename T2>
-    __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
-                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
-                                                    A2D::ADObj<A2D::Mat<T2, 3, 3>> u1x,
-                                                    A2D::ADObj<A2D::SymMat<T2, 3>> e0ty,
-                                                    A2D::ADObj<A2D::Vec<T2, 1>> et,
-                                                    A2D::ADObj<T2> &Uelem);
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeWeakRes(const Data &physData, const T &scale,
-                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                               A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                               A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
-                                               A2D::ADObj<A2D::Vec<T2, 1>> &et);
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeWeakJacobianCol(const Data &physData, const T &scale,
-                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                                       A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                                       A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
-                                                       A2D::A2DObj<A2D::Vec<T2, 1>> &et);
-
-    __HOST_DEVICE__
-    static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
-                                 T *fail_index);
-     */
-
-    // -------------------------------------------------------
-    // end of function declarations
-
     template <typename T2>
     __HOST_DEVICE__ static void computeStrainEnergy(const Data physData, const T scale,
                                                     A2D::ADObj<A2D::Mat<T2, 3, 3>> u0x,
@@ -145,6 +111,20 @@ class IsotropicShell {
         moments[2] = rho * t * t * t * (tOffset * tOffset + 1.0 / 12.0);
     }
 
+    __HOST_DEVICE__ static void compute_drill_strain_hrev(const Data &physData, const T &scale, 
+                                                       A2D::A2DObj<A2D::Vec<T, 1>> &et) {
+        T drill;
+        {  // TODO : could just compute G here separately.., less data
+            T C[6], E = physData.E, nu = physData.nu, thick = physData.thick;
+            Data::evalTangentStiffness2D(E, nu, C);
+            T As = Data::getTransShearCorrFactor() * thick * C[5];
+            drill = Data::getDrillingRegularization() * As;
+            
+            // this is basically computing the output level proj Hessian (that we can now backprop)
+            et.hvalue()[0] = scale * drill * et.pvalue()[0];  // backprop from strain energy
+        }
+    }
+
     template <typename T2>
     __HOST_DEVICE__ static void computeQuadptStresses(const Data &physData, const T &scale,
                                                       A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
@@ -227,9 +207,6 @@ class IsotropicShell {
         e[6] = 2.0 * e0tyF[4];  // e23, transverse shear
         e[7] = 2.0 * e0tyF[2];  // e13, transverse shear
         e[8] = etF[0];          // e12 (drill strain)
-
-        printf("e:");
-        printVec<T>(9, e.get_data());
 
         // forward stresses derivs (dstress/dthick) are dU/dstrain/dx
         T C[6];

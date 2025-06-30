@@ -64,6 +64,9 @@ void perform_ilu0_factorization(cusparseHandle_t handle, cusparseMatDescr_t &des
     // cudaMalloc((void **)&pBuffer, pBufferSize);
     cudaMalloc(pBuffer, pBufferSize);
 
+    printf("cuSparse allocating buffer size %d vs matrix nnz %d\n", pBufferSize,
+           blockDim * blockDim * nnzb);
+
     // perform ILU symbolic factorization on L
     CHECK_CUSPARSE(cusparseDbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, vals, rowp, cols,
                                               blockDim, info_M, policy_M, *pBuffer));

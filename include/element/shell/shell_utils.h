@@ -34,11 +34,34 @@ __HOST_DEVICE__ void ShellComputeTransform(const T refAxis[], const T dXdxi[], c
     }
 }
 
+template <typename T, class Data, class Basis>
+__HOST_DEVICE__ void _compute_shell_transforms(const T quad_pt[], const T refAxis[], const T xpts[],
+                                               const T n0[], T Tmat[], T XdinvT[], T &detXd) {
+    // get shell transform and Xdn frame scope
+    T Xd[9];
+    {
+        // compute the computational coord gradients of Xpts for xi, eta
+        T dXdxi[3], dXdeta[3];
+        Basis::template interpFieldsGrad<3, 3>(quad_pt, xpts, dXdxi, dXdeta);
+
+        // assemble Xd frame
+        Basis::assembleFrame(dXdxi, dXdeta, n0, Xd);
+
+        // compute the shell transform based on the ref axis in Data object
+        ShellComputeTransform<T, Data>(refAxis, dXdxi, dXdeta, n0, Tmat);
+    }  // end of Xd and shell transform scope
+
+    // inverse Xd frame and Transformed product
+    T tmp[9];
+    A2D::MatInvCore<T, 3>(Xd, tmp);
+    detXd = A2D::MatDetCore<T, 3>(Xd);
+    A2D::MatMatMultCore3x3<T>(tmp, Tmat, XdinvT);
+
+}  // end of method ShellComputeDrillStrain
+
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[], const T xpts[],
                                              const T vars[], const T fn[], T et[]) {
-    // TODO : do we actually need Ctn, Tn, XdinvTn, u0xn here?
-
     T etn[Basis::num_nodes];
     for (int inode = 0; inode < Basis::num_nodes; inode++) {
         T pt[2];
@@ -182,6 +205,88 @@ __HOST_DEVICE__ void ShellComputeDrillStrainHrev(const T quad_pt[], const T refA
                                                                          vars, fn, et_hat, matCol);
 
 }  // end of method ShellComputeDrillStrainHrev
+
+template <typename T, int vars_per_node, class Data, class Basis, class Director>
+__device__ __forceinline__ void ShellComputeDrillStrainLight(const T pt[], const T vars[],
+                                                             const T Tmat[], const T XdinvT[],
+                                                             A2D::Vec<T, 1> &et) {
+    // assemble u0xn frame
+    T u0x_1, u0x_3;
+    {
+        T u0x[9];
+        // compute midplane disp field gradients
+        T u0xi[3], u0eta[3];
+        Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, u0xi, u0eta);
+
+        A2D::Vec<T, 3> zero;
+        Basis::assembleFrame(u0xi, u0eta, zero.get_data(), u0x);
+
+        // u0x' = T^T * u0x * XdinvT (but only [1], [3] entries of that)
+        u0x_1 = A2D::Mat3x3MatTripleProduct<T>(0, 1, Tmat, u0x, XdinvT);
+        u0x_3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, u0x, XdinvT);
+    }
+
+    T C1, C3;
+    {
+        // interpolate rotation vars to this quadpt (linear rotation only)
+        T rots[6];
+        Basis::template interpFieldsOffset<vars_per_node, 3, 3>(pt, vars, &rots[3]);
+
+        // compute the rotation matrix
+        T C[9];
+        Director::template computeRotationMat<vars_per_node, 1>(rots, C);
+
+        C3 = A2D::Mat3x3MatTripleProduct<T>(1, 0, Tmat, C, Tmat);
+        C1 = -C3;
+    }
+
+    // compute drill strains
+    et[0] = 0.5 * (C3 + u0x_3 - u0x_1 - C1);
+}
+
+template <typename T, int vars_per_node, class Data, class Basis, class Director>
+__device__ __forceinline__ void ShellComputeDrillStrainLightSens(const T pt[], const T vars[],
+                                                                 const T Tmat[], const T XdinvT[],
+                                                                 const A2D::Vec<T, 1> &etbb,
+                                                                 T res[]) {
+    T etb = etbb[0];
+    // backprop through rotation mat
+    {
+        T C3b = 0.5 * etb, C1b = -0.5 * etb;
+        T Cb[9];
+        memset(Cb, 0.0, 9 * sizeof(T));
+        A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, Tmat, C3b, Cb);
+        A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, Tmat, C1b, Cb);
+
+        T rot_sens[6];
+        Director::template computeRotationMatSens<vars_per_node, 1>(Cb, rot_sens);
+
+        Basis::template interpFieldsOffsetSens<vars_per_node, 3, 3>(pt, &rot_sens[3], res);
+    }
+
+    // backprop through u0x disp grad
+    {
+        T u0xb3 = 0.5 * etb;
+        T u0xb1 = -u0xb3;
+
+        T u0xb[9];
+        A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, XdinvT, u0xb3, u0xb);
+        A2D::Mat3x3MatTripleProductSens<T>(1, 0, Tmat, XdinvT, u0xb1, u0xb);
+
+        // transpose u0xb
+#pragma unroll
+        for (int i = 0; i < 3; i++) {
+#pragma unroll
+            for (int j = 0; j < i; j++) {
+                T tmp = u0xb[3 * i + j];
+                u0xb[3 * i + j] = u0xb[3 * j + i];
+                u0xb[3 * j + i] = tmp;
+            }
+        }
+
+        Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0xb[0], &u0xb[3], res);
+    }
+}
 
 template <typename T, class Physics, class Basis, bool is_nonlinear>
 __HOST_DEVICE__ static void computeTyingStrain(const T Xpts[], const T fn[], const T vars[],
