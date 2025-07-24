@@ -88,6 +88,7 @@ beta = 0.0
 gamma = 0.0
 tacs.zeroVariables()
 tacs.assembleJacobian(alpha, beta, gamma, res, mat)
+tacs.applyBCs(mat)
 pc.factor()
 
 # Solve the linear system
