@@ -35,6 +35,7 @@ ytmp = numpy.linspace(0, ly, ny)
 X, Y = numpy.meshgrid(xtmp, ytmp)
 Z = numpy.zeros_like(X)
 nodes = numpy.stack((X, Y, Z), axis=2)
+# nodes = numpy.stack((X.T, Y.T, Z), axis=2)
 nmat = nodes.reshape((nx * ny, 3))
 
 # Node numbering
@@ -69,7 +70,7 @@ for i in range(ney):
 
 
 # Write BDF
-output_file = args.name + ".bdf"
+output_file = "in/" + args.name + ".bdf"
 
 with open(output_file, "w") as fout:
     write_80("SOL 103")
@@ -124,8 +125,27 @@ with open(output_file, "w") as fout:
 
     # Write boundary conditions
     for node in bcnodes:
-        # bc = "123456" # "123"
-        bc = "123"
+        ix = (node-1) % nx
+        iy = (node-1) // nx
+        interior = 0 < ix and ix < nx-1 and 0 < iy and iy < ny-1
+        x_bndry = ix == 0 or ix == nx-1 and not(interior)
+        y_bndry = iy == 0 or iy == ny-1 and not(interior)
+
+        if node == 1:
+            bc = "123456"
+        elif x_bndry and not y_bndry:
+            bc = "35"
+        elif y_bndry and not x_bndry:
+            bc = "34"
+        elif node == nx * ny:
+            bc = "12345"
+        elif x_bndry and y_bndry:
+            bc = "345" # all rot constrained
+        else:
+            bc = "3"
+
+        # print(F"{node=} {nx=} {bc=}")
+
         write_bulk_line("SPC", [1, node, bc, 0.0])
 
     write_80("ENDDATA")

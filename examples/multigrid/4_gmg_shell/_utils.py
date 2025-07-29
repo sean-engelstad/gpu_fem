@@ -5,7 +5,7 @@ from tacs import TACS, elements, constitutive
 import scipy
 import matplotlib.pyplot as plt
 
-def get_tacs_matrix(bdf_file):
+def get_tacs_matrix(bdf_file, thickness:float=0.02):
 
     # Load structural mesh from BDF file
     tacs_comm = MPI.COMM_WORLD
@@ -19,8 +19,8 @@ def get_tacs_matrix(bdf_file):
     kcorr = 5.0 / 6.0  # shear correction factor
     ys = 350e6  # yield stress, Pa
     min_thickness = 0.002
-    max_thickness = 0.20
-    thickness = 0.02
+    max_thickness = 10.0 # 0.2
+    # thickness = 0.02
 
     # Loop over components, creating stiffness and element object for each
     num_components = struct_mesh.getNumComponents()
@@ -53,7 +53,12 @@ def get_tacs_matrix(bdf_file):
     # Create the forces
     forces = tacs.createVec()
     force_array = forces.getArray()
-    force_array[2::6] += 100.0  # uniform load in z direction
+    # force_array[2::6] += 100.0  # uniform load in z direction
+    x = xpts_arr[0::3]
+    y = xpts_arr[0::3]
+    r = np.sqrt(x**2 + y**2)
+    force_array[2::6] += 100.0 * np.sin(3 * np.pi * x)
+    # force_array[2::6] += 100.0 * np.sin(3 * np.pi * r)
     tacs.applyBCs(forces)
 
     # Assemble the Jacobian and factor
@@ -98,6 +103,7 @@ def delete_rows_and_columns(A, dof=None):
     cols = []
     data = []
 
+    # inverse map from full dof => red dof
     indices = -np.ones(A.shape[0])
     indices[dof] = np.arange(len(dof))
 
@@ -154,6 +160,26 @@ def plot_vec_compare(nxe, old_defect, new_defect, sort_fw_map, filename=None, no
     fig, ax = plt.subplots(1, 2, figsize=(13, 7), subplot_kw={'projection': '3d'})
     plot_plate_vec(nxe=nxe, vec=old_defect, ax=ax[0], sort_fw=sort_fw_map, nodal_dof=nodal_dof)
     plot_plate_vec(nxe=nxe, vec=new_defect, ax=ax[1], sort_fw=sort_fw_map, nodal_dof=nodal_dof)
+
+    if filename is None:
+        plt.show()
+    else:
+        plt.savefig(filename)
+
+def plot_vec_compare_all(nxe, old_defect, new_defect, sort_fw_map, filename=None):
+    from mpl_toolkits.mplot3d import Axes3D  # This import registers the 3D projection, even if not used directly.
+    plot_init()
+    fig, ax = plt.subplots(2, 3, figsize=(26, 8), subplot_kw={'projection': '3d'})
+
+    # only w, thy, thz are coupled for shell + plate (plotted all six before)
+    for idof in [2,3,4]:
+        plot_plate_vec(nxe=nxe, vec=old_defect, ax=ax[0,idof-2], sort_fw=sort_fw_map, nodal_dof=idof)
+        plot_plate_vec(nxe=nxe, vec=new_defect, ax=ax[1,idof-2], sort_fw=sort_fw_map, nodal_dof=idof)
+    ax[0,0].set_title("w")
+    ax[0,1].set_title("thx")
+    ax[0,2].set_title("thy")
+
+    plt.tight_layout()
 
     if filename is None:
         plt.show()
@@ -252,6 +278,8 @@ def sort_vis_maps(nxe, xpts, free_dof):
     nfree = 6 * N
     x, y = xpts[0::3], xpts[1::3]
     node_sort_map = np.lexsort((y, x))  # lexsort uses last index first, so (y, x) gives x primary, y secondary
+    # temp if don't want to resort basically
+    # node_sort_map = np.arange(node_sort_map.shape[0])
     inv_node_sort_map = np.empty_like(node_sort_map)
     inv_node_sort_map[node_sort_map] = np.arange(N)
 
@@ -270,7 +298,7 @@ def sort_vis_maps(nxe, xpts, free_dof):
 
     return sort_free_fw_map, sort_free_bk_map
 
-def mg_coarse_fine_operators(nxe_fine, sort_bk_fine, sort_bk_coarse):
+def mg_coarse_fine_operators(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
     """include a bit of reordering in the Ifc and Icf operators, also we first include then remove the bcs.."""
 
     nxe_coarse = nxe_fine // 2
@@ -348,8 +376,15 @@ def mg_coarse_fine_operators(nxe_fine, sort_bk_fine, sort_bk_coarse):
 
     # plt.imshow(I_fc)
     # plt.show()
+
+    # remove bcs for case where we kept them
+    if bcs_list is not None:
+        bcs_fine = np.array(bcs_list[0])
+        bcs_coarse = np.array(bcs_list[1])
+        I_fc[bcs_coarse,:] *= 0.0
+        I_fc[:,bcs_fine] *= 0.0
     
     # coarse to fine is transpose operator
-    I_cf = I_fc.T * 4 # why the *4 though? for 2^d?
+    I_cf = I_fc.T * 4
 
     return I_cf, I_fc
