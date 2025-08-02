@@ -264,10 +264,12 @@ def get_bcs(nxe):
 
             if ix in [0, nx-1] or iy in [0, nx-1]:
                 bcs += [3 * inode]
-            elif ix in [0, nx-1]:
-                bcs += [3 * inode + 2] # theta y = 0 on y=const edge
-            elif iy in [0, nx-1]:
-                bcs += [3 * inode + 1] # theta x = 0 on x=const edge
+            
+            if ix in [0, nx-1]:
+                bcs += [3 * inode + 1] # theta y = 0 on y=const edge
+
+            if iy in [0, nx-1]:
+                bcs += [3 * inode + 2] # theta x = 0 on x=const edge
     return bcs
 
 def apply_bcs(nxe, K, F):
