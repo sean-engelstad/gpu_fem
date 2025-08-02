@@ -1,5 +1,5 @@
 from src.assembler import *
-from src.linalg import ILU0Preconditioner, pcg, gauss_seidel_csr
+from src.linalg import ILU0Preconditioner, pcg, gauss_seidel_csr, block_gauss_seidel
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.sparse.linalg import spsolve
@@ -133,18 +133,22 @@ for i_vcycle in range(20):
         ct += 1
 
         # get operators for this level (and to level below)
-        lhs = mat_list[i_level]
+        lhs = mat_list[i_level].copy()
 
         if i_level < n_levels - 1: # then smoothing
             # pre-smooth solution
             _x0 = np.zeros(lhs.shape[0])
             # TBD : could I use ILU(0) here? or some PCG version of ILU(0) right precond?
-            x_update = gauss_seidel_csr(lhs, defect, _x0, num_iter=3)
+            # x_update = gauss_seidel_csr(lhs, defect, _x0, num_iter=3)
+            x_update = block_gauss_seidel(lhs, defect, _x0, num_iter=3, ndof=3)
             
             # restrict the defect (rhs error or current resid) to the coarse grid
             old_defect = defect.copy()
             _defect = defect - lhs @ x_update
             defect_list += [_defect.copy()]
+
+            plate_list[i_level].plot_vectors(defect, _defect, filename=None)
+            exit()
 
             plate_list[i_level].plot_vector(defect, 
                         # filename=None)
@@ -154,8 +158,8 @@ for i_vcycle in range(20):
                         # filename=None)
                         filename=f"{folder}/{ct}_down{i_level}_2smooth.svg")
             
-            # diff = _defect - defect
-            # plate_list[i_level].plot_vector(diff, filename=None)
+            diff = _defect - defect
+            plate_list[i_level].plot_vector(diff, filename=None)
 
             # coarsen here (TODO : why is the smoothing then messing up my coarse fine operator?)
             # must have something to do with the rot DOF.. something is still wonky..
@@ -238,7 +242,8 @@ for i_vcycle in range(20):
 
         # do a post-smoothing and update the update at this level
         _x0 = np.zeros(lhs.shape[0])
-        _update = gauss_seidel_csr(lhs, start_defect, _x0, num_iter=3)
+        # _update = gauss_seidel_csr(lhs, start_defect, _x0, num_iter=3)
+        _update = block_gauss_seidel(lhs, start_defect, _x0, num_iter=3, ndof=3)
 
         x_update = _update + fine_update
 

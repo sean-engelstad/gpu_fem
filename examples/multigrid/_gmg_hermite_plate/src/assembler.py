@@ -72,9 +72,12 @@ class PlateAssembler:
         for iy in range(self.nny):
             for ix in range(self.nnx):
                 inode = iy * self.nnx + ix
-                w_idof = 3 * inode
                 if ix == 0 or ix == self.nnx - 1 or iy == 0 or iy == self.nny-1:
-                    self.bcs += [w_idof]
+                    self.bcs += [3 * inode]
+                if iy == 0 or iy == self.nny - 1: # x edge with y=const
+                    self.bcs += [3 * inode + 1] # dw/dx = 0
+                if ix == 0 or ix == self.nnx - 1: # y edge with x=const
+                    self.bcs += [3 * inode + 2] # dw/dy = 0
         self.bcs = np.array(self.bcs)
 
         # also define finer grid bcs for multigrid (TODO : should we also apply rot bcs on boundary? for multigrid)
@@ -85,6 +88,10 @@ class PlateAssembler:
                 w_idof = 3 * inode
                 if ix == 0 or ix == 2 * self.nnx - 2 or iy == 0 or iy == 2 * self.nny - 2:
                     self.fine_bcs += [w_idof]
+                if iy == 0 or iy == 2 * self.nny - 2: # x edge with y=const
+                    self.fine_bcs += [3 * inode + 1] # dw/dx = 0
+                if ix == 0 or ix == 2 * self.nnx - 2: # y edge with x=const
+                    self.fine_bcs += [3 * inode + 2] # dw/dy = 0
         self.fine_bcs = np.array(self.fine_bcs)
         # print(F"{np.max(self.fine_bcs)=} {self.num_fine_dof=}")
     
@@ -432,6 +439,8 @@ class PlateAssembler:
         """go to a finer mesh than this one (so coarse is this mesh size).."""
         assert(self.nxe == self.nye) # TBD only do square grid right now easier
 
+        in_vec = in_vec.copy()
+
         if fine_out:
             out_vec = np.zeros(self.num_fine_dof)
         else:
@@ -439,6 +448,15 @@ class PlateAssembler:
         nxe_fine = self.nxe * 2
         nx_fine = nxe_fine + 1
         nx_coarse = self.nxe + 1
+
+        # need to rescale by mesh size change first so that the interp goes well
+        # if fine_out:
+        #     # r = 4.0
+        #     r = 3.0
+        #     # r = 2.0
+        #     # r = 0.5
+        #     in_vec[1::3] *= r
+        #     in_vec[2::3] *= r
 
         nnodes_fine = self.num_fine_dof // 3
 
@@ -475,9 +493,9 @@ class PlateAssembler:
                         if idof == 0:
                             coeff = hermite_cubic_2d(ibasis, xi, eta)
                         elif idof == 1:
-                            coeff = get_gradient(ibasis, xi, eta, xscale=self.dx, yscale=self.dy)[0]
+                            coeff = get_gradient(ibasis, xi, eta, xscale=1.0, yscale=1.0)[0] # no xscale (since w_x DOF is actually w_xi in hermite cubic)
                         else: # idof == 2
-                            coeff = get_gradient(ibasis, xi, eta, xscale=self.dx, yscale=self.dy)[1]
+                            coeff = get_gradient(ibasis, xi, eta, xscale=1.0, yscale=1.0)[1]
 
                         out_vec[idof_out] += in_vec[idof_in] * coeff
                     
@@ -504,9 +522,9 @@ class PlateAssembler:
                             if idof == 0:
                                 coeff = hermite_cubic_2d(ibasis, xi, eta)
                             elif idof == 1:
-                                coeff = get_gradient(ibasis, xi, eta, xscale=self.dx, yscale=self.dy)[0]
+                                coeff = get_gradient(ibasis, xi, eta, xscale=1.0, yscale=1.0)[0] # no xscale (since w_x DOF is actually w_xi in hermite cubic)
                             else: # idof == 2
-                                coeff = get_gradient(ibasis, xi, eta, xscale=self.dx, yscale=self.dy)[1]
+                                coeff = get_gradient(ibasis, xi, eta, xscale=1.0, yscale=1.0)[1]
 
                             out_vec[idof_out] += in_vec[idof_in] * coeff * 0.5 # since two elements considered
 
@@ -533,9 +551,9 @@ class PlateAssembler:
                             if idof == 0:
                                 coeff = hermite_cubic_2d(ibasis, xi, eta)
                             elif idof == 1:
-                                coeff = get_gradient(ibasis, xi, eta, xscale=self.dx, yscale=self.dy)[0]
+                                coeff = get_gradient(ibasis, xi, eta, xscale=1.0, yscale=1.0)[0] # no xscale (since w_x DOF is actually w_xi in hermite cubic)
                             else: # idof == 2
-                                coeff = get_gradient(ibasis, xi, eta, xscale=self.dx, yscale=self.dy)[1]
+                                coeff = get_gradient(ibasis, xi, eta, xscale=1.0, yscale=1.0)[1]
 
                             out_vec[idof_out] += in_vec[idof_in] * coeff * 0.5 # since two elements considered
 
@@ -544,6 +562,21 @@ class PlateAssembler:
             out_vec[self.fine_bcs] = 0.0
         else:
             out_vec[self.bcs] = 0.0
+
+        # rescale rot DOF since they are w_xi and w_eta and scale by changed mesh size with hermite cubic here
+        # this is something particular only to hermite cubic (not shells where all DOF are physical quantities)
+        # to coarse works well, but to fine isn't scaling that well?
+
+        if not fine_out: # coarsen
+            out_vec *= 0.25 # cause accumulates from 4 values going down
+
+
+        # if fine_out: # means we are increasing mesh size, scale down by 2x the rot DOF
+        #     out_vec[1::3] *= 0.5
+        #     # out_vec[2::3] *= 0.5
+        # else: # decreasing mesh size, scale up the ROT dof
+        #     out_vec[1::3] *= 2.0
+        #     # out_vec[2::3] *= 2.0
 
         return out_vec
 
@@ -702,6 +735,35 @@ class PlateAssembler:
         )
         cb = fig.colorbar(cf, ax=ax, format=FormatStrFormatter(format_str)) # can change string format as needed
         cb.set_label("w(x,y)")
+        fig.set_dpi(dpi)
+
+        if filename is None:
+            plt.show() 
+        else:
+            plt.savefig(filename, dpi=dpi)    
+            plt.close('all')
+    
+    def plot_vectors(self, vec1, vec2, filename:str=None, figsize=(10, 7), dpi:int=100, format_str="%.1e"):
+        """plot the transverse disp w(x,y)"""
+
+        plot_init()
+        fig, axs = plt.subplots(2, 3, figsize=(15, 8))  # Create a 2x3 grid of subplots
+
+        for i in range(2):
+            for j in range(3):
+                vec = vec1 if i == 0 else vec2
+                ax = fig.add_subplot(2, 3, i*3 + j + 1, projection='3d')
+
+                cf = self._plot_field_on_ax(
+                    field=vec[j::3], # plot only w DOF first
+                    ax=ax,
+                    log_scale=False,
+                    cmap='turbo',
+                    surface=True,
+                    elem_to_node_convert=False,
+                )
+                cb = fig.colorbar(cf, ax=ax, format=FormatStrFormatter(format_str)) # can change string format as needed
+                # cb.set_label("w(x,y)")
         fig.set_dpi(dpi)
 
         if filename is None:

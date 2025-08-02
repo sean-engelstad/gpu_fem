@@ -34,6 +34,7 @@ remove_bcs = False
 # thickness = 1.0
 thickness = 0.1
 # thickness = 0.02 # still somewhat thick..
+# thickness = 0.001
 
 # yes the singularity is causing poor scaling and smoothing qualities
 # need to think about block / coupled smoothing steps..
@@ -43,7 +44,7 @@ nxe_list = [16, 8, 4]
 # nxe_list = [4,2]
 
 for nxe in nxe_list:
-    _tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"plate{nxe}.bdf", thickness=thickness)
+    _tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"in/plate{nxe}.bdf", thickness=thickness)
     _tacs_csr_mat = _tacs_bsr_mat.tocsr()
 
     _nnodes = _xpts.shape[0] // 3
@@ -79,7 +80,7 @@ for nxe in nxe_list:
     rhs_list += [_rhs.copy()]
 
 """plot and solve the original res error"""
-mat, rhs, sort_fw, sort_bk = tacs_csr_mat_list[0], rhs_list[0], sort_fw_map_list[0], sort_bk_map_list[0]
+mat, rhs, sort_fw, sort_bk = tacs_csr_mat_list[0].copy(), rhs_list[0].copy(), sort_fw_map_list[0], sort_bk_map_list[0]
 nfree = sort_bk.shape[0]
 nnodes = nfree // 6
 nxe, N = int(nnodes**0.5) - 1, rhs.shape[0] # here N is the # DOF after bc removal
@@ -157,7 +158,7 @@ import os
 
 last_ovr_defect = defect.copy()
 
-for i_vcycle in range(20):
+for i_vcycle in range(15):
 
     folder = f"out/vcyc_{i_vcycle}"
     if not os.path.exists(folder):
@@ -225,17 +226,40 @@ for i_vcycle in range(20):
 
         # interpolate the correction
         # print(f"{_coarse_update.shape=} {Icf.shape=}")
-        cf_update = np.dot(Icf, _coarse_update) 
-        # add correction from this level to coarser update
-        fine_update = x_update_list[i_level] + cf_update
+        _cf_update = np.dot(Icf, _coarse_update) 
 
+        # NOTE : new line search strategy here.. (to get magnitude of update righ   t)
+        defect = defect_list[i_level].copy()
+        nrm0 = np.linalg.norm(defect)
+
+        # TODO : try doing separate line search updates for the translation vs rot DOF (see if that helps)
+        # first translational DOF
+        cf_update = _cf_update.copy()
+        for i in range(3,6):
+            cf_update[i::6] *= 0.0
+        omega = np.dot(cf_update, defect) / np.dot(lhs.dot(cf_update), cf_update)
+        cf_update *= omega # comment out to change scaling
+        fine_update = x_update_list[i_level] + cf_update
+        start_defect = defect - lhs @ cf_update
+        nrm1 = np.linalg.norm(start_defect)
+
+        # then do rot DOF
+        cf_update = _cf_update.copy()
+        for i in range(3):
+            cf_update[i::6] *= 0.0
+        omega = np.dot(cf_update, start_defect) / np.dot(lhs.dot(cf_update), cf_update)
+        cf_update *= omega # comment out to change scaling
+        # cf_update *= -1 #
+        fine_update = fine_update + cf_update
+        start_defect = start_defect - lhs @ cf_update
+        nrm2 = np.linalg.norm(start_defect)
+
+        print(f"{nrm0=:.3e} {nrm1=:.3e} {nrm2=:.3e}")
+        exit()
+
+        # plot to check the update now
         plot_vec_compare_all(nxe_list[i_level], x_update_list[i_level], fine_update, sort_fw_map=sort_fw_map_list[i_level], 
                          filename=f"{folder}/{ct}_up{i_level}_design.svg")
-
-        defect = defect_list[i_level].copy()
-        start_defect = defect - lhs @ cf_update
-
-        
 
         # TEMP DEBUG: zero out all error outside the w DOF
         if zero_non_w_dof:
@@ -277,6 +301,7 @@ for i_vcycle in range(20):
 
     if res_norm < (init_res_norm * 1e-7 + 1e-8):
         print(f"\tvcycle multigrid converged in {i_vcycle+1} steps")
+        break
 
     last_ovr_defect = defect.copy()
     last_res_norm = res_norm
@@ -286,8 +311,9 @@ for i_vcycle in range(20):
 
 # now check the solution against the true soln
 print("final multigrid results:\n")
+mat, rhs = tacs_csr_mat_list[0], rhs_list[0]
 final_res = rhs - mat.dot(x)
 final_res_norm = np.linalg.norm(final_res)
 print(f"{init_res_norm=:.3e} => {final_res_norm=:.3e}")
-plot_vec_compare(c_nxe, final_res.copy(), x.copy(), sort_fw_map=sort_fw_map_list[0], 
+plot_vec_compare_all(c_nxe, final_res.copy(), x.copy(), sort_fw_map=sort_fw_map_list[0], 
                          filename=f"out/_ovr.svg")

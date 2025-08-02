@@ -57,7 +57,8 @@ def get_tacs_matrix(bdf_file, thickness:float=0.02):
     x = xpts_arr[0::3]
     y = xpts_arr[0::3]
     r = np.sqrt(x**2 + y**2)
-    force_array[2::6] += 100.0 * np.sin(3 * np.pi * x)
+    force_array[2::6] += 100.0 # simple loading first
+    # force_array[2::6] += 100.0 * np.sin(3 * np.pi * x)
     # force_array[2::6] += 100.0 * np.sin(3 * np.pi * r)
     tacs.applyBCs(forces)
 
@@ -169,7 +170,7 @@ def plot_vec_compare(nxe, old_defect, new_defect, sort_fw_map, filename=None, no
 def plot_vec_compare_all(nxe, old_defect, new_defect, sort_fw_map, filename=None):
     from mpl_toolkits.mplot3d import Axes3D  # This import registers the 3D projection, even if not used directly.
     plot_init()
-    fig, ax = plt.subplots(2, 3, figsize=(26, 8), subplot_kw={'projection': '3d'})
+    fig, ax = plt.subplots(2, 3, figsize=(20, 8), subplot_kw={'projection': '3d'})
 
     # only w, thy, thz are coupled for shell + plate (plotted all six before)
     for idof in [2,3,4]:
@@ -298,8 +299,9 @@ def sort_vis_maps(nxe, xpts, free_dof):
 
     return sort_free_fw_map, sort_free_bk_map
 
-def mg_coarse_fine_operators(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
+def mg_coarse_fine_operators_v1(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
     """include a bit of reordering in the Ifc and Icf operators, also we first include then remove the bcs.."""
+    # this v1 uses same stencil as Poisson's problem
 
     nxe_coarse = nxe_fine // 2
     nxc = nxe_coarse + 1
@@ -387,4 +389,246 @@ def mg_coarse_fine_operators(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=No
     # coarse to fine is transpose operator
     I_cf = I_fc.T * 4
 
+    return I_cf, I_fc
+
+def mg_coarse_fine_operators_v2(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
+    """include a bit of reordering in the Ifc and Icf operators, also we first include then remove the bcs.."""
+    # uses the FEA Lagrange basis of quad elements (needs to match FEA basis to get disps coarse to fine with consistent loads)
+    # 1st order interp is not sufficient to give accurate 2nd derivs or forces for bending (ahh, maybe axial would be fine, but not bending..)
+
+    nxe_coarse = nxe_fine // 2
+    nxc = nxe_coarse + 1
+    nxf = nxe_fine + 1
+    Nc = nxc**2
+    Nf = nxf**2
+    # assumes it does have bcs here..
+    Nc_dof = Nc * 6
+    Nf_dof = Nf * 6
+
+    # first include all nodes, then we'll remove the 
+    I_cf = np.zeros((Nf_dof, Nc_dof)) # coarse to fine
+
+    for i_c in range(Nc_dof):
+        # coarse point
+        idof = i_c % 6
+        inode_c = i_c // 6
+        iyc = inode_c // nxc
+        ixc = inode_c % nxc
+
+        # corresponding fine point
+        ixf = 2 * ixc
+        iyf = 2 * iyc
+        inode_f = nxf * iyf + ixf
+        i_f = 6 * inode_f + idof
+
+        # lagrange interpolated basis
+
+        # fine and coarse node match
+        I_cf[i_f, i_c] = 1.0
+
+        if ixc < nxc - 1:
+            # fine node half-way to right
+            I_cf[i_f + 6, i_c] = 0.5
+            I_cf[i_f + 6, i_c + 6] = 0.5
+
+        if iyc < nxc - 1:
+            # fine node half-way up
+            I_cf[i_f + 6 * nxf, i_c] = 0.5
+            I_cf[i_f + 6 * nxf, i_c + 6 * nxc] = 0.5  
+
+        if ixc < nxc - 1 and iyc < nxc - 1:
+            # fine node half to right and half up
+            _if = i_f + 6 * nxf + 6
+            I_cf[_if, i_c] = 0.25
+            I_cf[_if, i_c + 6] = 0.25
+            I_cf[_if, i_c + 6 * nxc] = 0.25
+            I_cf[_if, i_c + 6 * nxc + 6] = 0.25  
+
+    # remove bcs and apply sorting (since the I_fc currently is perfectly sorted)
+    I_cf_0 = I_cf.copy() # fine to coarse mapping
+
+    nc_keep = np.sum(sort_bk_coarse != -1)
+    nf_keep = np.sum(sort_bk_fine != -1)
+    I_cf = np.zeros((nf_keep, nc_keep))
+
+    # print(f"{nf_keep=} {Nf_dof=}")
+
+    for i_c in range(Nc_dof):
+        i2_c = sort_bk_coarse[i_c]
+        if i2_c == -1: continue
+
+        for i_f in range(Nf_dof):
+            i2_f = sort_bk_fine[i_f]
+            if i2_f == -1: continue
+
+            # now copy from old mapping operator
+            I_cf[i2_f, i2_c] = I_cf_0[i_f, i_c]
+
+    # plt.imshow(I_fc)
+    # plt.show()
+
+    # remove bcs for case where we kept them
+    if bcs_list is not None:
+        bcs_fine = np.array(bcs_list[0])
+        bcs_coarse = np.array(bcs_list[1])
+        I_cf[bcs_fine,:] *= 0.0
+        I_cf[:,bcs_coarse] *= 0.0
+    
+    # coarse to fine is transpose operator
+    I_fc = I_cf.T
+
+    return I_cf, I_fc
+
+def mg_coarse_fine_operators_v3(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
+    """
+    Uses quadratic Lagrange interpolation (2nd order) from coarse to fine for quad shell elements with 6 DOFs per node.
+    Improves accuracy of interpolated fine displacements and resulting fine nodal forces.
+    """
+    nxe_coarse = nxe_fine // 2
+    nxc = nxe_coarse + 1
+    nxf = nxe_fine + 1
+    Nc = nxc**2
+    Nf = nxf**2
+    Nc_dof = Nc * 6
+    Nf_dof = Nf * 6
+
+    I_cf_full = np.zeros((Nf_dof, Nc_dof))
+
+    def quadratic_weights(xi):
+        """Lagrange weights for xi in [0, 1]"""
+        return np.array([0.5 * xi * (xi - 1), (1 - xi**2), 0.5 * xi * (xi + 1)])
+
+    for iyf in range(nxf):
+        for ixf in range(nxf):
+            inode_f = iyf * nxf + ixf
+            for idof in range(6):
+                i_f = 6 * inode_f + idof
+
+                # physical coordinates in coarse mesh units
+                x_coarse = ixf / 2.0
+                y_coarse = iyf / 2.0
+
+                # center index of the stencil in coarse grid
+                ixc = int(np.floor(x_coarse))
+                iyc = int(np.floor(y_coarse))
+
+                xi = x_coarse - ixc
+                eta = y_coarse - iyc
+
+                wx = quadratic_weights(xi)
+                wy = quadratic_weights(eta)
+
+                for dy in range(-1, 2):
+                    for dx in range(-1, 2):
+                        jxc = ixc + dx
+                        jyc = iyc + dy
+                        if 0 <= jxc < nxc and 0 <= jyc < nxc:
+                            inode_c = jyc * nxc + jxc
+                            i_c = 6 * inode_c + idof
+
+                            wx_idx = dx + 1
+                            wy_idx = dy + 1
+                            weight = wx[wx_idx] * wy[wy_idx]
+
+                            I_cf_full[i_f, i_c] += weight
+
+    # Apply sorting and BCs
+    nc_keep = np.sum(sort_bk_coarse != -1)
+    nf_keep = np.sum(sort_bk_fine != -1)
+    I_cf = np.zeros((nf_keep, nc_keep))
+
+    for i_c in range(Nc_dof):
+        i2_c = sort_bk_coarse[i_c]
+        if i2_c == -1:
+            continue
+        for i_f in range(Nf_dof):
+            i2_f = sort_bk_fine[i_f]
+            if i2_f == -1:
+                continue
+            I_cf[i2_f, i2_c] = I_cf_full[i_f, i_c]
+
+    if bcs_list is not None:
+        bcs_fine = np.array(bcs_list[0])
+        bcs_coarse = np.array(bcs_list[1])
+        I_cf[bcs_fine, :] *= 0.0
+        I_cf[:, bcs_coarse] *= 0.0
+
+    I_fc = I_cf.T
+    return I_cf, I_fc
+
+def mg_coarse_fine_operators_v4(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
+    """
+    Uses quartic Lagrange interpolation (4th order) from coarse to fine for quad shell elements with 6 DOFs per node.
+    Accurate for bending-dominated or thin shell cases.
+    """
+    nxe_coarse = nxe_fine // 2
+    nxc = nxe_coarse + 1
+    nxf = nxe_fine + 1
+    Nc = nxc**2
+    Nf = nxf**2
+    Nc_dof = Nc * 6
+    Nf_dof = Nf * 6
+
+    I_cf_full = np.zeros((Nf_dof, Nc_dof))
+
+    def lagrange_weights(x_nodes, x_eval):
+        n = len(x_nodes)
+        w = np.ones(n)
+        for j in range(n):
+            for k in range(n):
+                if j != k:
+                    w[j] *= (x_eval - x_nodes[k]) / (x_nodes[j] - x_nodes[k])
+        return w
+
+    for iyf in range(nxf):
+        for ixf in range(nxf):
+            inode_f = iyf * nxf + ixf
+            for idof in range(6):
+                i_f = 6 * inode_f + idof
+
+                # fine node in coarse grid coordinates
+                x_fine = ixf / 2.0
+                y_fine = iyf / 2.0
+
+                ixc = int(np.floor(x_fine)) - 2  # 5-point stencil centered
+                iyc = int(np.floor(y_fine)) - 2
+
+                x_nodes = [ixc + i for i in range(5)]
+                y_nodes = [iyc + j for j in range(5)]
+
+                wx = lagrange_weights(x_nodes, x_fine)
+                wy = lagrange_weights(y_nodes, y_fine)
+
+                for dy in range(5):
+                    for dx in range(5):
+                        jxc = x_nodes[dx]
+                        jyc = y_nodes[dy]
+                        if 0 <= jxc < nxc and 0 <= jyc < nxc:
+                            inode_c = jyc * nxc + jxc
+                            i_c = 6 * inode_c + idof
+                            weight = wx[dx] * wy[dy]
+                            I_cf_full[i_f, i_c] += weight
+
+    # Apply sorting and BCs
+    nc_keep = np.sum(sort_bk_coarse != -1)
+    nf_keep = np.sum(sort_bk_fine != -1)
+    I_cf = np.zeros((nf_keep, nc_keep))
+
+    for i_c in range(Nc_dof):
+        i2_c = sort_bk_coarse[i_c]
+        if i2_c == -1:
+            continue
+        for i_f in range(Nf_dof):
+            i2_f = sort_bk_fine[i_f]
+            if i2_f == -1:
+                continue
+            I_cf[i2_f, i2_c] = I_cf_full[i_f, i_c]
+
+    if bcs_list is not None:
+        bcs_fine = np.array(bcs_list[0])
+        bcs_coarse = np.array(bcs_list[1])
+        I_cf[bcs_fine, :] *= 0.0
+        I_cf[:, bcs_coarse] *= 0.0
+
+    I_fc = I_cf.T
     return I_cf, I_fc

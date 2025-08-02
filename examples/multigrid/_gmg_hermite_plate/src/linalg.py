@@ -29,6 +29,53 @@ def gauss_seidel_csr(A, b, x0, num_iter=1):
                     sum_ += Av[idx] * x[j]
             x[i] = (b[i] - sum_) / diag
     return x
+
+def block_gauss_seidel(A, b: np.ndarray, x0: np.ndarray, num_iter=1, ndof:int=3):
+    """
+    Perform Block Gauss-Seidel smoothing for 3 DOF per node.
+    A: csr_matrix of size (3*nnodes, 3*nnodes)
+    b: RHS vector (3*nnodes,)
+    x0: initial guess (3*nnodes,)
+    num_iter: number of smoothing iterations
+    Returns updated solution vector x
+    """
+    x = x0.copy()
+    n = A.shape[0] // ndof
+
+    for it in range(num_iter):
+        for i in range(n):
+            row_block_start = i * ndof
+            row_block_end = (i + 1) * ndof
+
+            # Initialize block and RHS
+            Aii = np.zeros((ndof, ndof))
+            rhs = b[row_block_start:row_block_end].copy()
+
+            for row_local, row in enumerate(range(row_block_start, row_block_end)):
+                for idx in range(A.indptr[row], A.indptr[row + 1]):
+                    col = A.indices[idx]
+                    val = A.data[idx]
+
+                    j = col // ndof
+                    dof_j = col % ndof
+
+                    col_block_start = j * ndof
+                    col_block_end = (j + 1) * ndof
+
+                    if j == i:
+                        Aii[row_local, dof_j] = val  # Fill local diag block
+                    else:
+                        rhs[row_local] -= val * x[col]
+
+            # Check for singular or ill-conditioned diagonal block
+            try:
+                x[row_block_start:row_block_end] = np.linalg.solve(Aii, rhs)
+            except np.linalg.LinAlgError:
+                print(f"Warning: singular block at node {i}, skipping update.")
+                continue
+
+    return x
+
 class ILU0Preconditioner:
     def __init__(self, A: sp.csr_matrix, dof_per_node=3):
         """
