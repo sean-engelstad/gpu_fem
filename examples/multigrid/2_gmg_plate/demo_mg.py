@@ -247,11 +247,13 @@ print(f"{defect_means=}")
 additive = False # multiplicative
 # can't choose as many subdomains here cause it's so small a mesh?
 as_smoother = SchwarzSmoother(K, nx_sd=4, overlap_frac=0.1, additive=additive)
+as_smoother.set_material(E, nu, thick)
 for i in range(as_smoother.nx_sd):
     ix_no = as_smoother._get_1d_domain(ix_sd=i)
-    # print(f"{nxe=} {i=} {ix_no=}")
-nodes_list = as_smoother.sd_nodes_list
-# print(f"{nodes_list=}")
+    print(f"{nxe=} {i=} {ix_no=}")
+#nodes_list = as_smoother.sd_nodes_list
+#print(f"{nodes_list=}")
+# exit()
 
 # plot each subdomain (debug to make sure subdomains properly overlap and everything)
 # M_sd = np.zeros((nx, nx), dtype=np.int32)
@@ -279,6 +281,8 @@ omega_as = 0.5 # damping factor for additive schwarz
 du, defect_2 = as_smoother.multi_smooth(defect, np.zeros(ndof), num_smooth=1, omega=omega_as)
 defect_2_check = np.dot(K, du)
 
+# exit()
+
 plot_defect_change(nx, defect, du, defect_2)
 plot_defect_change(nx, defect_2, du, defect_2_check)
 exit()
@@ -296,9 +300,11 @@ R = P.T # restriction operator
 additive = True
 # additive = False
 ss_f = SchwarzSmoother(K_f, nx_sd=4, overlap_frac=0.1, additive=additive)
+ss_f.set_material(E, nu, thick)
 
 # multiplicative schwarz smoother for smoothing boundary
 ssm_f = SchwarzSmoother(K_f, nx_sd=4, overlap_frac=0.1, additive=False)
+ssm_f.set_material(E, nu, thick)
 
 defect_0 = F.copy()
 u_f_0 = np.zeros(ndof)

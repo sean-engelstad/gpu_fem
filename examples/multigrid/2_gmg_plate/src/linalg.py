@@ -89,6 +89,12 @@ class SchwarzSmoother:
         self._nxe_sd_wo = self._nxe_sd_no * overlap_frac # with overlap part each side (overlap only though)
         self.nx_sd_wo = self._nxe_sd_wo + 1
         self.N_sd = nx_sd**2
+        self.h = 1.0 / self.nxe
+
+        self.E, self.nu, self.thick = None, None, None
+
+    def set_material(self, E, nu, thick):
+        self.E, self.nu, self.thick = E, nu, thick
 
     def _get_1d_domain(self, ix_sd):
         """get the start and stop nodes for 1d subdomain"""
@@ -128,8 +134,8 @@ class SchwarzSmoother:
         return sd_nodes[bndry_mask]
     
     def _node_to_dof_list(self, node_list):
-        # return np.array([3*inode+idof for inode in node_list for idof in range(3)])
-        return np.array([3*inode+idof for inode in node_list for idof in range(1)]) # here try just w dof constrained on schwarz subdomains
+        return np.array([3*inode+idof for inode in node_list for idof in range(3)])
+        # return np.array([3*inode+idof for inode in node_list for idof in range(1)]) # here try just w dof constrained on schwarz subdomains
     
     def _get_bndry_sd_dof(self, sd_dof, bndry_dof):
         bndry_sd_dof = []
@@ -137,6 +143,85 @@ class SchwarzSmoother:
             if inode in bndry_dof:
                 bndry_sd_dof += [i]
         return np.array(bndry_sd_dof)
+    
+    def _add_weak_moment_lhs(self, K_sd, b_sd, sd_nodes, c_xvals):
+        """add weak moment bc penalty to the lhs and rhs for (normal moments Dirichlet)"""
+
+        from ._dkt_plate_elem import get_weak_moment_kelem_felem
+
+        assert(self.E)
+
+        # get the bndry ix and iy coords
+        ix_list, iy_list = sd_nodes % self.nx, sd_nodes // self.nx
+        ix_min, ix_max = np.min(ix_list), np.max(ix_list)
+        iy_min, iy_max = np.min(iy_list), np.max(iy_list)
+        nx_red = ix_max - ix_min + 1
+        # print(f"{nx_red=}")
+
+        irt3 = 1.0 / np.sqrt(3)
+        pt1, pt2 = 0.5 * (1 - irt3), 0.5 * (1 + irt3)
+
+        for bndry_ind in range(4):
+            # print(f"{bndry_ind=} \n-----------------\n")
+
+            # quadpt weights are just 1, 1 each time with two-point quadrature
+
+            if bndry_ind == 0: # xleft bndry, ix == ix_min
+                ix_list, iy_list = [ix_min], [_ for _ in range(iy_min, iy_max)]
+                xi_list, eta_list = [0.0], [pt1, pt2]
+                x_elem = self.h * np.array([0.0, 1.0, 0.0])
+                y_elem = self.h * np.array([0.0, 0.0, 1.0])
+
+            elif bndry_ind == 1: # xright bndry, ix == ix_max
+                ix_list, iy_list = [ix_max], [_ for _ in range(iy_min, iy_max)]
+                xi_list, eta_list = [pt1, pt2], [0.0]
+                x_elem = self.h * np.array([1.0, 1.0, 0.0])
+                y_elem = self.h * np.array([0.0, 1.0, 1.0])
+
+            elif bndry_ind == 2: # ybot bndry, iy == iy_min
+                ix_list, iy_list = [_ for _ in range(ix_min, ix_max)], [iy_min]
+                xi_list, eta_list = [pt1, pt2], [0.0]
+                x_elem = self.h * np.array([0.0, 1.0, 0.0])
+                y_elem = self.h * np.array([0.0, 0.0, 1.0])
+
+            else: # ytop bndry, iy == iy_max
+                ix_list, iy_list = [_ for _ in range(ix_min, ix_max)], [iy_min]
+                xi_list, eta_list = [0.0], [pt1, pt2]
+                x_elem = self.h * np.array([1.0, 1.0, 0.0])
+                y_elem = self.h * np.array([0.0, 1.0, 1.0])
+
+            # print(F"{ix_min=} {ix_max=} {iy_min=} {iy_max=}")
+            # import matplotlib.pyplot as plt
+
+            # main part now
+            for ix in ix_list:
+                for iy in iy_list:
+                    for xi in xi_list:
+                        for eta in eta_list:
+                            
+                            # print(f"{ix=} {iy=} {xi=} {eta=}")
+                            inode = nx_red * (iy - iy_min) + (ix-ix_min)
+                            inode_glob = self.nx * iy + ix
+
+                            elem_nodes = [inode_glob, inode_glob+1, inode_glob+self.nx] if bndry_ind in [0, 2] else [inode_glob, inode_glob+self.nx, inode_glob + self.nx - 1]
+                            elem_dof = np.array([3*_inode+_idof for _inode in elem_nodes for _idof in range(3)])
+                            elem_vals = c_xvals[elem_dof]
+                            Mn_kelem_term, Mn_felem_term = get_weak_moment_kelem_felem(elem_vals, self.E, self.thick, self.nu, x_elem, y_elem, xi=xi, eta=eta)
+                            
+                            elem_nodes_red = [inode, inode+1, inode+nx_red] if bndry_ind in [0, 2] else [inode, inode + nx_red, inode+nx_red-1]
+                            elem_red_dof = np.array([3*_inode+_idof for _inode in elem_nodes_red for _idof in range(3)])
+                            # it's linear thn on the bndry so only need one quadpt (or actually maybe that's not true?)
+                            arr_ind = np.ix_(elem_red_dof, elem_red_dof)
+                            # print(f"{inode=} {elem_nodes_red=} {elem_red_dof=} {K_sd.shape=}")
+                            K_sd[arr_ind] += Mn_kelem_term
+                            b_sd[elem_red_dof] += Mn_felem_term
+
+        # plt.imshow(K_sd)
+        # plt.show()
+        # exit()
+
+        return K_sd, b_sd      
+    
 
     def smooth(self, b0, x0, omega:float=1.0):
         """do additive or multiplicative schwarz smoothing"""
@@ -153,29 +238,27 @@ class SchwarzSmoother:
             sd_nodes = np.array(nodes_list[i_sd])
             bndry_nodes = self._get_boundary_nodes_on_sd(sd_nodes)
             sd_dof, bndry_dof = self._node_to_dof_list(sd_nodes), self._node_to_dof_list(bndry_nodes)
+            bndry_dof = bndry_dof[0::3] # only w dof displaced
 
             # now compute smaller problem
             bndry_sd_dof = self._get_bndry_sd_dof(sd_dof, bndry_dof)
-            K_sd = self.K[sd_dof, :][:, sd_dof]
-
             int_dof = np.array([idof for idof in sd_dof if not(idof in bndry_dof)])
             int_sd_dof = self._get_bndry_sd_dof(sd_dof, int_dof)
+            K_sd = self.K[sd_dof, :][:, sd_dof]
+            b_sd = b0[sd_dof] if self.additive else b[sd_dof]
+            c_x = x0.copy() if self.additive else x.copy()
+
+            # add weak moment term to lhs and rhs
+            K_sd, b_sd = self._add_weak_moment_lhs(K_sd, b_sd, sd_nodes, c_x)
+     
+            # now compute reduced problem (only interior dof)
             K_sd_red = K_sd[int_sd_dof,:][:,int_sd_dof]
+            b_sd_red = b_sd[int_sd_dof]
             K_FC = K_sd[int_sd_dof, :][:, bndry_sd_dof]
-            x_c = x[bndry_dof]
-            
-            # compute rhs accounting for non-zero disp boundaries (cause disp boundaries in middle)
-            if self.additive:
-                b_sd = b0[int_dof]
-                x_c = x0[bndry_dof]
-                b_sd -= np.dot(K_FC, x_c) # nz dirichlet bc adjustment
+            b_sd_red -= np.dot(K_FC, c_x[bndry_dof]) # nz dirichlet bc adjustment
 
-            else:
-                b_sd = b[int_dof]
-                x_c = x[bndry_dof]
-                b_sd -= np.dot(K_FC, x_c)
-
-            dx_sd = np.linalg.solve(K_sd_red, b_sd) * omega # damp the update here..
+            # solve the reduced problem
+            dx_sd = np.linalg.solve(K_sd_red, b_sd_red) * omega # damp the update here..
             x[int_dof] += dx_sd
 
             # now adjust the rhs
