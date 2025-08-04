@@ -484,7 +484,9 @@ def add_weak_moment_penalties(K_sd, F_sd, sd_disps, sd_dof, nx, E, thick, nu):
             yn = bndry_case == 0 and not(iyn)
             yp = bndry_case == 1 and not(iyp)
             if xn or xp or yn or yp: # aka if not on global boundary (only on transmission bndry, then can do this) 
-                M_kelem, M_felem = get_weak_moment_kelem_felem(elem_disp, E, thick, nu, x_elem, y_elem, xi, eta)
+                elem_disp2 = elem_disp # TODO : how to reduce state drift here, below didn't work
+                # elem_disp2 = elem_disp * 0.0 # check if this reduces state drift (basically laplacian on state update = 0 since want to be same as before..)
+                M_kelem, M_felem = get_weak_moment_kelem_felem(elem_disp2, E, thick, nu, x_elem, y_elem, xi, eta)
 
                 # exit() # temp debug
 
