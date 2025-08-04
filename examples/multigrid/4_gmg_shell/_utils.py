@@ -49,15 +49,26 @@ def get_tacs_matrix(bdf_file, thickness:float=0.02):
     xpts_vec = tacs.createNodeVec()
     tacs.getNodes(xpts_vec)
     xpts_arr = xpts_vec.getArray()
+    nnodes = xpts_arr.shape[0] // 3
 
     # Create the forces
     forces = tacs.createVec()
     force_array = forces.getArray()
     # force_array[2::6] += 100.0  # uniform load in z direction
     x = xpts_arr[0::3]
-    y = xpts_arr[0::3]
+    y = xpts_arr[1::3]
     r = np.sqrt(x**2 + y**2)
-    force_array[2::6] += 100.0 # simple loading first
+    # force_array[2::6] += 100.0 # simple loading first
+    
+    def load_fcn(_x,_y):
+        import math
+        theta = math.atan2(_y, _x)
+        r = np.sqrt(_x**2 + _y**2)
+        return 100.0 * np.sin(5.0  * np.pi * r) * np.cos(4*theta)
+    # game of life polar load..
+
+    force_array[2::6] = np.array([load_fcn(x[i], y[i]) for i in range(nnodes)])
+
     # force_array[2::6] += 100.0 * np.sin(3 * np.pi * x)
     # force_array[2::6] += 100.0 * np.sin(3 * np.pi * r)
     tacs.applyBCs(forces)
@@ -133,7 +144,7 @@ def plot_init():
         'figure.titlesize': 20
     }) 
 
-def plot_plate_vec(nxe, vec, ax, sort_fw, nodal_dof:int=2):
+def plot_plate_vec(nxe, vec, ax, sort_fw, nodal_dof:int=2, cmap='viridis'):
     """assume vec is one DOF per node only here (and includes bcs)"""
     nx = nxe + 1
     N = nx**2
@@ -153,7 +164,7 @@ def plot_plate_vec(nxe, vec, ax, sort_fw, nodal_dof:int=2):
     y = x.copy()
     X, Y = np.meshgrid(x, y)
     VALS = np.reshape(plot_vec, (nx, nx))
-    ax.plot_surface(X, Y, VALS, cmap='viridis')
+    ax.plot_surface(X, Y, VALS, cmap=cmap)
 
 def plot_vec_compare(nxe, old_defect, new_defect, sort_fw_map, filename=None, nodal_dof:int=2):
     from mpl_toolkits.mplot3d import Axes3D  # This import registers the 3D projection, even if not used directly.
