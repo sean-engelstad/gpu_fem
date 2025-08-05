@@ -15,9 +15,9 @@ geometric multigrid for shells
 """
 import numpy as np
 import matplotlib.pyplot as plt
-from _utils import get_tacs_matrix, delete_rows_and_columns, reduced_indices, plot_vec_compare, plot_vec_compare_all, plot_plate_vec
-from _utils import gauss_seidel_csr, block_gauss_seidel_6dof, mg_coarse_fine_operators_v1, mg_coarse_fine_operators_v2, sort_vis_maps, zero_non_nodal_dof
-from _utils import mg_coarse_fine_operators_v3, mg_coarse_fine_operators_v4
+from __src import get_tacs_matrix, delete_rows_and_columns, reduced_indices, plot_vec_compare, plot_vec_compare_all, plot_plate_vec
+from __src import gauss_seidel_csr, block_gauss_seidel_6dof, mg_coarse_fine_operators_v1, mg_coarse_fine_operators_v2, sort_vis_maps, zero_non_nodal_dof
+from __src import mg_coarse_fine_operators_v3, mg_coarse_fine_operators_v4
 import scipy as sp
 from scipy.sparse.linalg import spsolve
 from mpl_toolkits.mplot3d import Axes3D  # This import registers the 3D projection, even if not used directly.
