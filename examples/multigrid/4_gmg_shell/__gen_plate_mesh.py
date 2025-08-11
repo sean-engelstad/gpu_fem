@@ -70,7 +70,7 @@ for i in range(ney):
 
 
 # Write BDF
-output_file = "in/" + args.name + ".bdf"
+output_file = "_in/" + args.name + ".bdf"
 
 with open(output_file, "w") as fout:
     write_80("SOL 103")
@@ -134,11 +134,11 @@ with open(output_file, "w") as fout:
         if node == 1:
             bc = "123456"
         elif x_bndry and not y_bndry:
-            bc = "35"
+            # bc = "35"
+            bc = "34" # NOTE : changed to this cause 'x_bndry' is really the y axis and want thx constr on y axis actually (vice versa for y_bndry)
         elif y_bndry and not x_bndry:
-            bc = "34"
-        elif node == nx * ny:
-            bc = "12345"
+            # bc = "34"
+            bc = "35"
         elif x_bndry and y_bndry:
             bc = "345" # all rot constrained
         else:

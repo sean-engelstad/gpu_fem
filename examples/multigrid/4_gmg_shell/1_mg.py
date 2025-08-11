@@ -17,14 +17,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from __src import get_tacs_matrix, delete_rows_and_columns, reduced_indices, plot_vec_compare, plot_vec_compare_all, plot_plate_vec
 from __src import gauss_seidel_csr, block_gauss_seidel_6dof, mg_coarse_fine_operators_v1, mg_coarse_fine_operators_v2, sort_vis_maps, zero_non_nodal_dof
-from __src import mg_coarse_fine_operators_v3, mg_coarse_fine_operators_v4
+from __src import mg_coarse_fine_operators_v3, mg_coarse_fine_operators_v4, mg_coarse_fine_transv_shear_smooth
 import scipy as sp
 from scipy.sparse.linalg import spsolve
 from mpl_toolkits.mplot3d import Axes3D  # This import registers the 3D projection, even if not used directly.
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--cf_smooth", type=int, default=1, help="smooth coarse-fine step")
+parser.add_argument("--cf_smooth", type=int, default=0, help="smooth coarse-fine step")
+parser.add_argument("--trv_shear", type=int, default=1, help="turn on strain-disp transv shear smooth step (cheap)")
 parser.add_argument("--n_gs", type=int, default=1, help="num gs smoothing steps")
 parser.add_argument("--SR", type=float, default=100.0, help="slenderness ratio of plate L/h")
 parser.add_argument("--n_vcyc", type=int, default=100, help="max num v-cycles")
@@ -59,11 +60,12 @@ thickness = 1.0 / args.SR
 # nxe_list = [32, 16, 8, 4]
 # nxe_list = [16, 8, 4]
 # nxe_list = [8, 4]
-nxe_list = [32, 16]
+# nxe_list = [32, 16]
+nxe_list = [16, 8]
 # nxe_list = [4,2]
 
 for nxe in nxe_list:
-    _tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"in/plate{nxe}.bdf", thickness=thickness)
+    _tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"_in/plate{nxe}.bdf", thickness=thickness)
     _tacs_csr_mat = _tacs_bsr_mat.tocsr()
 
     _nnodes = _xpts.shape[0] // 3
@@ -127,7 +129,7 @@ res2 = res - mat.dot(x)
 
 """compute and try coarse-fine operators (check error shape stays the same)"""
 # coarse_fine_method = mg_coarse_fine_operators_v1 # poisson stencil
-coarse_fine_method = mg_coarse_fine_operators_v2 # 1st order accurate lagrange
+coarse_fine_method = mg_coarse_fine_operators_v2 # 1st order accurate lagrange (simple avging => this is fine.. even if high freq error, smoothing reduces that)
 # coarse_fine_method = mg_coarse_fine_operators_v3 # 2nd order accurate lagrange
 # coarse_fine_method = mg_coarse_fine_operators_v4 # 4th order accurate lagrange
 
@@ -217,6 +219,12 @@ for v_cycle in range(300):
 
     # coarse-fine the disps
     _dx_cf_0 = np.dot(Icf_list[0], dx_1)
+
+    # coarse-fine transv shear correction
+    if args.trv_shear:
+        _dx_cf_0 = mg_coarse_fine_transv_shear_smooth(nxe, _dx_cf_0, h=1.0/nxe)
+
+    # get loads of coarse-fine update
     _df_cf_0 = lhs_0.dot(_dx_cf_0)
 
     # TODO : need smoothing of coarse-fine? (neg loads because we add neg loads to next defect)
@@ -227,6 +235,7 @@ for v_cycle in range(300):
         _df_cf_1 = lhs_0.dot(_dx_cf_1)
     else:
         _dx_cf_1, _df_cf_1 = _dx_cf_0.copy(), _df_cf_0.copy()
+
     if args.plot:
         print(f"{v_cycle=} : 2 - prolong smooth")
         plot_vec_compare_all(nxe_list[0], _df_cf_0, _df_cf_1, sort_fw_map=sort_fw_map_list[0], 

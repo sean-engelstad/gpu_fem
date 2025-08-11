@@ -490,6 +490,125 @@ def mg_coarse_fine_operators_v2(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list
 
     return I_cf, I_fc
 
+def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h):
+    nxe_coarse = nxe_fine // 2
+    nx_coarse = nxe_coarse + 1
+    nx_fine = nxe_fine + 1
+    H = 2.0 * h # coarse mesh size
+    fine_disp = fine_disp_0.copy()
+
+    def _shear_strain(w, th, sign:float=1.0, _dx:float=h):
+        """helper method to compute shear strains (2 vals each in w and th) for fine vs coarse elements and gam_13, gam_23"""
+        return (w[1] - w[0]) / _dx + sign * 0.5 * (th[0] + th[1]) # dw/dx here, same as 2/dx * dw/dxi, etc.
+
+    def _oned_shear_interp(w, th, sign:float=1.0):
+        # here w, th are length 3 vecs each (with interp middle value not set yet, and we set that)
+
+        # print(f"{w=} {th=}")
+
+        # any edge and either shear strain will use this interp method..
+        gamma_c = _shear_strain(w=[w[0], w[2]], th=[th[0], th[2]], _dx=H, sign=sign) # coarse shear strain
+
+        w_new = 0.5 * (w[0] + w[2]) + sign * 0.25 * h * (th[2] - th[0]) # from subtracting two eqns
+        th_new = -th[0] + 2.0 * sign * gamma_c - 2.0 * sign * (w_new - w[0]) / h
+        return w_new, th_new
+
+    def _gam13_interp(w, th):
+        return _oned_shear_interp(w, th, sign=1.0)
+
+    def _gam23_interp(w, th):
+        return _oned_shear_interp(w, th, sign=-1.0)
+
+    for iye_c in range(nxe_coarse):
+        for ixe_c in range(nxe_coarse):
+
+            # get all 9 fine nodes.. and their 3 DOF (27 DOF total)
+            ixe_f, iye_f = 2 * ixe_c, 2 * iye_c
+            inode_f = iye_f * nx_fine + ixe_f # bottom right fine node on coarse elem
+            elem_f_nodes = [inode_f + _ix + nx_fine * _iy for _iy in range(3) for _ix in range(3)]
+            elem_f_dof = np.array([3*_inode + _idof for _inode in elem_f_nodes for _idof in range(3)])
+            # print(f"{elem_f_nodes=} {elem_f_dof=}")
+            # print(f"1: {fine_disp_v2[elem_f_dof]=}")
+            elem_f_disp = fine_disp[elem_f_dof]
+            f1, f2, f3, f4, f5, f6 = elem_f_disp[0], elem_f_disp[1], elem_f_disp[2], elem_f_disp[3], elem_f_disp[4], elem_f_disp[5]
+            f7, f8, f9, f10, f11, f12 = elem_f_disp[6], elem_f_disp[7], elem_f_disp[8], elem_f_disp[9], elem_f_disp[10], elem_f_disp[11]
+            f13, f14, f15, f16, f17, f18 = elem_f_disp[12], elem_f_disp[13], elem_f_disp[14], elem_f_disp[15], elem_f_disp[16], elem_f_disp[17]
+            f19, f20, f21, f22, f23, f24 = elem_f_disp[18], elem_f_disp[19], elem_f_disp[20], elem_f_disp[21], elem_f_disp[22], elem_f_disp[23]
+            f25, f26, f27 = elem_f_disp[24], elem_f_disp[25], elem_f_disp[26]
+
+            """ solve boundary shear strain updates first => updates 8 DOF """
+            
+            # gam13 update on y- edge (south)
+            _i, _j = elem_f_dof[4-1], elem_f_dof[6-1]
+            fine_disp[_i], fine_disp[_j] = _gam13_interp(
+                w=[f1, f4, f7],
+                th=[f3, f6, f9],
+            )
+
+            # gam23 update on x- edge (west)
+            _i, _j = elem_f_dof[10-1], elem_f_dof[11-1]
+            fine_disp[_i], fine_disp[_j] = _gam23_interp(
+                w=[f1, f10, f19],
+                th=[f2, f11, f20],
+            )
+
+            # gam13 update on y+ edge (north)
+            _i, _j = elem_f_dof[22-1], elem_f_dof[24-1]
+            fine_disp[_i], fine_disp[_j] = _gam13_interp(
+                w=[f19, f22, f25],
+                th=[f21, f24, f27],
+            )
+
+            # gam23 update on x+ edge (east)
+            _i, _j = elem_f_dof[16-1], elem_f_dof[17-1]
+            fine_disp[_i], fine_disp[_j] = _gam23_interp(
+                w=[f7, f16, f25],
+                th=[f8, f17, f26],
+            )
+
+            # solve linear system for last rem DOF u13,u14,u15,u18 (to enforce gam13,gam23 zero on interior tying point lines)
+            hi = 1.0 / h
+            _A = np.array([
+                [hi, 0, 0.5, 0],
+                [-hi, 0, 0.5, 0.5],
+                [hi, -0.5, 0, 0],
+                [-hi, -0.5, 0, 0],
+            ])
+
+            # need to use coarse node data (which doesn't change here to get gamij RHS, fine disps in middle change and may mess up coarse gam)
+            _gam_13_c_top = (f25 - f19) / H + 0.5 * (f21 + f27)
+            _gam_13_c_bot = (f7 - f1) / H + 0.5 * (f9 + f3)
+            _gam_13_mid = 0.5 * (_gam_13_c_top + _gam_13_c_bot)
+
+            _gam_23_c_right = (f25 - f7) / H - 0.5 * (f26 + f8)
+            _gam_23_c_left = (f19 - f1) / H - 0.5 * (f20 + f2)
+            _gam_23_mid = 0.5 * (_gam_23_c_right + _gam_23_c_left)
+
+            # udpate disps again for rhs
+            elem_f_disp = fine_disp[elem_f_dof]
+            f1, f2, f3, f4, f5, f6 = elem_f_disp[0], elem_f_disp[1], elem_f_disp[2], elem_f_disp[3], elem_f_disp[4], elem_f_disp[5]
+            f7, f8, f9, f10, f11, f12 = elem_f_disp[6], elem_f_disp[7], elem_f_disp[8], elem_f_disp[9], elem_f_disp[10], elem_f_disp[11]
+            f13, f14, f15, f16, f17, f18 = elem_f_disp[12], elem_f_disp[13], elem_f_disp[14], elem_f_disp[15], elem_f_disp[16], elem_f_disp[17]
+            f19, f20, f21, f22, f23, f24 = elem_f_disp[18], elem_f_disp[19], elem_f_disp[20], elem_f_disp[21], elem_f_disp[22], elem_f_disp[23]
+            f25, f26, f27 = elem_f_disp[24], elem_f_disp[25], elem_f_disp[26]
+
+            # print(F"{_gam_13_mid=} {_gam_23_mid=}")
+
+            _b = np.array([
+                _gam_13_mid + f10*hi - f12*0.5,
+                _gam_13_mid - f16*hi,
+                _gam_23_mid + f4*hi + 0.5*f5,
+                _gam_23_mid - f22*hi + 0.5*f23,
+            ])
+
+            _x = np.linalg.solve(_A, _b)
+            # sets f13, f14, f15, f18 now..
+            for _i, _j in enumerate([12, 13, 14, 17]):
+                _j2 = elem_f_dof[_j]
+                fine_disp[_j2] = _x[_i]
+
+    return fine_disp
+
 def mg_coarse_fine_operators_v3(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
     """
     Uses quadratic Lagrange interpolation (2nd order) from coarse to fine for quad shell elements with 6 DOFs per node.

@@ -18,8 +18,8 @@ import scipy as sp
 from scipy.sparse.linalg import spsolve
 import os
 
-if not os.path.exists("out"): os.mkdir("out")
-folder = "out/_interp"
+if not os.path.exists("_out"): os.mkdir("_out")
+folder = "_out/_interp"
 if not os.path.exists(folder): os.mkdir(folder)
 
 """ first let's solve the linear system on the coarse mesh """
@@ -27,7 +27,7 @@ if not os.path.exists(folder): os.mkdir(folder)
 SR = 1000.0 # fairly slender plate
 thickness = 1.0 / SR
 nxe = 32 # num elements in coarse mesh
-_tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"in/plate{nxe}.bdf", thickness=thickness)
+_tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"_in/plate{nxe}.bdf", thickness=thickness)
 _tacs_csr_mat = _tacs_bsr_mat.tocsr()
 
 disp = spsolve(_tacs_csr_mat, _rhs)
@@ -316,6 +316,7 @@ fine_disp[4] = 0.5 * (fine_disp[1] + fine_disp[7])
 w_mask = np.array([3, 12, 21])
 thx_mask = np.array([4, 13, 22])
 # TODO : this last gamma_c isn't right.. it's huge..
+# NOTE : the gamma_c rhs isn't correct here..
 fine_disp[w_mask], fine_disp[thx_mask] = oned_shear_interp(fine_disp[w_mask], fine_disp[thx_mask], sign=-1.0) # opp sign for gamma_23
 
 # TODO : 2.6 - three thy DOF left, apply gamma_13 constraints and maybe some avg or penalty term on them?
