@@ -289,7 +289,8 @@ def sort_vis_maps(nxe, xpts, free_dof):
     nred = len(free_dof)
     nfree = 6 * N
     x, y = xpts[0::3], xpts[1::3]
-    node_sort_map = np.lexsort((y, x))  # lexsort uses last index first, so (y, x) gives x primary, y secondary
+    # node_sort_map = np.lexsort((y, x))  # lexsort uses last index first, so (y, x) gives x primary, y secondary
+    node_sort_map = np.lexsort((x, y))  # lexsort uses last index first, so (y, x) gives x primary, y secondary
     # temp if don't want to resort basically
     # node_sort_map = np.arange(node_sort_map.shape[0])
     inv_node_sort_map = np.empty_like(node_sort_map)
@@ -490,12 +491,23 @@ def mg_coarse_fine_operators_v2(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list
 
     return I_cf, I_fc
 
-def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h):
+def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h, sort_fw_arr):
     nxe_coarse = nxe_fine // 2
-    nx_coarse = nxe_coarse + 1
+    # nx_coarse = nxe_coarse + 1
     nx_fine = nxe_fine + 1
     H = 2.0 * h # coarse mesh size
-    fine_disp = fine_disp_0.copy()
+    fine_disp = np.zeros_like(fine_disp_0)
+    fine_disp[sort_fw_arr] = fine_disp_0[:]
+
+    # NOTE : please turn this off later => or figure out why 4x nodal diff
+    # debug = True # debug to change and try and get rid of 4x diff
+    debug = True
+    # gam_fact = 0.5**0.5
+    # gam_fact = 0.5
+    gam_fact = 1.0
+    # gam_fact = 2.0
+    # gam_fact = 4.0
+
 
     def _shear_strain(w, th, sign:float=1.0, _dx:float=h):
         """helper method to compute shear strains (2 vals each in w and th) for fine vs coarse elements and gam_13, gam_23"""
@@ -504,13 +516,16 @@ def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h):
     def _oned_shear_interp(w, th, sign:float=1.0):
         # here w, th are length 3 vecs each (with interp middle value not set yet, and we set that)
 
-        # print(f"{w=} {th=}")
-
         # any edge and either shear strain will use this interp method..
         gamma_c = _shear_strain(w=[w[0], w[2]], th=[th[0], th[2]], _dx=H, sign=sign) # coarse shear strain
 
+        if debug:
+            gamma_c *= gam_fact
+
         w_new = 0.5 * (w[0] + w[2]) + sign * 0.25 * h * (th[2] - th[0]) # from subtracting two eqns
         th_new = -th[0] + 2.0 * sign * gamma_c - 2.0 * sign * (w_new - w[0]) / h
+
+        # print(f"{th_new=} {th[1]=}")
         return w_new, th_new
 
     def _gam13_interp(w, th):
@@ -526,7 +541,7 @@ def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h):
             ixe_f, iye_f = 2 * ixe_c, 2 * iye_c
             inode_f = iye_f * nx_fine + ixe_f # bottom right fine node on coarse elem
             elem_f_nodes = [inode_f + _ix + nx_fine * _iy for _iy in range(3) for _ix in range(3)]
-            elem_f_dof = np.array([3*_inode + _idof for _inode in elem_f_nodes for _idof in range(3)])
+            elem_f_dof = np.array([6*_inode + _idof for _inode in elem_f_nodes for _idof in [2,3,4]])
             # print(f"{elem_f_nodes=} {elem_f_dof=}")
             # print(f"1: {fine_disp_v2[elem_f_dof]=}")
             elem_f_disp = fine_disp[elem_f_dof]
@@ -540,10 +555,22 @@ def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h):
             
             # gam13 update on y- edge (south)
             _i, _j = elem_f_dof[4-1], elem_f_dof[6-1]
+
+            # _w0, _th0 = fine_disp[_i], fine_disp[_j] # get for DEBUG
+
             fine_disp[_i], fine_disp[_j] = _gam13_interp(
                 w=[f1, f4, f7],
                 th=[f3, f6, f9],
             )
+
+            # _w, _th = fine_disp[_i], fine_disp[_j] # get for DEBUG
+            # if ixe_c == nxe_coarse-1 and iye_c == 0: # DEBUG since this didn't interp correctly
+            #     w_list = [f1, f4, f7]
+            #     th_list = [f3, f6, f9]
+            #     print(f"{w_list=} {th_list=}")
+            #     print(F"{_w0=:.3e} => {_w=:.3e}, {_th0=:.3e} => {_th=:.3e}")
+
+            #     exit()
 
             # gam23 update on x- edge (west)
             _i, _j = elem_f_dof[10-1], elem_f_dof[11-1]
@@ -584,6 +611,12 @@ def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h):
             _gam_23_c_left = (f19 - f1) / H - 0.5 * (f20 + f2)
             _gam_23_mid = 0.5 * (_gam_23_c_right + _gam_23_c_left)
 
+            if debug:
+                _gam_13_mid *= gam_fact
+                _gam_23_mid *= gam_fact
+
+            # print(f"{_gam_13_c_top=} {_gam_13_c_bot=}")
+
             # udpate disps again for rhs
             elem_f_disp = fine_disp[elem_f_dof]
             f1, f2, f3, f4, f5, f6 = elem_f_disp[0], elem_f_disp[1], elem_f_disp[2], elem_f_disp[3], elem_f_disp[4], elem_f_disp[5]
@@ -605,9 +638,16 @@ def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h):
             # sets f13, f14, f15, f18 now..
             for _i, _j in enumerate([12, 13, 14, 17]):
                 _j2 = elem_f_dof[_j]
+                _orig = fine_disp[_j2]
                 fine_disp[_j2] = _x[_i]
 
-    return fine_disp
+                if _j in [13, 14, 17]:
+                    print(f"{_orig=:.3e} => {fine_disp[_j2]=:.3e}")
+
+    # then inv sort to output
+    fine_disp_out = fine_disp[sort_fw_arr].copy()
+
+    return fine_disp_out
 
 def mg_coarse_fine_operators_v3(nxe_fine, sort_bk_fine, sort_bk_coarse, bcs_list=None):
     """

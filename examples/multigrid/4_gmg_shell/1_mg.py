@@ -60,8 +60,8 @@ thickness = 1.0 / args.SR
 # nxe_list = [32, 16, 8, 4]
 # nxe_list = [16, 8, 4]
 # nxe_list = [8, 4]
-# nxe_list = [32, 16]
-nxe_list = [16, 8]
+nxe_list = [32, 16]
+# nxe_list = [16, 8]
 # nxe_list = [4,2]
 
 for nxe in nxe_list:
@@ -220,12 +220,25 @@ for v_cycle in range(300):
     # coarse-fine the disps
     _dx_cf_0 = np.dot(Icf_list[0], dx_1)
 
+    # loads of coarse-fine update
+    _df_cf_0 = lhs_0.dot(_dx_cf_0)
+
     # coarse-fine transv shear correction
     if args.trv_shear:
-        _dx_cf_0 = mg_coarse_fine_transv_shear_smooth(nxe, _dx_cf_0, h=1.0/nxe)
+        _dx_cf_0_2 = mg_coarse_fine_transv_shear_smooth(nxe, _dx_cf_0, h=1.0/nxe, sort_fw_arr=sort_fw_map_list[0])
+        _df_cf_0_2 = lhs_0.dot(_dx_cf_0_2)
 
-    # get loads of coarse-fine update
-    _df_cf_0 = lhs_0.dot(_dx_cf_0)
+        if args.plot:
+            print(f"2.0.1 - coarse-fine transv shear correction disp")
+            plot_vec_compare_all(nxe_list[0], _dx_cf_0, _dx_cf_0_2, sort_fw_map=sort_fw_map_list[0], 
+                                    filename=None)
+            
+            print(f"2.0.2 - coarse-fine transv shear correction loads")
+            plot_vec_compare_all(nxe_list[0], defect_0_1, _df_cf_0_2, sort_fw_map=sort_fw_map_list[0], 
+                                    filename=None)
+        _dx_cf_0 = _dx_cf_0_2.copy()
+        _df_cf_0 = _df_cf_0_2.copy()
+        
 
     # TODO : need smoothing of coarse-fine? (neg loads because we add neg loads to next defect)
     # NOTE : this is prolong smoothing here..
@@ -233,24 +246,45 @@ for v_cycle in range(300):
         _dx_cf_update = block_gauss_seidel_6dof(lhs_0, -1.0 * _df_cf_0, np.zeros(lhs_0.shape[0]), num_iter=gs_cf)
         _dx_cf_1 = _dx_cf_0 + _dx_cf_update
         _df_cf_1 = lhs_0.dot(_dx_cf_1)
+
+        if args.plot:
+            print(f"{v_cycle=} : 2 - prolong smooth")
+            if args.cf_smooth:
+                plot_vec_compare_all(nxe_list[0], _df_cf_0, _df_cf_1, sort_fw_map=sort_fw_map_list[0], 
+                                        filename=None)
+            else:
+                plot_vec_compare_all(nxe_list[0], _dx_cf_0, _df_cf_0, sort_fw_map=sort_fw_map_list[0], 
+                                        filename=None)
     else:
         _dx_cf_1, _df_cf_1 = _dx_cf_0.copy(), _df_cf_0.copy()
-
-    if args.plot:
-        print(f"{v_cycle=} : 2 - prolong smooth")
-        plot_vec_compare_all(nxe_list[0], _df_cf_0, _df_cf_1, sort_fw_map=sort_fw_map_list[0], 
-                                filename=None)
 
     # re-scale using one DOF min
     s = _dx_cf_1
     omega = np.dot(defect_0_1, s) / np.dot(s, lhs_0.dot(s))
     # compute equiv loads
-    # 
 
     defect_0_2 = defect_0_1 - lhs_0.dot(omega * s)
     x_2 = x_1 + omega * s
+
+    cf_nrm_1, cf_nrm_2 = np.linalg.norm(defect_0_1), np.linalg.norm(defect_0_2)
+
+    if args.plot:
+        # temp debug printouts
+        p1 = np.dot(defect_0_1, s)
+        _df = lhs_0.dot(s)
+        p2 = np.dot(_df, s)
+        print(f"\t{omega=:.3e}, {p1=:.3e}, {p2=:.3e}")
+
+        plot_vec_compare_all(nxe_list[0], defect_0_1, s, sort_fw_map=sort_fw_map_list[0], 
+                                filename=None)
+
+        plot_vec_compare_all(nxe_list[0], defect_0_1, _df, sort_fw_map=sort_fw_map_list[0], 
+                                filename=None)
+
     if args.plot:
         print(f"{v_cycle=} : 3 - coarse-fine update")
+        print(f"\t{omega=:.3e} {cf_nrm_1=:.3e} => {cf_nrm_2=:.3e}")
+
         plot_vec_compare_all(nxe_list[0], defect_0_1, defect_0_2, sort_fw_map=sort_fw_map_list[0], 
                                 filename=None)
     if args.debug: check_defect_err(x_2, defect_0_2)
