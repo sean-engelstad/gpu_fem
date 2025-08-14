@@ -692,10 +692,16 @@ def get_bcs(nxe):
             inode = nx * iy + ix
 
             if ix in [0, nx-1] or iy in [0, nx-1]:
-                bcs += [5*inode, 5*inode+1, 5 * inode + 2] # uvw constr
+                bcs += [5 * inode + 2] # uvw constr
             
             if ix in [0, nx-1]:
                 bcs += [5 * inode + 3] # theta y = 0 on y=const edge
+
+            if ix == 0:
+                bcs += [5*inode] # u constr
+
+            if iy == 0:
+                bcs += [5*inode+1] # v constr
 
             if iy in [0, nx-1]:
                 bcs += [5 * inode + 4] # theta x = 0 on x=const edge
