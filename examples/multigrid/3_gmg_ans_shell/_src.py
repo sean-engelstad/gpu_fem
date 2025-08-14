@@ -33,9 +33,9 @@ def modified_lbasis_1d(xi, vals):
 def modified_lbasis_1d_transpose(xi, out_bar):
     """modified lagrange basis => becomes linear from quadratic for consistent interp"""
     vals_bar = np.zeros(3)
-    vals_bar = (1.0 / 6.0 - xi/2.0) * out_bar
-    vals_bar += 2.0 / 3.0 * out_bar
-    vals_bar += (1.0 / 6.0 + xi/2.0) * out_bar
+    vals_bar[0] = (1.0 / 6.0 - xi/2.0) * out_bar
+    vals_bar[1] = 2.0 / 3.0 * out_bar
+    vals_bar[2] = (1.0 / 6.0 + xi/2.0) * out_bar
     return vals_bar
 
 def lagrange_basis_2d(xi, eta, vals):
@@ -82,7 +82,7 @@ def get_natural_rot_matrix(shell_xi_axis, xi, eta, xpts):
     # get shell normals here in local cartesian basis first
     e_x = shell_xi_axis.copy()
     e_x -= np.dot(a_gam, e_x) # remove normal component of 1 axis
-    e_y = np.cross(a_gam, e_y)
+    e_y = np.cross(a_gam, e_x)
     e_z = a_gam.copy() # since e_z, a_gam assumed same direction
 
     # make transform from global disps to local cartesian basis
@@ -118,7 +118,7 @@ def get_cov_nodal_disps(shell_xi_axis, xpts, vars):
         # get shell normals here in local cartesian basis first
         e_x = shell_xi_axis.copy()
         e_x -= np.dot(a_gam, e_x) # remove normal component of 1 axis
-        e_y = np.cross(a_gam, e_y)
+        e_y = np.cross(a_gam, e_x)
         e_z = a_gam.copy() # since e_z, a_gam assumed same direction
 
         # make transform from global disps to local cartesian basis
@@ -163,7 +163,7 @@ def get_cov_nodal_disps_transpose(shell_xi_axis, xpts, vars_cov_bar):
         # get shell normals here in local cartesian basis first
         e_x = shell_xi_axis.copy()
         e_x -= np.dot(a_gam, e_x) # remove normal component of 1 axis
-        e_y = np.cross(a_gam, e_y)
+        e_y = np.cross(a_gam, e_x)
         e_z = a_gam.copy() # since e_z, a_gam assumed same direction
 
         # make transform from global disps to local cartesian basis
@@ -182,10 +182,10 @@ def get_cov_nodal_disps_transpose(shell_xi_axis, xpts, vars_cov_bar):
         Tinv_planar = Tinv[:2, :][:, :2]
 
         # now begin transpose steps
-        uvw_loc_xyz_bar = np.dot(Tinv_planar.T, vars_cov_bar[5*node:(5*node+3)])
+        uvw_loc_xyz_bar = np.dot(Tinv.T, vars_cov_bar[5*node:(5*node+3)])
         vars_bar[5*node:(5*node+3)] += np.dot(T_LG.T, uvw_loc_xyz_bar)
 
-        rots_bar = np.dot(Tinv_planar, vars_cov_bar[(5*node+3):(5*node+5)])
+        rots_bar = np.dot(Tinv_planar.T, vars_cov_bar[(5*node+3):(5*node+5)])
         thx_bar, thy_bar = -rots_bar[1], rots_bar[0]
         vars_bar[5*node+3] += thx_bar
         vars_bar[5*node+4] += thy_bar
@@ -314,7 +314,8 @@ def collect_xi_vals_transpose(eta, xpts, xi_vals_bar, prime_arr:np.ndarray, out_
 
             b_vec = (cl * T_left[out_direc,:] + cr * T_right[out_direc,:]) / ds_eta
             if rots:
-                vars_cov_bar[5*node+3], vars_cov_bar[5*node+4] += b_vec[0] * xi_vals_bar[ieta], b_vec[1] * xi_vals_bar[ieta]
+                vars_cov_bar[5*node+3] += b_vec[0] * xi_vals_bar[ieta]
+                vars_cov_bar[5*node+4] += b_vec[1] * xi_vals_bar[ieta]
             else:
                 vars_cov_bar[5*node:(5*node+3)] += xi_vals_bar[ieta] * b_vec
     return vars_cov_bar
@@ -364,7 +365,8 @@ def collect_eta_vals_transpose(xi, xpts, eta_vals_bar, prime_arr:np.ndarray, out
 
             b_vec = (cl * T_left[out_direc,:] + cr * T_right[out_direc,:]) / ds_xi
             if rots:
-                vars_cov_bar[5*node+3], vars_cov_bar[5*node+4] += b_vec[0] * eta_vals_bar[ieta], b_vec[1] * eta_vals_bar[ieta]
+                vars_cov_bar[5*node+3] += b_vec[0] * eta_vals_bar[ieta]
+                vars_cov_bar[5*node+4] += b_vec[1] * eta_vals_bar[ieta]
             else:
                 vars_cov_bar[5*node:(5*node+3)] += eta_vals_bar[ieta] * b_vec
     return vars_cov_bar
@@ -412,7 +414,7 @@ def get_membrane_strains_transpose(shell_xi_axis, xi, eta, xpts, mem_strains_xyz
 
     # undo the xi,eta => xyz strain transform (transpose)
     T2 = get_natural_to_local_strain_transform(shell_xi_axis, xi, eta, xpts)
-    mem_strains_bar = np.doT(T2.T, mem_strains_xyz_bar)
+    mem_strains_bar = np.dot(T2.T, mem_strains_xyz_bar)
 
     # vars_cov is already the local nodal cov rotated bases
     e11_eta_bar = lagrange_basis_1d_transpose(eta, mem_strains_bar[0])
@@ -461,7 +463,7 @@ def get_bending_strains_transpose(shell_xi_axis, xi, eta, xpts, bend_strains_xyz
 
     # undo the xi,eta => xyz strain transform (transpose)
     T2 = get_natural_to_local_strain_transform(shell_xi_axis, xi, eta, xpts)
-    bend_strains_bar = np.doT(T2.T, bend_strains_xyz_bar)
+    bend_strains_bar = np.dot(T2.T, bend_strains_xyz_bar)
 
     # vars_cov is already the local nodal cov rotated bases
     k11_eta_bar = lagrange_basis_1d_transpose(eta, bend_strains_bar[0])
@@ -480,7 +482,7 @@ def get_bending_strains_transpose(shell_xi_axis, xi, eta, xpts, bend_strains_xyz
 
 def get_trv_shear_strains(shell_xi_axis, xi, eta, xpts, vars_cov):
     """compute first cov then global basis membrane strains (3 of them)"""
-    trv_shear_strains = np.zeros(3)
+    trv_shear_strains = np.zeros(2)
 
     # TODO : is it supposed to be out_direc = 2 for the first term in each trv_shear_strain?
 
@@ -514,7 +516,7 @@ def get_trv_shear_strains_transpose(shell_xi_axis, xi, eta, xpts, trv_shear_stra
     # undo the xi,eta => xyz strain transform (transpose)
     T = get_natural_rot_matrix(shell_xi_axis, xi, eta, xpts)
     T2 = T[:2,:][:,:2]
-    trv_shear_strains_bar = np.doT(T2.T, trv_shear_strains_xyz_bar)
+    trv_shear_strains_bar = np.dot(T2.T, trv_shear_strains_xyz_bar)
 
     # vars_cov is already the local nodal cov rotated bases
     gam13_eta_bar = lagrange_basis_1d_transpose(eta, trv_shear_strains_bar[0])
@@ -522,7 +524,7 @@ def get_trv_shear_strains_transpose(shell_xi_axis, xi, eta, xpts, trv_shear_stra
     for i in range(3):
         nodes = np.array([3*i+j for j in range(3)])
         alpha_dof = 5 * nodes + 3
-        vars_cov_bar[alpha_dof] += modified_lbasis_1d_transpose(xi, gam13_eta_bar)
+        vars_cov_bar[alpha_dof] += modified_lbasis_1d_transpose(xi, gam13_eta_bar[i])
 
     # now get the e_eta,eta strains
     gam23_xi_bar = lagrange_basis_1d_transpose(xi, trv_shear_strains_bar[1])
@@ -531,11 +533,11 @@ def get_trv_shear_strains_transpose(shell_xi_axis, xi, eta, xpts, trv_shear_stra
     for i in range(3):
         nodes = np.array([3*i+j for j in range(3)])
         beta_dof = 5 * nodes + 4
-        vars_cov_bar[beta_dof] += lagrange_basis_1d_transpose(xi, gam23_xi_mod_bar)
+        vars_cov_bar[beta_dof] += lagrange_basis_1d_transpose(xi, gam23_xi_mod_bar[i])
     return vars_cov_bar
 
-def get_quadpt_stresses(shell_xi_axis, xi, eta, xpts, vars, E:float, nu:float, thick:float):
-    """get quadpt stresses (important step in the kelem formulation)"""
+def get_quadpt_strains(shell_xi_axis, xi, eta, xpts, vars):
+    """get quadpt strains (important step in the kelem formulation)"""
 
     vars_cov = get_cov_nodal_disps(shell_xi_axis, xpts, vars)
 
@@ -543,6 +545,12 @@ def get_quadpt_stresses(shell_xi_axis, xi, eta, xpts, vars, E:float, nu:float, t
     quadpt_strains[:3] = get_membrane_strains(shell_xi_axis, xi, eta, xpts, vars_cov)
     quadpt_strains[3:6] = get_bending_strains(shell_xi_axis, xi, eta, xpts, vars_cov)
     quadpt_strains[6:] = get_trv_shear_strains(shell_xi_axis, xi, eta, xpts, vars_cov)
+    return quadpt_strains
+
+def get_quadpt_stresses(shell_xi_axis, xi, eta, xpts, vars, E:float, nu:float, thick:float):
+    """get quadpt stresses (important step in the kelem formulation)"""
+
+    quadpt_strains = get_quadpt_strains(shell_xi_axis, xi, eta, xpts, vars)
 
     # now get A,D,As matrix (for metal)
     C = E / (1.0 - nu**2) * np.array([
@@ -573,24 +581,24 @@ def get_strains_transpose(shell_xi_axis, xi, eta, xpts, dstrain):
     return vars_bar
 
 
-def get_quadpt_kelem(shell_xi_axis, xi, eta, xpts, vars, E:float, nu:float, thick:float):
+def get_quadpt_kelem(shell_xi_axis, xi, eta, xpts, E:float, nu:float, thick:float):
     """get linear kelem stiffness matrix"""
 
-    N = vars.shape[0]
+    N = 45
     Kelem = np.zeros((N,N))
 
     # TODO : need to loop over each of 45 input strains to do hess-vec prod method..
     for i in range(N):
-        p_vars = np.zeros_like(vars)
+        p_vars = np.zeros(N)
         p_vars[i] = 1.0
-        quadpt_stresses = get_quadpt_stresses(shell_xi_axis, xi, eta, xpts, vars, E, nu, thick)
+        quadpt_stresses = get_quadpt_stresses(shell_xi_axis, xi, eta, xpts, p_vars, E, nu, thick)
 
         vars_bar = get_strains_transpose(shell_xi_axis, xi, eta, xpts, dstrain=quadpt_stresses)
         Kelem[:,i] = vars_bar
 
     return Kelem
 
-def get_kelem(shell_xi_axis, xpts, vars, E:float, nu:float, thick:float):
+def get_kelem(shell_xi_axis, xpts, E:float, nu:float, thick:float):
     """get full kelem by looping over quadpts and weights"""
 
     rt_35 = np.sqrt(3.0 / 5.0)
@@ -609,7 +617,101 @@ def get_kelem(shell_xi_axis, xpts, vars, E:float, nu:float, thick:float):
             a_xi, a_eta, _, _, _ = get_xpts_basis(xi, eta, xpts)
             dxy_jac = np.linalg.norm(np.cross(a_xi, a_eta)) # dS/dxi/deta
 
-            _kelem = get_quadpt_kelem(shell_xi_axis, xi, eta, xpts, vars, E, nu, thick)
+            _kelem = get_quadpt_kelem(shell_xi_axis, xi, eta, xpts, E, nu, thick)
             full_Kelem += _kelem * weight * dxy_jac
+            print(f"full kelem done with {ixi=} {ieta=}")
+
+            # _temp = np.log(np.abs(_kelem))
+            # _temp[np.abs(_kelem) < 1e0] = np.nan
+            # plt.imshow(_temp)
+            # plt.show()
 
     return full_Kelem
+
+def get_plate_K_global(nxe, E:float, nu:float, thick:float):
+    """get a global stiffness matrix for a plate geometry"""
+
+    shell_xi_axis = np.array([1.0, 0.0, 0.0])
+    nx = 2 * nxe + 1
+    nnodes = nx**2
+    ndof = 5 * nnodes
+    h = 1.0 / (nx-1)
+    K = np.zeros((ndof, ndof))
+
+    # same elem_xpts shape (just shifts, so make it once)
+    elem_xpts = np.zeros(27)
+    for inode in range(3):
+        x = h * inode
+        for jnode in range(3):
+            y = h * jnode
+            z = 0.0
+            node = 3 * jnode + inode
+            elem_xpts[3*node:(3*node+3)] = np.array([x, y, z])[:]
+
+    # get kelem once (since it's the same for each element here in this structured grid)
+    Kelem = get_kelem(shell_xi_axis, elem_xpts, E, nu, thick)
+
+    for iye in range(nxe):
+        for ixe in range(nxe):
+            node = iye * nx + ixe
+            elem_nodes = np.array([node, node+1, node+2, node+nx, node+nx+1, node+nx+2, node+2*nx, node+2*nx+1, node+2*nx+2])
+            elem_dof = np.array([5*_node+_idof for _node in elem_nodes for _idof in range(5)])
+            
+            arr_ind = np.ix_(elem_dof, elem_dof)
+            K[arr_ind] += Kelem[:,:]
+
+    return K
+
+def get_global_plate_loads(nxe, load_type:str="sine-sine", magnitude:float=1.0):
+
+    nx = 2 * nxe + 1
+    nnodes = nx**2
+    ndof = 5 * nnodes
+    F = np.zeros(ndof)
+    h = 1.0 / (nx-1)
+
+    if load_type == "sine-sine":
+        # apply w bending plate loads...
+        for inode in range(nnodes):
+            ix, iy = inode % nx, inode // nx
+            x, y = ix * h, iy * h
+            q = magnitude * np.sin(np.pi * x) * np.sin(np.pi * y)
+            F[5 * inode + 2] = q
+
+    else:
+        raise AssertionError("No other current load types")
+    
+    return F
+
+def get_bcs(nxe):
+    # now apply bcs to the stiffness matrix and forces
+    nx = 2 * nxe + 1
+    bcs = []
+    for iy in range(nx):
+        for ix in range(nx):
+            inode = nx * iy + ix
+
+            if ix in [0, nx-1] or iy in [0, nx-1]:
+                bcs += [5*inode, 5*inode+1, 5 * inode + 2] # uvw constr
+            
+            if ix in [0, nx-1]:
+                bcs += [5 * inode + 3] # theta y = 0 on y=const edge
+
+            if iy in [0, nx-1]:
+                bcs += [5 * inode + 4] # theta x = 0 on x=const edge
+
+    print(f"{bcs=}")
+    return bcs
+
+def _apply_bcs_helper(bcs, K, F):
+    K[bcs,:] = 0.0
+    K[:,bcs] = 0.0
+    for bc in bcs:
+        K[bc,bc] = 1.0
+    F[bcs] = 0.0
+    return K, F
+
+def apply_bcs(nxe, K, F):
+    """apply bcs to the global stiffness matrix and forces"""
+    bcs = get_bcs(nxe)
+    return _apply_bcs_helper(bcs, K, F)
