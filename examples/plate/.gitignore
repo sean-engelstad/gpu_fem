@@ -2,3 +2,4 @@ csv/
 elems*/
 *.out
 *.png
+out/
