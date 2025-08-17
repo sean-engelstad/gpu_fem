@@ -4,3 +4,5 @@ _src
 _out
 _archive
 out/
+*nsys-rep
+*gif*

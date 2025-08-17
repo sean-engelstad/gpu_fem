@@ -1,5 +1,6 @@
 #include "_gmres_utils.h"
 #include "_mat_utils.h"
+#include <chrono>
 
 int main() {
     // double BSR mv routine doesn't work (see archive)
@@ -366,25 +367,33 @@ int main() {
         
         // ILU solve U^-1 L^-1 * b
         // L^-1 * b => tmp
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_triang = std::chrono::high_resolution_clock::now();
         a = 1.0;
         CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &a, descr_L,
             d_vals_ILU0, d_rowp, d_cols, block_dim, info_L, d_rhs, d_tmp, policy_L, pBuffer));
 
-        if (debug) {
-            CHECK_CUDA(cudaMemcpy(h_rhs, d_tmp, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
-            printf("L^-1 * b:");
-            printVec<T>(NPRINT, h_rhs);
-        }
+        // if (debug) {
+        //     CHECK_CUDA(cudaMemcpy(h_rhs, d_tmp, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
+        //     printf("L^-1 * b:");
+        //     printVec<T>(NPRINT, h_rhs);
+        // }
 
         // U^-1 * tmp => into rhs
         CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &a, descr_U,
             d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_tmp, d_rhs, policy_U, pBuffer));
 
-        if (debug) {
-            CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
-            printf("U^-1 * L^-1 * b:");
-            printVec<T>(NPRINT, h_rhs);
-        }
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_triang = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> triang_time_loc = end_triang - start_triang;
+        printf("Double BSR triang solve:");
+        printf("\ttriang solve time %.4e\n", triang_time_loc.count());
+
+        // if (debug) {
+        //     CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
+        //     printf("U^-1 * L^-1 * b:");
+        //     printVec<T>(NPRINT, h_rhs);
+        // }
 
         // CHECK_CUDA(cudaMemcpy(h_rhs, d_rhs, NPRINT * sizeof(T), cudaMemcpyDeviceToHost));
         // printf("precond vec_rhs:");

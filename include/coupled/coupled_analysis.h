@@ -43,25 +43,6 @@ class FuntofemCoupledAnalysis {
             if (demo) struct_solver.resetSoln();
             struct_solver.solve(fs_ext);
             struct_solver.getStructDisps(us);
-
-            // if (demo) {
-            //     // debug print
-            //     auto h_ua = ua.createHostVec();
-            //     printf("ua:");
-            //     printVec<T>(10, h_ua.getPtr());
-            //     auto h_fa = fa.createHostVec();
-            //     printf("fa:");
-            //     printVec<T>(10, h_fa.getPtr());
-            //     auto h_fs = fs.createHostVec();
-            //     printf("fs:");
-            //     printVec<T>(10, h_fs.getPtr());
-            //     auto h_fs_ext = fs_ext.createHostVec();
-            //     printf("h_fs_ext:");
-            //     printVec<T>(10, h_fs_ext.getPtr());
-            //     auto h_us = us.createHostVec();
-            //     printf("us:");
-            //     printVec<T>(10, h_us.getPtr());
-            // }
         }
     }
 

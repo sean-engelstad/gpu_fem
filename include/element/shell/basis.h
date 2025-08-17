@@ -364,6 +364,18 @@ class ShellQuadBasis {
 
 };  // end of class ShellQuadBasis
 
+template <typename T, class Basis>
+__HOST_DEVICE__ T getDetXd(const T pt[], const T xpts[], const T fn[]) {
+    T n0[3], Xxi[3], Xeta[3];
+    Basis::template interpFields<3, 3>(pt, fn, n0);
+    Basis::template interpFieldsGrad<3, 3>(pt, xpts, Xxi, Xeta);
+
+    // assemble frames dX/dxi in comp coord
+    T Xd[9];
+    Basis::assembleFrame(Xxi, Xeta, n0, Xd);
+    return A2D::MatDetCore<T, 3>(Xd);
+}
+
 // Basis related utils
 template <typename T, class Basis>
 __HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[]) {

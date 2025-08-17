@@ -38,6 +38,21 @@ __device__ inline void atomicAdd(A2D_complex_t<double>* addr, A2D_complex_t<doub
     atomicAdd(reinterpret_cast<double*>(addr) + 1, val.imag());
 }
 
+// an atomic max for doubles which doesn't exist by default
+__device__ double atomicMax(double* address, double val) {
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+
+    do {
+        assumed = old;
+        double assumed_val = __longlong_as_double(assumed);
+        double max_val = (val > assumed_val) ? val : assumed_val;
+        old = atomicCAS(address_as_ull, assumed, __double_as_longlong(max_val));
+    } while (assumed != old);
+
+    return __longlong_as_double(old);
+}
+
 #define CHECK_CUDA(call)                                                         \
     {                                                                            \
         cudaError_t err = call;                                                  \

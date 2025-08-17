@@ -47,20 +47,6 @@ class IsotropicShell {
                                                        A2D::A2DObj<A2D::SymMat<T2, 3>> &e0ty,
                                                        A2D::A2DObj<A2D::Vec<T2, 1>> &et);
 
-                                                       template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
-                                                            A2D::Mat<T2, 3, 3> &u0x,
-                                                            A2D::Mat<T2, 3, 3> &u1x,
-                                                            A2D::SymMat<T2, 3> &e0ty,
-                                                            A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S);
-
-                                                            template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
-                                                     A2D::Mat<T2, 3, 3> &u0x,
-                                                     A2D::Mat<T2, 3, 3> &u1x,
-                                                     A2D::SymMat<T2, 3> &e0ty, A2D::Vec<T2, 1> &et,
-                                                     A2D::Vec<T, 9> E);
-
     __HOST_DEVICE__
     static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
                                  T *fail_index);
@@ -145,306 +131,207 @@ class IsotropicShell {
         Uelem.bvalue() = 1.0;
         strain_energy_stack.hproduct();  // computes projected hessians
         // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
-    }  // end of computeWeakRes
+    }  // end of JacobianCol
+
+    __HOST_DEVICE__ static void getMassMoments(const Data &physData, T moments[]) {
+        // for mass residual + jacobian (unsteady analyses)
+        const T &rho = physData.rho;
+        const T &t = physData.thick;
+        const T &tOffset = physData.tOffset;
+
+        // taken from TACSIsoShellConstitutive.cpp (evalMassMoments)
+        moments[0] = rho * t;
+        moments[1] = -rho * t * t * tOffset;
+        moments[2] = rho * t * t * t * (tOffset * tOffset + 1.0 / 12.0);
+    }
 
     template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptSectionalLoads(const Data &physData, const T &scale,
-                                                            A2D::Mat<T2, 3, 3> &u0x,
-                                                            A2D::Mat<T2, 3, 3> &u1x,
-                                                            A2D::SymMat<T2, 3> &e0ty,
-                                                            A2D::Vec<T2, 1> &et, A2D::Vec<T, 9> S) {
-        A2D::ADObj<A2D::Vec<T, 9>> E;
-
+    __HOST_DEVICE__ static void computeQuadptStresses(const Data &physData, const T &scale,
+                                                      A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                      A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                      A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                      A2D::ADObj<A2D::Vec<T2, 1>> &et,
+                                                      A2D::ADObj<A2D::Vec<T2, 9>> &E,
+                                                      A2D::ADObj<A2D::Vec<T2, 9>> &S) {
         // use stack to compute shell strains, stresses and then to strain energy
         auto strain_energy_stack =
             A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
                            A2D::IsotropicShellStress<T, Data>(
                                physData.E, physData.nu, physData.thick, physData.tOffset, E, S));
-
-        // technically the IsotropicShellStress computes sectional stresses aka sectional loads
-    }  // end of computeQuadptSectionalLoads
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptStrains(const Data &physData, const T &scale,
-                                                     A2D::Mat<T2, 3, 3> &u0x,
-                                                     A2D::Mat<T2, 3, 3> &u1x,
-                                                     A2D::SymMat<T2, 3> &e0ty, A2D::Vec<T2, 1> &et,
-                                                     A2D::Vec<T, 9> E) {
-        // use stack to compute shell strains, stresses and then to strain energy
-        auto strain_energy_stack =
-            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E));
     }  // end of computeQuadptStrains
 
     template <typename T2>
-    __HOST_DEVICE__ static void computeQuadptStrainsSens(const Data &physData, const T &scale,
-                                                         A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                                         A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                                         A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
-                                                         A2D::ADObj<A2D::Vec<T2, 1>> &et,
-                                                         T strain_bar[9]) {
-        A2D::Vec<T, 9> E;
-        // use stack to compute shell strains, stresses and then to strain energy
-        auto strain_energy_stack =
-            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E));
-        T *Eb = E.bvalue();
-        for (int i = 0; i < 6; i++) {
-            Eb[i] = strain_bar[i];
-        }
-        strain_energy_stack.reverse();
-    }  // end of computeQuadptStrains
+    __HOST_DEVICE__ static void compute_strain_adjoint_res_product(
+        const Data &physData, const T &scale, const A2D::Mat<T2, 3, 3> &u0x,
+        const A2D::Mat<T2, 3, 3> &u1x, const A2D::SymMat<T2, 3> &e0ty, const A2D::Vec<T2, 1> &et,
+        const A2D::Mat<T2, 3, 3> &psi_u0x, const A2D::Mat<T2, 3, 3> &psi_u1x,
+        const A2D::SymMat<T2, 3> &psi_e0ty, const A2D::Vec<T2, 1> &psi_et, T loc_dv_sens[]) {
+        /* compute psi[E]^T * d^2Pi/dE/dx product at strain level (equiv to back at disp level) */
+        A2D::Vec<T2, 9> E;
+        A2D::Vec<T2, 9> psi_E;
 
-    __HOST_DEVICE__ static void vonMisesFailure2D(const Data &data, const T stress[3], T *failure) {
-        // stress[3] refers to s11, s22, s12; ys refers to yield stress
-        return sqrt(stress[0] * stress[0] + stress[1] * stress[1] - stress[0] * stress[1] +
-                    3.0 * stress[2] * stress[2]) /
-               data.ys;
-    }
-
-    __HOST_DEVICE__ static void vonMisesFailure2DSens(const Data &data, const T stress[3],
-                                                      const T &fail_bar, T *stress_bar) {
-        // stress[3] refers to s11, s22, s12; ys refers to yield stress
-        T my_sqrt = sqrt(stress[0] * stress[0] + stress[1] * stress[1] - stress[0] * stress[1] +
-                         3.0 * stress[2] * stress[2]);
-        T factor = 0.5 * fail_bar / my_sqrt / data.ys;
-
-        stress_bar[0] = factor * (2 * stress[0] - stress[1]);
-        stress_bar[1] = factor * (2 * stress[1] - stress[0]);
-        stress_bar[2] = factor * 6 * stress[2];
-    }
-
-    __HOST_DEVICE__
-    static void computeKSFailure(const Data &data, T rho_KS, T strains[vars_per_node],
-                                 T *fail_index) {
-        // compute the von mises ksfailure index in the shell
-        // strains are the 'nodal_strains' 6 of them
-
-        // upper and lower surface thicknesses in z the normal coordinate
-        T zU = (0.5 - data.tOffset) * data.thick;
-        T zL = -(0.5 + data.tOffset) * data.thick;
-
-        // compute the upper and lower surface strains
-        T strainU[3], strainL[3];
-        A2D::VecSumCore<T, 3>(1.0, &strains[0], zU, &strains[3], strainU);
-        A2D::VecSumCore<T, 3>(1.0, &strains[0], zL, &strains[3], strainL);
-
-        // compute the 2D tangent stiffness matrix C or Q
-        T C[6];
-        Data::evalTangentStiffness2D(data.E, data.nu, C);
-
-        // compute upper and lower surface stresses
-        T stressU[3], stressL[3];
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainL, stressL);
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainU, stressU);
-
-        // note stress[3] refers to s11, s22, s12 stresses
-        // compute von mises failure at upper and lower surfaces
-        T failU, failL;
-        vonMisesFailure2D(data, stressU, &failU);
-        vonMisesFailure2D(data, stressL, &failL);
-
-        // now do KS max among upper and lower surface stresses
-        T ksMax;
-        if (failU > failL) {
-            ksMax = failU;
+        // first compute strains on the regular disps
+        if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
+            A2D::LinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                          et.get_data(), E.get_data());
         } else {
-            ksMax = failL;
+            A2D::NonlinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                             et.get_data(), E.get_data());
         }
 
-        T ksSum = exp(rho_KS * (failU - ksMax)) + exp(rho_KS * (failL - ksMax));
-        T ksVal = ksMax + log(ksSum) / rho_KS;
-        return ksVal;
-    }
-
-    __HOST_DEVICE__
-    static void computeKSFailureDVSens(const Data &data, T rho_KS, const T strains[vars_per_node],
-                                       const T fail_index_bar, T *x_bar) {
-        // compute the von mises ksfailure index in the shell
-        // strains are the 'nodal_strains' 6 of them
-        // x_bar is a scalar
-
-        // upper and lower surface thicknesses in z the normal coordinate
-        T zU = (0.5 - data.tOffset) * data.thick;
-        T zL = -(0.5 + data.tOffset) * data.thick;
-
-        // compute the upper and lower surface strains
-        T strainU[3], strainL[3];
-        A2D::VecSumCore<T, 3>(1.0, &strains[0], zU, &strains[3], strainU);
-        A2D::VecSumCore<T, 3>(1.0, &strains[0], zL, &strains[3], strainL);
-
-        // compute the 2D tangent stiffness matrix C or Q
-        T C[6];
-        Data::evalTangentStiffness2D(data.E, data.nu, C);
-
-        // compute upper and lower surface stresses
-        T stressU[3], stressL[3];
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainL, stressL);
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainU, stressU);
-
-        // note stress[3] refers to s11, s22, s12 stresses
-        // compute von mises failure at upper and lower surfaces
-        T failU, failL;
-        vonMisesFailure2D(data, stressU, &failU);
-        vonMisesFailure2D(data, stressL, &failL);
-
-        // now do KS max among upper and lower surface stresses
-        T ksMax;
-        if (failU > failL) {
-            ksMax = failU;
+        // then compute adjoint strains using (linearized hfwd)
+        if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
+            A2D::LinearShellStrainForwardCore<T>(psi_u0x.get_data(), psi_u1x.get_data(),
+                                                 psi_e0ty.get_data(), psi_et.get_data(),
+                                                 psi_E.get_data());
         } else {
-            ksMax = failL;
+            A2D::NonlinearShellStrainForwardCore<T>(
+                u0x.get_data(), u1x.get_data(), e0ty.get_data(), et.get_data(), psi_u0x.get_data(),
+                psi_u1x.get_data(), psi_e0ty.get_data(), psi_et.get_data(), psi_E.get_data());
         }
 
-        T ksSum = exp(rho_KS * (failU - ksMax)) + exp(rho_KS * (failL - ksMax));
-        T ksVal = ksMax + log(ksSum) / rho_KS;
+        // then compute psi_E^T dEbar/dx the strain sensitivity design var sens for each design var
+        physData.evalStrainDVSensProduct(scale, E.get_data(), psi_E.get_data(), loc_dv_sens);
 
-        // end of forward analysis
-        // backprop now first to dsigma_KS/dthick through zL and zU
-        x_bar = 0.0;  // init the scalar to zero from this quadpt
-
-        // first for lower stresses
-        T fail_bar = exp(rho_KS * (failL - ksMax)) / ksSum;
-        T stress_bar[3];
-        vonMisesFailure2DSens(data, stressL, fail_bar, stress_bar);
-        T surf_strain_bar[3];
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
-        T zL_bar = A2D::VecDotCore<T, 3>(surf_strain_bar, &strains[3]);
-        x_bar += zL_bar * -0.5;
-
-        // then for upper stresses
-        fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
-        vonMisesFailure2DSens(data, stressU, fail_bar, stress_bar);
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
-        T zU_bar = A2D::VecDotCore<T, 3>(surf_strain_bar, &strains[3]);
-        x_bar += zU_bar * 0.5;
-
-        return ksVal;
-    }
-
-    __HOST_DEVICE__
-    static void computeKSFailureSVSens(const Data &data, T rho_KS, const T strains[vars_per_node],
-                                       const T fail_index_bar, T strain_bar[vars_per_node]) {
-        // compute the von mises ksfailure index in the shell
-        // strains are the 'nodal_strains' 6 of them
-        // x_bar is a scalar
-
-        // upper and lower surface thicknesses in z the normal coordinate
-        T zU = (0.5 - data.tOffset) * data.thick;
-        T zL = -(0.5 + data.tOffset) * data.thick;
-
-        // compute the upper and lower surface strains
-        T strainU[3], strainL[3];
-        A2D::VecSumCore<T, 3>(1.0, &strains[0], zU, &strains[3], strainU);
-        A2D::VecSumCore<T, 3>(1.0, &strains[0], zL, &strains[3], strainL);
-
-        // compute the 2D tangent stiffness matrix C or Q
-        T C[6];
-        Data::evalTangentStiffness2D(data.E, data.nu, C);
-
-        // compute upper and lower surface stresses
-        T stressU[3], stressL[3];
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainL, stressL);
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, strainU, stressU);
-
-        // note stress[3] refers to s11, s22, s12 stresses
-        // compute von mises failure at upper and lower surfaces
-        T failU, failL;
-        vonMisesFailure2D(data, stressU, &failU);
-        vonMisesFailure2D(data, stressL, &failL);
-
-        // now do KS max among upper and lower surface stresses
-        T ksMax;
-        if (failU > failL) {
-            ksMax = failU;
-        } else {
-            ksMax = failL;
-        }
-
-        T ksSum = exp(rho_KS * (failU - ksMax)) + exp(rho_KS * (failL - ksMax));
-        T ksVal = ksMax + log(ksSum) / rho_KS;
-
-        // end of forward analysis
-        // backprop now first to dsigma_KS/dthick through zL and zU
-
-        // first for lower stresses
-        T fail_bar = exp(rho_KS * (failL - ksMax)) / ksSum;
-        T stress_bar[3];
-        vonMisesFailure2DSens(data, stressL, fail_bar, stress_bar);
-        T surf_strain_bar[3];
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
-
-        // backprop from lower surf strains to strain_bar
-        A2D::VecSumCore<T, 3>(surf_strain_bar, &strain_bar[0]);
-        A2D::VecSumCore<T, 3>(zL, surf_strain_bar, &strain_bar[3]);
-
-        // then for upper stresses
-        fail_bar = exp(rho_KS * (failU - ksMax)) / ksSum;
-        vonMisesFailure2DSens(data, stressU, fail_bar, stress_bar);
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, stress_bar, surf_strain_bar);
-
-        // backprop from upper surf strains to strain_bar
-        A2D::VecSumCore<T, 3>(surf_strain_bar, &strain_bar[0]);
-        A2D::VecSumCore<T, 3>(zU, surf_strain_bar, &strain_bar[3]);
-
-        return ksVal;
-    }
-
-    __HOST_DEVICE__ static void compute_dRdx(const int local_dv, const Data &physData,
-                                             const T &scale, A2D::ADObj<A2D::Mat<T, 3, 3>> &u0x,
-                                             A2D::ADObj<A2D::Mat<T, 3, 3>> &u1x,
-                                             A2D::ADObj<A2D::SymMat<T, 3>> &e0ty,
-                                             A2D::ADObj<A2D::Vec<T, 1>> &et) {
-        // for isotropic material only one local_dv aka thickness
-        // so ignore this input
-
-        using T2 = A2D::ADScalar<T, 1>;
-
-        // copy into local
-        A2D::ADObj<A2D::Mat<T2, 3, 3>> _u0x, _u1x;
-        A2D::ADObj<A2D::SymMat<T2, 3>> _e0ty;
-        A2D::ADObj<A2D::Vec<T2, 1>> _et;
-
-        for (int i = 0; i < 9; i++) {
-            _u0x.value()[i].value = u0x.value()[i];
-            _u1x.value()[i].value = u1x.value()[i];
-        }
-        for (int i = 0; i < 6; i++) {
-            _e0ty.value()[i].value = e0ty.value()[i];
-        }
-        _et.value()[0].value = et.value()[0];
-
-        // use forward AD to get dstrain/dthick?
-        A2D::ADObj<A2D::Vec<T2, 9>> E, S;
-        A2D::ADObj<T2> ES_dot, Uelem;
-
-        // some way to check that T2 is indeed ADScalar<> type?
-        T2 thick;
-        if (local_dv == 0) {
-            thick = physData.thick;
-            thick.deriv = 1.0;
-        }
-
-        // use stack to compute shell strains, stresses and then to strain energy
-        auto strain_energy_stack =
-            A2D::MakeStack(A2D::ShellStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
-                           A2D::IsotropicShellStress<T2, Data>(T2(physData.E), T2(physData.nu),
-                                                               thick, physData.tOffset, E, S),
-                           // no 1/2 here to match TACS formulation (just scales eqns) [is removing
-                           // the 0.5 correct?]
-                           A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
-        // printf("Uelem = %.8e\n", Uelem.value());
-
-        Uelem.bvalue() = 1.0;
-        strain_energy_stack.reverse();
-        // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
-
-        // now copy back data from ADScalar to regular types
-        for (int i = 0; i < 9; i++) {
-            u0x.value()[i] = _u0x.value()[i].deriv;
-            u1x.value()[i] = _u1x.value()[i].deriv;
-        }
-        for (int i = 0; i < 6; i++) {
-            e0ty.value()[i] = _e0ty.value()[i].deriv;
-        }
-        et.value()[0] = _et.value()[0].deriv;
     }  // end of computeWeakRes
+
+    template <typename T2>
+    __HOST_DEVICE__ static void computeWeakResThickDVSens(const Data &physData, const T &scale,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                          A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                          A2D::ADObj<A2D::Vec<T2, 1>> &et) {
+        // manually for linear isotropic case for now
+        A2D::Vec<T, 9> e, eb, s, sb;
+        auto &u0xF = u0x.value();
+        auto &u0xb = u0x.bvalue();
+        auto &u1xF = u1x.value();
+        auto &u1xb = u1x.bvalue();
+        auto &e0tyF = e0ty.value();
+        auto &e0tyb = e0ty.bvalue();
+        auto &etF = et.value();
+        auto &etb = et.bvalue();
+
+        // linear shell strains
+        // Evaluate the in-plane strains from the tying strain expressions
+        e[0] = e0tyF[0];        // e11
+        e[1] = e0tyF[3];        // e22
+        e[2] = 2.0 * e0tyF[1];  // e12
+
+        // Compute the bending strain
+        e[3] = u1xF[0];            // k11
+        e[4] = u1xF[4];            // k22
+        e[5] = u1xF[1] + u1xF[3];  // k12
+
+        // Add the components of the shear strain
+        e[6] = 2.0 * e0tyF[4];  // e23, transverse shear
+        e[7] = 2.0 * e0tyF[2];  // e13, transverse shear
+        e[8] = etF[0];          // e12 (drill strain)
+
+        printf("e:");
+        printVec<T>(9, e.get_data());
+
+        // forward stresses derivs (dstress/dthick) are dU/dstrain/dx
+        T C[6];
+        Data::evalTangentStiffness2D(physData.E, physData.nu, C);
+        T thick = physData.thick;
+        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, e.get_data(), s.get_data());
+        A2D::SymMatVecCoreScale3x3<T, true>(thick * thick / 4.0, C, &e.get_data()[3],
+                                            &s.get_data()[3]);
+        T dAs = Data::getTransShearCorrFactor() * C[5];
+        s[6] = dAs * e[6];
+        s[7] = dAs * e[7];
+        T ddrill = Data::getDrillingRegularization() * dAs;
+        s[8] = ddrill * e[8];
+        for (int i = 0; i < 9; i++) eb[i] = scale * s[i];
+
+        // strain derivs back to input disp grad derivs
+        e0tyb[0] += eb[0];        // e1
+        e0tyb[3] += eb[1];        // e22
+        e0tyb[1] += 2.0 * eb[2];  // e12
+
+        // Compute the bending strain
+        u1xb[0] += eb[3];  // k11
+        u1xb[4] += eb[4];  // k22
+        u1xb[1] += eb[5];  // k12
+        u1xb[3] += eb[5];  // k12
+
+        // Add the components of the shear strain
+        e0tyb[4] += 2.0 * eb[6];  // e23, transverse shear
+        e0tyb[2] += 2.0 * eb[7];  // e13, transverse shear
+        etb[0] += eb[8];          // e12 (drill strain)
+    }                             // end of computeWeakRes
+
+    template <typename T2>
+    __HOST_DEVICE__ static void computeFailureIndex(const Data physData, A2D::Mat<T2, 3, 3> u0x,
+                                                    A2D::Mat<T2, 3, 3> u1x, A2D::SymMat<T2, 3> e0ty,
+                                                    A2D::Vec<T2, 1> et, const T &rhoKS,
+                                                    const T &safetyFactor, T &fail_index) {
+        A2D::Vec<T2, 9> E;
+
+        if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
+            A2D::LinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                          et.get_data(), E.get_data());
+        } else {
+            A2D::NonlinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                             et.get_data(), E.get_data());
+        }
+
+        fail_index = physData.evalFailure(rhoKS, safetyFactor, E.get_data());
+
+    }  // end of computeFailureIndex
+
+    template <typename T2>
+    __HOST_DEVICE__ static void computeFailureIndexDVSens(
+        const Data physData, A2D::Mat<T2, 3, 3> u0x, A2D::Mat<T2, 3, 3> u1x,
+        A2D::SymMat<T2, 3> e0ty, A2D::Vec<T2, 1> et, const T &rhoKS, const T &safetyFactor,
+        const T &scale, T dv_sens[]) {
+        /* compute df/dx constribution to ks failure */
+        A2D::Vec<T2, 9> E;
+        if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
+            A2D::LinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                          et.get_data(), E.get_data());
+        } else {
+            A2D::NonlinearShellStrainCore<T>(u0x.get_data(), u1x.get_data(), e0ty.get_data(),
+                                             et.get_data(), E.get_data());
+        }
+
+        physData.evalFailureDVSens(rhoKS, safetyFactor, E.get_data(), scale, dv_sens);
+
+    }  // end of computeFailureIndexDVSens
+
+    template <typename T2>
+    __HOST_DEVICE__ static void computeFailureIndexSVSens(const Data physData, const T &rhoKS,
+                                                          const T &safetyFactor, const T &scale,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
+                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
+                                                          A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
+                                                          A2D::ADObj<A2D::Vec<T2, 1>> &et) {
+        /* compute df/du RHS constribution to ks failure */
+        A2D::ADObj<A2D::Vec<T2, 9>> E;
+        if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
+            A2D::LinearShellStrainCore<T>(u0x.value().get_data(), u1x.value().get_data(),
+                                          e0ty.value().get_data(), et.value().get_data(),
+                                          E.value().get_data());
+        } else {
+            A2D::NonlinearShellStrainCore<T>(u0x.value().get_data(), u1x.value().get_data(),
+                                             e0ty.value().get_data(), et.value().get_data(),
+                                             E.value().get_data());
+        }
+
+        // go from E forward to E backwards (the strain)
+        physData.evalFailureStrainSens(scale, rhoKS, safetyFactor, E.value().get_data(),
+                                       E.bvalue().get_data());
+
+        if constexpr (STRAIN_TYPE == A2D::ShellStrainType::LINEAR) {
+            A2D::LinearShellStrainReverseCore<T>(E.bvalue().get_data(), u0x.bvalue().get_data(),
+                                                 u1x.bvalue().get_data(), e0ty.bvalue().get_data(),
+                                                 et.bvalue().get_data());
+        } else {
+            A2D::NonlinearShellStrainReverseCore<T>(
+                E.bvalue().get_data(), u0x.value().get_data(), u1x.value().get_data(),
+                e0ty.value().get_data(), et.value().get_data(), u0x.bvalue().get_data(),
+                u1x.bvalue().get_data(), e0ty.bvalue().get_data(), et.bvalue().get_data());
+        }
+    }  // end of computeFailureIndexDVSens
 };

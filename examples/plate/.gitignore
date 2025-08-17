@@ -2,4 +2,5 @@ csv/
 elems*/
 *.out
 *.png
+*.so
 out/
