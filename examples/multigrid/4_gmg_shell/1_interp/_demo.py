@@ -26,9 +26,11 @@ if not os.path.exists(folder): os.mkdir(folder)
 
 SR = 1000.0 # fairly slender plate
 thickness = 1.0 / SR
-nxe = 32 # num elements in coarse mesh
+nxe = 16 # num elements in coarse mesh
 _tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"_in/plate{nxe}.bdf", thickness=thickness)
 _tacs_csr_mat = _tacs_bsr_mat.tocsr()
+
+_rhs *= 1e9 * thickness**3
 
 disp = spsolve(_tacs_csr_mat, _rhs)
 
