@@ -3,22 +3,89 @@
 int main() {
     // make poisson solver and try and run it..
 
+    using T = float; // double
+
     // int nxe = 2;
     int nxe = 4;
-    auto solver = PoissonSolver<float>(nxe);
+    // int nxe = 10;
+    // int nxe = 30;
+    // int nxe = 100;
+    // int nxe = 300;
+    // int nxe = 500;
+    // int nxe = 1024; // about 1M DOF (works)
+    // int nxe = 4000; // about 16M DOF (works)
+    // int nxe = 6000; // about 36M DOF (works)
+    // int nxe = 8000; // about 64M DOF (works)
+    // int nxe = 10000; // 100M DOF (fails on 3060 Ti)
+    // int nxe = 30000; // 1 billion DOF (fails on 3060 Ti)
 
-    // try printing out data structures to check..
-    int N = solver.N;
-    printf("h_rowp: ");
-    int *h_rowp = solver.d_csr_rowp.createHostVec().getPtr();
-    printVec<int>(N+1, h_rowp);
+    auto solver = PoissonSolver<T>(nxe);
 
-    printf("csr_nnz %d\n", (int)solver.csr_nnz);
-    printf("h_cols: ");
-    int *h_cols = solver.d_csr_cols.createHostVec().getPtr();
-    printVec<int>(solver.csr_nnz, h_cols);
+    // // try printing out data structures to check..
+    // int N = solver.N;
+    // int n_print = 300;
 
-    // now printout lhs
+    // // printf("h_rowp: ");
+    // int *h_rowp = solver.d_csr_rowp.createHostVec().getPtr();
+    // // printVec<int>(min(n_print, N+1), h_rowp);
+
+    // printf("csr_nnz %d\n", (int)solver.csr_nnz);
+    // printf("h_rows: ");
+    // int *h_rows = solver.d_csr_rows.createHostVec().getPtr();
+    // printVec<int>(min(n_print, (int)solver.csr_nnz), h_rows);
+
+    // printf("h_cols: ");
+    // int *h_cols = solver.d_csr_cols.createHostVec().getPtr();
+    // printVec<int>(min(n_print, (int)solver.csr_nnz), h_cols);
+
+    // T *h_x0 = solver.d_soln.createHostVec().getPtr();
+
+    // // // now printout lhs and rhs
+    // // printf("h_lhs:");
+    // T *h_lhs = solver.d_lhs.createHostVec().getPtr();
+    // // printVec<T>(min(n_print, (int)solver.csr_nnz), h_lhs);
+
+    // // printf("h_rhs:");
+    // T *h_rhs = solver.d_rhs.createHostVec().getPtr();
+    // // printVec<T>(min(n_print, N), h_rhs);
+    // // return 0;
+
+    // // printout lhs and rhs of each row::
+    // printf("N = %d DOF linear system\n", N);
+    // for (int row = 0; row < N; row++) {
+    //     // first printout lhs
+    //     printf("row %d : lhs ", row);
+    //     for (int jp = h_rowp[row]; jp < h_rowp[row+1]; jp++) {
+    //         int col = h_cols[jp];
+    //         T val = h_lhs[jp];
+
+    //         printf("%.2e[%d] ", val, col);
+    //     }
+    //     printf("  * (x0 = %.2e) ", h_x0[row]);
+    //     printf("= (rhs = %.2e)\n", h_rhs[row]);
+    // }
+
+    // // check lhs diag inv
+    // printf("h_diag_inv:");
+    // T *h_diag_inv = solver.d_diag_inv.createHostVec().getPtr();
+    // printVec<T>(min(n_print, N), h_diag_inv);
+
+    // return;
+
+    /* try solve here.. */
+    int n_iter = 100;
+    // int n_iter = 1000;
+    T omega = 2.0 / 3.0;
+    bool print = true;
+    solver.dampedJacobiSolve(n_iter, omega, print);
+
+    // get true soln error (including discretization)
+    // maybe some error in lhs or rhs here..
+    T err_nrm = solver.getSolnError();
+    printf("true soln error = %.4e\n", err_nrm);
+
+    // free memory
+    solver.free();
 
     return 0;
 };

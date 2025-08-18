@@ -12,8 +12,8 @@ nxe = 4
 A, b = get_poisson_lhs_and_rhs(nxe=nxe)
 N = A.shape[0]
 
-plt.imshow(A)
-plt.show()
+# plt.imshow(A)
+# plt.show()
 
 """compute the solution and compare against method of manufactured disps
  with np dense solve just to check we coded PDE discretization right """
