@@ -8,9 +8,10 @@ int main() {
 
     // set finest grid size (must be power of 2 for this case..)
     // int nxe = 8192; // fails too large problem for 3060 Ti GPU
-    int nxe = 4096;
+    int nxe = 4096; // solves in 3 seconds the 16M problem on my local 3060 Ti GPU
     // int nxe = 2048;
     // int nxe = 1024;
+    // int nxe = 256;
     // int nxe = 32;
 
     int log2_nxe = 0, nxe_copy = nxe;
