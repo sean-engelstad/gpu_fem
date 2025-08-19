@@ -7,12 +7,14 @@
 template <typename T, template <typename> class Vec>
 class AnalysisFunction {
    public:
-   AnalysisFunction(std::string& name) : name(name), setup(false) { *value = 0.0; }
+    AnalysisFunction(std::string name, bool has_adjoint = true)
+        : name(std::move(name)), setup(false), value(0.0), has_adjoint(has_adjoint) {}
     std::string name;
-    T* value;
+    T value;
     bool setup;
+    bool has_adjoint;
 
-    void check_setup() {
+    void check_setup() const {
         if (!setup) {
             throw std::runtime_error("Function is not set up properly!");
         }
@@ -29,6 +31,9 @@ class AnalysisFunction {
         xpt_sens.free();
     }
 
+    // makes it an abstract class
+    virtual ~AnalysisFunction() = default;
+
     //    private:
     // should we make this hostvec later?
     Vec<T> dv_sens;
@@ -38,12 +43,13 @@ class AnalysisFunction {
 template <typename T, template <typename> class Vec>
 class KSFailure : public AnalysisFunction<T, Vec> {
    public:
-    KSFailure(T rho_KS) : AnalysisFunction<T,Vec>("ksfailure"), rho_KS(rho_KS) {}
-    T rho_KS;
+    KSFailure(T rho_KS, T safetyFactor = 1.0)
+        : AnalysisFunction<T, Vec>("ksfailure", true), rho_KS(rho_KS), safetyFactor(safetyFactor) {}
+    T rho_KS, safetyFactor;
 };
 
 template <typename T, template <typename> class Vec>
 class Mass : public AnalysisFunction<T, Vec> {
    public:
-    Mass() : AnalysisFunction<T,Vec>("mass") {}
+    Mass() : AnalysisFunction<T, Vec>("mass", false) {}
 };

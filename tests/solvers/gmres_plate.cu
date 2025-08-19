@@ -16,8 +16,8 @@
 void test_GMRES_plate(std::string ordering, std::string fill_type, bool print = false, int nxe = 10) {
 
     int rcm_iters = 5;
-    double p_factor = 1.0;
-    int k = 5; // for ILU(k)
+    double p_factor = 0.25;
+    int k = 7; // for ILU(k)
     // int nxe = 5;
     double fillin = 10.0;
 
@@ -92,8 +92,9 @@ void test_GMRES_plate(std::string ordering, std::string fill_type, bool print = 
     T abs_tol = 1e-14, rel_tol = 1e-15;
     constexpr bool use_precond = true;
     bool debug = false; // print
-    CUSPARSE::GMRES_solve<T, use_precond>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol,
-        print, debug);
+    // CUSPARSE::GMRES_solve<T, use_precond>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol,
+    //     print, debug);
+    CUSPARSE::GMRES_DR_solve<T, use_precond>(kmat, loads, soln, 40, 10, 200, abs_tol, rel_tol, print, debug);
 
     // printf("debug running direct LU solve\n");
     // CUSPARSE::direct_LU_solve(kmat, loads, soln);
@@ -115,8 +116,8 @@ void test_GMRES_plate(std::string ordering, std::string fill_type, bool print = 
     // test get residual in cusparse also (debug)
     assembler.add_jacobian(res, kmat);
     assembler.apply_bcs(kmat);
-    T resid2 = get_resid<T>(kmat, loads, soln);
-    if (print) printf("cusparse resid norm = %.4e\n", resid_norm);
+    // T resid2 = get_resid<T>(kmat, loads, soln);
+    // if (print) printf("cusparse resid norm = %.4e\n", resid2);
 
     // report test result ------------------
     std::string testName = "GMRES plate solve, with ";
@@ -146,6 +147,7 @@ int main(int argc, char* argv[]) {
     // to get good actual resid and this requires almost 200 iterations of GMRES for none reordering, less for others..
 
     int nxe = 20;
+    // int nxe = 100;
     bool print = false;
     if (test_all) {
         std::list<std::string> list1 = {"none", "RCM", "AMD", "qorder"};

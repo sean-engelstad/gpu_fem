@@ -72,6 +72,70 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
         myfile << soln[6 * inode + 2] << "\n";
     }
 
+    // init visualization states
+    int ndvs = assembler.get_num_dvs();
+    DeviceVec<double> d_dvs(ndvs);
+    DeviceVec<int> elem_components(num_elems);
+    assembler.get_elem_components(elem_components);
+    DeviceVec<double> fail_index(num_elems);
+    int nstresses = assembler.get_num_vis_stresses();
+    DeviceVec<double> strains(nstresses), stresses(nstresses);
+
+    // compute visualization states
+    assembler.compute_visualization_states(d_dvs, fail_index, strains, stresses);
+
+    // write thicknesses
+    double *h_dvs = d_dvs.createHostVec().getPtr();
+    int *h_elem_comp = elem_components.createHostVec().getPtr();
+    myfile << "CELL_DATA " << num_elems << "\n";
+    scalarName = "thickness";
+    myfile << "SCALARS " << scalarName << " double64 1\n";
+    myfile << "LOOKUP_TABLE default\n";
+    for (int ielem = 0; ielem < num_elems; ielem++) {
+        int comp_id = h_elem_comp[ielem];
+        myfile << h_dvs[comp_id] << "\n";
+    }
+
+    // write failure indexes
+    double *h_fail_index = fail_index.createHostVec().getPtr();
+    scalarName = "fail_index";
+    myfile << "SCALARS " << scalarName << " double64 1\n";
+    myfile << "LOOKUP_TABLE default\n";
+    for (int ielem = 0; ielem < num_elems; ielem++) {
+        myfile << h_fail_index[ielem] << "\n";
+    }
+
+    // write strains
+    double *h_strains = strains.createHostVec().getPtr();
+    myfile << "FIELD FieldData 4\n";
+    scalarName = "midplane_strain";
+    myfile << scalarName << " 3 " << num_elems << " double\n";
+    for (int ielem = 0; ielem < num_elems; ++ielem) {
+        myfile << h_strains[6 * ielem + 0] << " " << h_strains[6 * ielem + 1] << " "
+               << h_strains[6 * ielem + 2] << "\n";
+    }
+    scalarName = "bending_strain";
+    myfile << scalarName << " 3 " << num_elems << " double\n";
+    for (int ielem = 0; ielem < num_elems; ++ielem) {
+        myfile << h_strains[6 * ielem + 3] << " " << h_strains[6 * ielem + 4] << " "
+               << h_strains[6 * ielem + 5] << "\n";
+    }
+
+    // write stresses
+    double *h_stresses = stresses.createHostVec().getPtr();
+    scalarName = "midplane_stress";
+    myfile << scalarName << " 3 " << num_elems << " double\n";
+    for (int ielem = 0; ielem < num_elems; ++ielem) {
+        myfile << h_stresses[6 * ielem + 0] << " " << h_stresses[6 * ielem + 1] << " "
+               << h_stresses[6 * ielem + 2] << "\n";
+    }
+    scalarName = "bending_stress";
+    myfile << scalarName << " 3 " << num_elems << " double\n";
+    for (int ielem = 0; ielem < num_elems; ++ielem) {
+        myfile << h_stresses[6 * ielem + 3] << " " << h_stresses[6 * ielem + 4] << " "
+               << h_stresses[6 * ielem + 5] << "\n";
+    }
+
     myfile.close();
 }
 
