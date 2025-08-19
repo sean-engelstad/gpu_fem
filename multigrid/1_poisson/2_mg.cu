@@ -6,9 +6,12 @@ int main() {
     using T = float; // double
     using GRID = PoissonSolver<T>;
 
-    // set finest grid size
+    // set finest grid size (must be power of 2 for this case..)
+    // int nxe = 8192; // fails too large problem for 3060 Ti GPU
+    int nxe = 4096;
+    // int nxe = 2048;
     // int nxe = 1024;
-    int nxe = 32;
+    // int nxe = 32;
 
     int log2_nxe = 0, nxe_copy = nxe;
     while (nxe_copy >>= 1) ++log2_nxe;
@@ -43,20 +46,30 @@ int main() {
     // now try multigrid V-cycle solves here
 
     // /* try solve here.. */
-    int pre_smooth = 3, post_smooth = 3;
+    // int pre_smooth = 1, post_smooth = 1;
+    // int pre_smooth = 3, post_smooth = 3; 
+    int pre_smooth = 5, post_smooth = 5; // more smoothing steps just because it's damped jacobi (which is weaker but more parallel)
+    // int pre_smooth = 30, post_smooth = 30;
     T omega = 2.0 / 3.0;
-    bool print = true;
-    // int n_vcycles = 100;
-    int n_vcycles = 1;
+
+    // bool print = true;
+    bool print = false;
+
+    int n_vcycles = 100;
+    // int n_vcycles = 1;
+
+    // init defect nrm
+    T init_defect_nrm = grids[0].getDefectNorm();
+    printf("init defect nrm, ||defect|| = %.2e\n", init_defect_nrm);
 
     for (int i_vcycle = 0; i_vcycle < n_vcycles; i_vcycle++) {
-        printf("V cycle step %d\n", i_vcycle);
+        // printf("V cycle step %d\n", i_vcycle);
 
         // go down each level smoothing and restricting until lowest level
         for (int i_level = 0; i_level < n_levels; i_level++) {
             // if not last  (pre-smooth)
             if (i_level < n_levels - 1) {
-                printf("\tlevel %d pre-smooth\n", i_level);
+                if (print) printf("\tlevel %d pre-smooth\n", i_level);
 
                 // pre-smooth
                 grids[i_level].dampedJacobiDefect(pre_smooth, omega, print, pre_smooth - 1);
@@ -64,7 +77,7 @@ int main() {
                 // restrict defect
                 grids[i_level + 1].restrict_defect(grids[i_level].d_defect);
             } else {
-                printf("\tlevel %d full-solve\n", i_level);
+                if (print) printf("\tlevel %d full-solve\n", i_level);
 
                 // print the defect here..
                 // T *h_coarse_defect = grids[i_level].d_defect.createHostVec().getPtr();
@@ -81,7 +94,7 @@ int main() {
             // get coarse-fine correction from coarser grid to this grid
             grids[i_level].prolongate(grids[i_level + 1].d_soln);
 
-            printf("\tlevel %d post-smooth\n", i_level);
+            if (print) printf("\tlevel %d post-smooth\n", i_level);
 
             // post-smooth
             grids[i_level].dampedJacobiDefect(post_smooth, omega, print, post_smooth - 1);
@@ -89,7 +102,12 @@ int main() {
 
         // compute fine grid defect of V-cycle
         T defect_nrm = grids[0].getDefectNorm();
-        printf("\tend of v-cycle step %d, ||defect|| = %.2e\n", i_vcycle, defect_nrm);
+        printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
+
+        if (defect_nrm < 1e-6 * init_defect_nrm) {
+            printf("V-cycle GMG converged in %d steps\n", i_vcycle + 1);
+            break;
+        }
 
     }
 

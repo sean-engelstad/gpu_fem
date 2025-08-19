@@ -359,14 +359,14 @@ class PoissonSolver {
             dim3 block(32), grid((N + 31) / 32);
             k_diag_inv_vec<T><<<grid, block>>>(N, d_diag_inv.getPtr(), d_defect.getPtr(), d_temp);
 
-            // x += dx
-            T a = 1.0;
+            // x += omega * dx
+            T a = omega;
             CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
 
-            // defect -= A * dx
-            T floatnegone = -1.0, floatone = 1.0;
-            CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                        &floatnegone, matA, vecTMP, &floatone, vecD, CUDA_R_32F,
+            // defect -= A * omega * dx
+            T nomega = -omega, floatone = 1.0;
+            CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &nomega,
+                                        matA, vecTMP, &floatone, vecD, CUDA_R_32F,
                                         CUSPARSE_SPMV_ALG_DEFAULT, buffer_MV));
 
             // compute defect nrm
@@ -380,8 +380,8 @@ class PoissonSolver {
     void prolongate(DeviceVec<T> coarse_soln_in) {
         // transfer a coarser mesh to this fine mesh
 
-        // save previous soln (so we can track defect)
-        cudaMemcpy(d_temp, d_soln.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+        // zero temp so we can store dx in it
+        cudaMemset(d_temp, 0.0, N * sizeof(T));
 
         // launch kernel so coalesced with every group of N_coarse threads covering whole domain
         // then repeats with extra group of grids (9x for 9x adjacent fine nodes of FD stencil)
@@ -390,14 +390,14 @@ class PoissonSolver {
         int nblocks_x = (Nc + 31) / 32;
         dim3 grid(nblocks_x, 9);
 
-        k_coarse_fine<T><<<grid, block>>>(nxe, N, coarse_soln_in.getPtr(), d_soln.getPtr());
+        k_coarse_fine<T><<<grid, block>>>(nxe, N, coarse_soln_in.getPtr(), d_temp);
 
-        // compute soln change -dx = prev_soln - new_soln
-        T a = -1.0;
-        CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, d_soln.getPtr(), 1, d_temp, 1));
-        // A * -dx add into defect
-        T floatone = 1.0;  //, floatnegone = -1.0;
-        CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
+        // add coarse-fine dx into soln
+        T a = 1.0;
+        CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
+        // defect -= A * dx
+        T floatnegone = -1.0, floatone = 1.0;
+        CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatnegone,
                                     matA, vecTMP, &floatone, vecD, CUDA_R_32F,
                                     CUSPARSE_SPMV_ALG_DEFAULT, buffer_MV));
     }

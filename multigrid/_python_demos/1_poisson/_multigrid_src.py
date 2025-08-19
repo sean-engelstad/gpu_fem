@@ -121,3 +121,16 @@ def coarse_fine_operators(nxe_fine, nxe_factor:int=2, remove_bcs:bool=True):
 
     return I_cf, I_fc
 
+def damped_jacobi_defect(n_iters, A, _defect):
+    defect = _defect.copy()
+    dx = np.zeros_like(defect)
+    Dinv = 1.0 / np.diag(A)
+    omega = 2.0 / 3.0
+    for i in range(n_iters):
+        dx_update = omega * Dinv * defect
+
+        dx += dx_update
+        defect -= np.dot(A, dx_update)
+        d_norm = np.linalg.norm(defect)
+        print(f"{i=} : {d_norm=:.3e}")
+    return 
