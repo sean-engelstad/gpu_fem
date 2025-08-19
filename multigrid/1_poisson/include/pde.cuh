@@ -1,5 +1,19 @@
 /* helper device methods with prefix d_ for device */
-__device__ static int d_getElemInd() { return blockIdx.x * blockDim.x + threadIdx.x; }
+__device__ static int d_getElemInd(bool red_black_order, int nelems) {
+    // permute elems order so that writes are consecutive in memory for red-black vs standard order 
+    int perm_ielem = blockIdx.x * blockDim.x + threadIdx.x;
+    if (!red_black_order) return perm_ielem; // no unpermute needed here
+    if (red_black_order) {
+        // don't choose nelems
+        // assert(nelems % 2 == 0); // still need this to be the case
+        int half_nelems = nelems / 2;
+        int odd_elem = perm_ielem >= half_nelems;
+        int half_ielem = perm_ielem - odd_elem * half_nelems;
+        int unperm_ielem = 2 * half_ielem + 1 * odd_elem;
+        return unperm_ielem;
+    }
+    return -1;
+}
 __device__ static int d_getElemGlobalNode(int nxe, int ielem, int local_node) {
     int ixe = ielem % nxe, iye = ielem / nxe;
     int nx = nxe + 1;  // get num nodes on line
@@ -30,19 +44,45 @@ __global__ static void k_vecset(int N, int value, int *d_vec) {
     }
 }
 
-__global__ static void k_minElemsPerNode(int nxe, int nelems, int *d_node_min_elems) {
-    // for each node get the min elem_ind connected to it
-    int ielem = d_getElemInd(), local_node = blockIdx.y;
-    if (ielem >= nelems) return;
+__global__ static void k_getRedBlackPerms(int N, int *d_perm, int *d_iperm) {
+    // get red black ordering
+    int ind = threadIdx.x + blockIdx.x * blockDim.x;
+    if (ind < N) {
+        int odd = ind % 2 == 1;
+        // assuming N is odd because nxe is power of 2 (this is way I do it..) otherwise could go into subcases
+        int half = (N+1) / 2;
+        d_perm[ind] = ind / 2 + half * odd; // old to new node
 
-    int global_node = d_getElemGlobalNode(nxe, ielem, local_node);
-    atomicMin(&d_node_min_elems[global_node], ielem);
+        // this is done consectuve in memory!
+        int odd_rev = ind >= half; // even from reverse
+        int half_ind = ind - half * odd_rev;
+        d_iperm[ind] = 2 * half_ind + 1 * odd_rev; // new to old node
+    }
 }
 
+__global__ static void k_getNaturalPerm(int N, int *d_perm, int *d_iperm) {
+    // get natural perm (no reordering) just 1 to N
+    int ind = threadIdx.x + blockIdx.x * blockDim.x;
+    if (ind < N) {
+        d_perm[ind] = ind;
+        d_iperm[ind] = ind;
+    }
+}
+
+
+// __global__ static void k_minElemsPerNode(int nxe, int nelems, int *d_node_min_elems) {
+//     // for each node get the min elem_ind connected to it
+//     int ielem = d_getElemInd(), local_node = blockIdx.y;
+//     if (ielem >= nelems) return;
+
+//     int global_node = d_getElemGlobalNode(nxe, ielem, local_node);
+//     atomicMin(&d_node_min_elems[global_node], ielem);
+// }
+
 template <typename I>
-__global__ static void k_csrNUNIQRowCounts(int nxe, int nelems, int *d_csrNUNIQRowCounts) {
+__global__ static void k_csrNUNIQRowCounts(bool red_black_order, int nxe, int nelems, int *d_perm, int *d_csrNUNIQRowCounts) {
     // non-unique row counts
-    int ielem = d_getElemInd();
+    int ielem = d_getElemInd(red_black_order, nelems);
     if (ielem >= nelems) return;
 
     // get the i,j for local node indices (i,j) each in [0,1,2,3] of elem
@@ -54,10 +94,12 @@ __global__ static void k_csrNUNIQRowCounts(int nxe, int nelems, int *d_csrNUNIQR
     int g_row = d_getElemGlobalNode(nxe, ielem, i);
     int g_col = d_getElemGlobalNode(nxe, ielem, j);
 
+    // map old to new nodes
+    int perm_g_row = d_perm[g_row];
     int connected = d_getFDConnectedNodePair(nxe+1, g_row, g_col);
 
     // now we write into the main
-    atomicAdd(&d_csrNUNIQRowCounts[g_row], connected);
+    atomicAdd(&d_csrNUNIQRowCounts[perm_g_row], connected);
 }
 
 template <typename I>
@@ -65,9 +107,6 @@ __global__ static void k_uniqueRowCount(int nx, int N, int *d_minConnectedNode, 
     int ind = threadIdx.x + blockIdx.x * blockDim.x;
     if (ind < N) {
         int validConnectedCol = d_minConnectedNode[ind] < N; // if it's above N, there were no min connected cols left => it adds 0
-
-        // check also the two nodes are connected in FD stencil
-        int connected = d_getFDConnectedNodePair(nx, ind, validConnectedCol) * validConnectedCol;
 
         d_csrRowCounts[ind] += validConnectedCol;
         atomicAdd(d_csr_nnz, validConnectedCol);
@@ -83,9 +122,10 @@ __global__ static void k_csrMaxRowCount(int N, int *d_csrRowCounts, int *d_maxRo
     }
 }
 
-__global__ static void k_getMinConnectedNode(int nxe, int nrows, int nelems, int *d_minConnectedNode_in, int *d_minConnectedNode_out) {
+__global__ static void k_getMinConnectedNode(bool red_black_order, int nxe, int nrows, int nelems, int *d_perm, 
+        int *d_minConnectedNode_in, int *d_minConnectedNode_out) {
     // compute the number of values on CSR rowp (row counts)
-    int ielem = d_getElemInd();
+    int ielem = d_getElemInd(red_black_order, nelems);
     if (ielem >= nelems) return;
 
     // get the i,j for local node indices (i,j) each in [0,1,2,3] of elem
@@ -97,16 +137,21 @@ __global__ static void k_getMinConnectedNode(int nxe, int nrows, int nelems, int
     int g_row = d_getElemGlobalNode(nxe, ielem, i);
     int g_col = d_getElemGlobalNode(nxe, ielem, j);
 
+    // map old to new nodes
+    int perm_g_row = d_perm[g_row], perm_g_col = d_perm[g_col];
+    int connected = d_getFDConnectedNodePair(nxe+1, g_row, g_col);
+
     // had syncthreads here before => that doesn't work  (cause it only syncs threads in thread block, not whole GPU)
     // syncthreads is useful for splitting up register usage nicely and dropping registers on each thread block still
-    int b_larger_than_prev = g_col > d_minConnectedNode_in[g_row];
+    int prev_perm_g_col = d_minConnectedNode_in[perm_g_row];
+    int b_larger_than_prev = perm_g_col > prev_perm_g_col;
 
     // check also the two nodes are connected in FD stencil
     b_larger_than_prev = d_getFDConnectedNodePair(nxe + 1, g_row, g_col) * b_larger_than_prev;
 
     // now do atomic min, this should get min connected node larger than previous (efficiently)
     // printf("g_row %d, g_col %d, valid %d\n", g_row, g_col, b_larger_than_prev); // race condition stuff here.. (fixed by two arrays now)
-    atomicMin(&d_minConnectedNode_out[g_row], g_col * b_larger_than_prev + nrows * (1 - b_larger_than_prev));
+    atomicMin(&d_minConnectedNode_out[perm_g_row], perm_g_col * b_larger_than_prev + nrows * (1 - b_larger_than_prev));
 }
 
 __global__ static void k_addMinConnectedNodeRows(int i_minNode, int N,
@@ -195,20 +240,24 @@ __global__ static void k_assembleLHS(int nxe, int nnz, int nelems, int *d_rows, 
         // finite diff stencil for 2d laplacian
         T val = (row == col) ? 4.0 : -1.0;
         val *= 1.0 / dx / dx;
+        // same for perm even (just diff NZ pattern, no changes to this kernel)
 
         d_lhs[csr_ind] = val;
     }
 }
 
 template <typename T>
-__global__ static void k_applyBCsLHS(int nx, int N, int csr_nnz, int *d_rows, int *d_cols, T *d_lhs) {
+__global__ static void k_applyBCsLHS(int nx, int N, int csr_nnz, int *d_iperm, int *d_rows, int *d_cols, T *d_lhs) {
     // NOTE : this kernel is not very efficient yet..
     int csr_ind = threadIdx.x + blockIdx.x * blockDim.x;
     if (csr_ind < csr_nnz) {
         T val = d_lhs[csr_ind];
 
-        int row = d_rows[csr_ind];
-        int col = d_cols[csr_ind];
+        int perm_row = d_rows[csr_ind];
+        int perm_col = d_cols[csr_ind];
+
+        // unpermute
+        int row = d_iperm[perm_row], col = d_iperm[perm_col];
 
         int rx = row % nx, ry = row / nx;
         int cx = col % nx, cy = col / nx;
@@ -221,17 +270,22 @@ __global__ static void k_applyBCsLHS(int nx, int N, int csr_nnz, int *d_rows, in
         val = !bndry ? val : 0.0;
         val = !diag_bndry ? val : 1.0;
 
+        // still consectuve in memory despite perm
+
         // now we write into the 
         d_lhs[csr_ind] = val;
     }
 }
 
 template <typename T>
-__global__ static void k_assembleRHS(int nx, int N, T dx, T *d_rhs) {
+__global__ static void k_assembleRHS(int nx, int N, T dx, int *d_iperm, T *d_rhs) {
     // assemble lhs with exponential load f(x,y) = -2 * exp(x*y)
     
-    int ind = threadIdx.x + blockIdx.x * blockDim.x;
-    if (ind < N) {
+    int perm_ind = threadIdx.x + blockIdx.x * blockDim.x;
+    if (perm_ind < N) {
+
+        int ind = d_iperm[perm_ind];
+
         int ix = ind % nx, iy = ind / nx;
         T x = ix * dx, y = iy * dx;
         T load = -2.0 * exp(x * y);
@@ -240,16 +294,18 @@ __global__ static void k_assembleRHS(int nx, int N, T dx, T *d_rhs) {
         int bndry = (ix == 0 || ix == (nx-1) || iy == 0 || (iy == (nx - 1)));
         load = !bndry ? load : exp(x*y); // non-zero dirichlet condition on bndry
 
-        d_rhs[ind] = load;
+        d_rhs[perm_ind] = load;
     }
 }
 
 template <typename T>
-__global__ static void k_initSoln(int nx, int N, T dx, T *d_soln) {
+__global__ static void k_initSoln(int nx, int N, T dx, int *d_iperm, T *d_soln) {
     // set soln to dirichlet bc on bndry and zero elsewhere
     
-    int ind = threadIdx.x + blockIdx.x * blockDim.x;
-    if (ind < N) {
+    int perm_ind = threadIdx.x + blockIdx.x * blockDim.x;
+    if (perm_ind < N) {
+        int ind = d_iperm[perm_ind];
+
         int ix = ind % nx, iy = ind / nx;
         T x = ix * dx, y = iy * dx;
 
@@ -257,20 +313,22 @@ __global__ static void k_initSoln(int nx, int N, T dx, T *d_soln) {
         int bndry = (ix == 0 || ix == (nx-1) || iy == 0 || (iy == (nx - 1)));
         T val = !bndry ? 0.0 : exp(x*y); // non-zero dirichlet condition on bndry
 
-        d_soln[ind] = val;
+        d_soln[perm_ind] = val;
     }
 }
 
 template <typename T>
-__global__ static void k_getTrueSoln(int nx, int N, T dx, T *d_true_soln) {
-    int ind = threadIdx.x + blockIdx.x * blockDim.x;
-    if (ind < N) {
+__global__ static void k_getTrueSoln(int nx, int N, T dx, int *d_iperm, T *d_true_soln) {
+    int perm_ind = threadIdx.x + blockIdx.x * blockDim.x;
+    if (perm_ind < N) {
+        int ind = d_iperm[perm_ind];
+
         int ix = ind % nx, iy = ind / nx;
         T x = ix * dx, y = iy * dx;
         T val = exp(x * y);
 
         // true soln is exp(x * y)
-        d_true_soln[ind] = val;
+        d_true_soln[perm_ind] = val;
     }
 }
 
@@ -302,7 +360,7 @@ __global__ static void k_diag_inv_vec(int N, T *diag_inv, T *vec_in, T *vec_out)
 }
 
 template <typename T>
-__global__ static void k_coarse_fine(int nxe_fine, int N_f, const T *this_coarse_vec, T *finer_vec) {
+__global__ static void k_coarse_fine(int nxe_fine, int N_f, const int *d_fine_perm, const int *d_coarse_iperm, const T *this_coarse_vec, T *finer_vec) {
     // go from a coarser grid to this fine level
     int nxe_coarse = nxe_fine / 2;
     int nx_c = nxe_coarse + 1;
@@ -311,7 +369,10 @@ __global__ static void k_coarse_fine(int nxe_fine, int N_f, const T *this_coarse
     int nx_f = 2 * nxe_coarse + 1;
 
     // get the fine node right on the coarse node
-    int coarse_ind = threadIdx.x + blockDim.x * blockIdx.x;
+    int perm_coarse_ind = threadIdx.x + blockDim.x * blockIdx.x;
+    if (perm_coarse_ind >= N_coarse) return;
+    int coarse_ind = d_coarse_iperm[perm_coarse_ind];
+
     int ix_c = coarse_ind % nx_c, iy_c = coarse_ind / nx_c;
     int ix_f0 = 2 * ix_c, iy_f0 = 2 * iy_c;
 
@@ -323,7 +384,9 @@ __global__ static void k_coarse_fine(int nxe_fine, int N_f, const T *this_coarse
     int fine_ind = nx_f * iy_f + ix_f;
 
     // now only perform updates if in range and if on boundary => update becomes zero
-    if (0 <= fine_ind && fine_ind < N_f && coarse_ind < N_coarse) {
+    if (0 <= fine_ind && fine_ind < N_f) {
+
+        int perm_fine_ind = d_fine_perm[fine_ind];
 
         // compute scale based on dx and dy offsets on fine mesh
         int case1 = ix_adj == 0 && iy_adj == 0; // coarse and fine nodes match
@@ -338,12 +401,13 @@ __global__ static void k_coarse_fine(int nxe_fine, int N_f, const T *this_coarse
         int bndry = coarse_bndry || fine_bndry;
         scale *= !bndry; // makes it zero if bndry
 
-        atomicAdd(&finer_vec[fine_ind], scale * this_coarse_vec[coarse_ind]);
+        // TODO : could change order of kernels to be based on consecutive fine ind for greater perf (but this prob not perf limiting rn)
+        atomicAdd(&finer_vec[perm_fine_ind], scale * this_coarse_vec[perm_coarse_ind]);
     }
 }
 
 template <typename T>
-__global__ static void k_fine_coarse(int nxe_coarse, int N_coarse, const T *finer_vec_in, T *coarse_vec_out) {
+__global__ static void k_fine_coarse(int nxe_coarse, int N_coarse, const int *d_fine_perm, const int *d_coarse_iperm, const T *finer_vec_in, T *coarse_vec_out) {
     // go from finer grid than this one => to this coarse grid defect
     int nx_c = nxe_coarse + 1;
     // int nxe_f = nxe_coarse * 2;
@@ -351,7 +415,10 @@ __global__ static void k_fine_coarse(int nxe_coarse, int N_coarse, const T *fine
     int N_f = nx_f * nx_f;
 
     // get the fine node right on the coarse node
-    int coarse_ind = threadIdx.x + blockDim.x * blockIdx.x;
+    int perm_coarse_ind = threadIdx.x + blockDim.x * blockIdx.x;
+    if (perm_coarse_ind >= N_coarse) return;
+    int coarse_ind = d_coarse_iperm[perm_coarse_ind];
+
     int ix_c = coarse_ind % nx_c, iy_c = coarse_ind / nx_c;
     int ix_f0 = 2 * ix_c, iy_f0 = 2 * iy_c;
 
@@ -363,7 +430,9 @@ __global__ static void k_fine_coarse(int nxe_coarse, int N_coarse, const T *fine
     int fine_ind = nx_f * iy_f + ix_f;
 
     // now only perform updates if in range and if on boundary => update becomes zero
-    if (0 <= fine_ind && fine_ind < N_f && coarse_ind < N_coarse) {
+    if (0 <= fine_ind && fine_ind < N_f) {
+
+        int perm_fine_ind = d_fine_perm[fine_ind];
 
         // compute scale based on dx and dy offsets on fine mesh
         int case1 = ix_adj == 0 && iy_adj == 0; // coarse and fine nodes match
@@ -380,7 +449,7 @@ __global__ static void k_fine_coarse(int nxe_coarse, int N_coarse, const T *fine
         // printf("fine %d, coarse %d, fb %d, cb %d : scale %.2e\n", fine_ind, coarse_ind, fine_bndry, coarse_bndry, scale);
         // printf("fine_ind %d => coarse_ind %d, with scale %.2e on fine val %.2e\n", fine_ind, coarse_ind, scale, finer_vec_in[fine_ind]);
 
-        atomicAdd(&coarse_vec_out[coarse_ind], scale * finer_vec_in[fine_ind]);
+        atomicAdd(&coarse_vec_out[perm_coarse_ind], scale * finer_vec_in[perm_fine_ind]);
     }
 
 }

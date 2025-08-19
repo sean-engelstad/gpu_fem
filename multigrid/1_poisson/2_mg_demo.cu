@@ -19,11 +19,13 @@ int main() {
     int n_levels = log2_nxe - 1;
     printf("nxe %d, log2(nxe) %d, n_levels %d\n", nxe, log2_nxe, n_levels);
 
+    bool red_black_order = false; // just lexigraphic or natural ordering for the damped jacobi
+
     GRID *grids = new GRID[n_levels]; 
     int c_nxe = nxe;
     for (int ilevel = 0; ilevel < n_levels; ilevel++, c_nxe /= 2) {
         printf("level %d, making poisson solver with nxe %d elems\n", ilevel, c_nxe);
-        grids[ilevel] = GRID(c_nxe);
+        grids[ilevel] = GRID(c_nxe, red_black_order);
     }
 
     /* DEBUG before full V-cycles */
@@ -76,7 +78,7 @@ int main() {
                 grids[i_level].dampedJacobiDefect(pre_smooth, omega, print, pre_smooth - 1);
 
                 // restrict defect
-                grids[i_level + 1].restrict_defect(grids[i_level].d_defect);
+                grids[i_level + 1].restrict_defect(grids[i_level].d_perm, grids[i_level].d_defect);
             } else {
                 if (print) printf("\tlevel %d full-solve\n", i_level);
 
@@ -93,7 +95,7 @@ int main() {
         // now go back up the hierarchy
         for (int i_level = n_levels - 2; i_level >= 0; i_level--) {
             // get coarse-fine correction from coarser grid to this grid
-            grids[i_level].prolongate(grids[i_level + 1].d_soln);
+            grids[i_level].prolongate(grids[i_level + 1].d_iperm, grids[i_level + 1].d_soln);
 
             if (print) printf("\tlevel %d post-smooth\n", i_level);
 

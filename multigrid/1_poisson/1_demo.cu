@@ -6,6 +6,7 @@ int main() {
     using T = float; // double
 
     // int nxe = 2;
+    // int nxe = 3;
     int nxe = 4;
     // int nxe = 10;
     // int nxe = 30;
@@ -19,7 +20,9 @@ int main() {
     // int nxe = 10000; // 100M DOF (fails on 3060 Ti)
     // int nxe = 30000; // 1 billion DOF (fails on 3060 Ti)
 
-    auto solver = PoissonSolver<T>(nxe);
+    auto solver = PoissonSolver<T>(nxe, true);
+
+    // return 0;
 
     // // try printing out data structures to check..
     // int N = solver.N;
@@ -73,11 +76,15 @@ int main() {
     // return;
 
     /* try solve here.. */
+    // int n_iter = 100;
+    // // int n_iter = 1000;
+    // T omega = 2.0 / 3.0;
+    // bool print = true;
+    // solver.dampedJacobiSolve(n_iter, omega, print);
+
     int n_iter = 100;
-    // int n_iter = 1000;
-    T omega = 2.0 / 3.0;
     bool print = true;
-    solver.dampedJacobiSolve(n_iter, omega, print);
+    solver.redBlackGaussSeidelDefect(n_iter, print);
 
     // get true soln error (including discretization)
     // maybe some error in lhs or rhs here..

@@ -16,11 +16,14 @@ class PoissonSolver {
    public:
     PoissonSolver() = default;  // so you can make pointers..
 
-    PoissonSolver(int nxe_) : nxe(nxe_) {
+    PoissonSolver(int nxe_, bool red_black_order_ = false)
+        : nxe(nxe_), red_black_order(red_black_order_) {
         nx = nxe + 1;
         N = nx * nx;
         nelems = nxe * nxe;
         dx = 1.0 / (nx - 1);  // element dx or mesh size metric
+
+        assert(nxe % 2 == 0);
 
         // compute the nnz pattern of the LHS
         buildCSRPattern();
@@ -46,15 +49,18 @@ class PoissonSolver {
 
         // init dense vecs
         d_temp = DeviceVec<T>(N).getPtr();
+        d_temp_half = DeviceVec<T>(N / 2).getPtr();
         d_resid = DeviceVec<T>(N).getPtr();
         d_defect = DeviceVec<T>(N);
         cusparseCreateDnVec(&vecB, N, d_rhs.getPtr(), CUDA_R_32F);
         cusparseCreateDnVec(&vecTMP, N, d_temp, CUDA_R_32F);
+        cusparseCreateDnVec(&vecHalf, N, d_temp_half, CUDA_R_32F);
         cusparseCreateDnVec(&vecX, N, d_soln.getPtr(), CUDA_R_32F);
         cusparseCreateDnVec(&vecR, N, d_resid, CUDA_R_32F);
         cusparseCreateDnVec(&vecD, N, d_defect.getPtr(), CUDA_R_32F);
 
         CHECK_CUSPARSE(cusparseCreateDnVec(&vecTMP, N, d_temp, CUDA_R_32F));
+        CHECK_CUSPARSE(cusparseCreateDnVec(&vecHalf, N, d_temp_half, CUDA_R_32F));
         CHECK_CUSPARSE(cusparseCreateDnVec(&vecR, N, d_resid, CUDA_R_32F));
 
         // init A matrix
@@ -68,6 +74,27 @@ class PoissonSolver {
             cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone, matA, vecTMP, &floatzero,
             vecR, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSizeMV));
         CHECK_CUDA(cudaMalloc(&buffer_MV, bufferSizeMV));
+        // this buffer size should also be sufficient for the red and black matrices I believe (they
+        // are smaller..)
+
+        // if (red_black_order) {
+        //     int N_half = N / 2;
+        //     int csr_nnz_half = csr_nnz / 2;
+
+        //     // also initialize A_red and A_black
+        //     CHECK_CUSPARSE(cusparseCreateCsr(&matA_red, N_half, N, csr_nnz_half,
+        //                                      d_csr_rowp.getPtr(), d_csr_cols.getPtr(),
+        //                                      d_lhs.getPtr(), CUSPARSE_INDEX_32I,
+        //                                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+        //                                      CUDA_R_32F));
+
+        //     // A_black
+        //     CHECK_CUSPARSE(cusparseCreateCsr(&matA_black, N_half, N, csr_nnz_half,
+        //                                      &d_csr_rowp.getPtr()[N_half], d_csr_cols.getPtr(),
+        //                                      d_lhs.getPtr(), CUSPARSE_INDEX_32I,
+        //                                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO,
+        //                                      CUDA_R_32F));
+        // }
     }
 
     void free() {
@@ -92,8 +119,8 @@ class PoissonSolver {
         k_assembleLHS<T><<<grid, block>>>(nxe, csr_nnz, nelems, d_csr_rows.getPtr(),
                                           d_csr_cols.getPtr(), dx, d_lhs.getPtr());
 
-        k_applyBCsLHS<T><<<grid, block>>>(nx, N, csr_nnz, d_csr_rows.getPtr(), d_csr_cols.getPtr(),
-                                          d_lhs.getPtr());
+        k_applyBCsLHS<T><<<grid, block>>>(nx, N, csr_nnz, d_iperm.getPtr(), d_csr_rows.getPtr(),
+                                          d_csr_cols.getPtr(), d_lhs.getPtr());
 
         // get diag inv for jacobi
         d_diag_inv = DeviceVec<T>(N);
@@ -109,7 +136,7 @@ class PoissonSolver {
         dim3 grid(nblocks, 16);
 
         d_rhs = DeviceVec<T>(N);
-        k_assembleRHS<T><<<grid, block>>>(nx, N, dx, d_rhs.getPtr());
+        k_assembleRHS<T><<<grid, block>>>(nx, N, dx, d_iperm.getPtr(), d_rhs.getPtr());
     }
 
     void computeDefectFromRHS() {
@@ -118,20 +145,35 @@ class PoissonSolver {
         cudaMemcpy(d_defect.getPtr(), d_resid, N * sizeof(T), cudaMemcpyDeviceToDevice);
     }
 
-    void updateDefect() {
-        // compute a new defect
-    }
-
     void buildCSRPattern() {
         /* compute the CSR matrix nnz pattern on the GPU (with nofill) */
         // TODO : can lattern extend some of these methods to compute nnz patterns on GPU with TACS
 
+        // init cuda grid and perm pointers
+        dim3 block(32), grid0((N + 31) / 32);
+        d_perm = DeviceVec<int>(N), d_iperm = DeviceVec<int>(N);
+
+        // get perm vector
+        if (red_black_order) {
+            k_getRedBlackPerms<<<grid0, block>>>(N, d_perm.getPtr(), d_iperm.getPtr());
+        } else {
+            k_getNaturalPerm<<<grid0, block>>>(N, d_perm.getPtr(), d_iperm.getPtr());
+        }
+
+        // printf("d_perm : ");
+        // int *h_perm = d_perm.createHostVec().getPtr();
+        // printVec<int>(min(N, 50), h_perm);
+        // printf("d_iperm : ");
+        // int *h_iperm = d_iperm.createHostVec().getPtr();
+        // printVec<int>(min(N, 50), h_iperm);
+        // return;  // temp
+
         // 1) get total row counts (non-unique)
         auto d_csr_NUNIQ_row_counts = DeviceVec<int>(N);
         int nblocks = (nelems + 31) / 32;
-        dim3 block(32);
         dim3 grid(nblocks, 16);
-        k_csrNUNIQRowCounts<I><<<grid, block>>>(nxe, nelems, d_csr_NUNIQ_row_counts.getPtr());
+        k_csrNUNIQRowCounts<I><<<grid, block>>>(red_black_order, nxe, nelems, d_perm.getPtr(),
+                                                d_csr_NUNIQ_row_counts.getPtr());
         // NOTE : realized after the fact => some of this CSR pattern stuff maybe shouldn't have
         // used elements, should have just gone by nodes, but whatever..
 
@@ -167,7 +209,8 @@ class PoissonSolver {
             k_vecset<<<grid3, block>>>(N, N, d_minConnectedNode_out.getPtr());
 
             // get the ith min node connected to this nodal row (loops over each element..)
-            k_getMinConnectedNode<<<grid, block>>>(nxe, N, nelems, d_minConnectedNode_in.getPtr(),
+            k_getMinConnectedNode<<<grid, block>>>(red_black_order, nxe, N, nelems, d_perm.getPtr(),
+                                                   d_minConnectedNode_in.getPtr(),
                                                    d_minConnectedNode_out.getPtr());
 
             // add this ith min connected node to the row (until no more to add)
@@ -194,8 +237,7 @@ class PoissonSolver {
         // // DEBUG
         // printf("h_rowp: ");
         // int *h_rowp = d_csr_rowp.createHostVec().getPtr();
-        // // printVec<int>(N + 1, h_rowp);
-        // printVec<int>(100, h_rowp);
+        // printVec<int>(min(N + 1, 100), h_rowp);
         // return;
 
         // 5) get max row count (unique row counts)
@@ -219,7 +261,8 @@ class PoissonSolver {
             k_vecset<<<grid3, block>>>(N, N, d_minConnectedNode_out.getPtr());
 
             // get the ith min node connected to this nodal row (loops over each element..)
-            k_getMinConnectedNode<<<grid, block>>>(nxe, N, nelems, d_minConnectedNode_in.getPtr(),
+            k_getMinConnectedNode<<<grid, block>>>(red_black_order, nxe, N, nelems, d_perm.getPtr(),
+                                                   d_minConnectedNode_in.getPtr(),
                                                    d_minConnectedNode_out.getPtr());
 
             // DEBUG
@@ -251,7 +294,7 @@ class PoissonSolver {
         // printf("h_cols: ");
         // int *h_cols = d_csr_cols.createHostVec().getPtr();
         // // printVec<int>(csr_nnz, h_cols);
-        // printVec<int>(100, h_cols);
+        // printVec<int>(min((int)csr_nnz, 100), h_cols);
     }
 
     void getTrueSoln() {
@@ -261,7 +304,7 @@ class PoissonSolver {
         dim3 block(32);
         int nblocks = (N + block.x - 1) / block.x;
         dim3 grid(nblocks);
-        k_getTrueSoln<T><<<grid, block>>>(nx, N, dx, d_true_soln.getPtr());
+        k_getTrueSoln<T><<<grid, block>>>(nx, N, dx, d_iperm.getPtr(), d_true_soln.getPtr());
     }
 
     T getSolnError() {
@@ -310,7 +353,7 @@ class PoissonSolver {
         // init soln to zero but nz on bndry
         dim3 block(32);
         dim3 grid((N + 31) / 32);
-        k_initSoln<T><<<grid, block>>>(nx, N, dx, d_soln.getPtr());
+        k_initSoln<T><<<grid, block>>>(nx, N, dx, d_iperm.getPtr(), d_soln.getPtr());
     }
 
     void resetDefect() {
@@ -377,7 +420,61 @@ class PoissonSolver {
         }
     }
 
-    void prolongate(DeviceVec<T> coarse_soln_in) {
+    void redBlackGaussSeidelDefect(int n_iters, bool print = false, int print_freq = 10) {
+        // do red black gauss-seidel on the defect
+        // here red are even nodes and black are odd nodes from lexigraphic (or natural order)
+        // uses 2 full-size matrix-vec products on each iter (twice cost of damped jacobi, but much
+        // more powerful smoother often about 3x less ovr cost and less tuning needed)
+
+        int N_half = (N + 1) / 2;  // N is odd since nxe is even (conventin for this problem)
+
+        for (int iter = 0; iter < n_iters; iter++) {
+            /* 1) D_red * dx_red = defect_red */
+
+            // defect_red => d_temp_half (half size)
+            cudaMemcpy(d_temp_half, d_defect.getPtr(), N_half * sizeof(T),
+                       cudaMemcpyDeviceToDevice);
+
+            // Dinv * d_temp_half => d_temp, so that d_temp [dx_red, 0] now
+            cudaMemset(d_temp, 0.0, N * sizeof(T));
+            dim3 block(32), grid((N_half + 31) / 32);
+            k_diag_inv_vec<T><<<grid, block>>>(N / 2, d_diag_inv.getPtr(), d_temp_half, d_temp);
+
+            /* 2) now update soln and defect from dx = [dx_red, 0] red update */
+            T a = 1.0;
+            CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
+            T float_mone = -1.0, float_one = 1.0;
+            CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                        &float_mone, matA, vecTMP, &float_one, vecD, CUDA_R_32F,
+                                        CUSPARSE_SPMV_ALG_DEFAULT, buffer_MV));
+
+            /* 3) D_black * dx_black = defect_black */
+
+            // defect_black => d_temp_half (half size) // since lengths N_half and N_half-1..
+            cudaMemcpy(d_temp_half, &d_defect.getPtr()[N_half], (N_half - 1) * sizeof(T),
+                       cudaMemcpyDeviceToDevice);
+
+            // Dinv * d_temp_half = Dinv * [0, defect_black] => d_temp, so that d_temp [0, dx_black]
+            cudaMemset(d_temp, 0.0, N * sizeof(T));
+            k_diag_inv_vec<T><<<grid, block>>>(N_half - 1, &d_diag_inv.getPtr()[N_half],
+                                               d_temp_half, &d_temp[N_half]);
+
+            /* 4) now update soln and defect from dx = [0, dx_black] black update */
+            a = 1.0;
+            CHECK_CUBLAS(cublasSaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
+            CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                        &float_mone, matA, vecTMP, &float_one, vecD, CUDA_R_32F,
+                                        CUSPARSE_SPMV_ALG_DEFAULT, buffer_MV));
+
+            /* 5) report progress of defect nrm if printing.. */
+            T defect_nrm;
+            CHECK_CUBLAS(cublasSnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
+            if (print && iter % print_freq == 0)
+                printf("\tDampJac %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+        }
+    }
+
+    void prolongate(DeviceVec<int> d_coarse_iperm, DeviceVec<T> coarse_soln_in) {
         // transfer a coarser mesh to this fine mesh
 
         // zero temp so we can store dx in it
@@ -390,7 +487,8 @@ class PoissonSolver {
         int nblocks_x = (Nc + 31) / 32;
         dim3 grid(nblocks_x, 9);
 
-        k_coarse_fine<T><<<grid, block>>>(nxe, N, coarse_soln_in.getPtr(), d_temp);
+        k_coarse_fine<T><<<grid, block>>>(nxe, N, d_perm.getPtr(), d_coarse_iperm.getPtr(),
+                                          coarse_soln_in.getPtr(), d_temp);
 
         // add coarse-fine dx into soln
         T a = 1.0;
@@ -402,7 +500,7 @@ class PoissonSolver {
                                     CUSPARSE_SPMV_ALG_DEFAULT, buffer_MV));
     }
 
-    void restrict_defect(DeviceVec<T> fine_defect_in) {
+    void restrict_defect(DeviceVec<int> d_fine_perm, DeviceVec<T> fine_defect_in) {
         // transfer from finer mesh to this coarse mesh (on defect)
         // first reset defect on this coarser grid and soln
         resetDefect();
@@ -414,7 +512,8 @@ class PoissonSolver {
         int nblocks_x = (N + 31) / 32;
         dim3 grid(nblocks_x, 9);
 
-        k_fine_coarse<T><<<grid, block>>>(nxe, N, fine_defect_in.getPtr(), d_defect.getPtr());
+        k_fine_coarse<T><<<grid, block>>>(nxe, N, d_fine_perm.getPtr(), d_iperm.getPtr(),
+                                          fine_defect_in.getPtr(), d_defect.getPtr());
 
         // temp debug defect
         // T grid1_def_nrm;
@@ -427,9 +526,11 @@ class PoissonSolver {
     int nxe, nx, N, nelems;
     I csr_nnz;
     DeviceVec<int> d_csr_rowp, d_csr_cols, d_node_min_elems, d_csr_rows;
+    DeviceVec<int> d_perm, d_iperm;  // perm gives old to new node, iperm is flipped
     T dx;
     DeviceVec<T> d_lhs, d_rhs, d_soln, d_true_soln, d_diag_inv, d_defect;
-    T *d_temp, *d_resid;
+    T *d_temp, *d_temp_half, *d_resid;
+    bool red_black_order;
 
    private:
     /* other helper methods (non device) */
@@ -454,8 +555,8 @@ class PoissonSolver {
     cublasHandle_t cublasHandle = NULL;
     cusparseHandle_t cusparseHandle = NULL;
     cusparseMatDescr_t descrA = 0;
-    cusparseDnVecDescr_t vecX, vecB, vecR, vecTMP, vecD;
-    cusparseSpMatDescr_t matA = NULL;
+    cusparseDnVecDescr_t vecX, vecB, vecR, vecTMP, vecD, vecHalf;
+    cusparseSpMatDescr_t matA = NULL;  //, matA_red = NULL, matA_black = NULL;
     size_t bufferSizeMV;
     void *buffer_MV = nullptr;
 };
