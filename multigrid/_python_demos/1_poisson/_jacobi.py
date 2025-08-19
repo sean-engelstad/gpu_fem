@@ -5,15 +5,15 @@ from _multigrid_src import *
 
 """setup the poisson linear system"""
 # nxe = 4
-# nxe = 8
+nxe = 8
 # nxe = 32 # choose power of 2 please
-nxe = 64
+# nxe = 64
 # nxe = 128
 A, b = get_poisson_lhs_and_rhs(nxe=nxe)
 N = A.shape[0]
 
-plt.imshow(A)
-plt.show()
+# plt.imshow(A)
+# plt.show()
 
 """compute the solution and compare against method of manufactured disps
  with np dense solve just to check we coded PDE discretization right """

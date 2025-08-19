@@ -438,7 +438,7 @@ class PoissonSolver {
             // Dinv * d_temp_half => d_temp, so that d_temp [dx_red, 0] now
             cudaMemset(d_temp, 0.0, N * sizeof(T));
             dim3 block(32), grid((N_half + 31) / 32);
-            k_diag_inv_vec<T><<<grid, block>>>(N / 2, d_diag_inv.getPtr(), d_temp_half, d_temp);
+            k_diag_inv_vec<T><<<grid, block>>>(N_half, d_diag_inv.getPtr(), d_temp_half, d_temp);
 
             /* 2) now update soln and defect from dx = [dx_red, 0] red update */
             T a = 1.0;
