@@ -18,7 +18,7 @@ N = A_0.shape[0]
 """compute the solution and compare against method of manufactured disps
  with np dense solve just to check we coded PDE discretization right """
 x_discrete = np.linalg.solve(A_0, b_0)
-# plot_poisson_soln(nx, _soln=x_discrete)
+plot_poisson_soln(nxe, _soln=x_discrete)
 
 # permutations of red-black ordering
 perm = np.zeros(N, dtype=np.int32)

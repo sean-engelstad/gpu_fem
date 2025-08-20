@@ -320,6 +320,12 @@ class PoissonSolver {
         T err_nrm;
         CHECK_CUBLAS(cublasSnrm2(cublasHandle, N, d_temp, 1, &err_nrm));
 
+        // NOTE : the different treatment of bcs is leading to slight errors near bndry
+        // may have to remove bcs from the unknowns to get same good conv results as python, we'll
+        // see (but I did fix the bcs, no column bcs for NZ dirichlet..)
+
+        // could also be float vs double?
+
         return err_nrm;
     }
 

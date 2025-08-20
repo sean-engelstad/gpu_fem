@@ -35,6 +35,24 @@ __device__ static int d_getFDConnectedNodePair(int nx, int row, int col) {
     return case1 || case2 || case3;
 }
 
+template <typename T>
+__device__ static T d_getTrueSoln(T x, T y) {
+    // get soln of the method of manufactured solns
+
+    // here's a rose..
+    T x2 = x - 0.5;
+    T y2 = y - 0.5;
+
+    return x2 * x2 * x2 - 3.0 * x2 * y2 * y2;
+}
+
+template <typename T>
+__device__ static T d_getTrueLaplacian(T x, T y) {
+    return 0.0;
+}
+
+
+
 /* helper kernel functions with prefix k_ for kernel function*/
 __global__ static void k_vecset(int N, int value, int *d_vec) {
     int ind = threadIdx.x + blockIdx.x * blockDim.x;
@@ -260,10 +278,12 @@ __global__ static void k_applyBCsLHS(int nx, int N, int csr_nnz, int *d_iperm, i
         int row = d_iperm[perm_row], col = d_iperm[perm_col];
 
         int rx = row % nx, ry = row / nx;
-        int cx = col % nx, cy = col / nx;
+        // int cx = col % nx, cy = col / nx;
         int r_bndry = rx == 0 || rx == nx - 1 || ry == 0 || ry == nx - 1;
-        int c_bndry = cx == 0 || cx == nx - 1 || cy == 0 || cy == nx - 1;
-        int bndry = r_bndry || c_bndry;
+        // can't zero out these entries with nonzero dirichlet (only can zero out in eqn, otherwise messes up PDE)
+        // int c_bndry = cx == 0 || cx == nx - 1 || cy == 0 || cy == nx - 1;
+        // int bndry = r_bndry || c_bndry;
+        int bndry = r_bndry;
         int diag_bndry = (row == col) && bndry;
 
         // apply bcs to values
@@ -288,11 +308,13 @@ __global__ static void k_assembleRHS(int nx, int N, T dx, int *d_iperm, T *d_rhs
 
         int ix = ind % nx, iy = ind / nx;
         T x = ix * dx, y = iy * dx;
-        T load = -2.0 * exp(x * y);
+        // T load = -2.0 * exp(x * y);
+        T load = -1.0 * d_getTrueLaplacian(x, y);
+        T bc_val = d_getTrueSoln(x, y);
 
         // apply bcs to load here
         int bndry = (ix == 0 || ix == (nx-1) || iy == 0 || (iy == (nx - 1)));
-        load = !bndry ? load : exp(x*y); // non-zero dirichlet condition on bndry
+        load = !bndry ? load : bc_val; // non-zero dirichlet condition on bndry
 
         d_rhs[perm_ind] = load;
     }
@@ -311,7 +333,8 @@ __global__ static void k_initSoln(int nx, int N, T dx, int *d_iperm, T *d_soln) 
 
         // apply bcs to load here
         int bndry = (ix == 0 || ix == (nx-1) || iy == 0 || (iy == (nx - 1)));
-        T val = !bndry ? 0.0 : exp(x*y); // non-zero dirichlet condition on bndry
+        T bc_val = d_getTrueSoln(x, y);
+        T val = !bndry ? 0.0 : bc_val; // non-zero dirichlet condition on bndry
 
         d_soln[perm_ind] = val;
     }
@@ -325,7 +348,7 @@ __global__ static void k_getTrueSoln(int nx, int N, T dx, int *d_iperm, T *d_tru
 
         int ix = ind % nx, iy = ind / nx;
         T x = ix * dx, y = iy * dx;
-        T val = exp(x * y);
+        T val = d_getTrueSoln(x, y);
 
         // true soln is exp(x * y)
         d_true_soln[perm_ind] = val;

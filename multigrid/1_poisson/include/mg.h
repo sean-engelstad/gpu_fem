@@ -102,7 +102,7 @@ class PoissonGeometricMultigrid {
             T defect_nrm = grids[0].getDefectNorm();
             printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
 
-            if (defect_nrm < 1e-6 * init_defect_nrm) {
+            if (defect_nrm < atol + rtol * init_defect_nrm) {
                 printf("V-cycle GMG converged in %d steps\n", i_vcycle + 1);
                 break;
             }
