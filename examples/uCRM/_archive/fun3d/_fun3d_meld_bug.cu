@@ -152,9 +152,8 @@ int main(void) {
 
     // test coupled driver
     // testCoupledDriver<T>(struct_solver, aero_solver, transfer, assembler);
-    bool aero_point_data = true;
     testCoupledDriverManual<T>(struct_solver, aero_solver, transfer,
-    assembler, _assembler_aero, aero_point_data);
+    assembler, _assembler_aero);
 
     struct_solver.writeSoln("out/uCRM_coupled_us.vtk");
 
