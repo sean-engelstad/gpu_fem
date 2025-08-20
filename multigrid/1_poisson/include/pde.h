@@ -28,6 +28,8 @@ class PoissonSolver {
         // compute the nnz pattern of the LHS
         buildCSRPattern();
 
+        N_half = (N + 1) / 2;  // for red-black GS
+
         // then assemble LHS and RHS also..
         assembleLHS();
         assembleRHS();
@@ -49,18 +51,18 @@ class PoissonSolver {
 
         // init dense vecs
         d_temp = DeviceVec<T>(N).getPtr();
-        d_temp_half = DeviceVec<T>(N / 2).getPtr();
+        d_temp_half = DeviceVec<T>(N_half).getPtr();
         d_resid = DeviceVec<T>(N).getPtr();
         d_defect = DeviceVec<T>(N);
         cusparseCreateDnVec(&vecB, N, d_rhs.getPtr(), CUDA_R_32F);
         cusparseCreateDnVec(&vecTMP, N, d_temp, CUDA_R_32F);
-        cusparseCreateDnVec(&vecHalf, N, d_temp_half, CUDA_R_32F);
+        cusparseCreateDnVec(&vecHalf, N_half, d_temp_half, CUDA_R_32F);
         cusparseCreateDnVec(&vecX, N, d_soln.getPtr(), CUDA_R_32F);
         cusparseCreateDnVec(&vecR, N, d_resid, CUDA_R_32F);
         cusparseCreateDnVec(&vecD, N, d_defect.getPtr(), CUDA_R_32F);
 
         CHECK_CUSPARSE(cusparseCreateDnVec(&vecTMP, N, d_temp, CUDA_R_32F));
-        CHECK_CUSPARSE(cusparseCreateDnVec(&vecHalf, N, d_temp_half, CUDA_R_32F));
+        CHECK_CUSPARSE(cusparseCreateDnVec(&vecHalf, N_half, d_temp_half, CUDA_R_32F));
         CHECK_CUSPARSE(cusparseCreateDnVec(&vecR, N, d_resid, CUDA_R_32F));
 
         // init A matrix
@@ -333,8 +335,8 @@ class PoissonSolver {
         cudaMemset(d_resid, 0.0, N * sizeof(T));
 
         // d_temp = -Ax
-        T floatone = 1.0, floatzero = 0.0;
-        CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &floatone,
+        T float_mone = -1.0, floatzero = 0.0;
+        CHECK_CUSPARSE(cusparseSpMV(cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &float_mone,
                                     matA, vecX, &floatzero, vecR, CUDA_R_32F,
                                     CUSPARSE_SPMV_ALG_DEFAULT, buffer_MV));
 
@@ -426,7 +428,9 @@ class PoissonSolver {
         // uses 2 full-size matrix-vec products on each iter (twice cost of damped jacobi, but much
         // more powerful smoother often about 3x less ovr cost and less tuning needed)
 
-        int N_half = (N + 1) / 2;  // N is odd since nxe is even (conventin for this problem)
+        T init_defect_nrm;
+        CHECK_CUBLAS(cublasSnrm2(cublasHandle, N, d_defect.getPtr(), 1, &init_defect_nrm));
+        if (print) printf("Red-Black GS init defect nrm = %.4e\n", init_defect_nrm);
 
         for (int iter = 0; iter < n_iters; iter++) {
             /* 1) D_red * dx_red = defect_red */
@@ -470,7 +474,8 @@ class PoissonSolver {
             T defect_nrm;
             CHECK_CUBLAS(cublasSnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
             if (print && iter % print_freq == 0)
-                printf("\tDampJac %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+                printf("\tRB-GaussSeidel %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters,
+                       defect_nrm);
         }
     }
 
@@ -523,7 +528,7 @@ class PoissonSolver {
     }
 
     // public data
-    int nxe, nx, N, nelems;
+    int nxe, nx, N, nelems, N_half;
     I csr_nnz;
     DeviceVec<int> d_csr_rowp, d_csr_cols, d_node_min_elems, d_csr_rows;
     DeviceVec<int> d_perm, d_iperm;  // perm gives old to new node, iperm is flipped

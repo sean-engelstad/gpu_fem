@@ -20,7 +20,8 @@ int main() {
     // int nxe = 10000; // 100M DOF (fails on 3060 Ti)
     // int nxe = 30000; // 1 billion DOF (fails on 3060 Ti)
 
-    auto solver = PoissonSolver<T>(nxe, true);
+    bool red_black_order = true; // use for red-black GS
+    auto solver = PoissonSolver<T>(nxe, red_black_order);
 
     // return 0;
 
@@ -83,8 +84,9 @@ int main() {
     // solver.dampedJacobiSolve(n_iter, omega, print);
 
     int n_iter = 100;
+    // int n_iter = 3;
     bool print = true;
-    solver.redBlackGaussSeidelDefect(n_iter, print);
+    solver.redBlackGaussSeidelDefect(n_iter, print, 1);
 
     // get true soln error (including discretization)
     // maybe some error in lhs or rhs here..

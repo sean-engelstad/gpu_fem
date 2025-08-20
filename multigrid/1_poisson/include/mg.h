@@ -61,7 +61,7 @@ class PoissonGeometricMultigrid {
                         grids[i_level].dampedJacobiDefect(pre_smooth, jacobi_omega, print,
                                                           pre_smooth - 1);
                     } else {  // GAUSS_SEIDEL
-                        // grids[i_level].redBlackGaussSeidel();
+                        grids[i_level].redBlackGaussSeidelDefect(pre_smooth, print, pre_smooth - 1);
                     }
 
                     // restrict defect
@@ -76,7 +76,8 @@ class PoissonGeometricMultigrid {
                         grids[i_level].dampedJacobiDefect(inner_solve_iters, jacobi_omega, print,
                                                           inner_solve_iters - 1);
                     } else {  // GAUSS_SEIDEL
-                        // grids[i_level].redBlackGaussSeidel();
+                        grids[i_level].redBlackGaussSeidelDefect(inner_solve_iters, print,
+                                                                 inner_solve_iters - 1);
                     }
                 }
             }
@@ -93,7 +94,7 @@ class PoissonGeometricMultigrid {
                     grids[i_level].dampedJacobiDefect(post_smooth, jacobi_omega, print,
                                                       post_smooth - 1);
                 } else {  // GAUSS_SEIDEL
-                    // grids[i_level].redBlackGaussSeidel();
+                    grids[i_level].redBlackGaussSeidelDefect(post_smooth, print, post_smooth - 1);
                 }
             }
 

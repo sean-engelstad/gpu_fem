@@ -23,11 +23,21 @@ x_discrete = np.linalg.solve(A_0, b_0)
 # permutations of red-black ordering
 perm = np.zeros(N, dtype=np.int32)
 iperm = np.zeros(N, dtype=np.int32)
-half = (N - 1) // 2
+
+even_reds = True
+# even_reds = False
+
+half = (N - 1) // 2 if even_reds else (N+1) // 2
 for ind in range(N):
-    even = ind % 2 == 0
     half_ind = ind // 2
-    perm_ind = half_ind + half * even
+
+    if even_reds:
+        even = ind % 2 == 0
+        perm_ind = half_ind + half * even
+    else: # odd reds
+        odd = ind % 2 == 1
+        perm_ind = half_ind + half * odd
+
     perm[ind] = perm_ind
     iperm[perm_ind] = ind
 

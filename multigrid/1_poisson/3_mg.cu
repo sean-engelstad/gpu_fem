@@ -43,7 +43,9 @@ void mg_gauss_seidel(int nxe) {
     MG mg = MG(nxe);
 
     // now solve (these settings were carefully tuned..)
-    int pre_smooth = 1, post_smooth = 1, n_vcycles = 100, inner_solve_iters = 40;
+    // int pre_smooth = 1, post_smooth = 1;
+    int pre_smooth = 2, post_smooth = 2;
+    int n_vcycles = 100, inner_solve_iters = 40;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, inner_solve_iters, atol, rtol);
