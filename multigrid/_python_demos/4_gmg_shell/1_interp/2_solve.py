@@ -12,20 +12,22 @@ import scipy as sp
 from __src import get_tacs_matrix, plot_plate_vec
 import scipy as sp
 from scipy.sparse.linalg import spsolve
+import argparse
 
 import os
 if not os.path.exists("../_out"): os.mkdir("../_out")
 folder = "../_out/_interp2"
 if not os.path.exists(folder): os.mkdir(folder)
 
+"""argparse"""
+parser = argparse.ArgumentParser()
+parser.add_argument("--SR", type=int, default=100, help="slenderness ratio of plate L/h")
+args = parser.parse_args()
 
 """ first let's solve the linear system on the coarse mesh """
 
-# SR = 10.0
-# SR = 100.0
-SR = 1000.0 # fairly slender plate
-# SR = 10000.0 # really slender plate..
-thickness = 1.0 / SR
+SR = int(args.SR)
+thickness = 1.0 / float(SR)
 
 # NOTE : after fixing nodal ordering issues, as SR -> 0
 # I'm getting shear strains which do scale by 1/SR^2 !! Nice, this makes sense
@@ -51,7 +53,7 @@ sort_map = np.array([dof_xpts_list2[inode][:6] for inode in range(nnodes)])
 sort_map = np.reshape(sort_map, (6*nnodes,))
 
 # scale RHS by thick^3 so that get similar disp despite changed thickness (so similar strains across each SR value)
-_rhs *= 1e9 * thickness**3
+_rhs *= 1e5 * thickness**3
 
 _disp = spsolve(_tacs_csr_mat, _rhs)
 

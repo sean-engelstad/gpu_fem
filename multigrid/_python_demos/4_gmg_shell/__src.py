@@ -68,6 +68,7 @@ def get_tacs_matrix(bdf_file, thickness:float=0.02):
     # game of life polar load..
 
     force_array[2::6] = np.array([load_fcn(x[i], y[i]) for i in range(nnodes)])
+    # force_array[2::6] += np.sin(2.0 * np.pi * x) * np.sin(np.pi * y)
 
     # force_array[2::6] += 100.0 * np.sin(3 * np.pi * x)
     # force_array[2::6] += 100.0 * np.sin(3 * np.pi * r)
@@ -641,8 +642,8 @@ def mg_coarse_fine_transv_shear_smooth(nxe_fine, fine_disp_0, h, sort_fw_arr):
                 _orig = fine_disp[_j2]
                 fine_disp[_j2] = _x[_i]
 
-                if _j in [13, 14, 17]:
-                    print(f"{_orig=:.3e} => {fine_disp[_j2]=:.3e}")
+                # if _j in [13, 14, 17]:
+                #     print(f"{_orig=:.3e} => {fine_disp[_j2]=:.3e}")
 
     # then inv sort to output
     fine_disp_out = fine_disp[sort_fw_arr].copy()

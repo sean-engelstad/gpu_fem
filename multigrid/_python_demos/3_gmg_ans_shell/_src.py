@@ -8,13 +8,25 @@ def lagrange_basis_1d(xi, vals):
     result += 0.5 * xi * (1.0 + xi) * vals[2]
     return result
 
+def lagrange_basis_1d_vec(xi):
+    return np.array([
+        -0.5 * xi * (1.0 - xi),
+        (1.0 - xi**2),
+        0.5 * xi * (1.0 + xi),
+    ])
+
 def lagrange_basis_1d_transpose(xi, out_bar):
     """1d order 2, basis interp (3 points)"""
     vals_bar = np.zeros(3)
     vals_bar[0] = -0.5 * xi * (1.0 - xi) * out_bar
-    vals_bar[1] += (1.0 - xi**2) * out_bar
-    vals_bar[2] += 0.5 * xi * (1.0 + xi) * out_bar
+    vals_bar[1] = (1.0 - xi**2) * out_bar
+    vals_bar[2] = 0.5 * xi * (1.0 + xi) * out_bar
     return vals_bar
+
+def lagrange_basis_2d_vec(xi, eta):
+    xi_vec = lagrange_basis_1d_vec(xi)
+    eta_vec = lagrange_basis_1d_vec(eta)
+    return np.array([xi_vec[i]*eta_vec[j] for j in range(3) for i in range(3)])
 
 def lagrange_basis_1d_grad(xi, vals):
     """get d/dxi derivs of the 1D lagrange basis"""
@@ -73,6 +85,19 @@ def get_xpts_basis(xi, eta, xpts):
     a_gam /= np.linalg.norm(a_gam)
 
     return a_xi, a_eta, a_gam, A_xi, a_eta
+
+def get_dsurf_jac(xi, eta, xpts):
+    """get |d(x,y)/d(xi,eta)| jacobian"""
+
+    # get nodal vals here
+    xyz = [xpts[i::3] for i in range(3)]
+
+    # get param grads
+    r_xi = np.array([lagrange_basis_2d_grad(xi, eta, _vec, deriv=0) for _vec in xyz])
+    r_eta = np.array([lagrange_basis_2d_grad(xi, eta, _vec, deriv=1) for _vec in xyz])
+
+    out = np.cross(r_xi, r_eta)
+    return np.linalg.norm(out)
 
 def get_natural_rot_matrix(shell_xi_axis, xi, eta, xpts):
     """get Tinv matrix.."""
@@ -241,17 +266,15 @@ def get_barlow_1d_interp_vecs(xi, primed:bool=False):
     if not primed:
         return c_left, c_right
     else:
-        c_left_p = np.array([
-            4 * c_left[0] + c_left[1] - 2 * c_left[2],
-            4.0 * (c_left[0] + c_left[1] + c_left[2]),
-            -2 * c_left[0] + c_left[1] + 4 * c_left[2]
+        T_PRIME = np.array([
+            [4, 1, -2],
+            [4, 4, 4],
+            [-2, 1, 4],
         ]) / 6.0
 
-        c_right_p = np.array([
-            4 * c_right[0] + c_right[1] - 2 * c_right[2],
-            4.0 * (c_right[0] + c_right[1] + c_right[2]),
-            -2 * c_right[0] + c_right[1] + 4 * c_right[2]
-        ]) / 6.0
+        c_left_p = np.dot(T_PRIME, c_left)
+
+        c_right_p = np.dot(T_PRIME, c_right)
 
         return c_left_p, c_right_p
 
@@ -292,7 +315,7 @@ def collect_xi_vals(eta, xpts, vars_cov, prime_arr:np.ndarray, out_direc:int, ro
             cr = np.array([c_right_p[ieta] if prime_arr[_i] else c_right[ieta] for _i in range(3)])
 
             b_vec = (cl * T_left[out_direc,:] + cr * T_right[out_direc,:]) / ds_eta
-            xi_vals[ieta] += np.dot(b_vec, loc_vars)
+            xi_vals[ixi] += np.dot(b_vec, loc_vars)
     return xi_vals
 
 def collect_xi_vals_transpose(eta, xpts, xi_vals_bar, prime_arr:np.ndarray, out_direc:int, rots:bool=False):
@@ -314,10 +337,10 @@ def collect_xi_vals_transpose(eta, xpts, xi_vals_bar, prime_arr:np.ndarray, out_
 
             b_vec = (cl * T_left[out_direc,:] + cr * T_right[out_direc,:]) / ds_eta
             if rots:
-                vars_cov_bar[5*node+3] += b_vec[0] * xi_vals_bar[ieta]
-                vars_cov_bar[5*node+4] += b_vec[1] * xi_vals_bar[ieta]
+                vars_cov_bar[5*node+3] += b_vec[0] * xi_vals_bar[ixi]
+                vars_cov_bar[5*node+4] += b_vec[1] * xi_vals_bar[ixi]
             else:
-                vars_cov_bar[5*node:(5*node+3)] += xi_vals_bar[ieta] * b_vec
+                vars_cov_bar[5*node:(5*node+3)] += xi_vals_bar[ixi] * b_vec
     return vars_cov_bar
 
 def collect_eta_vals(xi, xpts, vars_cov, prime_arr:np.ndarray, out_direc:int, rots:bool=False):
@@ -422,13 +445,13 @@ def get_membrane_strains_transpose(shell_xi_axis, xi, eta, xpts, mem_strains_xyz
 
     # now get the e_eta,eta strains
     e22_xi_bar = lagrange_basis_1d_transpose(xi, mem_strains_bar[1])
-    vars_cov_bar += collect_eta_vals_transpose(xi, xpts, e22_xi_bar, prime_arr=[0,0,1], out_direc=1, rots=False)
+    vars_cov_bar += collect_xi_vals_transpose(eta, xpts, e22_xi_bar, prime_arr=[0,0,1], out_direc=1, rots=False)
 
     # now do the e_{xi,eta} in-plane 
     e12_eta_bar = modified_lbasis_1d_transpose(eta, mem_strains_bar[2])
     vars_cov_bar += collect_eta_vals_transpose(xi, xpts, e12_eta_bar, prime_arr=[0,0,1], out_direc=1, rots=False)
     e12_xi_bar = modified_lbasis_1d_transpose(xi, mem_strains_bar[2])
-    vars_cov_bar += collect_eta_vals_transpose(eta, xpts, e12_xi_bar, prime_arr=[0,0,1], out_direc=0, rots=False)
+    vars_cov_bar += collect_xi_vals_transpose(eta, xpts, e12_xi_bar, prime_arr=[0,0,1], out_direc=0, rots=False)
     
     return vars_cov_bar
 
@@ -471,13 +494,13 @@ def get_bending_strains_transpose(shell_xi_axis, xi, eta, xpts, bend_strains_xyz
 
     # now get the e_eta,eta strains
     k22_xi_bar = lagrange_basis_1d_transpose(xi, bend_strains_bar[1])
-    vars_cov_bar += collect_eta_vals_transpose(xi, xpts, k22_xi_bar, prime_arr=[0,0,1], out_direc=1, rots=True)
+    vars_cov_bar += collect_xi_vals_transpose(eta, xpts, k22_xi_bar, prime_arr=[0,0,1], out_direc=1, rots=True)
 
     # now do the e_{xi,eta} in-plane 
     k12_eta_bar = modified_lbasis_1d_transpose(eta, bend_strains_bar[2])
     vars_cov_bar += collect_eta_vals_transpose(xi, xpts, k12_eta_bar, prime_arr=[0,0,1], out_direc=1, rots=True)
     k12_xi_bar = modified_lbasis_1d_transpose(xi, bend_strains_bar[2])
-    vars_cov_bar += collect_eta_vals_transpose(eta, xpts, k12_xi_bar, prime_arr=[0,0,1], out_direc=0, rots=True)
+    vars_cov_bar += collect_xi_vals_transpose(eta, xpts, k12_xi_bar, prime_arr=[0,0,1], out_direc=0, rots=True)
     return vars_cov_bar
 
 def get_trv_shear_strains(shell_xi_axis, xi, eta, xpts, vars_cov):
@@ -528,12 +551,12 @@ def get_trv_shear_strains_transpose(shell_xi_axis, xi, eta, xpts, trv_shear_stra
 
     # now get the e_eta,eta strains
     gam23_xi_bar = lagrange_basis_1d_transpose(xi, trv_shear_strains_bar[1])
-    vars_cov_bar += collect_eta_vals_transpose(xi, xpts, gam23_xi_bar, prime_arr=[1,1,0], out_direc=2, rots=False)
-    gam23_xi_mod_bar = modified_lbasis_1d_transpose(xi, trv_shear_strains_bar[1])
+    vars_cov_bar += collect_xi_vals_transpose(eta, xpts, gam23_xi_bar, prime_arr=[1,1,0], out_direc=2, rots=False)
+    gam23_eta_mod_bar = modified_lbasis_1d_transpose(eta, trv_shear_strains_bar[1])
     for i in range(3):
         nodes = np.array([3*i+j for j in range(3)])
         beta_dof = 5 * nodes + 4
-        vars_cov_bar[beta_dof] += lagrange_basis_1d_transpose(xi, gam23_xi_mod_bar[i])
+        vars_cov_bar[beta_dof] += lagrange_basis_1d_transpose(xi, gam23_eta_mod_bar[i])
     return vars_cov_bar
 
 def get_quadpt_strains(shell_xi_axis, xi, eta, xpts, vars):
@@ -559,16 +582,16 @@ def get_quadpt_stresses(shell_xi_axis, xi, eta, xpts, vars, E:float, nu:float, t
     A = C * thick
     D = C * thick**3 / 12.0
     ks = 5.0 / 6.0 # shear correction factor
-    As = ks * C[-1,-1] * np.diag([1.0, 1.0])
+    As = ks * A[-1, -1] * np.diag([1.0, 1.0])
 
     # now get the shell stress resultants
     N = np.dot(A, quadpt_strains[:3])
     M = np.dot(D, quadpt_strains[3:6])
     Q = np.dot(As, quadpt_strains[6:])
 
-    loads = np.concatenate([N, M, Q], axis=0)
+    quadpt_stresses = np.concatenate([N, M, Q], axis=0)
 
-    return loads
+    return quadpt_stresses
 
 def get_strains_transpose(shell_xi_axis, xi, eta, xpts, dstrain):
     """transpose operation of strain sens back to disps"""
@@ -579,7 +602,6 @@ def get_strains_transpose(shell_xi_axis, xi, eta, xpts, dstrain):
 
     vars_bar = get_cov_nodal_disps_transpose(shell_xi_axis, xpts, vars_cov_bar)
     return vars_bar
-
 
 def get_quadpt_kelem(shell_xi_axis, xi, eta, xpts, E:float, nu:float, thick:float):
     """get linear kelem stiffness matrix"""
@@ -596,6 +618,9 @@ def get_quadpt_kelem(shell_xi_axis, xi, eta, xpts, E:float, nu:float, thick:floa
         vars_bar = get_strains_transpose(shell_xi_axis, xi, eta, xpts, dstrain=quadpt_stresses)
         Kelem[:,i] = vars_bar
 
+    # plt.imshow(Kelem)
+    # plt.show()
+
     return Kelem
 
 def get_kelem(shell_xi_axis, xpts, E:float, nu:float, thick:float):
@@ -603,28 +628,29 @@ def get_kelem(shell_xi_axis, xpts, E:float, nu:float, thick:float):
 
     rt_35 = np.sqrt(3.0 / 5.0)
     pts = np.array([-rt_35, 0.0, rt_35])
-    weights = np.array([5/9, 8/9, 5/9])
+    weights = np.array([5.0/9, 8.0/9, 5.0/9])
 
     full_Kelem = np.zeros((45,45))
 
-    for ixi in range(3):
-        xi, wt_xi = pts[ixi], weights[ixi]
+    for ieta in range(3):
+        eta, wt_eta = pts[ieta], weights[ieta]
 
-        for ieta in range(3):
-            eta, wt_eta = pts[ieta], weights[ieta]
+        for ixi in range(3):
+            xi, wt_xi = pts[ixi], weights[ixi]
             weight = wt_xi * wt_eta
-
-            a_xi, a_eta, _, _, _ = get_xpts_basis(xi, eta, xpts)
-            dxy_jac = np.linalg.norm(np.cross(a_xi, a_eta)) # dS/dxi/deta
+            dxy_jac = get_dsurf_jac(xi, eta, xpts)
 
             _kelem = get_quadpt_kelem(shell_xi_axis, xi, eta, xpts, E, nu, thick)
-            full_Kelem += _kelem * weight * dxy_jac
-            print(f"full kelem done with {ixi=} {ieta=}")
 
-            # _temp = np.log(np.abs(_kelem))
-            # _temp[np.abs(_kelem) < 1e0] = np.nan
-            # plt.imshow(_temp)
-            # plt.show()
+            full_Kelem += _kelem * weight * dxy_jac
+
+            iquad = 3 * ieta + ixi + 1
+            print(f"full kelem done with {iquad=}/9")
+
+    # # _temp = np.log(np.abs(full_Kelem))
+    # # _temp[np.abs(full_Kelem) < 1e0] = np.nan
+    # plt.imshow(full_Kelem)
+    # plt.show()
 
     return full_Kelem
 
@@ -651,14 +677,22 @@ def get_plate_K_global(nxe, E:float, nu:float, thick:float):
     # get kelem once (since it's the same for each element here in this structured grid)
     Kelem = get_kelem(shell_xi_axis, elem_xpts, E, nu, thick)
 
+    max_node = 0
+
     for iye in range(nxe):
         for ixe in range(nxe):
-            node = iye * nx + ixe
+            node = 2 * iye * nx + 2 * ixe
             elem_nodes = np.array([node, node+1, node+2, node+nx, node+nx+1, node+nx+2, node+2*nx, node+2*nx+1, node+2*nx+2])
             elem_dof = np.array([5*_node+_idof for _node in elem_nodes for _idof in range(5)])
             
+            c_max_node = np.max(elem_nodes)
+            max_node = np.max([max_node, c_max_node + 1])
+
             arr_ind = np.ix_(elem_dof, elem_dof)
             K[arr_ind] += Kelem[:,:]
+
+    # make sure we covered all the nodes..
+    assert(max_node == nnodes)
 
     return K
 
@@ -675,7 +709,9 @@ def get_global_plate_loads(nxe, load_type:str="sine-sine", magnitude:float=1.0):
         for inode in range(nnodes):
             ix, iy = inode % nx, inode // nx
             x, y = ix * h, iy * h
-            q = magnitude * np.sin(np.pi * x) * np.sin(np.pi * y)
+
+            # (2,1) mode so at least we can see which direction is which
+            q = magnitude * np.sin(2.0 * np.pi * x) * np.sin(np.pi * y)
             F[5 * inode + 2] = q
 
     else:
@@ -683,7 +719,7 @@ def get_global_plate_loads(nxe, load_type:str="sine-sine", magnitude:float=1.0):
     
     return F
 
-def get_bcs(nxe):
+def get_bcs(nxe, uv_fix:bool=False):
     # now apply bcs to the stiffness matrix and forces
     nx = 2 * nxe + 1
     bcs = []
@@ -692,21 +728,19 @@ def get_bcs(nxe):
             inode = nx * iy + ix
 
             if ix in [0, nx-1] or iy in [0, nx-1]:
-                bcs += [5 * inode + 2] # uvw constr
+                bcs += [5 * inode + 2] # w constr
             
-            if ix in [0, nx-1]:
-                bcs += [5 * inode + 3] # theta y = 0 on y=const edge
+            if ix in [0, nx-1]: bcs += [5 * inode + 3] # theta_x = 0 on x=const edge (y-varying)
+            if iy in [0, nx-1]: bcs += [5 * inode + 4] # theta y = 0 on y=const edge
 
-            if ix == 0:
+            if uv_fix:
                 bcs += [5*inode] # u constr
-
-            if iy == 0:
                 bcs += [5*inode+1] # v constr
+            else:
+                if ix == 0: bcs += [5*inode] # u constr
+                if iy == 0: bcs += [5*inode+1] # v constr
 
-            if iy in [0, nx-1]:
-                bcs += [5 * inode + 4] # theta x = 0 on x=const edge
-
-    print(f"{bcs=}")
+    bcs = np.array(bcs)
     return bcs
 
 def _apply_bcs_helper(bcs, K, F):
@@ -721,3 +755,130 @@ def apply_bcs(nxe, K, F):
     """apply bcs to the global stiffness matrix and forces"""
     bcs = get_bcs(nxe)
     return _apply_bcs_helper(bcs, K, F)
+
+def remove_bcs(nxe, _K, _F):
+    nx = 2 * nxe + 1
+    ndof = 5 * nx**2
+    bcs = get_bcs(nxe)
+    free_dof = np.array([dof for dof in range(ndof) if not(dof in bcs)])
+    K, F = _K[free_dof,:][:,free_dof], _F[free_dof]
+    return K, F
+
+def gmg_plate_coarse_fine_matrices(nxe_fine, apply_bcs:bool=True):
+    """prolongation or coarse-fine operator of the plate"""
+    nxe_c, nxe_f = nxe_fine // 2, nxe_fine
+    nelems_c, nelems_f = nxe_c**2, nxe_f**2
+    nx_c, nx_f = 2 * nxe_c + 1, 2 * nxe_f + 1
+    nnodes_c, nnodes_f = nx_c**2, nx_f**2
+    ndof_c, ndof_f = 5 * nnodes_c, 5 * nnodes_f
+
+    I_cf = np.zeros((ndof_f, ndof_c))
+
+    fine_node_cts = np.zeros(nnodes_f).astype(np.int32)
+
+    for ielem_c in range(nelems_c):
+        ixe_c, iye_c = ielem_c % nxe_c, ielem_c // nxe_c
+        node_c = 2 * iye_c * nx_c + 2 * ixe_c
+        c_nodes = [node_c + nx_c * i + j for i in range(3) for j in range(3)]
+
+        # 5x5 set of fine nodes inside each 3x3 coarse elem
+        ix_f, iy_f = 4 * ixe_c, 4 * iye_c
+        node_f = iy_f * nx_f + ix_f
+        f_nodes = np.array([node_f + nx_f * i + j for i in range(5) for j in range(5)])
+
+        # count how many times we added into this fine node.. so that we can average contributions
+        fine_node_cts[f_nodes] += 1
+        
+        # same interp for each DOF.
+        # NOTE : if thickness varies throughout elem, then there is an extra adjustment for rots in J. Fish paper
+        # I'll have to add, rushing to get demo for meeting, so not doing that yet.. just basic interp
+
+        for nodal_dof in range(5):
+            # for single DOF like u or w for instance, we now interp among the nodes.. with 2d lagrange basis..
+            c_dof = np.array([5*_node + nodal_dof for _node in c_nodes])
+            f_dof = np.array([5 *_node + nodal_dof for _node in f_nodes])
+
+            # loop over each fine node..
+            for node, dof in enumerate(f_dof):
+                ix_loc, iy_loc = node % 5, node // 5
+                xi, eta = (ix_loc / 2.0) - 1.0, (iy_loc / 2.0) - 1.0
+
+                N = lagrange_basis_2d_vec(xi, eta)
+                # print(f"{node=} {xi=} {eta=} {N=} {np.sum(N)=}")
+                # I_cf[f_dof[node], c_dof] = N
+                I_cf[f_dof[node], c_dof] += N
+                # not += N?
+
+    I_fc = I_cf.copy().T
+
+    # normalize coarse=>fine by row-sums (since sometimes multiple coarse nodes add to fine, like on edge boundaries)
+    for ifine in range(I_cf.shape[0]):
+        I_cf[ifine,:] /= np.sum(I_cf[ifine,:])
+
+    # NOTE : should I row-normalize like this?
+
+    if apply_bcs:
+        # normalize coarse operator (since it's also basically an interp also)
+        for icoarse in range(I_fc.shape[0]):
+            I_fc[icoarse,:] /= np.sum(I_fc[icoarse,:])
+
+        # plt.imshow(I_cf)
+
+        # apply bcs (in place, dof not removed)
+        fine_bcs = get_bcs(nxe_f)
+        coarse_bcs = get_bcs(nxe_c)
+        I_cf[fine_bcs,:] = 0.0
+        I_cf[:, coarse_bcs] = 0.0
+
+        # apply bcs on fc also
+        I_fc[coarse_bcs,:] = 0.0
+        I_fc[:,fine_bcs] = 0.0
+
+    return I_cf, I_fc
+
+
+def block_gauss_seidel(A, b: np.ndarray, x0: np.ndarray, num_iter=1, ndof:int=5):
+    """
+    Perform Block Gauss-Seidel smoothing for 3 DOF per node.
+    A: csr_matrix of size (3*nnodes, 3*nnodes)
+    b: RHS vector (3*nnodes,)
+    x0: initial guess (3*nnodes,)
+    num_iter: number of smoothing iterations
+    Returns updated solution vector x
+    """
+    x = x0.copy()
+    n = A.shape[0] // ndof
+
+    for it in range(num_iter):
+        for i in range(n):
+            row_block_start = i * ndof
+            row_block_end = (i + 1) * ndof
+
+            # Initialize block and RHS
+            Aii = np.zeros((ndof, ndof))
+            rhs = b[row_block_start:row_block_end].copy()
+
+            for row_local, row in enumerate(range(row_block_start, row_block_end)):
+                for idx in range(A.indptr[row], A.indptr[row + 1]):
+                    col = A.indices[idx]
+                    val = A.data[idx]
+
+                    j = col // ndof
+                    dof_j = col % ndof
+
+                    col_block_start = j * ndof
+                    col_block_end = (j + 1) * ndof
+
+                    if j == i:
+                        Aii[row_local, dof_j] = val  # Fill local diag block
+                    else:
+                        rhs[row_local] -= val * x[col]
+
+            # Check for singular or ill-conditioned diagonal block
+            try:
+                x[row_block_start:row_block_end] = np.linalg.solve(Aii, rhs)
+            except np.linalg.LinAlgError:
+                print(f"Warning: singular block at node {i}, skipping update.")
+                continue
+
+    return x
