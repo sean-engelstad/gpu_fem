@@ -12,6 +12,7 @@
 // local multigrid imports
 #include "include/grid.h"
 #include "include/fea.h"
+#include <string>
 
 /* command line args:
     [direct/mg] [--nxe int] [--SR float]
@@ -134,65 +135,27 @@ void multigrid_plate_solve(int nxe, double SR) {
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
     int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
-
-    // BSR symbolic factorization
-    // must pass by ref to not corrupt pointers
-    auto& bsr_data = assembler.getBsrData();
-
-    int num_colors, *_color_rowp;
-
-    bsr_data.multicolor_reordering(num_colors, _color_rowp); // TODO : add this method.. (I guess I can just do host for now..)
-    bsr_data.compute_nofill_pattern();
-
-    auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
-
-    // printf("perm:");
-    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
-    // printf("h_color_rowp: ");
-    // printVec<int>(num_colors + 1, _color_rowp);
-
-    // return; // DEBUG
-
-    assembler.moveBsrDataToDevice();
-
-    // get the loads
     double Q = 1.0; // load magnitude
     T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
 
-    auto loads = assembler.createVarsVec(my_loads);
-    assembler.apply_bcs(loads);
-
-    // setup kmat and initial vecs
-    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-    auto soln = assembler.createVarsVec();
-    auto res = assembler.createVarsVec();
-    auto vars = assembler.createVarsVec();
-    int N = vars.getSize();
-
-    // assemble the kmat
-    assembler.add_jacobian(res, kmat);
-    assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
-
-    // DEBUG build single grid..
-    // TODO : we should put for loop to make shell grid objects over each grid size
-    // then put into multigrid object..
-    
-    printf("test making single ShellGrid object of ndof or N = %d, with %d nnodes\n", N, N / 6);
-    auto grid = ShellGrid(N, kmat, loads, h_color_rowp);
+    // make the shell grid
+    auto grid = ShellGrid::buildFromAssembler<Assembler>(assembler, my_loads);
 
     // try doing multicolor block-GS iterations here (precursor to doing multgrid first)
-    int n_iter = 3;
+    // int n_iters = 3;
+    // int n_iters = 10;
+    int n_iters = 1000;
     bool print = true;
     int print_freq = 1;
-    grid.multicolorBlockGaussSeidel(n_iter, print, print_freq);
+    // T omega = 1.0; // TODO : may need somewhat damping for higher SR?
+    T omega = 0.7;
+    grid.multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega);
 
-    // solve the linear system
-    // TBD with multigrid here..
+    // multigrid solve here..
 
     // print some of the data of host residual
-    // auto h_soln = soln.createHostVec();
-    // printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_mg.vtk");
+    auto h_soln = grid.d_soln.createPermuteVec(6, grid.Kmat.getIPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_mg.vtk");
 }
 
 int main(int argc, char **argv) {

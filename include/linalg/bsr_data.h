@@ -339,10 +339,10 @@ class BsrData {
             color_rowp[i_color + 1] = ct + 1;
         }
 
-        printf("color_rowp:");
-        printVec<int>(n_colors + 1, color_rowp);
-        printf("iperm:");
-        printVec<int>(nnodes, iperm);
+        // printf("color_rowp:");
+        // printVec<int>(n_colors + 1, color_rowp);
+        // printf("iperm:");
+        // printVec<int>(nnodes, iperm);
 
         // then delete old rowp, cols
         delete[] colors;
