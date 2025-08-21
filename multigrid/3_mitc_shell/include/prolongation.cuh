@@ -3,14 +3,14 @@
 
 template <typename T>
 __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fine, 
-    const int nelems_fine, const int *d_elem_conn, const int *d_coarse_perm, const int *d_fine_perm,
+    const int nelems_fine, const int *d_elem_conn, const int *d_coarse_iperm, const int *d_fine_iperm,
     const T *coarse_soln_in, T *dx_fine, int *d_fine_wts) {
     // prolongation for linear cquad4 shells in plate geometry (corrects for arbitrary reordering here..)
 
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int _ielem = tid;
     int odd_ielem = _ielem % 2 == 1;
-    int ielem = _ielem / 2 + nelems / 2 * (1 - odd_ielem);
+    int ielem = _ielem / 2 + nelems_fine / 2 * (1 - odd_ielem);
     if (ielem >= nelems_fine) return;
 
     // get the coarse node for this element as fine ind (there's only one bc)
@@ -18,14 +18,15 @@ __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fi
     int coarse_ind_f = -1;
     for (int local_node = 0; local_node < 4; local_node++) {
         int inode = d_elem_conn[4 * ielem + local_node];
-        int ix = inode % nx_f, iy = inode % nx_f;
+        int ix = inode % nx_f, iy = inode / nx_f;
         int is_coarse = ix % 2 == 0 && iy % 2 == 0;
         coarse_ind_f += is_coarse * inode;
     }
     int ix_0 = coarse_ind_f % nx_f, iy_0 = coarse_ind_f / nx_f;
     // also get the actual coarse ind
     int coarse_ind_c = nx_c * (iy_0 / 2) + ix_0 / 2;
-    int perm_coarse_ind_c = d_coarse_perm[coarse_ind_c];
+    printf("coarse_ind_f = %d : ix_0 %d, iy_0 %d => coarse_ind_c %d\n", coarse_ind_f, ix_0, iy_0, coarse_ind_c);
+    int perm_coarse_ind_c = d_coarse_iperm[coarse_ind_c];
     __syncthreads(); // divides registers
     
     for (int idof = 0; idof < 6; idof++) {
@@ -39,7 +40,9 @@ __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fi
             // since it's just linear interp => no need to compute basis functions
             // weight normalization is sufficient..
             int fine_ind = iy * nx_f + ix;
-            int perm_fine_ind = d_fine_perm[fine_ind];
+            int perm_fine_ind = d_fine_iperm[fine_ind];
+
+            printf("coarse node %d => fine node %d; permuted %d => %d\n", coarse_ind_c, fine_ind, perm_coarse_ind_c, perm_fine_ind);
             
             atomicAdd(&dx_fine[6 * perm_fine_ind + idof], coarse_val);
             atomicAdd(&d_fine_wts[6 * perm_fine_ind + idof], 1);

@@ -1,26 +1,14 @@
-#include "grid.h"
+#pragma once
 
-template <class Grid>
+template <class GRID>
 class ShellMultigrid {
     /* shell elem geomtric multigrid solver class */
-    using GRID = ShellGrid;
     using T = double;
 
    public:
-    ShellMultigrid(int nxe_) : nxe(nxe_) {
-        // number of levels for nxe_ being finest grid num elements in x-dir (TODO : adapt this from plate case later..)
-        int log2_nxe = 0, nxe_copy = nxe;
-        while (nxe_copy >>= 1) ++log2_nxe;
-        n_levels = log2_nxe - 1;
+    ShellMultigrid() = default;
 
-        // check nxe is power of 2 (for good geom multigrid property, convenience)
-        int nxe_power_2 = 1 << log2_nxe;
-        assert(nxe_power_2 == nxe);
-    }
-
-    void addGrid(int ilevel, Grid &grid) {
-        grids[ilevel] = grid;
-    }
+    int getNumLevels() { return grids.size(); }
 
     void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
                       int inner_solve_iters = 100, T atol = 1e-6, T rtol = 1e-6) {
@@ -32,7 +20,7 @@ class ShellMultigrid {
             // printf("V cycle step %d\n", i_vcycle);
 
             // go down each level smoothing and restricting until lowest level
-            for (int i_level = 0; i_level < n_levels; i_level++) {
+            for (int i_level = 0; i_level < getNumLevels(); i_level++) {
                 // if not last  (pre-smooth)
                 if (i_level < n_levels - 1) {
                     if (print) printf("\tlevel %d pre-smooth\n", i_level);
@@ -81,5 +69,5 @@ class ShellMultigrid {
 
     int nxe, n_levels;
     bool setup;
-    GRID *grids;
+    std::vector<GRID> grids;
 };

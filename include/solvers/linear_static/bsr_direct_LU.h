@@ -16,7 +16,7 @@ namespace CUSPARSE {
 
 template <typename T>
 void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
-                     bool can_print = true) {
+                     bool can_print = true, bool permute_inout = true) {
     /* direct LU solve => performs LU factorization then L and U triangular solves.
         Best for solving with same matrix and multiple rhs vectors such as aeroelastic + linear
        structures Although need to check LU factorization held in place correctly and boolean to not
@@ -25,7 +25,13 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     static_assert(std::is_same<T, double>::value,
                   "Only double precision is written in our code for cuSparse direct LU solve");
 
-    auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
+    T *d_rhs;
+    if (permute_inout) {
+        auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
+        d_rhs = rhs_perm.getPtr();
+    } else {
+        d_rhs = rhs.getPtr();
+    }
 
     if (can_print) {
         printf("direct LU cusparse solve\n");
@@ -41,7 +47,6 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     int block_dim = bsr_data.block_dim;
     index_t *d_rowp = bsr_data.rowp;
     index_t *d_cols = bsr_data.cols;
-    T *d_rhs = rhs_perm.getPtr();
     T *d_soln = soln.getPtr();
     DeviceVec<T> temp = DeviceVec<T>(soln.getSize());
     T *d_temp = temp.getPtr();
@@ -99,7 +104,10 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     cusparseDestroy(handle);
 
     // now also inverse permute the soln data
-    permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
+    if (permute_inout) {
+        permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
+    }
+    
 
     // print timing data
     auto stop = std::chrono::high_resolution_clock::now();

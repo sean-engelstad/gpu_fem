@@ -12,6 +12,7 @@
 // local multigrid imports
 #include "include/grid.h"
 #include "include/fea.h"
+#include "include/mg.h"
 #include <string>
 
 /* command line args:
@@ -113,23 +114,23 @@ void direct_plate_solve(int nxe, double SR) {
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate.vtk");
 }
 
-void multigrid_plate_solve(int nxe, double SR) {
-    // geometric multigrid method here..
-    // need to make a number of grids..
+void multigrid_plate_debug(int nxe, double SR) {
+    // geometric multigrid method, debug individual steps on single grid here..
 
     using T = double;   
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
     using Basis = ShellQuadBasis<T, Quad, 2>;
     using Geo = Basis::Geo;
-
     constexpr bool has_ref_axis = false;
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+
+    // multigrid objects
+    using GRID = ShellGrid<PlateProlongation>;
 
     int nye = nxe;
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
@@ -139,23 +140,98 @@ void multigrid_plate_solve(int nxe, double SR) {
     T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
 
     // make the shell grid
-    auto grid = ShellGrid::buildFromAssembler<Assembler>(assembler, my_loads);
+    GRID *grid = GRID::buildFromAssembler<Assembler>(assembler, my_loads);
 
-    // try doing multicolor block-GS iterations here (precursor to doing multgrid first)
-    // int n_iters = 3;
-    // int n_iters = 10;
-    int n_iters = 1000;
-    bool print = true;
-    int print_freq = 1;
-    // T omega = 1.0; // TODO : may need somewhat damping for higher SR?
-    T omega = 0.7;
-    grid.multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega);
+    // make a second grid here
+    auto coarse_assembler = createPlateAssembler<Assembler>(nxe / 2, nxe / 2, Lx, Ly, E, nu, thick, rho, ys, 
+        nxe_per_comp / 2, nye_per_comp / 2);
+    T *my_coarse_loads = getPlateLoads<T, Physics>(nxe / 2, nye / 2, Lx, Ly, Q);
 
-    // multigrid solve here..
+    // make the shell grid
+    GRID *coarse_grid = GRID::buildFromAssembler<Assembler>(coarse_assembler, my_coarse_loads);
+
+    // solve on coarse grid first..
+    coarse_grid->direct_solve();
+    auto h_coarse_soln = coarse_grid->d_soln.createPermuteVec(6, coarse_grid->Kmat.getPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_coarse_soln, "out/plate_coarse_direct.vtk");
+
+    // DEBUG
+    // int *h_c_iperm = DeviceVec<int>(coarse_grid->nnodes, coarse_grid->d_iperm).createHostVec().getPtr();
+    // printf("h_ coarse iperm: ");
+    // printVec<int>(coarse_grid->nnodes, h_c_iperm);
+    // return;
+
+    // try prolongation
+    grid->prolongate(coarse_grid->d_iperm, coarse_grid->d_soln);
 
     // print some of the data of host residual
-    auto h_soln = grid.d_soln.createPermuteVec(6, grid.Kmat.getIPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_mg.vtk");
+    auto h_soln = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_cf.vtk");
+
+    // // try doing multicolor block-GS iterations here (precursor to doing multgrid first)
+    // int n_iters = 3;
+    int n_iters = 10;
+    // int n_iters = 1000;
+    bool print = true;
+    int print_freq = 1;
+    T omega = 1.0; // TODO : may need somewhat damping for higher SR?
+    // T omega = 0.7; // only seem to need damping for very small DOF (for full solve, still smoothes otherwise)
+    grid->multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega);
+
+    // print some of the data of host residual
+    auto h_soln2 = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln2, "out/plate_cf.vtk");
+    
+}
+
+void multigrid_plate_solve(int nxe, double SR) {
+    // geometric multigrid method here..
+    // need to make a number of grids..
+
+    using T = double;   
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    using Basis = ShellQuadBasis<T, Quad, 2>;
+    using Geo = Basis::Geo;
+    constexpr bool has_ref_axis = false;
+    constexpr bool is_nonlinear = false;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+
+    // multigrid objects
+    using Prolongation = PlateProlongation;
+    using GRID = ShellGrid<Prolongation>;
+    using MG = ShellMultigrid<GRID>;
+
+    Assembler *fine_assembler;
+    auto mg = MG();
+
+    // make each grid
+    for (int c_nxe = nxe; c_nxe >= 4; c_nxe /= 2) {
+        // make the assembler
+        int c_nye = c_nxe;
+        double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
+        int nxe_per_comp = c_nxe / 4, nye_per_comp = c_nye/4; // for now (should have 25 grids)
+        auto assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+        double Q = 1.0; // load magnitude
+        T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+
+        if (c_nxe = nxe) {
+            fine_assembler = &assembler;
+        }
+
+        // make the grid
+        auto grid = *GRID::buildFromAssembler<Assembler>(assembler, my_loads);
+        mg.grids.push_back(grid); // add new grid
+    }
+
+
+    // print some of the data of host residual
+    int *d_iperm = mg.grids[0].Kmat.getIPerm();
+    auto h_soln = mg.grids[0].d_soln.createPermuteVec(6, d_iperm).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(*fine_assembler, h_soln, "out/plate_mg.vtk");
 }
 
 int main(int argc, char **argv) {
@@ -196,7 +272,8 @@ int main(int argc, char **argv) {
 
     // done reading arts, now run stuff
     if (is_multigrid) {
-        multigrid_plate_solve(nxe, SR);
+        // multigrid_plate_solve(nxe, SR);
+        multigrid_plate_debug(nxe, SR);
     } else {
         direct_plate_solve(nxe, SR);
     }

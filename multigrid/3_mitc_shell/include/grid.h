@@ -9,12 +9,15 @@
 
 // local includes for shell multigrid
 #include "grid.cuh"
+#include "prolongation.h" // for prolongations
 
 template <class Prolongation>
 class ShellGrid {
    public:
     using T = double;
     using I = long long int;
+
+    ShellGrid() = default;
 
     ShellGrid(int N_, BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_, HostVec<int> h_color_rowp_)
         : N(N_) {
@@ -38,7 +41,7 @@ class ShellGrid {
     }
 
     template <class Assembler>
-    static ShellGrid buildFromAssembler(Assembler &assembler, T *h_loads) {
+    static ShellGrid *buildFromAssembler(Assembler &assembler, T *h_loads) {
         // BSR symbolic factorization
         // must pass by ref to not corrupt pointers
         auto& bsr_data = assembler.getBsrData();
@@ -60,7 +63,7 @@ class ShellGrid {
         assembler.apply_bcs(res);
         assembler.apply_bcs(kmat);
 
-        return ShellGrid(N, kmat, loads, h_color_rowp);
+        return new ShellGrid(N, kmat, loads, h_color_rowp);
     }
 
     void initCuda() {
@@ -71,16 +74,20 @@ class ShellGrid {
         // init some util vecs
         d_defect = DeviceVec<T>(N);
         d_soln = DeviceVec<T>(N);
-        d_temp = DeviceVec<T>(N).getPtr();
+        d_temp_vec = DeviceVec<T>(N);
+        d_temp = d_temp_vec.getPtr();
         d_temp2 = DeviceVec<T>(N).getPtr();
         d_resid = DeviceVec<T>(N).getPtr();
+        d_int_temp = DeviceVec<int>(N).getPtr();
 
         // copy rhs into defect
         cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
         // and inv permute the rhs
         d_perm = Kmat.getPerm();
         d_iperm = Kmat.getIPerm();
-        d_elem_conn = Kmat.getBsrData().elem_conn;
+        auto d_bsr_data = Kmat.getBsrData();
+        d_elem_conn = d_bsr_data.elem_conn;
+        nelems = d_bsr_data.nelems;
         d_defect.permuteData(block_dim, d_iperm);
 
         // make mat handles for SpMV
@@ -320,10 +327,10 @@ class ShellGrid {
         // do a direct solve on the coarsest grid, with current defect.. (multicolor GS not reliable)
         // we keep permuted form, so I have to undo that from direct solve..
         bool permute_inout = false;
-        direct_LU_solve<T>(Kmat, d_defect, d_soln, print, permute_inout);
+        CUSPARSE::direct_LU_solve<T>(Kmat, d_defect, d_soln, print, permute_inout);
     }
 
-    void getDefectNorm() {
+    T getDefectNorm() {
         T def_nrm;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &def_nrm));
         return def_nrm;
@@ -557,16 +564,42 @@ class ShellGrid {
         }  // next block-GS iteration
 
         // NOTE : solution and defect are permuted here..
+    } // end of multicolor block GS fast
+
+    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in) {
+        // prolongate from coarser grid to this fine grid
+        cudaMemset(d_temp, 0.0, N * sizeof(T));
+        cudaMemset(d_int_temp, 0, N * sizeof(int)); // temp here used for weights..
+
+        Prolongation::prolongate(nelems, d_elem_conn, d_coarse_iperm, 
+            d_iperm, coarse_soln_in, d_temp_vec, d_int_temp);
+
+        // now add coarse-fine dx into soln and update defect
+        T a = 1.0, b = 1.0;
+        CHECK_CUBLAS(
+            cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
+        a = -1.0, b = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(
+                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                    block_dim, d_temp, &b, d_defect.getPtr()));
     }
 
+    // void restrict_defect() {
+    //     // transfer from finer mesh to this coarse mesh
+
+
+    // }
+
     // data
-    int N;
+    int N, nelems, block_dim, nnodes;
     BsrMat<DeviceVec<T>> Kmat, D_LU_mat;  // can't get Dinv_mat directly at moment
-    DeviceVec<T> d_rhs, d_defect, d_soln;
+    DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec;
     T *d_temp, *d_temp2, *d_resid;
     int *d_perm, *d_iperm;
     const int *d_elem_conn;
     HostVec<int> h_color_rowp;
+    int *d_int_temp;
 
     // DEBUG
     int n_solns;
@@ -583,9 +616,6 @@ class ShellGrid {
 
     // color rowp and nnzb pointers data for row-slicing
     int *h_color_bnz_ptr, *h_color_local_rowp_ptr, *d_color_local_rowps;
-
-    // for general matrices..
-    int block_dim, nnodes;
 
     // for diag inv mat
     int diag_inv_nnzb, *d_diag_rowp, *d_diag_cols;
