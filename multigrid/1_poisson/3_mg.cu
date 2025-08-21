@@ -71,7 +71,7 @@ void mg_damped_jacobi(int nxe) {
 
     // write soln to csv file ..
     T *h_soln = mg.grids[0].d_soln.createHostVec().getPtr();
-    write_to_csv<T>(mg.grids[0].N, h_soln, "16M_dof_soln.csv");
+    write_to_csv<T>(mg.grids[0].N, h_soln, "out/16M_dof_soln.csv");
 }
 
 template <typename T>
@@ -111,7 +111,7 @@ void mg_gauss_seidel(int nxe) {
 
     // write soln to csv file ..
     T *h_soln = mg.grids[0].d_soln.createHostVec().getPtr();
-    write_to_csv<T>(mg.grids[0].N, h_soln, "16M_dof_soln.csv");
+    write_to_csv<T>(mg.grids[0].N, h_soln, "out/16M_dof_soln.csv");
 }
 
 int main(int argc, char **argv) {

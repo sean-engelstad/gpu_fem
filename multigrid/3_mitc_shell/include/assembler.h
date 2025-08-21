@@ -1,73 +1,77 @@
 
-#include <cusparse_v2.h>
-#include <thrust/device_vector.h>
+// TODO : would like to just rewrite the full assembler later, let's do less intrusive wrappers for
+// assembler from BDF, plate, cylinder or other geometries like what I did in the python for mitc
+// shell..
 
-#include "cublas_v2.h"
-#include "cuda_utils.h"
-#include "linalg/vec.h"
-#include "element.cuh"
+// #include <cusparse_v2.h>
+// #include <thrust/device_vector.h>
 
-#include "element/shell/shell_elem_group.h"
-#include "element/shell/shell_elem_group.cuh"
+// #include "cublas_v2.h"
+// #include "cuda_utils.h"
+// #include "linalg/vec.h"
+// #include "element.cuh"
 
-class ShellMultigridAssembler {
-    // lighter weight assembler for geometric multigrid (single grid here)
-    // TODO : would like to rewrite this from scratch again.. so more parallel, NZ pattern on GPU
-  public:
+// #include "element/shell/shell_elem_group.h"
+// #include "element/shell/shell_elem_group.cuh"
 
-    using T = double;
-    using Quad = QuadLinearQuadrature<T>;
-    using Basis = ShellQuadBasis<T, Quad, 2>;
-    using Geo = Basis::Geo;
-    using Data = ShellIsotropicData<T, false>;
-    using Physics = IsotropicShell<T, Data, false>;
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+// class ShellMultigridAssembler {
+//     // lighter weight assembler for geometric multigrid (single grid here)
+//     // TODO : would like to rewrite this from scratch again.. so more parallel, NZ pattern on GPU
+//   public:
 
-    static constexpr int xpts_per_node = 3;
-    static constexpr int vars_per_node = 6;
+//     using T = double;
+//     using Quad = QuadLinearQuadrature<T>;
+//     using Basis = ShellQuadBasis<T, Quad, 2>;
+//     using Geo = Basis::Geo;
+//     using Data = ShellIsotropicData<T, false>;
+//     using Physics = IsotropicShell<T, Data, false>;
+//     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
 
-    ShellMultigridAssembler(int num_nodes_, int num_elements_, DeviceVec<int> d_elem_conn, 
-        DeviceVec<int> d_bcs, DeviceVec<T> d_xpts, DeviceVec<Data> d_data) : num_nodes(num_nodes_), num_elements(num_elements_) {
-        
-        elem_conn = d_elem_conn;
-        bcs = d_bcs;
-        xpts = d_xpts;
-        data = d_data;
+//     static constexpr int xpts_per_node = 3;
+//     static constexpr int vars_per_node = 6;
 
-        num_dof = num_nodes * vars_per_node;
+//     ShellMultigridAssembler(int num_nodes_, int num_elements_, DeviceVec<int> d_elem_conn,
+//         DeviceVec<int> d_bcs, DeviceVec<T> d_xpts, DeviceVec<Data> d_data) :
+//         num_nodes(num_nodes_), num_elements(num_elements_) {
 
-        // zero vars
-        vars = DeviceVec<T>(num_dof);
+//         elem_conn = d_elem_conn;
+//         bcs = d_bcs;
+//         xpts = d_xpts;
+//         data = d_data;
 
-        // construct initial bsr data
-        h_bsr_data = BsrData(num_elements, num_nodes, 4, 6, elem_conn.getPtr());
-        d_bsr_data = h_bsr_data.createDeviceBsrData();
-    }
+//         num_dof = num_nodes * vars_per_node;
 
-    void compute_nofill_pattern() {
-        // compute nofill pattern (with desired ordering as well..) for coloring
+//         // zero vars
+//         vars = DeviceVec<T>(num_dof);
 
-    }
+//         // construct initial bsr data
+//         h_bsr_data = BsrData(num_elements, num_nodes, 4, 6, elem_conn.getPtr());
+//         d_bsr_data = h_bsr_data.createDeviceBsrData();
+//     }
 
-    void assembleJacobian() {
+//     void compute_nofill_pattern() {
+//         // compute nofill pattern (with desired ordering as well..) for coloring
 
-        // assemble the Kmat
-        dim3 block(1, 24, 4); // (1 elems_per_block, 24 DOF per elem, 4 quadpts per elem)
-        int nblocks = (num_elements + block.x - 1) / block.x;
-        dim3 grid(nblocks);
+//     }
 
-        add_jacobian_gpu<T, ElemGroup, Data, 1, DeviceVec, BsrMat><<<grid, block>>>(
-            num_nodes, num_elements, elem_conn, xpts, vars, physData, res, K_mat);
+//     void assembleJacobian() {
 
-        CHECK_CUDA(cudaDeviceSynchronize());
-    }
+//         // assemble the Kmat
+//         dim3 block(1, 24, 4); // (1 elems_per_block, 24 DOF per elem, 4 quadpts per elem)
+//         int nblocks = (num_elements + block.x - 1) / block.x;
+//         dim3 grid(nblocks);
 
+//         add_jacobian_gpu<T, ElemGroup, Data, 1, DeviceVec, BsrMat><<<grid, block>>>(
+//             num_nodes, num_elements, elem_conn, xpts, vars, physData, res, K_mat);
 
-    // public data
-    int num_nodes, num_dof, num_elements;
-    DeviceVec<int> bcs, elem_conn;
-    DeviceVec<T> xpts, vars;
-    DeviceVec<Data> data;
-    BsrData bsr_data;
-    BsrMat K_mat, Dinv_mat;
-};
+//         CHECK_CUDA(cudaDeviceSynchronize());
+//     }
+
+//     // public data
+//     int num_nodes, num_dof, num_elements;
+//     DeviceVec<int> bcs, elem_conn;
+//     DeviceVec<T> xpts, vars;
+//     DeviceVec<Data> data;
+//     BsrData bsr_data;
+//     BsrMat K_mat, Dinv_mat;
+// };

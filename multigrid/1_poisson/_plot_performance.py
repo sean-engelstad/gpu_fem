@@ -16,7 +16,7 @@ plt.rcParams.update({
 
 colors = ["#264653", "#2a9d8f", "#8ab17d", "#e9c46a", "#f4a261", "#e76f51"]
 
-df = pd.read_csv("poisson_3060Ti.csv")
+df = pd.read_csv("out/poisson_3060Ti.csv")
 arr = df.to_numpy()
 # print(f"{arr=}")
 
@@ -34,8 +34,8 @@ plt.ylabel("Runtime (sec)")
 
 # plt.show()
 plt.tight_layout()
-plt.savefig("poisson-3060ti.png")
-plt.savefig("poisson-3060ti.svg")
+plt.savefig("out/poisson-3060ti.png")
+plt.savefig("out/poisson-3060ti.svg")
 
 
 
@@ -46,13 +46,13 @@ fig, ax = plt.subplots(1,1)
 print("reading csv")
 
 # nxe = 16
-# soln = np.loadtxt("8x8_dof_soln.csv", delimiter=',')
+# soln = np.loadtxt("out/8x8_dof_soln.csv", delimiter=',')
 
 # nxe = 2048
-# soln = np.loadtxt("4M_dof_soln.csv", delimiter=',')
+# soln = np.loadtxt("out/4M_dof_soln.csv", delimiter=',')
 
 nxe = 4096
-soln = np.loadtxt("16M_dof_soln.csv", delimiter=',')
+soln = np.loadtxt("out/16M_dof_soln.csv", delimiter=',')
 
 nx = nxe + 1
 N = nx**2
