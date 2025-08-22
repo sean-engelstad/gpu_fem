@@ -155,18 +155,41 @@ void multigrid_plate_debug(int nxe, double SR) {
     auto h_coarse_soln = coarse_grid->d_soln.createPermuteVec(6, coarse_grid->Kmat.getPerm()).createHostVec();
     printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_coarse_soln, "out/plate_coarse_direct.vtk");
 
+    auto h_coarse_soln2 = coarse_grid->d_soln.createPermuteVec(6, coarse_grid->Kmat.getPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_coarse_soln2, "out/plate_coarse_direct2.vtk");
+
     // DEBUG
     // int *h_c_iperm = DeviceVec<int>(coarse_grid->nnodes, coarse_grid->d_iperm).createHostVec().getPtr();
     // printf("h_ coarse iperm: ");
     // printVec<int>(coarse_grid->nnodes, h_c_iperm);
     // return;
 
+    // fine defect here..
+    auto h_fine_defect = grid->d_defect.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_fine_defect, "out/plate_fine_defect_0.vtk");
+
     // try prolongation
     grid->prolongate(coarse_grid->d_iperm, coarse_grid->d_soln);
 
     // print some of the data of host residual
     auto h_soln = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_cf.vtk");
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_cf_soln.vtk");
+
+    // fine defect here..
+    auto h_fine_defect1 = grid->d_defect.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_fine_defect1, "out/plate_fine_defect_1.vtk");
+
+    // // does printing soln again change it?
+    // auto h_soln3 = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
+    // printToVTK<Assembler,HostVec<T>>(assembler, h_soln3, "out/plate_cf_soln2.vtk");
+
+    // try defect restriction
+    coarse_grid->restrict_defect(grid->nelems, grid->d_elem_conn, grid->d_iperm,
+                        grid->d_defect);
+
+    // print some of the data of host residual
+    auto h_coarse_defect = coarse_grid->d_defect.createPermuteVec(6, coarse_grid->Kmat.getPerm()).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_coarse_defect, "out/plate_fc_defect.vtk");
 
     // // try doing multicolor block-GS iterations here (precursor to doing multgrid first)
     // int n_iters = 3;
@@ -180,8 +203,7 @@ void multigrid_plate_debug(int nxe, double SR) {
 
     // print some of the data of host residual
     auto h_soln2 = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln2, "out/plate_cf.vtk");
-    
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln2, "out/plate_mg.vtk");
 }
 
 void multigrid_plate_solve(int nxe, double SR) {
@@ -218,14 +240,25 @@ void multigrid_plate_solve(int nxe, double SR) {
         double Q = 1.0; // load magnitude
         T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
 
-        if (c_nxe = nxe) {
+        if (c_nxe == nxe) {
             fine_assembler = &assembler;
         }
+        printf("making grid with nxe %d\n", c_nxe);
 
         // make the grid
         auto grid = *GRID::buildFromAssembler<Assembler>(assembler, my_loads);
         mg.grids.push_back(grid); // add new grid
     }
+
+    printf("starting v cycle solve\n");
+    int pre_smooth = 2, post_smooth = 2;
+    // int n_vcycles = 30;
+    int n_vcycles = 3;
+    // bool print = false;
+    bool print = true;
+    T atol = 1e-6, rtol = 1e-6;
+    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol);
+    printf("done with v-cycle solve\n");
 
 
     // print some of the data of host residual
@@ -272,8 +305,8 @@ int main(int argc, char **argv) {
 
     // done reading arts, now run stuff
     if (is_multigrid) {
-        // multigrid_plate_solve(nxe, SR);
-        multigrid_plate_debug(nxe, SR);
+        multigrid_plate_solve(nxe, SR);
+        // multigrid_plate_debug(nxe, SR);
     } else {
         direct_plate_solve(nxe, SR);
     }

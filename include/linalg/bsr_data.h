@@ -332,8 +332,10 @@ class BsrData {
             for (int inode = 0; inode < nnodes; inode++) {
                 if (colors[inode] == i_color) {
                     ct++;
-                    perm[inode] = ct;
-                    iperm[ct] = inode;
+                    // perm[inode] = ct;
+                    // iperm[ct] = inode;
+                    iperm[inode] = ct;
+                    perm[ct] = inode;
                 }
             }
             color_rowp[i_color + 1] = ct + 1;
