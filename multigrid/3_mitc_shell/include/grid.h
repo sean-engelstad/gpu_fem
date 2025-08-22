@@ -11,7 +11,7 @@
 #include "grid.cuh"
 #include "prolongation.h"  // for prolongations
 
-template <class Prolongation>
+template <class Assembler, class Prolongation>
 class ShellGrid {
    public:
     using T = double;
@@ -19,13 +19,16 @@ class ShellGrid {
 
     ShellGrid() = default;
 
-    ShellGrid(int N_, BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_, HostVec<int> h_color_rowp_)
-        : N(N_) {
+    ShellGrid(Assembler &assembler_, int N_, BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_,
+              HostVec<int> h_color_rowp_, bool full_LU_ = false)
+        : N(N_), full_LU(full_LU_) {
         Kmat = Kmat_;
         d_rhs = d_rhs_;
         h_color_rowp = h_color_rowp_;
         block_dim = 6;
         nnodes = N / 6;
+
+        assembler = assembler_;
 
         // get data out of kmat
         auto d_kmat_bsr_data = Kmat.getBsrData();
@@ -40,8 +43,9 @@ class ShellGrid {
         buildDiagInvMat();
     }
 
-    template <class Assembler>
-    static ShellGrid *buildFromAssembler(Assembler &assembler, T *h_loads) {
+    static ShellGrid *buildFromAssembler(Assembler &assembler, T *h_loads, bool full_LU = false) {
+        // only do full LU factor on coarsest grid..
+
         // BSR symbolic factorization
         // must pass by ref to not corrupt pointers
         auto &bsr_data = assembler.getBsrData();
@@ -49,7 +53,12 @@ class ShellGrid {
         bsr_data.multicolor_reordering(
             num_colors,
             _color_rowp);  // TODO : add this method.. (I guess I can just do host for now..)
-        bsr_data.compute_nofill_pattern();
+        if (full_LU) {
+            // only do this on coarsest grid (full LU fillin pattern for direct solve)
+            bsr_data.compute_full_LU_pattern(10.0, false);
+        } else {
+            bsr_data.compute_nofill_pattern();
+        }
         auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
         assembler.moveBsrDataToDevice();
         auto loads = assembler.createVarsVec(h_loads);
@@ -65,7 +74,7 @@ class ShellGrid {
         assembler.apply_bcs(res);
         assembler.apply_bcs(kmat);
 
-        return new ShellGrid(N, kmat, loads, h_color_rowp);
+        return new ShellGrid(assembler, N, kmat, loads, h_color_rowp, full_LU);
     }
 
     void initCuda() {
@@ -100,6 +109,19 @@ class ShellGrid {
         CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
         CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
         CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
+
+        // also init kmat for direct LU solves..
+        if (full_LU) {
+            d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
+            CHECK_CUDA(cudaMemcpy(d_kmat_lu_vals, d_kmat_vals, Kmat.get_nnz() * sizeof(T),
+                                  cudaMemcpyDeviceToDevice));
+
+            // ILU(0) factor on full LU pattern
+            CUSPARSE::perform_ilu0_factorization(
+                cusparseHandle, descr_kmat_L, descr_kmat_U, info_kmat_L, info_kmat_U, &kmat_pBuffer,
+                nnodes, kmat_nnzb, block_dim, d_kmat_lu_vals, d_kmat_rowp, d_kmat_cols, trans_L,
+                trans_U, policy_L, policy_U, dir);
+        }
     }
 
     void buildDiagInvMat() {
@@ -118,13 +140,13 @@ class ShellGrid {
         int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
         int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
 
-        printf("h_color_rowp:");
-        printVec<int>(h_color_rowp.getSize() + 1, h_color_rowp.getPtr());
-        printf("nnodes %d\n", nnodes);
-        printf("h_kmat_rowp:");
-        printVec<int>(20, h_kmat_rowp);
-        printf("h_kmat_cols:");
-        printVec<int>(100, h_kmat_cols);
+        // printf("h_color_rowp:");
+        // printVec<int>(h_color_rowp.getSize() + 1, h_color_rowp.getPtr());
+        // printf("nnodes %d\n", nnodes);
+        // printf("h_kmat_rowp:");
+        // printVec<int>(20, h_kmat_rowp);
+        // printf("h_kmat_cols:");
+        // printVec<int>(100, h_kmat_cols);
 
         // now copy to device
         d_diag_rowp = HostVec<int>(nnodes + 1, h_diag_rowp).createDeviceVec().getPtr();
@@ -334,10 +356,32 @@ class ShellGrid {
     }
 
     void direct_solve(bool print = false) {
+        // T defect_nrm;
+        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
+        // printf("\tdirect solve, ||defect|| = %.4e\n", defect_nrm);
+
         // do a direct solve on the coarsest grid, with current defect.. (multicolor GS not
         // reliable) we keep permuted form, so I have to undo that from direct solve..
-        bool permute_inout = false;
-        CUSPARSE::direct_LU_solve<T>(Kmat, d_defect, d_soln, print, permute_inout);
+        // bool permute_inout = false;
+        // CUSPARSE::direct_LU_solve<T>(Kmat, d_defect, d_soln, print, permute_inout);
+        // this routine destroys and recreates handles .. may cause problems if calling multiple
+        // times I think
+
+        const double alpha = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, nnodes, kmat_nnzb,
+                                             &alpha, descr_kmat_L, d_kmat_lu_vals, d_kmat_rowp,
+                                             d_kmat_cols, block_dim, info_kmat_L, d_defect.getPtr(),
+                                             d_temp, policy_L, kmat_pBuffer));
+
+        // triangular solve U*y = z
+        CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes, kmat_nnzb,
+                                             &alpha, descr_kmat_U, d_kmat_lu_vals, d_kmat_rowp,
+                                             d_kmat_cols, block_dim, info_kmat_U, d_temp,
+                                             d_soln.getPtr(), policy_U, kmat_pBuffer));
+
+        // T soln_nrm;
+        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_soln.getPtr(), 1, &soln_nrm));
+        // printf("\tdirect solve, ||soln|| = %.4e\n", soln_nrm);
     }
 
     T getDefectNorm() {
@@ -347,7 +391,7 @@ class ShellGrid {
     }
 
     void multicolorBlockGaussSeidel_slow(int n_iters, bool print = false, int print_freq = 10,
-                                         T omega = 1.0) {
+                                         T omega = 1.0, bool rev_colors = false) {
         // slower version of do multicolor BSRmat block gauss-seidel on the defect
         // slower in the sense that it uses full mat-vec and full triang solves (does work right)
         // would like a faster version with color slicing next..
@@ -364,8 +408,10 @@ class ShellGrid {
         // h_solns = new T *[n_solns];
 
         for (int iter = 0; iter < n_iters; iter++) {
-            for (int icolor = 0; icolor < num_colors; icolor++) {
+            for (int _icolor = 0; _icolor < num_colors; _icolor++) {
                 // printf("\t\titer %d, color %d\n", iter, icolor);
+
+                int icolor = rev_colors ? num_colors - 1 - _icolor : _icolor;
 
                 // get active rows / cols for this color
                 int start = color_rowp[icolor], end = color_rowp[icolor + 1];
@@ -577,22 +623,71 @@ class ShellGrid {
         // NOTE : solution and defect are permuted here..
     }  // end of multicolor block GS fast
 
-    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in) {
+    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in, bool debug = false) {
         // prolongate from coarser grid to this fine grid
         cudaMemset(d_temp, 0.0, N * sizeof(T));
         cudaMemset(d_int_temp, 0, N * sizeof(int));  // temp here used for weights..
 
+        // T soln_nrm;
+        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, coarse_soln_in.getSize(), coarse_soln_in.getPtr(),
+        // 1,
+        //                          &soln_nrm));
+        // printf("\tprolong coarse soln in, ||soln|| = %.4e\n", soln_nrm);
+
         Prolongation::prolongate(nelems, d_elem_conn, d_coarse_iperm, d_iperm, coarse_soln_in,
                                  d_temp_vec, d_int_temp);
+        CHECK_CUDA(cudaDeviceSynchronize());
 
-        // now add coarse-fine dx into soln and update defect
-        T a = 1.0, b = 1.0;
+        // zero bcs of coarse-fine prolong
+        d_temp_vec.permuteData(block_dim, d_perm);  // better way to do this later?
+        assembler.apply_bcs(d_temp_vec);
+        d_temp_vec.permuteData(block_dim, d_iperm);
+
+        // rescale coarse-fine using 1DOF min energy step
+        // since FEA restrict and prolong operations are not energy minimally scaled
+        // if u = u0 + omega * s, with s the proposed d_temp or du here (or line search)
+        // then min energy omega from 1DOF galerkin is omega = <s, defect> / <s, Ks>
+        // so need 2 dot prods, one SpMV, see 'multigrid/_python_demos/4_gmg_shell/1_mg.py' also
+        T sT_defect;
+        CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_defect.getPtr(), 1, d_temp, 1, &sT_defect));
+
+        T a = 1.0, b = 0.0;  // K * d_temp + 0 * d_temp2 => d_temp2
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, kmat_nnzb,
+                                      &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                                      block_dim, d_temp, &b, d_temp2));
+        T sT_Ks;
+        CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_temp2, 1, d_temp, 1, &sT_Ks));
+        T omega = sT_defect / sT_Ks;
+        if (debug) printf("omega = %.2e\n", omega);
+        // printf("sT_defect %.2e, sT_Ks %.2e\n", sT_defect, sT_Ks);
+
+        if (debug) {
+            auto h_defect1 = d_defect.createPermuteVec(6, d_perm).createHostVec();
+            printToVTK<Assembler, HostVec<T>>(assembler, h_defect1, "out/1_pre_cf_defect.vtk");
+        }
+
+        // now add coarse-fine dx into soln and update defect (with u = u0 + omega * d_temp)
+        a = omega, b = 1.0;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
-        a = -1.0, b = 1.0;
+        a = -omega, b = 1.0;
+        // a = -omega, b = 0.0;  // DEBUG
         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
                                       CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, kmat_nnzb,
                                       &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
                                       block_dim, d_temp, &b, d_defect.getPtr()));
+
+        // DEBUG : write out the cf update, defect update and before and after defects
+        if (debug) {
+            auto h_cf_update = d_temp_vec.createPermuteVec(6, d_perm).createHostVec();
+            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_update, "out/2_cf_update.vtk");
+
+            auto h_cf_loads = DeviceVec<T>(N, d_temp2).createPermuteVec(6, d_perm).createHostVec();
+            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_loads, "out/3_cf_loads.vtk");
+
+            auto h_defect2 = d_defect.createPermuteVec(6, d_perm).createHostVec();
+            printToVTK<Assembler, HostVec<T>>(assembler, h_defect2, "out/4_fin_defect.vtk");
+        }
     }
 
     void restrict_defect(int nelems_fine, const int *d_elem_conn_fine, int *d_iperm_fine,
@@ -604,11 +699,24 @@ class ShellGrid {
         Prolongation::restrict_defect(nelems_fine, d_elem_conn_fine, d_iperm, d_iperm_fine,
                                       fine_defect_in, d_defect, d_int_temp);
 
+        // auto h_defect2 = d_defect.createPermuteVec(6, d_perm).createHostVec();
+        // printToVTK<Assembler, HostVec<T>>(assembler, h_defect2, "out/4_fin_defect.vtk");
+        // T defect_nrm;
+        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
+        // printf("\trestrict to coarse, ||defect|| = %.4e\n", defect_nrm);
+
+        // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
+        // apply bcs is on un-permuted data
+        d_defect.permuteData(block_dim, d_perm);  // better way to do this later?
+        assembler.apply_bcs(d_defect);
+        d_defect.permuteData(block_dim, d_iperm);
+
         // reset soln (with bcs zero here, TBD others later)
         cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
     }
 
     // data
+    Assembler assembler;
     int N, nelems, block_dim, nnodes;
     BsrMat<DeviceVec<T>> Kmat, D_LU_mat;  // can't get Dinv_mat directly at moment
     DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec;
@@ -642,7 +750,7 @@ class ShellGrid {
 
     // for kmat
     int kmat_nnzb, *d_kmat_rowp, *d_kmat_cols;
-    T *d_kmat_vals;
+    T *d_kmat_vals, *d_kmat_lu_vals;
 
     // CUSPARSE triang solve for Dinv as diag LU
     cusparseMatDescr_t descr_L = 0, descr_U = 0;
@@ -653,4 +761,10 @@ class ShellGrid {
     const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
                               trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
+
+    // and simiarly for Kmat a few differences
+    bool full_LU;  // full LU only for coarsest mesh
+    cusparseMatDescr_t descr_kmat_L = 0, descr_kmat_U = 0;
+    bsrsv2Info_t info_kmat_L = 0, info_kmat_U = 0;
+    void *kmat_pBuffer = 0;
 };

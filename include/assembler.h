@@ -37,6 +37,8 @@ class ElementAssembler {
 
     // function declarations (to make easier to use)
     // ------------------------
+    ElementAssembler() = default;  // for pointers
+
     ElementAssembler(int32_t num_geo_nodes_, int32_t num_vars_nodes_, int32_t num_elements_,
                      HostVec<int32_t> &geo_conn, HostVec<int32_t> &vars_conn, HostVec<T> &xpts,
                      HostVec<int> &bcs, HostVec<Data> &physData, int32_t num_components_ = 0,

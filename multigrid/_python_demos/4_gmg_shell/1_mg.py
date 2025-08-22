@@ -65,7 +65,7 @@ nxe_list = [32, 16]
 # nxe_list = [4,2]
 
 for nxe in nxe_list:
-    _tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"_in/plate{nxe}.bdf", thickness=thickness)
+    _tacs_bsr_mat, _rhs, _xpts = get_tacs_matrix(f"_archive/plate{nxe}.bdf", thickness=thickness)
     _tacs_csr_mat = _tacs_bsr_mat.tocsr()
 
     _nnodes = _xpts.shape[0] // 3
@@ -261,6 +261,7 @@ for v_cycle in range(300):
     # re-scale using one DOF min
     s = _dx_cf_1
     omega = np.dot(defect_0_1, s) / np.dot(s, lhs_0.dot(s))
+    print(f"{omega=:.2e}")
     # compute equiv loads
 
     defect_0_2 = defect_0_1 - lhs_0.dot(omega * s)

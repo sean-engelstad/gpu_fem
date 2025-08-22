@@ -10,7 +10,7 @@ from tacs import TACS, elements, constitutive
 import time
 
 # Load structural mesh from BDF file
-bdfFile = "_in/plate4.bdf"
+bdfFile = "_archive/plate4.bdf"
 tacs_comm = MPI.COMM_WORLD
 struct_mesh = TACS.MeshLoader(tacs_comm)
 struct_mesh.scanBDFFile(bdfFile)

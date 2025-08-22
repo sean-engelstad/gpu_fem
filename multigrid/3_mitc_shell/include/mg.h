@@ -11,10 +11,13 @@ class ShellMultigrid {
     int getNumLevels() { return grids.size(); }
 
     void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
-                      int inner_solve_iters = 100, T atol = 1e-6, T rtol = 1e-6) {
+                      T atol = 1e-6, T rtol = 1e-6, T omega = 1.0) {
         // init defect nrm
         T init_defect_nrm = grids[0].getDefectNorm();
         printf("V-cycles: ||init_defect|| = %.2e\n", init_defect_nrm);
+
+        T fin_defect_nrm = init_defect_nrm;
+        int n_steps = n_vcycles;
 
         int n_levels = getNumLevels();
         // if (print) printf("n_levels %d\n", n_levels);
@@ -31,7 +34,7 @@ class ShellMultigrid {
                     // pre-smooth; TODO : do fast version later.. but let's demo with slow version
                     // first
                     grids[i_level].multicolorBlockGaussSeidel_slow(pre_smooth, print,
-                                                                   pre_smooth - 1);
+                                                                   pre_smooth - 1, omega);
 
                     // restrict defect
                     grids[i_level + 1].restrict_defect(
@@ -49,23 +52,32 @@ class ShellMultigrid {
             // now go back up the hierarchy
             for (int i_level = n_levels - 2; i_level >= 0; i_level--) {
                 // get coarse-fine correction from coarser grid to this grid
+                // printf("prolongate from grid %d => %d\n", i_level + 1, i_level);
                 grids[i_level].prolongate(grids[i_level + 1].d_iperm, grids[i_level + 1].d_soln);
-
                 // if (print) printf("\tlevel %d post-smooth\n", i_level);
 
                 // post-smooth
-                grids[i_level].multicolorBlockGaussSeidel_slow(post_smooth, print, post_smooth - 1);
+                // printf("post-smooth on level %d\n", i_level);
+                bool rev_colors = true;
+                grids[i_level].multicolorBlockGaussSeidel_slow(post_smooth, print, post_smooth - 1,
+                                                               omega, rev_colors);
             }
 
             // compute fine grid defect of V-cycle
             T defect_nrm = grids[0].getDefectNorm();
+            fin_defect_nrm = defect_nrm;
             printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
 
             if (defect_nrm < atol + rtol * init_defect_nrm) {
-                printf("V-cycle GMG converged in %d steps\n", i_vcycle + 1);
+                printf("V-cycle GMG converged in %d steps to defect nrm %.2e from init_nrm %.2e\n",
+                       i_vcycle + 1, defect_nrm, init_defect_nrm);
+                n_steps = i_vcycle + 1;
                 break;
             }
         }
+
+        printf("done with v-cycle solve, conv %.2e to %.2e ||defect|| in %d steps\n",
+               init_defect_nrm, fin_defect_nrm, n_steps);
     }
 
     void free() {

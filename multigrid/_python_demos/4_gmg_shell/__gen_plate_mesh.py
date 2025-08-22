@@ -70,7 +70,7 @@ for i in range(ney):
 
 
 # Write BDF
-output_file = "_in/" + args.name + ".bdf"
+output_file = "_archive/" + args.name + ".bdf"
 
 with open(output_file, "w") as fout:
     write_80("SOL 103")

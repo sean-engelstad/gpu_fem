@@ -34,7 +34,7 @@ __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fi
     // now loop over 4 connected nodes in the element..
     for (int local_node = 0; local_node < 4; local_node++) {
         int inode = d_elem_conn[4 * ielem + local_node];
-        if (inode < 3) 
+        // if (inode < 3) 
             // printf("ielem %d, local_node %d => inode %d\n", ielem, local_node, inode);
 
         for (int idof = 0; idof < 6; idof++) {
@@ -44,8 +44,15 @@ __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fi
             // weight normalization is sufficient..
             int perm_fine_ind = d_fine_iperm[inode];
 
-            // if (inode < 3 && idof == 0) {
+            // if (inode < 10 && idof == 2) {
             //     printf("tid %d, ielem %d: coarse node %d => fine node %d; permuted %d => %d\n", tid, ielem, coarse_ind_c, inode, perm_coarse_ind_c, perm_fine_ind);
+            //     printf("tid %d, coarse val %.2e\n", tid, coarse_val);
+            // }
+
+            // DEBUG
+            // int ix = inode % nx_f, iy = inode / nx_f;
+            // if (ix == 1 && idof == 2 && inode < 70) {
+            //     printf("prolong: ielem %d, inode %d, ix %d, iy %d => perm node %d with w-val %.2e\n", ielem, inode, ix, iy, perm_fine_ind, coarse_val);
             // }
             
             atomicAdd(&dx_fine[6 * perm_fine_ind + idof], coarse_val);
@@ -90,12 +97,18 @@ __global__ static void k_plate_restrict(const int nxe_coarse, const int nxe_fine
         int inode = d_elem_conn[4 * ielem + local_node];
 
         for (int idof = 0; idof < 6; idof++) {
-        
             // since it's just linear interp => no need to compute basis functions
             // weight normalization is sufficient..
             int perm_fine_ind = d_fine_iperm[inode];
 
             T fine_val = defect_fine_in[6 * perm_fine_ind + idof];
+
+            // DEBUG
+            // int ix = inode % nx_f, iy = inode / nx_f;
+            // if (ix == 1 && idof == 2 && inode < 70) {
+            //     printf("restrict: ielem %d, inode %d, ix %d, iy %d => perm node %d with w-val %.2e\n", ielem, inode, ix, iy, perm_fine_ind, fine_val);
+            //     printf("nx_f %d, nxe_f %d\n", nx_f, nxe_fine);
+            // }
 
             // printf("coarse node %d => fine node %d; permuted %d => %d\n", coarse_ind_c, inode, perm_coarse_ind_c, perm_fine_ind);
             // printf("coarse defect[%d] += %.4e\n", 6 * perm_coarse_ind_c + idof, fine_val);

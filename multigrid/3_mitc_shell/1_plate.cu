@@ -16,7 +16,7 @@
 #include <string>
 
 /* command line args:
-    [direct/mg] [--nxe int] [--SR float]
+    [direct/mg] [--nxe int] [--SR float] [--nvcyc int]
     * nxe must be power of 2
 
     examples:
@@ -114,99 +114,7 @@ void direct_plate_solve(int nxe, double SR) {
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate.vtk");
 }
 
-void multigrid_plate_debug(int nxe, double SR) {
-    // geometric multigrid method, debug individual steps on single grid here..
-
-    using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
-    using Director = LinearizedRotation<T>;
-    using Basis = ShellQuadBasis<T, Quad, 2>;
-    using Geo = Basis::Geo;
-    constexpr bool has_ref_axis = false;
-    constexpr bool is_nonlinear = false;
-    using Data = ShellIsotropicData<T, has_ref_axis>;
-    using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-
-    // multigrid objects
-    using GRID = ShellGrid<PlateProlongation>;
-
-    int nye = nxe;
-    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-    int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
-    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
-    double Q = 1.0; // load magnitude
-    T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
-
-    // make the shell grid
-    GRID *grid = GRID::buildFromAssembler<Assembler>(assembler, my_loads);
-
-    // make a second grid here
-    auto coarse_assembler = createPlateAssembler<Assembler>(nxe / 2, nxe / 2, Lx, Ly, E, nu, thick, rho, ys, 
-        nxe_per_comp / 2, nye_per_comp / 2);
-    T *my_coarse_loads = getPlateLoads<T, Physics>(nxe / 2, nye / 2, Lx, Ly, Q);
-
-    // make the shell grid
-    GRID *coarse_grid = GRID::buildFromAssembler<Assembler>(coarse_assembler, my_coarse_loads);
-
-    // solve on coarse grid first..
-    coarse_grid->direct_solve();
-    auto h_coarse_soln = coarse_grid->d_soln.createPermuteVec(6, coarse_grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_coarse_soln, "out/plate_coarse_direct.vtk");
-
-    auto h_coarse_soln2 = coarse_grid->d_soln.createPermuteVec(6, coarse_grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_coarse_soln2, "out/plate_coarse_direct2.vtk");
-
-    // DEBUG
-    // int *h_c_iperm = DeviceVec<int>(coarse_grid->nnodes, coarse_grid->d_iperm).createHostVec().getPtr();
-    // printf("h_ coarse iperm: ");
-    // printVec<int>(coarse_grid->nnodes, h_c_iperm);
-    // return;
-
-    // fine defect here..
-    auto h_fine_defect = grid->d_defect.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_fine_defect, "out/plate_fine_defect_0.vtk");
-
-    // try prolongation
-    grid->prolongate(coarse_grid->d_iperm, coarse_grid->d_soln);
-
-    // print some of the data of host residual
-    auto h_soln = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_cf_soln.vtk");
-
-    // fine defect here..
-    auto h_fine_defect1 = grid->d_defect.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_fine_defect1, "out/plate_fine_defect_1.vtk");
-
-    // // does printing soln again change it?
-    // auto h_soln3 = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    // printToVTK<Assembler,HostVec<T>>(assembler, h_soln3, "out/plate_cf_soln2.vtk");
-
-    // try defect restriction
-    coarse_grid->restrict_defect(grid->nelems, grid->d_elem_conn, grid->d_iperm,
-                        grid->d_defect);
-
-    // print some of the data of host residual
-    auto h_coarse_defect = coarse_grid->d_defect.createPermuteVec(6, coarse_grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_coarse_defect, "out/plate_fc_defect.vtk");
-
-    // // try doing multicolor block-GS iterations here (precursor to doing multgrid first)
-    // int n_iters = 3;
-    int n_iters = 10;
-    // int n_iters = 1000;
-    bool print = true;
-    int print_freq = 1;
-    T omega = 1.0; // TODO : may need somewhat damping for higher SR?
-    // T omega = 0.7; // only seem to need damping for very small DOF (for full solve, still smoothes otherwise)
-    grid->multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega);
-
-    // print some of the data of host residual
-    auto h_soln2 = grid->d_soln.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln2, "out/plate_mg.vtk");
-}
-
-void multigrid_plate_solve(int nxe, double SR) {
+void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -223,11 +131,9 @@ void multigrid_plate_solve(int nxe, double SR) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    using Prolongation = PlateProlongation;
-    using GRID = ShellGrid<Prolongation>;
+    using GRID = ShellGrid<Assembler, PlateProlongation>;
     using MG = ShellMultigrid<GRID>;
 
-    Assembler *fine_assembler;
     auto mg = MG();
 
     // make each grid
@@ -239,32 +145,30 @@ void multigrid_plate_solve(int nxe, double SR) {
         auto assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
         double Q = 1.0; // load magnitude
         T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
-
-        if (c_nxe == nxe) {
-            fine_assembler = &assembler;
-        }
         printf("making grid with nxe %d\n", c_nxe);
 
         // make the grid
-        auto grid = *GRID::buildFromAssembler<Assembler>(assembler, my_loads);
+        bool full_LU = c_nxe == 4; // smallest grid is direct solve
+        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU);
         mg.grids.push_back(grid); // add new grid
     }
 
     printf("starting v cycle solve\n");
-    int pre_smooth = 2, post_smooth = 2;
-    // int n_vcycles = 30;
-    int n_vcycles = 3;
+    int pre_smooth = 1, post_smooth = 1;
+    // int pre_smooth = 2, post_smooth = 2;
+    // int pre_smooth = 4, post_smooth = 4;
     // bool print = false;
-    bool print = true;
+    bool print = false;
     T atol = 1e-6, rtol = 1e-6;
-    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol);
+    T omega = 1.0;
+    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega);
     printf("done with v-cycle solve\n");
 
 
     // print some of the data of host residual
-    int *d_iperm = mg.grids[0].Kmat.getIPerm();
-    auto h_soln = mg.grids[0].d_soln.createPermuteVec(6, d_iperm).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(*fine_assembler, h_soln, "out/plate_mg.vtk");
+    int *d_perm = mg.grids[0].d_perm;
+    auto h_soln = mg.grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln, "out/plate_mg.vtk");
 }
 
 int main(int argc, char **argv) {
@@ -272,6 +176,7 @@ int main(int argc, char **argv) {
     bool is_multigrid = false;
     int nxe = 256; // default value
     double SR = 100.0; // default
+    int n_vcycles = 50;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -296,6 +201,13 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --SR\n";
                 return 1;
             }
+        } else if (strcmp(arg, "--nvcyc") == 0) {
+            if (i + 1 < argc) {
+                n_vcycles = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nvcyc\n";
+                return 1;
+            }
         } else {
             std::cerr << "Unknown argument: " << argv[i] << std::endl;
             std::cerr << "Usage: " << argv[0] << " [direct/mg] [--nxe value] [--SR value]" << std::endl;
@@ -305,8 +217,7 @@ int main(int argc, char **argv) {
 
     // done reading arts, now run stuff
     if (is_multigrid) {
-        multigrid_plate_solve(nxe, SR);
-        // multigrid_plate_debug(nxe, SR);
+        multigrid_plate_solve(nxe, SR, n_vcycles);
     } else {
         direct_plate_solve(nxe, SR);
     }
