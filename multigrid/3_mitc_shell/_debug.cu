@@ -179,7 +179,10 @@ void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega,
 
         // make the grid
         // printf("making grid with nxe %d\n", c_nxe);
-        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU);
+        bool coloring = true;
+        // bool coloring = false;
+
+        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, coloring);
         mg.grids.push_back(grid); // add new grid
         c_nxe /= 2;
     }

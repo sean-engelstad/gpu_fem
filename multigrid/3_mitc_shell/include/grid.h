@@ -43,16 +43,25 @@ class ShellGrid {
         buildDiagInvMat();
     }
 
-    static ShellGrid *buildFromAssembler(Assembler &assembler, T *h_loads, bool full_LU = false) {
+    static ShellGrid *buildFromAssembler(Assembler &assembler, T *h_loads, bool full_LU = false,
+                                         bool coloring = true) {
         // only do full LU factor on coarsest grid..
 
         // BSR symbolic factorization
         // must pass by ref to not corrupt pointers
         auto &bsr_data = assembler.getBsrData();
         int num_colors, *_color_rowp;
-        bsr_data.multicolor_reordering(
-            num_colors,
-            _color_rowp);  // TODO : add this method.. (I guess I can just do host for now..)
+        if (coloring) {
+            bsr_data.multicolor_reordering(
+                num_colors,
+                _color_rowp);  // TODO : add this method.. (I guess I can just do host for now..)
+        } else {
+            num_colors = 1;
+            _color_rowp = new int[2];
+            _color_rowp[0] = 0;
+            _color_rowp[1] = assembler.get_num_nodes();
+        }
+
         if (full_LU) {
             // only do this on coarsest grid (full LU fillin pattern for direct solve)
             bsr_data.compute_full_LU_pattern(10.0, false);
@@ -411,7 +420,9 @@ class ShellGrid {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
                 // printf("\t\titer %d, color %d\n", iter, icolor);
 
-                int icolor = rev_colors ? num_colors - 1 - _icolor : _icolor;
+                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
+
+                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
 
                 // get active rows / cols for this color
                 int start = color_rowp[icolor], end = color_rowp[icolor + 1];
