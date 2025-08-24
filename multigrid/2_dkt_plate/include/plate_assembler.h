@@ -2,6 +2,7 @@
 #include "assembler.cuh"
 #include "linalg/bsr_mat.h"
 #include "solvers/linear_static/bsr_direct_LU.h"
+#include "solvers/linear_static/bsr_gmres.h"
 
 /* main assembler for the DKT plate elements..*/
 
@@ -82,7 +83,7 @@ class DKTPlateAssembler {
         auto d_bsr_data = Kmat.getBsrData();
         d_elem_conn = d_bsr_data.elem_conn;
         nelems = d_bsr_data.nelems;
-        d_defect.permuteData(block_dim, d_iperm);
+        // d_defect.permuteData(block_dim, d_iperm);
 
         // make mat handles for SpMV
         CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
@@ -165,7 +166,6 @@ class DKTPlateAssembler {
     }
 
     void gmres_solve(bool print = false) {
-        bool permute_inout = false;
         // right precond, modified GS solve
         int n_iter = 50, max_iter = 300;
         T atol = 1e-7, rtol = 1e-7;

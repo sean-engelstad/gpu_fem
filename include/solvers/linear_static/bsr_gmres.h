@@ -56,7 +56,6 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     int *iperm = bsr_data.iperm;
     int N = soln.getSize();
     int n_iter = min(_n_iter, bsr_data.nnodes);
-    T *d_rhs = rhs_perm.getPtr();
     T *d_x = soln.getPtr();
 
     // permute data in soln if guess is not zero

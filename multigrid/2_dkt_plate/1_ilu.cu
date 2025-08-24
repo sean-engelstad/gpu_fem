@@ -3,6 +3,15 @@
 #include "include/_utils.h"
 #include <chrono>
 
+/* command line args:
+    [direct/qorder] [--nxe int]
+    * nxe must be power of 2
+
+    examples:
+    ./1_ilu.out direct --nxe 512  runs direct full LU solve on 512^2 elem grid
+    ./1_ilu.out qorder --nxe 1024  runs ILU(0) qorder GMRES solve on 1024^2 elem grid
+*/
+
 void to_lowercase(char *str) {
     for (; *str; ++str) {
         *str = std::tolower(*str);
@@ -12,7 +21,7 @@ void to_lowercase(char *str) {
 int main(int argc, char **argv) {
     using T = double;
 
-    bool is_direct = false; // default is Q-order
+    bool is_direct = true; // default is direct
     // int nxe = 256; // default
     int nxe = 32;
 
@@ -23,9 +32,9 @@ int main(int argc, char **argv) {
         to_lowercase(arg);
 
         if (strcmp(arg, "direct") == 0) {
-            is_direct = false;
-        } else if (strcmp(arg, "qorder") == 0) {
             is_direct = true;
+        } else if (strcmp(arg, "qorder") == 0) {
+            is_direct = false;
         } else if (strcmp(arg, "--nxe") == 0) {
             if (i + 1 < argc) {
                 nxe = std::atoi(argv[++i]);
@@ -48,12 +57,14 @@ int main(int argc, char **argv) {
 
     // do orderings and fillin here..
     if (is_direct) {
+        // if do no reordering with direct, will use way more memory than necessary (much slower + smaller problems you can do)
         // AMD ordering with direct solve
         assembler.h_bsr_data.AMD_reordering();
         assembler.h_bsr_data.compute_full_LU_pattern(10.0, false);
     } else {
         // Q-order and nofill
-        double qorder_p = 0.5; // smaller is more random
+        double qorder_p = 0.5;
+        if (nxe < 64) qorder_p = 2.0;
         assembler.h_bsr_data.qorder_reordering(qorder_p);  
         assembler.h_bsr_data.compute_nofill_pattern();
     }  
