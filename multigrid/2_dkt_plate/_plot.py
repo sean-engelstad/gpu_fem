@@ -33,7 +33,7 @@ ndof = vec.shape[0]
 N = ndof // 3
 nx = np.int32(N**0.5)
 nxe = nx - 1
-print(f"{nxe=}")
+print(f"python, plot soln with {nxe=}")
 
 w = vec[idof_plot::3]
 W = np.reshape(w, (nx, nx))

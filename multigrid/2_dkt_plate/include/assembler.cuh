@@ -179,6 +179,7 @@ __global__ void k_assembleRHS(const T load_mag, int nxe, int *d_iperm, T *d_rhs)
     int is_bc = d_getPlateBC(nx, tid);
     load *= (1 - is_bc);
 
-    d_rhs[tid] = load;
+    int perm_dof = d_iperm[tid];
+    d_rhs[perm_dof] = load;
 }
 

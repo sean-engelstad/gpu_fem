@@ -17,7 +17,8 @@ namespace CUSPARSE {
 template <typename T, bool right = true, bool modifiedGS = true, bool use_precond = true>
 void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &soln,
                  int _n_iter = 100, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
-                 bool can_print = false, bool debug = false, int print_freq = 10) {
+                 bool can_print = false, bool debug = false, int print_freq = 10,
+                 bool permute_inout = true) {
     /* GMRES iterative solve using a BsrMat on GPU with CUDA / CuSparse
         only supports T = double right now, may add float at some point (but float won't
        converge as deeply the residual, only about 1e-7) */
@@ -25,7 +26,13 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
                   "Only double precision is written in our code for cuSparse BSR GMRES with "
                   "Modified Gram-Schmidt");
 
-    auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
+    T *d_rhs;
+    if (permute_inout) {
+        auto rhs_perm = inv_permute_rhs<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, rhs);
+        d_rhs = rhs_perm.getPtr();
+    } else {
+        d_rhs = rhs.getPtr();
+    }
 
     // which type of preconditioners
     constexpr bool left_precond = use_precond && !right;
@@ -518,7 +525,9 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     // -------------------------------------------------
 
     // now also inverse permute the soln data
-    permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
+    if (permute_inout) {
+        permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
+    }
 
     // free resources
     cudaFree(pBuffer);

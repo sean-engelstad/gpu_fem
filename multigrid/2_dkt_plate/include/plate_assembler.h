@@ -17,69 +17,25 @@ class DKTPlateAssembler {
         ndof = nnodes * 3;
         N = ndof;
 
-        // init helper methods
-        printf("init nz pattern lhs\n");
-        init_nz_pattern_lhs();
+        init_nz_pattern();
+    }
 
-        printf("assemble lhs\n");
+    void assemble() {
+        // set ordering and then call initialize and assemble..
+        // here we first move the host bsr data to device (since ordered now..)
+        auto d_bsr_data = h_bsr_data.createDeviceBsrData();
+        nnzb = h_bsr_data.nnzb;
+        int nvals = nnzb * 9;
+        d_vals = DeviceVec<T>(nvals);
+        Kmat = BsrMat<DeviceVec<T>>(d_bsr_data, d_vals);
+
+        // assembly helper methods
         assemble_lhs();
-
-        printf("assemble rhs\n");
         assemble_rhs();
-        // return;  // DEBUG
-
-        printf("init cuda\n");
         initCuda();
     }
 
-    void initCuda() {
-        // init handles
-        // CHECK_CUBLAS(cublasCreate(&cublasHandle));
-        // CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
-
-        // init some util vecs
-        d_defect = DeviceVec<T>(N);
-        d_soln = DeviceVec<T>(N);
-        d_temp_vec = DeviceVec<T>(N);
-        d_temp = d_temp_vec.getPtr();
-        d_temp2 = DeviceVec<T>(N).getPtr();
-        d_resid = DeviceVec<T>(N).getPtr();
-        // d_int_temp = DeviceVec<int>(N).getPtr();
-
-        // copy rhs into defect
-        cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
-        // and inv permute the rhs
-        d_perm = Kmat.getPerm();
-        d_iperm = Kmat.getIPerm();
-        auto d_bsr_data = Kmat.getBsrData();
-        d_elem_conn = d_bsr_data.elem_conn;
-        nelems = d_bsr_data.nelems;
-        d_defect.permuteData(block_dim, d_iperm);
-
-        // // make mat handles for SpMV
-        // CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
-        // CHECK_CUSPARSE(cusparseSetMatType(descrKmat, CUSPARSE_MATRIX_TYPE_GENERAL));
-        // CHECK_CUSPARSE(cusparseSetMatIndexBase(descrKmat, CUSPARSE_INDEX_BASE_ZERO));
-
-        // CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
-        // CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
-        // CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
-
-        // // also init kmat for direct LU solves..
-        // if (full_LU) {
-        //     d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
-        //     CHECK_CUDA(cudaMemcpy(d_kmat_lu_vals, d_kmat_vals, Kmat.get_nnz() * sizeof(T),
-        //                           cudaMemcpyDeviceToDevice));
-
-        //     // ILU(0) factor on full LU pattern
-        //     CUSPARSE::perform_ilu0_factorization(
-        //         cusparseHandle, descr_kmat_L, descr_kmat_U, info_kmat_L, info_kmat_U,
-        //         &kmat_pBuffer, nnodes, kmat_nnzb, block_dim, d_kmat_lu_vals, d_kmat_rowp,
-        //         d_kmat_cols, trans_L, trans_U, policy_L, policy_U, dir);
-        // }
-    }
-
-    void init_nz_pattern_lhs() {
+    void init_nz_pattern() {
         // init sparsity pattern or nz pattern of lhs / matrix
         int nodes_per_elem = 3;
         block_dim = 3;
@@ -101,14 +57,54 @@ class DKTPlateAssembler {
             }
         }
 
-        auto bsr_data = BsrData(nelems, nnodes, nodes_per_elem, block_dim, conn);
+        h_bsr_data = BsrData(nelems, nnodes, nodes_per_elem, block_dim, conn);
+    }
 
-        // TODO : do any reordering here?
-        auto d_bsr_data = bsr_data.createDeviceBsrData();
-        nnzb = bsr_data.nnzb;
-        int nvals = nnzb * 9;
-        d_vals = DeviceVec<T>(nvals);
-        Kmat = BsrMat<DeviceVec<T>>(d_bsr_data, d_vals);
+    void initCuda() {
+        // init handles
+        CHECK_CUBLAS(cublasCreate(&cublasHandle));
+        CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+
+        // init some util vecs
+        d_defect = DeviceVec<T>(N);
+        d_soln = DeviceVec<T>(N);
+        d_temp_vec = DeviceVec<T>(N);
+        d_temp = d_temp_vec.getPtr();
+        d_temp2 = DeviceVec<T>(N).getPtr();
+        d_resid = DeviceVec<T>(N).getPtr();
+        // d_int_temp = DeviceVec<int>(N).getPtr();
+
+        // copy rhs into defect
+        cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+        // and inv permute the rhs
+        d_perm = Kmat.getPerm();
+        d_iperm = Kmat.getIPerm();
+        auto d_bsr_data = Kmat.getBsrData();
+        d_elem_conn = d_bsr_data.elem_conn;
+        nelems = d_bsr_data.nelems;
+        d_defect.permuteData(block_dim, d_iperm);
+
+        // make mat handles for SpMV
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
+        CHECK_CUSPARSE(cusparseSetMatType(descrKmat, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrKmat, CUSPARSE_INDEX_BASE_ZERO));
+
+        // CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
+        // CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
+        // CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
+
+        // // also init kmat for direct LU solves..
+        // if (full_LU) {
+        //     d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
+        //     CHECK_CUDA(cudaMemcpy(d_kmat_lu_vals, d_kmat_vals, Kmat.get_nnz() * sizeof(T),
+        //                           cudaMemcpyDeviceToDevice));
+
+        //     // ILU(0) factor on full LU pattern
+        //     CUSPARSE::perform_ilu0_factorization(
+        //         cusparseHandle, descr_kmat_L, descr_kmat_U, info_kmat_L, info_kmat_U,
+        //         &kmat_pBuffer, nnodes, kmat_nnzb, block_dim, d_kmat_lu_vals, d_kmat_rowp,
+        //         d_kmat_cols, trans_L, trans_U, policy_L, policy_U, dir);
+        // }
     }
 
     void assemble_lhs() {
@@ -123,10 +119,7 @@ class DKTPlateAssembler {
         // bcs also)
         int *h_rowp = new int[nnodes + 1];
         auto bsr_data = Kmat.getBsrData();
-        int *d_rowp = bsr_data.rowp;
-        cudaMemcpy(h_rowp, d_rowp, (nnodes + 1) * sizeof(int), cudaMemcpyDeviceToHost);
-        // printf("h_rowp:");
-        // printVec<int>(nnodes + 1, h_rowp);
+        cudaMemcpy(h_rowp, bsr_data.rowp, (nnodes + 1) * sizeof(int), cudaMemcpyDeviceToHost);
         nnzb = bsr_data.nnzb;
         int *h_rows = new int[nnzb];
         for (int brow = 0; brow < nnodes; brow++) {
@@ -135,8 +128,8 @@ class DKTPlateAssembler {
             }
         }
         d_rows = HostVec<int>(nnzb, h_rows).createDeviceVec().getPtr();
-        delete[] h_rowp;
-        delete[] h_rows;
+        // delete[] h_rowp;
+        // delete[] h_rows;
 
         // apply bcs..
         int nvals = 9 * nnzb;
@@ -164,11 +157,49 @@ class DKTPlateAssembler {
     void direct_solve(bool print = false) {
         bool permute_inout = false;
         CUSPARSE::direct_LU_solve<T>(Kmat, d_defect, d_soln, print, permute_inout);
-
         // TODO : do direct solve manually like with MITC4 shells..
+
+        // check the residual also
+        T resid_nrm = getResidNorm();
+        printf("direct solve completed with resid nrm %.2e\n", resid_nrm);
+    }
+
+    void gmres_solve(bool print = false) {
+        bool permute_inout = false;
+        // right precond, modified GS solve
+        int n_iter = 50, max_iter = 300;
+        T atol = 1e-7, rtol = 1e-7;
+        bool can_print = print, debug = false,
+             permute_inout = false;  // no permute inout because we have already permuted it?
+        int print_freq = 10;
+        CUSPARSE::GMRES_solve<T>(Kmat, d_defect, d_soln, n_iter, max_iter, atol, rtol, can_print,
+                                 debug, print_freq, permute_inout);
+        // TODO : how to handle repeated solves like direct poisson solver?
+
+        // check the residual also
+        T resid_nrm = getResidNorm();
+        printf("GMRES solve completed with resid nrm %.2e\n", resid_nrm);
+    }
+
+    T getResidNorm() {
+        // get the residual nrm of the linear system R = b - Ax
+        // reset resid to zero
+        cudaMemcpy(d_resid, d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+
+        T a = -1.0, b = 1.0;  // resid = 1.0 * rhs - 1.0 * A * x
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, nnzb, &a,
+                                      descrKmat, d_vals.getPtr(), d_rowp, d_cols, block_dim,
+                                      d_soln.getPtr(), &b, d_resid));
+
+        T resid_nrm;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &resid_nrm));
+
+        return resid_nrm;
     }
 
     // data
+    BsrData h_bsr_data;
     int nxe, nx, nnodes, nelems, ndof, N;
     int block_dim, nnzb;
     T E, thick, nu, load_mag;
@@ -177,4 +208,9 @@ class DKTPlateAssembler {
     BsrMat<DeviceVec<T>> Kmat;
     DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec, d_vals;
     T *d_temp, *d_temp2, *d_resid;
+
+    // cusparse utils
+    cusparseMatDescr_t descrKmat = 0;
+    cublasHandle_t cublasHandle = NULL;
+    cusparseHandle_t cusparseHandle = NULL;
 };
