@@ -148,11 +148,6 @@ class DKTPlateAssembler {
         d_rhs = DeviceVec<T>(N);
 
         k_assembleRHS<T><<<grid, block>>>(load_mag, nxe, d_iperm, d_rhs.getPtr());
-
-        // DEBUG
-        // T *h_rhs = d_rhs.createHostVec().getPtr();
-        // printf("h_rhs:");
-        // printVec<T>(ndof, h_rhs);
     }
 
     void direct_solve(bool print = false) {
@@ -180,6 +175,94 @@ class DKTPlateAssembler {
         T resid_nrm = getResidNorm();
         printf("GMRES solve completed with resid nrm %.2e\n", resid_nrm);
     }
+
+    void printToVTK(DeviceVec<T> vec, std::string filename) {
+        // to VTK method for the DKT plate element
+        // NOTE : better to use F5 binary for large cases, we will handle that
+
+        // later
+        using namespace std;
+        string sp = " ";
+        string dataType = "double64";
+
+        ofstream myfile;
+        myfile.open(filename);
+        myfile << "# vtk DataFile Version 2.0\n";
+        myfile << "TACS GPU shell writer\n";
+        myfile << "ASCII\n";
+
+        // make an unstructured grid even though it is really structured
+        myfile << "DATASET UNSTRUCTURED_GRID\n";
+        myfile << "POINTS " << nnodes << sp << dataType << "\n";
+
+        // print all the xpts coordinates
+        T dx = 1.0 / nxe;
+        for (int inode = 0; inode < nnodes; inode++) {
+            int ix = inode % nx, iy = inode / nx;
+            T x = ix * dx, y = iy * dx;
+
+            myfile << x << sp << y << sp << 0.0 << "\n";
+        }
+
+        // print all the cells
+        int num_elems = nelems;
+        int nodes_per_elem = 3;
+        int num_elem_nodes = num_elems * (nodes_per_elem + 1);  // repeats here
+        myfile << "CELLS " << num_elems << " " << num_elem_nodes << "\n";
+
+        const int *h_elem_conn = h_bsr_data.elem_conn;
+
+        for (int ielem = 0; ielem < nxe * nxe * 2; ielem++) {
+            const int *loc_elem_conn = &h_elem_conn[3 * ielem];
+            myfile << 3;
+            for (int inode = 0; inode < 3; inode++) {
+                myfile << sp << loc_elem_conn[inode];
+            }
+            myfile << "\n";
+        }
+
+        // cell type 6 is for CTRIA3 basically
+        myfile << "CELL_TYPES " << nelems << "\n";
+        for (int ielem = 0; ielem < nelems; ielem++) {
+            myfile << 6 << "\n";
+        }
+
+        // disp vector field now
+        vec.permuteData(3, d_perm);  // perm for visualization
+        CHECK_CUDA(cudaDeviceSynchronize());
+        T *h_vec = vec.createHostVec().getPtr();
+
+        myfile << "POINT_DATA " << nnodes << "\n";
+        string scalarName = "disp";
+        myfile << "VECTORS " << scalarName << " double64\n";
+        for (int inode = 0; inode < nnodes; inode++) {
+            myfile << 0.0 << sp;
+            myfile << 0.0 << sp;
+            myfile << h_vec[3 * inode] << "\n";
+        }
+
+        myfile << "VECTORS "
+               << "rot"
+               << " double64\n";
+        for (int inode = 0; inode < nnodes; inode++) {
+            myfile << h_vec[3 * inode + 1] << sp;
+            myfile << h_vec[3 * inode + 2] << sp;
+            myfile << 0.0 << "\n";
+        }
+        vec.permuteData(3, d_iperm);  // unperm after vis
+        CHECK_CUDA(cudaDeviceSynchronize());
+        myfile.close();
+    }
+
+    // void apply_near_identity_gmres_map(int n_iters, std::string baseName) {
+    //     // apply near identity AM^-1 ILU(0) map during GMRES iteration
+    //     // this method is for debugging the iteration itself..
+    //     // d_defect holds normal component after the application
+    //     // d_resid holds the previous defect
+    //     // and d_temp holds the new defect (without orthog)
+
+    //     // write init defect first
+    // }
 
     T getResidNorm() {
         // get the residual nrm of the linear system R = b - Ax

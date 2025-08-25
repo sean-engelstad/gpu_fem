@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
     if (is_direct) {
         // if do no reordering with direct, will use way more memory than necessary (much slower + smaller problems you can do)
         // AMD ordering with direct solve
-        assembler.h_bsr_data.AMD_reordering();
+        // assembler.h_bsr_data.AMD_reordering();
         assembler.h_bsr_data.compute_full_LU_pattern(10.0, false);
     } else {
         // Q-order and nofill
@@ -91,12 +91,16 @@ int main(int argc, char **argv) {
     double total = startup_time.count() + solve_time.count();
     printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
 
-    // write soln to file or to python?
+    assembler.printToVTK(assembler.d_soln, "out/soln.vtk");
+
+    // // write soln to file or to python?
     T *h_soln = assembler.d_soln.createHostVec().getPtr();
     write_to_csv<T>(assembler.ndof, h_soln, "out/soln.csv");
 
+    assembler.d_rhs.permuteData(3, assembler.d_perm);
     T *h_rhs = assembler.d_rhs.createHostVec().getPtr();
     write_to_csv<T>(assembler.ndof, h_rhs, "out/rhs.csv");
+    assembler.d_rhs.permuteData(3, assembler.d_iperm);
 
     return 0;
 }

@@ -20,8 +20,8 @@ plt.rcParams.update({
 
 fig, ax = plt.subplots(1,1)
 
-# vec = np.loadtxt("out/rhs.csv", delimiter=',')
-vec = np.loadtxt("out/soln.csv", delimiter=',')
+vec = np.loadtxt("out/rhs.csv", delimiter=',')
+# vec = np.loadtxt("out/soln.csv", delimiter=',')
 
 # setting input here..
 idof_plot = 0 # w
@@ -39,6 +39,8 @@ w = vec[idof_plot::3]
 W = np.reshape(w, (nx, nx))
 x, y = np.linspace(0, 1, nx), np.linspace(0.0, 1.0, nx)
 X, Y = np.meshgrid(x, y)
+
+print(f'{w=}')
 
 cax = fig.add_subplot(1,1,1, projection='3d')
 cax.plot_surface(X, Y, W, cmap='jet')

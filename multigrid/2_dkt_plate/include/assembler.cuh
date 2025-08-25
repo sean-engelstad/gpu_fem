@@ -9,9 +9,10 @@ __device__ T d_getPlateLoads(const T x, const T y, const T load_mag) {
     T r = sqrt(x * x + y * y);
     T th = atan2(y, x);
     T nodal_load = load_mag * sin(5.0 * PI * r) * cos(4.0 * th);
-    nodal_load *= sin(2 * th); // damps out some near edges (so more stable and smooth loading)
+    nodal_load *= std::pow(sin(2 * th), 0.25); // damps out some near edges (so more stable and smooth loading)
     // otherwise crazy loading field does result in weird rots near edges
-    nodal_load *= sin(PI / sqrt(2.0) * r); // also damp out at diag ends too.. to stabilize loading
+    nodal_load *= std::pow(sin(PI / sqrt(2.0) * r), 0.25); // also damp out at diag ends too.. to stabilize loading
+    // 0.25 root makes it not over-damp the solution near the edges.. like super-ellipse effect
     return nodal_load;
 }
 
@@ -179,7 +180,7 @@ __global__ void k_assembleRHS(const T load_mag, int nxe, int *d_iperm, T *d_rhs)
     int is_bc = d_getPlateBC(nx, tid);
     load *= (1 - is_bc);
 
-    int perm_dof = d_iperm[tid];
+    int perm_dof = 3 * d_iperm[inode] + tid % 3; 
     d_rhs[perm_dof] = load;
 }
 
