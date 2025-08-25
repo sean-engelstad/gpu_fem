@@ -18,6 +18,8 @@ class DKTPlateAssembler {
         ndof = nnodes * 3;
         N = ndof;
 
+        ilu0_init = false;
+
         init_nz_pattern();
     }
 
@@ -93,19 +95,21 @@ class DKTPlateAssembler {
         // CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
         // CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
         // CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
+    }
 
-        // // also init kmat for direct LU solves..
-        // if (full_LU) {
-        //     d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
-        //     CHECK_CUDA(cudaMemcpy(d_kmat_lu_vals, d_kmat_vals, Kmat.get_nnz() * sizeof(T),
-        //                           cudaMemcpyDeviceToDevice));
+    void initILUData() {
+        /* init cusparse data for ILU(0) with GMRES and direct LU on Kmat */
+        d_vals_ILU0 = DeviceVec<T>(Kmat.get_nnz()).getPtr();
+        CHECK_CUDA(cudaMemcpy(d_vals_ILU0, d_vals.getPtr(), Kmat.get_nnz() * sizeof(T),
+                              cudaMemcpyDeviceToDevice));
 
-        //     // ILU(0) factor on full LU pattern
-        //     CUSPARSE::perform_ilu0_factorization(
-        //         cusparseHandle, descr_kmat_L, descr_kmat_U, info_kmat_L, info_kmat_U,
-        //         &kmat_pBuffer, nnodes, kmat_nnzb, block_dim, d_kmat_lu_vals, d_kmat_rowp,
-        //         d_kmat_cols, trans_L, trans_U, policy_L, policy_U, dir);
-        // }
+        // ILU(0) factor on full LU pattern
+        CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
+                                             &pBuffer, nnodes, nnzb, block_dim, d_vals_ILU0, d_rowp,
+                                             d_cols, trans_L, trans_U, policy_L, policy_U, dir);
+
+        // set this to true
+        ilu0_init = true;
     }
 
     void assemble_lhs() {
@@ -151,6 +155,8 @@ class DKTPlateAssembler {
     }
 
     void direct_solve(bool print = false) {
+        if (!ilu0_init) initILUData();
+
         bool permute_inout = false;
         CUSPARSE::direct_LU_solve<T>(Kmat, d_defect, d_soln, print, permute_inout);
         // TODO : do direct solve manually like with MITC4 shells..
@@ -161,6 +167,8 @@ class DKTPlateAssembler {
     }
 
     void gmres_solve(bool print = false) {
+        if (!ilu0_init) initILUData();
+
         // right precond, modified GS solve
         int n_iter = 50, max_iter = 300;
         T atol = 1e-7, rtol = 1e-7;
@@ -254,15 +262,76 @@ class DKTPlateAssembler {
         myfile.close();
     }
 
-    // void apply_near_identity_gmres_map(int n_iters, std::string baseName) {
-    //     // apply near identity AM^-1 ILU(0) map during GMRES iteration
-    //     // this method is for debugging the iteration itself..
-    //     // d_defect holds normal component after the application
-    //     // d_resid holds the previous defect
-    //     // and d_temp holds the new defect (without orthog)
+    static std::string _get_3sigfig_str(int ind) {
+        if (ind < 10) {
+            return "00" + std::to_string(ind);
+        } else if (ind < 100) {
+            return "0" + std::to_string(ind);
+        } else {
+            return std::to_string(ind);
+        }
+    }
 
-    //     // write init defect first
-    // }
+    void apply_near_identity_gmres_map(int n_iters, std::string baseName) {
+        // apply near identity AM^-1 ILU(0) map during GMRES iteration
+        // this method is for debugging the iteration itself..
+        // d_defect holds normal component after the application
+        // d_resid holds the previous defect
+        // and d_temp holds the new defect (without orthog)
+
+        if (!ilu0_init) initILUData();
+
+        // write init defect first
+        printToVTK(d_defect, baseName + "id_defect_000.vtk");
+
+        // begin Krylov subspace steps with AM^-1 matrix
+        for (int iter = 0; iter < n_iters; iter++) {
+            // first take prev defect normal component and multiply it by AM^-1
+
+            // first v := defect, M^-1 * v => z
+            T a = 1.0, b;
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                cusparseHandle, dir, trans_L, nnodes, nnzb, &a, descr_L, d_vals_ILU0, d_rowp,
+                d_cols, block_dim, info_L, d_defect.getPtr(), d_temp, policy_L, pBuffer));
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes, nnzb, &a,
+                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_U, d_temp, d_resid, policy_U, pBuffer));
+
+            // then A * z => w
+            a = 1.0, b = 0.0;
+            CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                          CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, nnzb,
+                                          &a, descrKmat, d_vals.getPtr(), d_rowp, d_cols, block_dim,
+                                          d_resid, &b, d_temp));
+
+            // normalize w here (unit)
+            T w_nrm;
+            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_temp, 1, &w_nrm));
+            a = 1.0 / w_nrm;
+            CHECK_CUBLAS(cublasDscal(cublasHandle, N, &a, d_temp, 1));
+
+            // now copy w norm into d_resid for safe keeping
+            cudaMemcpy(d_resid, d_temp, N * sizeof(T), cudaMemcpyDeviceToDevice);
+
+            // here v = prev_defect (pseudo-load), z = d_resid (disp), w = d_temp (new load)
+            // now compute orthog w -= (w,v) * v
+            T wv_dot;
+            CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_temp, 1, d_defect.getPtr(), 1, &wv_dot));
+            a = -wv_dot;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_defect.getPtr(), 1, d_temp, 1));
+
+            // now writeout the new results..
+            std::string iter_str = _get_3sigfig_str(iter + 1);
+            printToVTK(DeviceVec<T>(N, d_resid),
+                       baseName + "id_defect_" + iter_str + ".vtk");  // near-identity map
+            printToVTK(d_temp_vec,
+                       baseName + "normal_" + iter_str + ".vtk");  // normal component to prev
+
+            // now inject w normal new load => v pseudo-load space (copy step)
+            CHECK_CUDA(
+                cudaMemcpy(d_defect.getPtr(), d_temp, N * sizeof(T), cudaMemcpyDeviceToDevice));
+        }
+    }
 
     T getResidNorm() {
         // get the residual nrm of the linear system R = b - Ax
@@ -296,4 +365,16 @@ class DKTPlateAssembler {
     cusparseMatDescr_t descrKmat = 0;
     cublasHandle_t cublasHandle = NULL;
     cusparseHandle_t cusparseHandle = NULL;
+
+    // cusparse ILU(0) data for GMRES and DirectLU solve with CuSparse
+    bool ilu0_init;
+    cusparseMatDescr_t descr_L = 0, descr_U = 0;
+    bsrsv2Info_t info_L = 0, info_U = 0;
+    void *pBuffer = 0;
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
+                                policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
+    T *d_vals_ILU0;
 };
