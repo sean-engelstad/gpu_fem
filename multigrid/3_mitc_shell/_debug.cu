@@ -46,7 +46,9 @@ void multigrid_plate_debug(int nxe, double SR) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    using GRID = ShellGrid<Assembler, PlateProlongation>;
+    // const SMOOTHER smoother = MULTICOLOR_GS;
+    const SMOOTHER smoother = LEXIGRAPHIC_GS;
+    using GRID = ShellGrid<Assembler, PlateProlongation, smoother>;
 
     int nye = nxe;
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
@@ -101,7 +103,7 @@ void multigrid_plate_debug(int nxe, double SR) {
     // printToVTK<Assembler,HostVec<T>>(assembler, h_soln3, "out/plate_cf_soln2.vtk");
 
     // try defect restriction
-    coarse_grid->restrict_defect(grid->nelems, grid->d_elem_conn, grid->d_iperm,
+    coarse_grid->restrict_defect(grid->nelems, grid->d_iperm,
                         grid->d_defect);
 
     // print some of the data of host residual
@@ -140,8 +142,10 @@ void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega,
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
+    // const SMOOTHER smoother = MULTICOLOR_GS;
+    const SMOOTHER smoother = LEXIGRAPHIC_GS;
     using Prolongation = PlateProlongation;
-    using GRID = ShellGrid<Assembler, Prolongation>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
     // define min nxe size..
@@ -179,10 +183,9 @@ void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega,
 
         // make the grid
         // printf("making grid with nxe %d\n", c_nxe);
-        bool coloring = true;
-        // bool coloring = false;
+        bool reorder = smoother == MULTICOLOR_GS;
 
-        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, coloring);
+        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
         c_nxe /= 2;
     }
@@ -199,10 +202,11 @@ void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega,
     // int pre_smooth = 1, post_smooth = 1;
     int pre_smooth = 2, post_smooth = 2;
     bool print = true;
-    // bool write = true;
-    bool write = false;
-    // bool debug = true;
-    bool debug = false; 
+    bool write = true;
+    // bool write = false;
+    
+    bool debug = true;
+    // bool debug = false; 
 
     // T omega = 1.0;
     // T omega = 0.8;
@@ -229,13 +233,13 @@ void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega,
                 // pre-smooth; TODO : do fast version later.. but let's demo with slow version
                 // first
                 printf("GS on level %d\n", i_level);
-                mg.grids[i_level].multicolorBlockGaussSeidel_slow(pre_smooth, print,
+                mg.grids[i_level].smoothDefect(pre_smooth, print,
                                                                 pre_smooth - 1, omega);
 
                 // restrict defect
                 printf("restrict defect from level %d => %d\n", i_level, i_level + 1);
                 mg.grids[i_level + 1].restrict_defect(
-                    mg.grids[i_level].nelems, mg.grids[i_level].d_elem_conn, mg.grids[i_level].d_iperm,
+                    mg.grids[i_level].nelems, mg.grids[i_level].d_iperm,
                     mg.grids[i_level].d_defect);
                 CHECK_CUDA(cudaDeviceSynchronize()); // needed to make this work right?
 
@@ -290,7 +294,7 @@ void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega,
             // post-smooth
             bool rev_colors = true; // rev colors only on post not pre-smooth?
             // bool rev_colors = false;
-            mg.grids[i_level].multicolorBlockGaussSeidel_slow(post_smooth, print, post_smooth - 1, omega, rev_colors); 
+            mg.grids[i_level].smoothDefect(post_smooth, print, post_smooth - 1, omega, rev_colors); 
         }
 
         // compute fine grid defect of V-cycle

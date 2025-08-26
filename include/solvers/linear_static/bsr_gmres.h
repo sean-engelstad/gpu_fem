@@ -116,7 +116,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     cusparseMatDescr_t descr_L = 0, descr_U = 0;
     bsrsv2Info_t info_L = 0, info_U = 0;
     void *pBuffer = 0;
-    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
+    // level scheduling makes it more parallel
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_USE_LEVEL,
                                 policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
     // const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_USE_LEVEL,
 

@@ -14,6 +14,7 @@
 #include "include/fea.h"
 #include "include/mg.h"
 #include <string>
+#include <chrono>
 
 /* command line args:
     [direct/mg] [--nxe int] [--SR float] [--nvcyc int]
@@ -131,13 +132,20 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    using GRID = ShellGrid<Assembler, PlateProlongation>;
+    const SMOOTHER smoother = MULTICOLOR_GS;
+    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
+    using GRID = ShellGrid<Assembler, PlateProlongation, smoother>;
     using MG = ShellMultigrid<GRID>;
+
+    auto start0 = std::chrono::high_resolution_clock::now();
 
     auto mg = MG();
 
+    int nxe_min = 4;
+    // int nxe_min = nxe / 2; // two level
+
     // make each grid
-    for (int c_nxe = nxe; c_nxe >= 4; c_nxe /= 2) {
+    for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
         // make the assembler
         int c_nye = c_nxe;
         double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
@@ -148,11 +156,21 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
         printf("making grid with nxe %d\n", c_nxe);
 
         // make the grid
-        bool full_LU = c_nxe == 4; // smallest grid is direct solve
-        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU);
+        bool full_LU = c_nxe == nxe_min; // smallest grid is direct solve
+        bool reorder;
+        if (smoother == LEXIGRAPHIC_GS) {
+            reorder = false;
+        } else if (smoother == MULTICOLOR_GS) {
+            reorder = true;
+        }
+        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
     }
 
+    auto end0 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> startup_time = end0 - start0;
+
+    auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
     int pre_smooth = 1, post_smooth = 1;
     // int pre_smooth = 2, post_smooth = 2;
@@ -163,6 +181,12 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     T omega = 1.0;
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega);
     printf("done with v-cycle solve\n");
+
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end1 - start1;
+    int ndof = mg.grids[0].N;
+    double total = startup_time.count() + solve_time.count();
+    printf("plate GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
 
 
     // print some of the data of host residual

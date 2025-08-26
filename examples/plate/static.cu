@@ -54,11 +54,14 @@ void solve_linear(bool full_LU, int nxe) {
         as it's whole point is to decrease matrix bandwidth)
         */
 
-        bsr_data.AMD_reordering();
+        // bsr_data.AMD_reordering();
         // bsr_data.RCM_reordering();
         // bsr_data.qorder_reordering(1.0);
+        bsr_data.qorder_reordering(0.25);
         
-        bsr_data.compute_ILUk_pattern(5, fillin);
+        // bsr_data.compute_ILUk_pattern(5, fillin);
+        bsr_data.compute_nofill_pattern();
+        // bsr_data.compute_ILUk_pattern(0, fillin);
         // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
     }
     // printf("perm:");
@@ -159,14 +162,14 @@ void solve_nonlinear(int nxe) {
         rel_tol = 1e-4;
     auto solve_func = CUSPARSE::direct_LU_solve<T>;
     std::string outputPrefix = "out/uCRM_";
-    newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
-        solve_func, kmat, loads, soln, assembler, res, rhs, vars,
-        num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
-        rel_tol, outputPrefix, print);
+    // newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
+    //     solve_func, kmat, loads, soln, assembler, res, rhs, vars,
+    //     num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
+    //     rel_tol, outputPrefix, print);
 
-    // print some of the data of host residual
-    auto h_soln = soln.createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate_nl.vtk");
+    // // print some of the data of host residual
+    // auto h_soln = soln.createHostVec();
+    // printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "plate_nl.vtk");
 }
 
 int main(int argc, char **argv) {

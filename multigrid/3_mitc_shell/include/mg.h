@@ -33,13 +33,11 @@ class ShellMultigrid {
 
                     // pre-smooth; TODO : do fast version later.. but let's demo with slow version
                     // first
-                    grids[i_level].multicolorBlockGaussSeidel_slow(pre_smooth, print,
-                                                                   pre_smooth - 1, omega);
+                    grids[i_level].smoothDefect(pre_smooth, print, pre_smooth - 1, omega);
 
                     // restrict defect
                     grids[i_level + 1].restrict_defect(
-                        grids[i_level].nelems, grids[i_level].d_elem_conn, grids[i_level].d_iperm,
-                        grids[i_level].d_defect);
+                        grids[i_level].nelems, grids[i_level].d_iperm, grids[i_level].d_defect);
 
                 } else {
                     if (print) printf("\t--level %d full-solve\n", i_level);
@@ -59,8 +57,7 @@ class ShellMultigrid {
                 // post-smooth
                 // printf("post-smooth on level %d\n", i_level);
                 bool rev_colors = true;
-                grids[i_level].multicolorBlockGaussSeidel_slow(post_smooth, print, post_smooth - 1,
-                                                               omega, rev_colors);
+                grids[i_level].smoothDefect(post_smooth, print, post_smooth - 1, omega, rev_colors);
             }
 
             // compute fine grid defect of V-cycle
