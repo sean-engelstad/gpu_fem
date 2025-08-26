@@ -9,7 +9,7 @@
 
 // local includes for shell multigrid
 #include "grid.cuh"
-#include "prolongation.h"  // for prolongations
+#include "prolongation/_prolong.h"  // for prolongations
 
 enum SMOOTHER : short {
     MULTICOLOR_GS,

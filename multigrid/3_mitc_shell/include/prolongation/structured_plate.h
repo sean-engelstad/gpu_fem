@@ -2,7 +2,7 @@
 // the restriction is often the transpose or row-normalized transpose for geom multigrid
 #pragma once
 #include "linalg/vec.h"
-#include "prolongation.cuh"
+#include "structured_plate.cuh"
 
 class PlateProlongation {
     using T = double;
@@ -13,8 +13,9 @@ class PlateProlongation {
         // zero temp so we can store dx in it
         int N_coarse = coarse_soln_in.getSize();  // this includes dof per node (not num nodes here)
         int N_fine = dx_fine.getSize();
-        int nnodes_fine = N_fine / 6;
-        int nxe_fine = sqrt((float)nnodes_fine) - 1;
+        // int nnodes_fine = N_fine / 6;
+        // int nxe_fine = sqrt((float)nnodes_fine) - 1;
+        int nxe_fine = sqrt((float)nelems_fine);
         int nxe_coarse = nxe_fine / 2;
         cudaMemset(d_weights, 0.0, N_fine * sizeof(T));
 
@@ -44,8 +45,9 @@ class PlateProlongation {
         int N_coarse =
             coarse_defect_out.getSize();  // this includes dof per node (not num nodes here)
         int N_fine = fine_defect_in.getSize();
-        int nnodes_fine = N_fine / 6;
-        int nxe_fine = sqrt((float)nnodes_fine) - 1;
+        // int nnodes_fine = N_fine / 6;
+        // int nxe_fine = sqrt((float)nnodes_fine) - 1;
+        int nxe_fine = sqrt((float)nelems_fine);
         int nxe_coarse = nxe_fine / 2;
         cudaMemset(d_weights, 0.0, N_fine * sizeof(T));
 
