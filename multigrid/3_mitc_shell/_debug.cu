@@ -125,7 +125,7 @@ void multigrid_plate_debug(int nxe, double SR) {
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln2, "out/plate_mg.vtk");
 }
 
-void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega, int min_nxe) {
+void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int min_nxe) {
     // geometric multigrid method, running the full solve with VTK, printouts and more specific debugs
     // throughout
 
@@ -165,18 +165,40 @@ void multigrid_plate_full_solve(int nxe, double SR, int n_vcycles, double omega,
     auto mg = MG();
     // printf("post assemblers + MG init\n");
 
+    // int run_case = 1; // plate
+    int run_case = 2; // cylinder
+
     // make each grid
     int c_nxe = nxe;
     for (int i_level = 0; i_level < n_levels; i_level++) {
-        // make the assembler
-        int c_nye = c_nxe;
-        double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-        int nxe_per_comp = c_nxe / 4, nye_per_comp = c_nye/4; // for now (should have 25 grids)
-        // printf("assembler pre-vec\n");
-        Assembler assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
-        // printf("assembler post-vec\n");
-        double Q = 1.0; // load magnitude
-        T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+        Assembler assembler;
+        T *my_loads;
+
+        if (run_case == 1) {
+            // make the assembler
+            int c_nye = c_nxe;
+            double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
+            int nxe_per_comp = c_nxe / 4, nye_per_comp = c_nye/4; // for now (should have 25 grids)
+            // printf("assembler pre-vec\n");
+            assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+            // printf("assembler post-vec\n");
+            double Q = 1.0; // load magnitude
+            my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+        } else if (run_case == 2) {
+            int c_nhe = c_nxe;
+            double L = 1.0, R = 0.5, thick = L / SR;
+            double E = 70e9, nu = 0.3;
+            // double rho = 2500, ys = 350e6;
+            bool imperfection = false; // option for geom imperfection
+            int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
+            assembler = createCylinderAssembler<Assembler>(c_nxe, c_nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
+
+            // get the loads
+            constexpr bool compressive = false;
+            double Q = 1.0; // load magnitude
+            my_loads = getCylinderLoads<T, Physics, compressive>(c_nxe, c_nhe, L, R, Q);
+        }
+        
 
         bool full_LU = i_level == n_levels - 1; // only do full LU pattern on coarsest grid
         printf("making grid nxe %d, with full LU ?= %d\n", c_nxe, (int)full_LU);
@@ -379,7 +401,7 @@ int main(int argc, char **argv) {
 
     // done reading arts, now run stuff
     if (is_full_mg) {
-        multigrid_plate_full_solve(nxe, SR, n_vcycles, omega, min_nxe);
+        multigrid_full_solve(nxe, SR, n_vcycles, omega, min_nxe);
     } else {
         multigrid_plate_debug(nxe, SR);
     }

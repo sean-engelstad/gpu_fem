@@ -128,17 +128,21 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    const SMOOTHER smoother = MULTICOLOR_GS;
-    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    using GRID = ShellGrid<Assembler, CylinderProlongation, smoother>;
+    // const SMOOTHER smoother = MULTICOLOR_GS;
+    const SMOOTHER smoother = LEXIGRAPHIC_GS;
+    // using Prolongation = PlateProlongation;
+    using Prolongation = CylinderProlongation;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
 
     auto mg = MG();
 
-    int nxe_min = 4;
+    // int nxe_min = 4;
     // int nxe_min = nxe / 2; // two level
+    int nxe_min = 32; // maybe really coarse cylinders have such horrible discretization (like diamond)
+    // that it affects the ovr conv, so make min size much larger..
 
     // make each grid
     for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
@@ -172,14 +176,16 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
 
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
-    int pre_smooth = 1, post_smooth = 1;
-    // int pre_smooth = 2, post_smooth = 2;
+    // int pre_smooth = 1, post_smooth = 1;
+    int pre_smooth = 2, post_smooth = 2; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     // int pre_smooth = 4, post_smooth = 4;
-    // bool print = false;
+    // bool print = true;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.0;
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega);
+    // 0 input means starts on outer level (fine grid W-cycle)
+    // mg.wcycle_solve(0, pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega); // try stronger W-cycle solve here on cylinder
     printf("done with v-cycle solve\n");
 
     auto end1 = std::chrono::high_resolution_clock::now();
@@ -187,7 +193,6 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     int ndof = mg.grids[0].N;
     double total = startup_time.count() + solve_time.count();
     printf("cylinder GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
-
 
     // print some of the data of host residual
     int *d_perm = mg.grids[0].d_perm;

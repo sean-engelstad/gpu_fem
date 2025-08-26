@@ -215,10 +215,10 @@ T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
     return my_loads;
 }
 
-
 template <class Assembler>
 Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E, double nu,
-                                  double thick, bool imperfection = false, int imp_x = 5, int imp_hoop = 4) {
+                                  double thick, bool imperfection = false, int imp_x = 5,
+                                  int imp_hoop = 4) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -238,7 +238,8 @@ Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E
     std::vector<int> my_bcs;
     // TODO : will change to use disp control BCs later
     // node 0 has dof 123456, changed now to just 123
-    for (int idof = 0; idof < 3; idof++) {
+    // for (int idof = 0; idof < 3; idof++) {
+    for (int idof = 0; idof < 6; idof++) {  // clamped
         my_bcs.push_back(idof);
     }
     // rest of nodes on xneg hoop are simply supported and with no axial disp
@@ -246,13 +247,15 @@ Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E
         int inode_L = ih * nnx;           // xneg node
         int inode_R = inode_L + nnx - 1;  // xpos node
         if (inode_L != 0) {               // xneg nodes
-            for (int idof = 0; idof < 3; idof++) {
+            // for (int idof = 0; idof < 3; idof++) {
+            for (int idof = 0; idof < 6; idof++) {  // clamped
                 // constrain u,v,w disp on xneg edge
                 if (inode_L != 0) my_bcs.push_back(6 * inode_L + idof);
             }
         }
         // xpos nodes
-        for (int idof = 1; idof < 3; idof++) {
+        // for (int idof = 1; idof < 3; idof++) {
+        for (int idof = 0; idof < 6; idof++) {  // clamped
             // only constraint v,w on xpos edge (TODO : later make disp control here)
             my_bcs.push_back(6 * inode_R + idof);
         }
