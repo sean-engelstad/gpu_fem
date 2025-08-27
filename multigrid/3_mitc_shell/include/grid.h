@@ -9,6 +9,7 @@
 
 // local includes for shell multigrid
 #include "grid.cuh"
+#include "vtk.h"
 #include "prolongation/_prolong.h"  // for prolongations
 
 enum SMOOTHER : short {
@@ -742,7 +743,8 @@ class ShellGrid {
     //     // NOTE : solution and defect are permuted here..
     // }  // end of multicolor block GS fast
 
-    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in, bool debug = false, std::string file_prefix = "", std::string file_suffix = "") {
+    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in, bool debug = false, 
+        std::string file_prefix = "", std::string file_suffix = "") {
         // prolongate from coarser grid to this fine grid
         cudaMemset(d_temp, 0.0, N * sizeof(T));
 
@@ -780,11 +782,6 @@ class ShellGrid {
         if (debug) printf("omega = %.2e\n", omega);
         // printf("sT_defect %.2e, sT_Ks %.2e\n", sT_defect, sT_Ks);
 
-        if (debug) {
-            auto h_defect1 = d_defect.createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_defect1, file_prefix + "post2_cf_defect" + file_suffix);
-        }
-
         // now add coarse-fine dx into soln and update defect (with u = u0 + omega * d_temp)
         a = omega, b = 1.0;
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
@@ -798,13 +795,16 @@ class ShellGrid {
         // DEBUG : write out the cf update, defect update and before and after defects
         if (debug) {
             auto h_cf_update = d_temp_vec.createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_update, file_prefix + "post3_cf_soln" + file_suffix);
+            T xpts_shift[3] = {0.0, -1.5, 1.5};
+            printToVTKDEBUG<Assembler, HostVec<T>>(assembler, h_cf_update, file_prefix + "post2_cf_soln" + file_suffix, xpts_shift);
 
             auto h_cf_loads = DeviceVec<T>(N, d_temp2).createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_loads, file_prefix + "post4_cf_loads" + file_suffix);
+            T xpts_shift2[3] = {0.0, -1.5, 3.0};
+            printToVTKDEBUG<Assembler, HostVec<T>>(assembler, h_cf_loads, file_prefix + "post3_cf_loads" + file_suffix, xpts_shift2);
 
             auto h_defect2 = d_defect.createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_defect2, file_prefix + "post5_cf_fin_defect" + file_suffix);
+            T xpts_shift3[3] = {0.0, -1.5, 4.5};
+            printToVTKDEBUG<Assembler, HostVec<T>>(assembler, h_defect2, file_prefix + "post4_cf_fin_defect" + file_suffix, xpts_shift3);
         }
     }
 

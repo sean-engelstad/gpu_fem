@@ -1,14 +1,32 @@
 #pragma once
-#include <cmath>
-#include <fstream>
-#include <iostream>
-#include <string>
-
-#include "assembler.h"
 
 template <class Assembler, class Vec>
-void printToVTK(Assembler assembler, Vec soln, std::string filename) {
-    // NOTE : better to use F5 binary for large cases, we will handle that
+void printToVTKDEBUG(Assembler assembler, Vec soln, std::string filename, double xpts_shift[3]) {
+    // better print to VTK custom for debugging..
+
+    // normalize the soln..
+    // get max value.. (not necessarily scalable here.. meant for small cases?)
+
+    // max on u,v,w
+    double max_uvw = 0.0, max_rot = 0.0;
+    int num_nodes = assembler.get_num_nodes();
+    for (int inode = 0; inode < num_nodes; inode++) {
+        for (int idof = 0; idof < 3; idof++) {
+            double uvw_disp = abs(soln[6 * inode + idof]);
+            if (uvw_disp > max_uvw) max_uvw = uvw_disp; 
+        }
+
+        for (int idof = 3; idof < 6; idof++) {
+            double rot = abs(soln[6 * inode + idof]);
+            if (rot > max_rot) max_rot = rot; 
+        }
+    }
+
+    // now normalize them by the inf norm (in this temp host vec.. usually is not tied to device vec data on GPU so fine to modify)
+    for (int inode = 0; inode < num_nodes; inode++) {
+        for (int idof = 0; idof < 3; idof++) soln[6 * inode + idof] /= (max_uvw + 1e-30);
+        for (int idof = 3; idof < 6; idof++) soln[6 * inode + idof] /= (max_rot + 1e-30);
+    }
 
     // later
     using namespace std;
@@ -23,7 +41,6 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
 
     // make an unstructured grid even though it is really structured
     myfile << "DATASET UNSTRUCTURED_GRID\n";
-    int num_nodes = assembler.get_num_nodes();
     myfile << "POINTS " << num_nodes << sp << dataType << "\n";
 
     // print all the xpts coordinates
@@ -33,7 +50,9 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     double *xpts_ptr = h_xpts.getPtr();
     for (int inode = 0; inode < num_nodes; inode++) {
         double *node_xpts = &xpts_ptr[3 * inode];
-        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2] << "\n";
+        myfile << node_xpts[0] + xpts_shift[0] << sp;
+        myfile << node_xpts[1] + xpts_shift[1] << sp;
+        myfile << node_xpts[2] + xpts_shift[2] << "\n";
     }
 
     // print all the cells
@@ -142,55 +161,6 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     for (int ielem = 0; ielem < num_elems; ++ielem) {
         myfile << h_stresses[6 * ielem + 3] << " " << h_stresses[6 * ielem + 4] << " "
                << h_stresses[6 * ielem + 5] << "\n";
-    }
-
-    myfile.close();
-}
-
-template <class Assembler, class Vec>
-void printToVTK_points(Assembler assembler, Vec soln, std::string filename) {
-    /* for point cloud data from FUN3D aero surf mesh */
-
-    // later
-    using namespace std;
-    string sp = " ";
-    string dataType = "double64";
-
-    ofstream myfile;
-    myfile.open(filename);
-    myfile << "# vtk DataFile Version 3.0\n";
-    myfile << "TACS GPU Point cloud writer\n";
-    myfile << "ASCII\n";
-
-    // make an unstructured grid even though it is really structured
-    myfile << "DATASET POLYDATA\n";
-    int num_nodes = assembler.get_num_nodes();
-    myfile << "POINTS " << num_nodes << sp << dataType << "\n";
-
-    // print all the xpts coordinates
-    auto d_xpts = assembler.getXpts();
-    auto h_xpts = d_xpts.createHostVec();
-
-    double *xpts_ptr = h_xpts.getPtr();
-    for (int inode = 0; inode < num_nodes; inode++) {
-        double *node_xpts = &xpts_ptr[3 * inode];
-        myfile << node_xpts[0] << sp << node_xpts[1] << sp << node_xpts[2] << "\n";
-    }
-
-    // list each vertex as standalong point
-    myfile << "VERTICES " << num_nodes << " " << 2 * num_nodes << "\n";
-    for (int inode = 0; inode < num_nodes; inode++) {
-        myfile << "1 " << inode << "\n";
-    }
-
-    // disp vector field now
-    myfile << "POINT_DATA " << num_nodes << "\n";
-    string scalarName = "disp";
-    myfile << "VECTORS " << scalarName << " double64\n";
-    for (int inode = 0; inode < num_nodes; inode++) {
-        myfile << soln[6 * inode] << sp;
-        myfile << soln[6 * inode + 1] << sp;
-        myfile << soln[6 * inode + 2] << "\n";
     }
 
     myfile.close();
