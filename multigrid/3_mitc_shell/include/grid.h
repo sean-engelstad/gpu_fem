@@ -742,7 +742,7 @@ class ShellGrid {
     //     // NOTE : solution and defect are permuted here..
     // }  // end of multicolor block GS fast
 
-    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in, bool debug = false) {
+    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in, bool debug = false, std::string file_prefix = "", std::string file_suffix = "") {
         // prolongate from coarser grid to this fine grid
         cudaMemset(d_temp, 0.0, N * sizeof(T));
 
@@ -782,7 +782,7 @@ class ShellGrid {
 
         if (debug) {
             auto h_defect1 = d_defect.createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_defect1, "out/1_pre_cf_defect.vtk");
+            printToVTK<Assembler, HostVec<T>>(assembler, h_defect1, file_prefix + "post2_cf_defect" + file_suffix);
         }
 
         // now add coarse-fine dx into soln and update defect (with u = u0 + omega * d_temp)
@@ -798,13 +798,13 @@ class ShellGrid {
         // DEBUG : write out the cf update, defect update and before and after defects
         if (debug) {
             auto h_cf_update = d_temp_vec.createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_update, "out/2_cf_update.vtk");
+            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_update, file_prefix + "post3_cf_soln" + file_suffix);
 
             auto h_cf_loads = DeviceVec<T>(N, d_temp2).createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_loads, "out/3_cf_loads.vtk");
+            printToVTK<Assembler, HostVec<T>>(assembler, h_cf_loads, file_prefix + "post4_cf_loads" + file_suffix);
 
             auto h_defect2 = d_defect.createPermuteVec(6, d_perm).createHostVec();
-            printToVTK<Assembler, HostVec<T>>(assembler, h_defect2, "out/4_fin_defect.vtk");
+            printToVTK<Assembler, HostVec<T>>(assembler, h_defect2, file_prefix + "post5_cf_fin_defect" + file_suffix);
         }
     }
 

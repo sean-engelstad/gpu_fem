@@ -1,7 +1,13 @@
 // helper GPU kernels for geometry-specific prolongation operators
 // NOTE : I will write more general one when it comes to wingbox later..
+#pragma once
 
-template <typename T>
+enum ProlongationGeom : int {
+    PLATE,
+    CYLINDER
+};
+
+template <typename T, ProlongationGeom geom>
 __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fine, 
     const int nelems_fine, const int *d_coarse_iperm, const int *d_fine_iperm,
     const T *coarse_soln_in, T *dx_fine, T *d_fine_wts) {
@@ -38,6 +44,12 @@ __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fi
             // scaling from FEA basis
             T scale = case1 * 1.0 + case2 * 0.5 + case3 * 0.25;
 
+            if (geom == CYLINDER) {
+                // loops back on itself in hoop direction
+                iy_f = iy_f % nxe_fine;
+                iy_c = iy_c % nxe_coarse;
+            }
+
             // get fine and coarse indices now..
             int coarse_node = nx_c * iy_c + ix_c;
             int perm_coarse_node = d_coarse_iperm[coarse_node];
@@ -59,7 +71,7 @@ __global__ static void k_plate_prolongate(const int nxe_coarse, const int nxe_fi
 
 }
 
-template <typename T>
+template <typename T, ProlongationGeom geom>
 __global__ static void k_plate_restrict(const int nxe_coarse, const int nxe_fine, 
     const int nelems_fine, const int *d_coarse_iperm, const int *d_fine_iperm,
     const T *defect_fine_in, T *defect_coarse_out, T *d_coarse_wts) {
@@ -95,6 +107,12 @@ __global__ static void k_plate_restrict(const int nxe_coarse, const int nxe_fine
 
             // scaling from FEA basis
             T scale = case1 * 1.0 + case2 * 0.5 + case3 * 0.25;
+
+            if (geom == CYLINDER) {
+                // loops back on itself in hoop direction
+                iy_f = iy_f % nxe_fine;
+                iy_c = iy_c % nxe_coarse;
+            }
 
             // get fine and coarse indices now..
             int coarse_node = nx_c * iy_c + ix_c;

@@ -30,6 +30,17 @@ void to_lowercase(char *str) {
     }
 }
 
+std::string time_string(int itime) {
+    std::string _time = std::to_string(itime);
+    if (itime < 10) {
+        return "00" + _time;
+    } else if (itime < 100) {
+        return "0" + _time;
+    } else {
+        return _time;
+    }
+}
+
 void multigrid_plate_debug(int nxe, double SR) {
     // geometric multigrid method, debug individual steps on single grid here..
 
@@ -48,7 +59,10 @@ void multigrid_plate_debug(int nxe, double SR) {
     // multigrid objects
     // const SMOOTHER smoother = MULTICOLOR_GS;
     const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    using GRID = ShellGrid<Assembler, PlateProlongation, smoother>;
+
+    // using Prolongation = StructuredProlongation<PLATE>;
+    using Prolongation = StructuredProlongation<CYLINDER>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
 
     int nye = nxe;
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
@@ -142,9 +156,11 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    // const SMOOTHER smoother = MULTICOLOR_GS;
-    const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    using Prolongation = PlateProlongation;
+    const SMOOTHER smoother = MULTICOLOR_GS;
+    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
+
+    // using Prolongation = StructuredProlongation<PLATE>;
+    using Prolongation = StructuredProlongation<CYLINDER>;
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
@@ -242,21 +258,35 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
 
     for (int i_vcycle = 0; i_vcycle < n_vcycles; i_vcycle++) {
         // printf("V cycle step %d\n", i_vcycle);
+        std::string file_suffix = "_" + time_string(i_vcycle) + ".vtk";
 
         // auto h_fine_defectn1 = mg.grids[0].d_defect.createPermuteVec(6, mg.grids[0].Kmat.getIPerm()).createHostVec();
         // printToVTK<Assembler,HostVec<T>>(assemblers[0], h_fine_defectn1, "out/0_plate_fine_defect0.vtk");
 
         // go down each level smoothing and restricting until lowest level
         for (int i_level = 0; i_level < n_levels; i_level++) {
+
+            std::string file_prefix = "out/level" + std::to_string(i_level) + "_";
+
             // if not last  (pre-smooth)
             if (i_level < n_levels - 1) {
                 // if (print) printf("\tlevel %d pre-smooth\n", i_level);
 
+                // prelim defect
+                if (write) {
+                    auto h_fine_defect00 = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
+                    printToVTK<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_fine_defect00, file_prefix + "pre1_start" + file_suffix);
+                }
+
                 // pre-smooth; TODO : do fast version later.. but let's demo with slow version
                 // first
                 printf("GS on level %d\n", i_level);
-                mg.grids[i_level].smoothDefect(pre_smooth, print,
-                                                                pre_smooth - 1, omega);
+                mg.grids[i_level].smoothDefect(pre_smooth, print, pre_smooth - 1, omega);
+
+                if (write) {
+                    auto h_fine_defect00 = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
+                    printToVTK<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_fine_defect00, file_prefix + "pre2_smooth" + file_suffix);
+                }
 
                 // restrict defect
                 printf("restrict defect from level %d => %d\n", i_level, i_level + 1);
@@ -265,58 +295,62 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
                     mg.grids[i_level].d_defect);
                 CHECK_CUDA(cudaDeviceSynchronize()); // needed to make this work right?
 
+                if (write) {
+                    auto h_fine_defect00 = mg.grids[i_level+1].d_defect.createPermuteVec(6, mg.grids[i_level+1].Kmat.getPerm()).createHostVec();
+                    printToVTK<Assembler,HostVec<T>>(mg.grids[i_level+1].assembler, h_fine_defect00, file_prefix + "pre3_suffix" + file_suffix);
+                }
+
             } else {
                 if (print) printf("\t--level %d full-solve\n", i_level);
 
                 // prelim defect
                 if (write) {
-                    auto h_fine_defect00 = mg.grids[0].d_defect.createPermuteVec(6, mg.grids[0].Kmat.getPerm()).createHostVec();
-                    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fine_defect00, "out/_fine_defect00.vtk");
-
-                    auto h_coarse_defect1 = mg.grids[1].d_defect.createPermuteVec(6, mg.grids[1].Kmat.getPerm()).createHostVec();
-                    printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_coarse_defect1, "out/_coarse_defect.vtk");
+                    auto h_fine_defect00 = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
+                    printToVTK<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_fine_defect00, file_prefix + "full_pre1_start" + file_suffix);
                 }
 
                 // coarsest grid full solve
                 mg.grids[i_level].direct_solve(false); // false for don't print
 
+                // prelim soln
                 if (write) {
-                    auto h_coarse_soln00 = mg.grids[1].d_soln.createPermuteVec(6, mg.grids[1].Kmat.getPerm()).createHostVec();
-                    printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_coarse_soln00, "out/_coarse_soln00.vtk");
+                    auto h_soln = mg.grids[i_level].d_soln.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
+                    printToVTK<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_soln, file_prefix + "full_pre2_soln" + file_suffix);
                 }
             }
         }
 
         // now go back up the hierarchy
         for (int i_level = n_levels - 2; i_level >= 0; i_level--) {
+
+            std::string file_prefix = "out/level" + std::to_string(i_level) + "_";
+
             // prelim defect
             if (write) {
-                auto h_fine_defect0 = mg.grids[0].d_defect.createPermuteVec(6, mg.grids[0].Kmat.getPerm()).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fine_defect0, "out/1_plate_fine_defect0.vtk");
+                auto h_soln = mg.grids[i_level].d_soln.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
+                printToVTK<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_soln, file_prefix + "post1_defect" + file_suffix);
             }
 
             // get coarse-fine correction from coarser grid to this grid
-            mg.grids[i_level].prolongate(mg.grids[i_level + 1].d_iperm, mg.grids[i_level + 1].d_soln, debug);
+            mg.grids[i_level].prolongate(mg.grids[i_level + 1].d_iperm, mg.grids[i_level + 1].d_soln, debug, file_prefix, file_suffix);
             // if (print) printf("\tlevel %d post-smooth\n", i_level);
 
             CHECK_CUDA(cudaDeviceSynchronize()); // TODO : needed to make this work right?, adding write statements improved conv..
 
             if (write) {
-                // printout the coarse vec, cf update and defect update, as well as new defect (write to VTK)
-                auto h_coarse_soln = mg.grids[1].d_soln.createPermuteVec(6, mg.grids[1].Kmat.getPerm()).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_coarse_soln, "out/2_plate_coarse_soln1.vtk");
-
-                auto h_fine_soln = mg.grids[0].d_soln.createPermuteVec(6, mg.grids[0].Kmat.getPerm()).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fine_soln, "out/3_plate_fine_soln1.vtk");
-
-                auto h_fine_defect = mg.grids[0].d_defect.createPermuteVec(6, mg.grids[0].Kmat.getPerm()).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fine_soln, "out/4_plate_fine_defect1.vtk");
+                auto h_soln = mg.grids[i_level].d_soln.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
+                printToVTK<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_soln, file_prefix + "post6_soln" + file_suffix);
             }
 
             // post-smooth
             bool rev_colors = true; // rev colors only on post not pre-smooth?
             // bool rev_colors = false;
             mg.grids[i_level].smoothDefect(post_smooth, print, post_smooth - 1, omega, rev_colors); 
+
+            if (write) {
+                auto h_defect = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
+                printToVTK<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_defect, file_prefix + "post7_postsmooth_defect" + file_suffix);
+            }
         }
 
         // compute fine grid defect of V-cycle

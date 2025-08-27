@@ -2,9 +2,10 @@
 // the restriction is often the transpose or row-normalized transpose for geom multigrid
 #pragma once
 #include "linalg/vec.h"
-#include "structured_plate.cuh"
+#include "structured.cuh"
 
-class PlateProlongation {
+template <ProlongationGeom geom>
+class StructuredProlongation {
     using T = double;
 
    public:
@@ -25,7 +26,7 @@ class PlateProlongation {
         int nblocks_x = (nelems_fine + 31) / 32;
         dim3 grid(nblocks_x);
 
-        k_plate_prolongate<T><<<grid, block>>>(nxe_coarse, nxe_fine, nelems_fine, d_coarse_iperm,
+        k_plate_prolongate<T, geom><<<grid, block>>>(nxe_coarse, nxe_fine, nelems_fine, d_coarse_iperm,
                                                d_fine_iperm, coarse_soln_in.getPtr(),
                                                dx_fine.getPtr(), d_weights);
 
@@ -57,7 +58,7 @@ class PlateProlongation {
         int nblocks_x = (nelems_fine + 31) / 32;
         dim3 grid(nblocks_x);
 
-        k_plate_restrict<T><<<grid, block>>>(nxe_coarse, nxe_fine, nelems_fine, d_coarse_iperm,
+        k_plate_restrict<T, geom><<<grid, block>>>(nxe_coarse, nxe_fine, nelems_fine, d_coarse_iperm,
                                              d_fine_iperm, fine_defect_in.getPtr(),
                                              coarse_defect_out.getPtr(), d_weights);
 

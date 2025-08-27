@@ -134,7 +134,10 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     // multigrid objects
     const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    using GRID = ShellGrid<Assembler, PlateProlongation, smoother>;
+
+    using Prolongation = StructuredProlongation<PLATE>;
+
+    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();

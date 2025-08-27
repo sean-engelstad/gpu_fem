@@ -128,10 +128,10 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    // const SMOOTHER smoother = MULTICOLOR_GS;
-    const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    // using Prolongation = PlateProlongation;
-    using Prolongation = CylinderProlongation;
+    const SMOOTHER smoother = MULTICOLOR_GS;
+    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
+    
+    using Prolongation = StructuredProlongation<CYLINDER>;
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
