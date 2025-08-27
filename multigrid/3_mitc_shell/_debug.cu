@@ -275,7 +275,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
                 // prelim defect
                 if (write) {
                     auto h_fine_defect00 = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
-                    T xpts_shift[3] = {0.0, 0.0, 0.0};
+                    T xpts_shift[3] = {1.5 * i_level, 0.0, 0.0};
                     printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_fine_defect00, file_prefix + "pre1_start" + file_suffix, xpts_shift);
                 }
 
@@ -286,7 +286,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
 
                 if (write) {
                     auto h_fine_defect00 = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
-                    T xpts_shift[3] = {0.0, 0.0, 1.5};
+                    T xpts_shift[3] = {1.5 * i_level, 0.0, 1.5};
                     printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_fine_defect00, file_prefix + "pre2_smooth" + file_suffix, xpts_shift);
                 }
 
@@ -299,7 +299,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
 
                 if (write) {
                     auto h_fine_defect00 = mg.grids[i_level+1].d_defect.createPermuteVec(6, mg.grids[i_level+1].Kmat.getPerm()).createHostVec();
-                    T xpts_shift[3] = {0.0, 0.0, 3.0};
+                    T xpts_shift[3] = {1.5 * i_level, 0.0, 3.0};
                     printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level+1].assembler, h_fine_defect00, file_prefix + "pre3_restrict" + file_suffix, xpts_shift);
                 }
 
@@ -309,7 +309,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
                 // prelim defect
                 if (write) {
                     auto h_fine_defect00 = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
-                    T xpts_shift[3] = {0.0, 0.0, 0.0};
+                    T xpts_shift[3] = {1.5 * i_level, 0.0, 0.0};
                     printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_fine_defect00, file_prefix + "full_pre1_start" + file_suffix, xpts_shift);
                 }
 
@@ -319,7 +319,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
                 // prelim soln
                 if (write) {
                     auto h_soln = mg.grids[i_level].d_soln.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
-                    T xpts_shift[3] = {0.0, 0.0, 1.5};
+                    T xpts_shift[3] = {1.5 * i_level, 0.0, 1.5};
                     printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_soln, file_prefix + "full_pre2_soln" + file_suffix, xpts_shift);
                 }
             }
@@ -333,7 +333,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
             // prelim defect
             if (write) {
                 auto h_soln = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
-                T xpts_shift[3] = {0.0, -1.5, 0.0};
+                T xpts_shift[3] = {1.5 * i_level, -1.5, 0.0};
                 printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_soln, file_prefix + "post1_defect" + file_suffix, xpts_shift);
             }
 
@@ -345,7 +345,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
 
             if (write) {
                 auto h_soln = mg.grids[i_level].d_soln.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
-                T xpts_shift[3] = {0.0, -1.5, 6.0};
+                T xpts_shift[3] = {1.5 * i_level, -1.5, 6.0};
                 printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_soln, file_prefix + "post5_soln" + file_suffix, xpts_shift);
             }
 
@@ -356,7 +356,7 @@ void multigrid_full_solve(int nxe, double SR, int n_vcycles, double omega, int m
 
             if (write) {
                 auto h_defect = mg.grids[i_level].d_defect.createPermuteVec(6, mg.grids[i_level].Kmat.getPerm()).createHostVec();
-                T xpts_shift[3] = {0.0, -1.5, 7.5};
+                T xpts_shift[3] = {1.5 * i_level, -1.5, 7.5};
                 printToVTKDEBUG<Assembler,HostVec<T>>(mg.grids[i_level].assembler, h_defect, file_prefix + "post6_postsmooth_defect" + file_suffix, xpts_shift);
             }
         }

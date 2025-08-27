@@ -127,7 +127,7 @@ __global__ static void k_plate_restrict(const int nxe_coarse, const int nxe_fine
                 T val = defect_fine_in[fine_dof];
                 val *= scale;
 
-                atomicAdd(&defect_coarse_out[coarse_dof], defect_fine_in[fine_dof]);
+                atomicAdd(&defect_coarse_out[coarse_dof], val);
                 atomicAdd(&d_coarse_wts[coarse_dof], scale);
             }
         }
