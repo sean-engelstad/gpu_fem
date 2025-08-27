@@ -247,15 +247,15 @@ Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E
         int inode_L = ih * nnx;           // xneg node
         int inode_R = inode_L + nnx - 1;  // xpos node
         if (inode_L != 0) {               // xneg nodes
-            // for (int idof = 0; idof < 3; idof++) {
-            for (int idof = 0; idof < 6; idof++) {  // clamped
+            for (int idof = 0; idof < 3; idof++) { // simply supported
+            // for (int idof = 0; idof < 6; idof++) {  // clamped
                 // constrain u,v,w disp on xneg edge
                 if (inode_L != 0) my_bcs.push_back(6 * inode_L + idof);
             }
         }
         // xpos nodes
-        // for (int idof = 1; idof < 3; idof++) {
-        for (int idof = 0; idof < 6; idof++) {  // clamped
+        for (int idof = 1; idof < 3; idof++) { // simply supported
+        // for (int idof = 0; idof < 6; idof++) {  // clamped
             // only constraint v,w on xpos edge (TODO : later make disp control here)
             my_bcs.push_back(6 * inode_R + idof);
         }

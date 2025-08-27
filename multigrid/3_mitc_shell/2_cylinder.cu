@@ -183,7 +183,9 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.0;
-    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega);
+    // bool double_smooth = false;
+    bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
+    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
     // 0 input means starts on outer level (fine grid W-cycle)
     // mg.wcycle_solve(0, pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega); // try stronger W-cycle solve here on cylinder
     printf("done with v-cycle solve\n");
