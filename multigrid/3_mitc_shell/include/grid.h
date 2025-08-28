@@ -684,6 +684,8 @@ class ShellGrid {
 
                 a = -omega,
                 b = 1.0;  // so that defect := defect - mat*vec
+                // can't row slice this to remove redundant color * 0 subblock computations
+                // because K^T * vec not supported in cusparseDbsrmv routine.. see doc
                 CHECK_CUSPARSE(cusparseDbsrmv(
                 cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,

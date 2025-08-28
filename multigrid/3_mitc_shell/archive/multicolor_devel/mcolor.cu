@@ -235,6 +235,8 @@ void fast_solve_single_color(const int icolor, T *h_defect, T *h_new_defect) {
     const int block_dim = 2;
     const int nnz = nnzb * 4;
 
+    int h_kmat_nnzb_color_starts[4] = {0, 5, 11, 16};
+
     T *h_vals = new T[nnz];
     memset(h_vals, 0.0, nnz * sizeof(T));
     int nnzb_diag = 7;
@@ -355,12 +357,38 @@ void fast_solve_single_color(const int icolor, T *h_defect, T *h_new_defect) {
 
     a = -1.0,
     b = 1.0;  // so that defect := defect - mat*vec
-    CHECK_CUSPARSE(cusparseDbsrmv(
-        cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-        nnodes, nnodes, nnzb, &a, descrKmat, d_kmat_vals, d_rowp, d_cols,
-        block_dim, d_dsoln, &b, d_new_defect));
+
+    // old full matrix-mult
+    // CHECK_CUSPARSE(cusparseDbsrmv(
+    //     cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    //     nnodes, nnodes, nnzb, &a, descrKmat, d_kmat_vals, d_rowp, d_cols,
+    //     block_dim, d_dsoln, &b, d_new_defect));
     // CHECK_CUDA(cudaDeviceSynchronize());
     // printf("here8\n");
+
+    // new matrix-mult use K^T and row-slicing, only those rows..
+    int nz_start = h_kmat_nnzb_color_starts[icolor] * block_dim * block_dim;
+    // get new rowp for kmat in these rows.. cols the same..
+    int *h_rowp_color = new int[nnodes_color + 1];
+    h_rowp_color[0] = 0;
+    // int rowp_start = h_rowp[start];
+    for (int inode = 0; inode < nnodes_color + 1; inode++) {
+        h_rowp_color[inode] = h_rowp[inode] - h_rowp[start];
+    }
+    int *d_rowp_color = HostVec<int>(nnodes_color + 1, h_rowp_color).createDeviceVec().getPtr();
+    CHECK_CUDA(cudaDeviceSynchronize());
+    printf("h_rowp_color for color %d: ", icolor);
+    printVec<int>(nnodes_color + 1, h_rowp_color);
+    int nnzb_color = h_kmat_nnzb_color_starts[icolor + 1] - h_kmat_nnzb_color_starts[icolor];
+    printf("nnzb color %d, nnodes_color %d\n", nnzb_color, nnodes_color);
+    printf("nz start %d\n", nz_start);
+
+    // // K[color_slice, :]^T * dx_color => defect update (full size defect), CUSPARSE_DIRECTION_COLUMN to make it do transpose?
+    // CUSPARSE_NON_TRANSPOSE (only is supported)
+    CHECK_CUSPARSE(cusparseDbsrmv(
+        cusparseHandle, CUSPARSE_DIRECTION_COLUMN, CUSPARSE_OPERATION_NON_TRANSPOSE,
+        nnodes_color, nnodes, nnzb_color, &a, descrKmat, &d_kmat_vals[nz_start], d_rowp_color, d_cols,
+        block_dim, &d_dsoln[start], &b, d_new_defect));
 
     // now copy new defect to output..
     cudaMemcpy(h_new_defect, d_new_defect, 14 * sizeof(T), cudaMemcpyDeviceToHost);
