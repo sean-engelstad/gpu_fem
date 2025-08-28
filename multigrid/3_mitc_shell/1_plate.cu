@@ -46,6 +46,8 @@ void direct_plate_solve(int nxe, double SR) {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
+    auto start0 = std::chrono::high_resolution_clock::now();
+
     int nye = nxe;
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
     int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
@@ -98,6 +100,10 @@ void direct_plate_solve(int nxe, double SR) {
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
 
+    auto end0 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> startup_time = end0 - start0;
+    auto start1 = std::chrono::high_resolution_clock::now();
+
     // solve the linear system
     if (full_LU) {
         CUSPARSE::direct_LU_solve(kmat, loads, soln);
@@ -109,6 +115,14 @@ void direct_plate_solve(int nxe, double SR) {
 
         // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
     }
+
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end1 - start1;
+    int nx = nxe + 1;
+    int ndof = nx * nx;
+    double total = startup_time.count() + solve_time.count();
+    printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
+
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
@@ -145,7 +159,7 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     auto mg = MG();
 
     // int nxe_min = 4;
-    int nxe_min = 32;
+    int nxe_min = nxe > 32 ? 32 : 8;
     // int nxe_min = nxe / 2; // two level
 
     // make each grid
