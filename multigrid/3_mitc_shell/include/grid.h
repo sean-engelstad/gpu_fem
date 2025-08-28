@@ -126,15 +126,18 @@ class ShellGrid {
         d_resid = DeviceVec<T>(N).getPtr();
         d_int_temp = DeviceVec<int>(N).getPtr();
 
-        // copy rhs into defect
-        cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
-        // and inv permute the rhs
+        
+        // get perm pointers
         d_perm = Kmat.getPerm();
         d_iperm = Kmat.getIPerm();
         auto d_bsr_data = Kmat.getBsrData();
         d_elem_conn = d_bsr_data.elem_conn;
         nelems = d_bsr_data.nelems;
-        d_defect.permuteData(block_dim, d_iperm);
+
+        // copy rhs into defect
+        d_rhs.permuteData(block_dim, d_iperm); // permute rhs to permuted form
+        cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+        // d_defect.permuteData(block_dim, d_iperm);
 
         // make mat handles for SpMV
         CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
@@ -448,6 +451,25 @@ class ShellGrid {
         T def_nrm;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &def_nrm));
         return def_nrm;
+    }
+
+    T getResidNorm() {
+        /* double check the linear system is actually solved */
+
+        // copy rhs into the resid
+        cudaMemcpy(d_resid, d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+
+        // subtract A * x where A = Kmat
+        T a = -1.0, b = 1.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, kmat_nnzb,
+                                      &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                                      block_dim, d_soln.getPtr(), &b, d_resid));
+
+        // get resid nrm now
+        T resid_nrm;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &resid_nrm));
+        return resid_nrm;
     }
 
     void smoothDefect(int n_iters, bool print = false, int print_freq = 10, T omega = 1.0,

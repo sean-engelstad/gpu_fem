@@ -173,6 +173,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
+    T init_resid_nrm = mg.grids[0].getResidNorm();
+
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
     int pre_smooth = 1, post_smooth = 1;
@@ -191,6 +193,9 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     double total = startup_time.count() + solve_time.count();
     printf("plate GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
 
+    // double check with true resid nrm
+    T resid_nrm = mg.grids[0].getResidNorm();
+    printf("init resid_nrm = %.2e => final resid_nrm = %.2e\n", init_resid_nrm, resid_nrm);
 
     // print some of the data of host residual
     int *d_perm = mg.grids[0].d_perm;
