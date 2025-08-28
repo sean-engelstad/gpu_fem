@@ -27,7 +27,9 @@ class ShellMultigrid {
 
             // go down each level smoothing and restricting until lowest level
             for (int i_level = 0; i_level < n_levels; i_level++) {
-                int exp_smooth_factor = double_smooth ? 1<<i_level : 1; // power of 2 more smoothing at each level..
+                // int exp_smooth_factor = double_smooth ? 1<<i_level : 1; // power of 2 more
+                // smoothing at each level..
+                int exp_smooth_factor = 1.0;  // only on post-steps..
 
                 // if not last  (pre-smooth)
                 if (i_level < n_levels - 1) {
@@ -35,7 +37,8 @@ class ShellMultigrid {
 
                     // pre-smooth; TODO : do fast version later.. but let's demo with slow version
                     // first
-                    grids[i_level].smoothDefect(pre_smooth * exp_smooth_factor, print, pre_smooth * exp_smooth_factor - 1, omega);
+                    grids[i_level].smoothDefect(pre_smooth * exp_smooth_factor, print,
+                                                pre_smooth * exp_smooth_factor - 1, omega);
 
                     // restrict defect
                     grids[i_level + 1].restrict_defect(
@@ -58,9 +61,11 @@ class ShellMultigrid {
 
                 // post-smooth
                 // printf("post-smooth on level %d\n", i_level);
-                int exp_smooth_factor = double_smooth ? 1<<i_level : 1; // power of 2 more smoothing at each level..
+                int exp_smooth_factor =
+                    double_smooth ? 1 << i_level : 1;  // power of 2 more smoothing at each level..
                 bool rev_colors = true;
-                grids[i_level].smoothDefect(post_smooth * exp_smooth_factor, print, post_smooth * exp_smooth_factor - 1, omega, rev_colors);
+                grids[i_level].smoothDefect(post_smooth * exp_smooth_factor, print,
+                                            post_smooth * exp_smooth_factor - 1, omega, rev_colors);
             }
 
             // compute fine grid defect of V-cycle

@@ -144,7 +144,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
 
     auto mg = MG();
 
-    int nxe_min = 4;
+    // int nxe_min = 4;
+    int nxe_min = 32;
     // int nxe_min = nxe / 2; // two level
 
     // make each grid
@@ -184,7 +185,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.0;
-    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega);
+    bool double_smooth = true; // false
+    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
     printf("done with v-cycle solve\n");
 
     auto end1 = std::chrono::high_resolution_clock::now();
