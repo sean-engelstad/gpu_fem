@@ -14,6 +14,7 @@
 
 enum SMOOTHER : short {
     MULTICOLOR_GS,
+    MULTICOLOR_GS_FAST,
     LEXIGRAPHIC_GS,
 };
 
@@ -44,11 +45,11 @@ class ShellGrid {
         kmat_nnzb = d_kmat_bsr_data.nnzb;
 
         // init helper methods
-        if (smoother == MULTICOLOR_GS) {
+        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
             buildColorLocalRowPointers();
         }
         initCuda();
-        if (smoother == MULTICOLOR_GS) {
+        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
             buildDiagInvMat();
         }
         if (smoother == LEXIGRAPHIC_GS && !full_LU) {
@@ -64,7 +65,7 @@ class ShellGrid {
         // must pass by ref to not corrupt pointers
         auto &bsr_data = assembler.getBsrData();
         int num_colors, *_color_rowp;
-        if (smoother == MULTICOLOR_GS) {
+        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
             if (reorder) {
                 bsr_data.multicolor_reordering(num_colors,
                                                _color_rowp);  // TODO : add this method.. (I guess I
@@ -477,84 +478,11 @@ class ShellGrid {
         /* calls either multicolor smoother or lexigraphic GS depending on tempalte smoother type */
         if (smoother == MULTICOLOR_GS) {
             multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega, rev_colors);
+        } else if (smoother == MULTICOLOR_GS_FAST) {
+            multicolorBlockGaussSeidel_fast(n_iters, print, print_freq, omega, rev_colors);
         } else if (smoother == LEXIGRAPHIC_GS) {
             lexigraphicBlockGS(n_iters, print, print_freq);
         }
-    }
-
-    void multicolorBlockGaussSeidel_slow(int n_iters, bool print = false, int print_freq = 10,
-                                         T omega = 1.0, bool rev_colors = false) {
-        // slower version of do multicolor BSRmat block gauss-seidel on the defect
-        // slower in the sense that it uses full mat-vec and full triang solves (does work right)
-        // would like a faster version with color slicing next..
-
-        // T init_defect_nrm;
-        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &init_defect_nrm));
-        // if (print) printf("Multicolor Block-GS init defect nrm = %.4e\n", init_defect_nrm);
-
-        int num_colors = h_color_rowp.getSize() - 1;
-        int *color_rowp = h_color_rowp.getPtr();
-
-        // DEBUG
-        // n_solns = n_iters * num_colors;
-        // h_solns = new T *[n_solns];
-
-        for (int iter = 0; iter < n_iters; iter++) {
-            for (int _icolor = 0; _icolor < num_colors; _icolor++) {
-                // printf("\t\titer %d, color %d\n", iter, icolor);
-
-                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
-                // int _icolor2 = _icolor;  // no permutations.. about the same either way..
-
-                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
-
-                // get active rows / cols for this color
-                int start = color_rowp[icolor], end = color_rowp[icolor + 1];
-                int nblock_rows_color = end - start;
-                T *d_defect_color = &d_defect.getPtr()[block_dim * start];
-                cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
-                T *d_temp_color = &d_temp[block_dim * start];
-                T *d_temp_color2 = &d_temp2[block_dim * start];
-                cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
-                cudaMemcpy(d_temp_color2, d_defect_color, nblock_rows_color * block_dim * sizeof(T),
-                           cudaMemcpyDeviceToDevice);
-
-                T a = 1.0, b = 0.0;
-                const double alpha = 1.0;
-                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-                    cusparseHandle, dir, trans_L, nnodes, diag_inv_nnzb, &alpha, descr_L,
-                    d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp2, d_resid,
-                    policy_L, pBuffer));  // prob only need U^-1 part for block diag.. TBD
-                CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes,
-                                                     diag_inv_nnzb, &alpha, descr_U, d_diag_LU_vals,
-                                                     d_diag_rowp, d_diag_cols, block_dim, info_U,
-                                                     d_resid, d_temp, policy_U, pBuffer));
-
-                // 2) update soln x_color += dx_color
-                int nrows_color = nblock_rows_color * block_dim;
-                T *d_soln_color = &d_soln.getPtr()[block_dim * start];
-                a = omega;
-                CHECK_CUBLAS(
-                    cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
-
-                a = -omega,
-                b = 1.0;  // so that defect := defect - mat*vec
-                CHECK_CUSPARSE(cusparseDbsrmv(
-                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
-                    block_dim, d_temp, &b, d_defect.getPtr()));
-
-            }  // next color iteration
-
-            // printf("iter %d, done with color iterations\n", iter);
-
-            /* report progress of defect nrm if printing.. */
-            T defect_nrm;
-            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
-            if (print && iter % print_freq == 0)
-                printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
-
-        }  // next block-GS iteration
     }
 
     void lexigraphicBlockGS(int n_iters, bool print = false, int print_freq = 10) {
@@ -589,6 +517,187 @@ class ShellGrid {
             CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
             if (print && iter % print_freq == 0)
                 printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+
+        }  // next block-GS iteration
+    }
+
+    void multicolorBlockGaussSeidel_slow(int n_iters, bool print = false, int print_freq = 10,
+                                         T omega = 1.0, bool rev_colors = false) {
+        // slower version of do multicolor BSRmat block gauss-seidel on the defect
+        // slower in the sense that it uses full mat-vec and full triang solves (does work right)
+        // would like a faster version with color slicing next..
+
+        // T init_defect_nrm;
+        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &init_defect_nrm));
+        // if (print) printf("Multicolor Block-GS init defect nrm = %.4e\n", init_defect_nrm);
+
+        int num_colors = h_color_rowp.getSize() - 1;
+        int *color_rowp = h_color_rowp.getPtr();
+
+        // DEBUG
+        // n_solns = n_iters * num_colors;
+        // h_solns = new T *[n_solns];
+
+        for (int iter = 0; iter < n_iters; iter++) {
+            for (int _icolor = 0; _icolor < num_colors; _icolor++) {
+                // printf("\t\titer %d, color %d\n", iter, icolor);
+
+                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
+                // int _icolor2 = _icolor;  // no permutations.. about the same either way..
+
+                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
+
+                // get active rows / cols for this color
+                int start = color_rowp[icolor], end = color_rowp[icolor + 1];
+                int nblock_rows_color = end - start;
+                int nrows_color = nblock_rows_color * block_dim;
+                T *d_defect_color = &d_defect.getPtr()[block_dim * start];
+                cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
+                T *d_temp_color = &d_temp[block_dim * start];
+                T *d_temp_color2 = &d_temp2[block_dim * start];
+                cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
+                cudaMemcpy(d_temp_color2, d_defect_color, nblock_rows_color * block_dim * sizeof(T),
+                           cudaMemcpyDeviceToDevice);
+
+                // T *h_defect = DeviceVec<T>(N, d_defect.getPtr()).createHostVec().getPtr();
+                // printf("h_defect slow, color %d with grid nnodes = %d\n", icolor, nnodes);
+                // printVec<T>(nrows_color, &h_defect[block_dim * start]);
+
+                T a = 1.0, b = 0.0;
+                const double alpha = 1.0;
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, nnodes, diag_inv_nnzb, &alpha, descr_L,
+                    d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp2, d_resid,
+                    policy_L, pBuffer));  // prob only need U^-1 part for block diag.. TBD
+
+                // T *h_resid = DeviceVec<T>(N, d_resid).createHostVec().getPtr();
+                // printf("h_resid_slow, color %d\n", icolor);
+                // printVec<T>(nrows_color, &h_resid[block_dim * start]);
+
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes,
+                                                     diag_inv_nnzb, &alpha, descr_U, d_diag_LU_vals,
+                                                     d_diag_rowp, d_diag_cols, block_dim, info_U,
+                                                     d_resid, d_temp, policy_U, pBuffer));
+
+                // T *h_temp = DeviceVec<T>(N, d_temp).createHostVec().getPtr();
+                // printf("h_temp slow, color %d\n", icolor);
+                // printVec<T>(nrows_color, &h_temp[block_dim * start]);
+
+                // 2) update soln x_color += dx_color
+                T *d_soln_color = &d_soln.getPtr()[block_dim * start];
+                a = omega;
+                CHECK_CUBLAS(
+                    cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
+
+                a = -omega,
+                b = 1.0;  // so that defect := defect - mat*vec
+                CHECK_CUSPARSE(cusparseDbsrmv(
+                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                    block_dim, d_temp, &b, d_defect.getPtr()));
+
+            }  // next color iteration
+
+            // printf("iter %d, done with color iterations\n", iter);
+
+            /* report progress of defect nrm if printing.. */
+            T defect_nrm;
+            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
+            if (print && iter % print_freq == 0)
+                printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+
+        }  // next block-GS iteration
+    }
+
+    void multicolorBlockGaussSeidel_fast(int n_iters, bool print = false, int print_freq = 10,
+        T omega = 1.0, bool rev_colors = false) {
+        // faster version
+
+        // T init_defect_nrm;
+        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &init_defect_nrm));
+        // if (print) printf("Multicolor Block-GS init defect nrm = %.4e\n", init_defect_nrm);
+
+        int num_colors = h_color_rowp.getSize() - 1;
+        int *color_rowp = h_color_rowp.getPtr();
+        // printf("mc BGS-fast with # colors = %d\n", num_colors);
+
+        // DEBUG
+        // n_solns = n_iters * num_colors;
+        // h_solns = new T *[n_solns];
+
+        for (int iter = 0; iter < n_iters; iter++) {
+            for (int _icolor = 0; _icolor < num_colors; _icolor++) {
+                // printf("\t\titer %d, color %d\n", iter, icolor);
+
+                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
+                // int _icolor2 = _icolor;  // no permutations.. about the same either way..
+
+                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
+
+                // get active rows / cols for this color
+                int start = color_rowp[icolor], end = color_rowp[icolor + 1];
+                int nblock_rows_color = end - start;
+                int nrows_color = nblock_rows_color * block_dim;
+                T *d_defect_color = &d_defect.getPtr()[block_dim * start];
+                cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
+                T *d_temp_color = &d_temp[block_dim * start];
+                T *d_temp_color2 = &d_temp2[block_dim * start];
+                cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
+                cudaMemcpy(d_temp_color2, d_defect_color, nrows_color * sizeof(T),
+                cudaMemcpyDeviceToDevice);
+
+                int block_dim2 = block_dim * block_dim;
+                int diag_inv_nnzb_color = nblock_rows_color;
+                T *d_diag_LU_vals_color = &d_diag_LU_vals[start * block_dim2];
+
+                // T *h_defect = DeviceVec<T>(N, d_defect.getPtr()).createHostVec().getPtr();
+                // printf("h_defect fast, color %d with nnodes %d\n", icolor, nnodes);
+                // printVec<T>(nrows_color, &h_defect[block_dim * start]);
+
+                T a = 1.0, b = 0.0;
+                const double alpha = 1.0;
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                cusparseHandle, dir, trans_L, nblock_rows_color, diag_inv_nnzb_color, &alpha, descr_L,
+                d_diag_LU_vals_color, d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp_color2, d_resid,
+                policy_L, pBuffer));  // prob only need U^-1 part for block diag.. TBD
+
+                // T *h_resid = DeviceVec<T>(N, d_resid).createHostVec().getPtr();
+                // printf("h_resid, color fast: %d\n", icolor);
+                // printVec<T>(nrows_color, h_resid);
+                // // printVec<T>(nrows_color, h_resid);
+
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nblock_rows_color,
+                    diag_inv_nnzb_color, &alpha, descr_U, d_diag_LU_vals_color,
+                                    d_diag_rowp, d_diag_cols, block_dim, info_U,
+                                    d_resid, d_temp_color, policy_U, pBuffer));
+
+                // T *h_temp = DeviceVec<T>(N, d_temp).createHostVec().getPtr();
+                // printf("h_temp_fast, color %d\n", icolor);
+                // printVec<T>(nrows_color, &h_temp[block_dim * start]);
+
+                // 2) update soln x_color += dx_color
+                
+                T *d_soln_color = &d_soln.getPtr()[block_dim * start];
+                a = omega;
+                CHECK_CUBLAS(
+                cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
+
+                a = -omega,
+                b = 1.0;  // so that defect := defect - mat*vec
+                CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                block_dim, d_temp, &b, d_defect.getPtr()));
+
+            }  // next color iteration
+
+            // printf("iter %d, done with color iterations\n", iter);
+
+            /* report progress of defect nrm if printing.. */
+            T defect_nrm;
+            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
+            if (print && iter % print_freq == 0)
+            printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
         }  // next block-GS iteration
     }
