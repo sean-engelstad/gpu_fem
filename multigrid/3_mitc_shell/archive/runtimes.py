@@ -32,8 +32,8 @@ runtime_groups += [
     RuntimeGroup(
         gpu='3060Ti',
         case='plate',
-        solver='direct',
+        solver='mg',
         SR=50.0,
-        times=[5.10e-2, 1.82e-1, 7.95e-1, 3.33e0, 1.75e1] + [np.nan] * 2,
+        times=[] + [np.nan] * 2,
     )
 ]
