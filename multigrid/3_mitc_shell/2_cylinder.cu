@@ -128,7 +128,8 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    const SMOOTHER smoother = MULTICOLOR_GS;
+    // const SMOOTHER smoother = MULTICOLOR_GS;
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
     
     using Prolongation = StructuredProlongation<CYLINDER>;
@@ -164,7 +165,7 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
         bool reorder;
         if (smoother == LEXIGRAPHIC_GS) {
             reorder = false;
-        } else if (smoother == MULTICOLOR_GS) {
+        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
             reorder = true;
         }
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);

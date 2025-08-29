@@ -33,3 +33,19 @@ plt.imshow(Nodal)
 plt.show()
 
 # for BSR version for now, each 2x2 block is going to be csr_scale * [2,1],[1,2] should be invertible
+
+A = np.zeros((14, 14))
+
+for ib in range(7):
+    for jb in range(7):
+        node = Nodal[ib, jb]
+
+        for k in range(4):
+            k1, k2 = k % 2, k // 2
+            val = 2.0 if k1 == k2 else 1.0
+            i, j = 2 * ib + k1, 2 * jb + k2
+
+            A[i, j] = node * val
+
+plt.imshow(A)
+plt.show()
