@@ -112,6 +112,11 @@ class ShellGrid {
         return new ShellGrid(assembler, N, kmat, loads, h_color_rowp, full_LU);
     }
 
+    void init_unstructured_grid_maps(ShellGrid coarse_grid) {
+        /* initialize the unstructured mesh prolongation map */
+        // TBD, want to get the coarse nodes
+    }
+
     void initCuda() {
         // init handles
         CHECK_CUBLAS(cublasCreate(&cublasHandle));
@@ -704,179 +709,6 @@ class ShellGrid {
         }  // next block-GS iteration
     }
 
-    // void multicolorBlockGaussSeidel_fast(int n_iters, bool print = false, int print_freq = 10) {
-    //     // do multicolor BSRmat block gauss-seidel on the defect
-    //     // work in progress here for faster or more scalable version with color slicing..
-    //     // and hopefully block_diag_inv mat-vec products
-
-    //     T init_defect_nrm;
-    //     CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &init_defect_nrm));
-    //     if (print) printf("Multicolor Block-GS init defect nrm = %.4e\n", init_defect_nrm);
-
-    //     int num_colors = h_color_rowp.getSize() - 1;
-    //     int *color_rowp = h_color_rowp.getPtr();
-
-    //     // DEBUG
-    //     n_solns = n_iters * num_colors;
-    //     h_solns = new T *[n_solns];
-
-    //     for (int iter = 0; iter < n_iters; iter++) {
-    //         for (int icolor = 0; icolor < num_colors; icolor++) {
-    //             // get active rows / cols for this color
-    //             int start = color_rowp[icolor], end = color_rowp[icolor + 1];
-    //             int nblock_rows_color = end - start;
-    //             // int block_dim2 = block_dim * block_dim;  // 36
-
-    //             // printf("iter %d, color %d : block rows [%d,%d)\n", iter, icolor, start, end);
-
-    //             // 1) compute Dinv_c * defect_c => dx_c  (c indicates color subset)
-    //             // int color_Dinv_nnzb = nblock_rows_color;
-    //             // can use same rowp, cols here (0,1,...,nrows)
-    //             // int *d_color_diag_cols = &d_diag_cols[block_dim * start];
-    //             // T *d_Dinv_vals_color = &d_diag_inv_vals[block_dim2 * start];
-    //             T *d_defect_color = &d_defect.getPtr()[block_dim * start];
-    //             cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
-    //             T *d_temp_color = &d_temp[block_dim * start];
-    //             T *d_temp_color2 = &d_temp2[block_dim * start];
-    //             cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
-    //             cudaMemcpy(d_temp_color2, d_defect_color, nblock_rows_color * block_dim *
-    //             sizeof(T),
-    //                        cudaMemcpyDeviceToDevice);
-
-    //             T a = 1.0, b = 0.0;
-    //             // CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
-    //             //                               CUSPARSE_OPERATION_NON_TRANSPOSE,
-    //             //                               nblock_rows_color, nblock_rows_color,
-    //             //                               color_Dinv_nnzb, &a, descrDinvMat,
-    //             //                               d_Dinv_vals_color, d_diag_rowp,
-    //             d_color_diag_cols,
-    //             //                               block_dim, d_defect_color, &b, d_temp_color));
-
-    //             // couldn't get accurate block-diag inv directly, so doing block diag LU here..
-    //             TBD
-    //             // or I'll come back to that..
-    //             // cudaMemcpy(d_temp_color, d_defect_color, nblock_rows_color * block_dim *
-    //             // sizeof(T),
-    //             //            cudaMemcpyDeviceToDevice);
-    //             // T **d_temp_batch_color = &d_temp_batch_ptr[start];
-    //             // T **d_diag_LU_batch_color = &d_diag_LU_batch_ptr[start];
-    //             // cublasDgetrsBatched(cublasHandle, CUBLAS_OP_N, block_dim, 1,
-    //             // d_diag_LU_batch_color,
-    //             //                     block_dim, d_piv, d_temp_batch_color, block_dim, d_info,
-    //             //                     nnodes);
-
-    //             // T defect_nrm_0;
-    //             // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1,
-    //             &defect_nrm_0));
-    //             // printf("defect nrm0 %.2e\n", defect_nrm_0);
-
-    //             const double alpha = 1.0;
-    //             // try normal triang solve first.. DEBUG
-    //             // printf("try normal triang solve first (DEBUG), get rid of this\n");
-    //             CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-    //                 cusparseHandle, dir, trans_L, nnodes, diag_inv_nnzb, &alpha, descr_L,
-    //                 d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp2,
-    //                 d_resid, policy_L, pBuffer));  // prob only need U^-1 part for block diag..
-    //                 TBD
-    //             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes,
-    //                                                  diag_inv_nnzb, &alpha, descr_U,
-    //                                                  d_diag_LU_vals, d_diag_rowp, d_diag_cols,
-    //                                                  block_dim, info_U, d_resid, d_temp,
-    //                                                  policy_U, pBuffer));
-    //             // printf("here0\n");
-
-    //             // cusparse LU solve on block diag matrix D(K) : giving D^-1 * d_temp
-
-    //             // T *d_diag_LU_vals_color = &d_diag_LU_vals[block_dim2 * start];
-    //             // // NOTE : I don't think I need this call.. since this is block U part
-    //             // // // and agbove diagonal and this is only diagonal here
-    //             // // // CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-    //             // // //     cusparseHandle, dir, trans_L, nblock_rows_color, color_Dinv_nnzb,
-    //             // &alpha,
-    //             // // //     descr_L, d_diag_LU_vals_color, d_diag_rowp, d_color_diag_cols,
-    //             // block_dim,
-    //             // // //     info_L, d_defect_color, d_temp_color, policy_L, pBuffer));
-    //             // // // printf("here1\n");
-
-    //             // T defect_nrm_1;
-    //             // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1,
-    //             &defect_nrm_1));
-    //             // printf("defect nrm1 %.2e\n", defect_nrm_1);
-
-    //             // triangular solve U*y = z,
-    //             // only need this call with block diag I think..
-    //             // CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-    //             //     cusparseHandle, dir, trans_U, nblock_rows_color, color_Dinv_nnzb, &alpha,
-    //             //     descr_U, d_diag_LU_vals_color, d_diag_rowp, d_color_diag_cols, block_dim,
-    //             //     info_U, d_defect_color, d_temp_color, policy_U, pBuffer));
-    //             // printf("here2, nnodes = %d\n", nnodes);
-
-    //             // T defect_nrm_2;
-    //             // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1,
-    //             &defect_nrm_2));
-    //             // printf("defect nrm2 %.2e\n", defect_nrm_2);
-
-    //             // 2) update soln x_color += dx_color
-    //             int nrows_color = nblock_rows_color * block_dim;
-    //             T *d_soln_color = &d_soln.getPtr()[block_dim * start];
-    //             a = 1.0;
-    //             CHECK_CUBLAS(
-    //                 cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color,
-    //                 1));
-    //             printf("here3\n");
-
-    //             // 3) update defect, defect -= K[color,:]^T * dx_color, with KT_color = N x
-    //             // nrows_color matrix
-    //             // int kmat_bnz_start = h_color_bnz_ptr[icolor];
-    //             // int kmat_bnz_end = h_color_bnz_ptr[icolor + 1];
-    //             // int color_kmat_nnzb = kmat_bnz_end - kmat_bnz_start;
-    //             // T *d_color_kmat_vals = &d_kmat_vals[36 * kmat_bnz_start];
-    //             // int local_color_rowp_start = h_color_local_rowp_ptr[icolor];
-    //             // printf("kmat bnz %d to %d, local rowp start %d\n", kmat_bnz_start,
-    //             kmat_bnz_end,
-    //             //    local_color_rowp_start);
-    //             // int *d_kmat_color_local_rowp = &d_color_local_rowps[local_color_rowp_start];
-    //             // int *d_kmat_color_cols = &d_kmat_cols[kmat_bnz_start];
-    //             a = -1.0,
-    //             b = 1.0;  // so that defect := defect - mat*vec
-    //             // CHECK_CUSPARSE(cusparseDbsrmv(
-    //             //     cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_TRANSPOSE,
-    //             //     nblock_rows_color, nnodes, color_kmat_nnzb, &a, descrKmat,
-    //             d_color_kmat_vals,
-    //             //     d_kmat_color_local_rowp, d_kmat_color_cols, block_dim, d_temp_color, &b,
-    //             //     d_defect.getPtr()));
-
-    //             // DEBUG try this instead..
-    //             // printf(
-    //             //     "try Sparse MV debug, remove this later.. and just do row-sliced transpose
-    //             "
-    //             //     "version\n");
-    //             CHECK_CUSPARSE(cusparseDbsrmv(
-    //                 cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-    //                 nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp,
-    //                 d_kmat_cols, block_dim, d_temp, &b, d_defect.getPtr()));
-    //             // printf("here4\n");
-
-    //             // auto h_soln = d_soln.createHostVec(); // DEBUG
-    //             // int i_soln = n_iters * num_colors + icolor;
-    //             // h_solns[i_soln] = new T[N];
-    //             // memcpy(h_solns[i_soln], h_soln.getPtr(), N * sizeof(T));
-
-    //         }  // next color iteration
-
-    //         printf("iter %d, done with color iterations\n", iter);
-
-    //         /* report progress of defect nrm if printing.. */
-    //         T defect_nrm;
-    //         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
-    //         if (print && iter % print_freq == 0)
-    //             printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
-
-    //     }  // next block-GS iteration
-
-    //     // NOTE : solution and defect are permuted here..
-    // }  // end of multicolor block GS fast
-
     void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in, bool debug = false,
                     std::string file_prefix = "", std::string file_suffix = "") {
         // prolongate from coarser grid to this fine grid
@@ -888,8 +720,14 @@ class ShellGrid {
         //                          &soln_nrm));
         // printf("\tprolong coarse soln in, ||soln|| = %.4e\n", soln_nrm);
 
-        Prolongation::prolongate(nelems, d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec,
-                                 d_weights);
+        if constexpr (Prolongation::structured) {
+            Prolongation::prolongate(nelems, d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec,
+                d_weights);
+        } else {
+            Prolongation::prolongate(); // TBD new inputs for unstruct case
+        }
+
+        
         CHECK_CUDA(cudaDeviceSynchronize());
 
         // zero bcs of coarse-fine prolong
@@ -950,8 +788,13 @@ class ShellGrid {
         // transfer from finer mesh to this coarse mesh
         cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T));  // reset defect
 
-        Prolongation::restrict_defect(nelems_fine, d_iperm, d_iperm_fine, fine_defect_in, d_defect,
-                                      d_weights);
+        if constexpr (Prolongation::structured) {
+            Prolongation::restrict_defect(nelems_fine, d_iperm, d_iperm_fine, fine_defect_in, d_defect,
+                d_weights);
+        } else {
+            Prolongation::restrict_defect(); // TBD new inputs for unstruct case
+        }
+        
 
         // auto h_defect2 = d_defect.createPermuteVec(6, d_perm).createHostVec();
         // printToVTK<Assembler, HostVec<T>>(assembler, h_defect2, "out/4_fin_defect.vtk");
