@@ -121,7 +121,7 @@ def xyz_dzeta(xis):
 def solve_comp_coords(xyz_star):
     xis = np.zeros(3)
 
-    for ct in range(8):
+    for ct in range(4): # don't need many iterations
 
         xyz = xyz_interp(xis)
         delta_xyz = xyz - xyz_star
@@ -138,7 +138,7 @@ def solve_comp_coords(xyz_star):
 
         hess = 2.0 * np.array([
             [np.dot(dxi, dxi), np.dot(dxi, deta), 0.0],
-            [np.dot(dxi, dxi), np.dot(deta, deta), 0.0],
+            [np.dot(dxi, deta), np.dot(deta, deta), 0.0],
             [0.0, 0.0, np.dot(dzeta, dzeta)],
         ])
 
@@ -152,6 +152,11 @@ def solve_comp_coords(xyz_star):
 
         resid = np.linalg.norm(delta_xyz)
         print(f"{resid=:.2e}")
+
+    # double check that xyz = xyz_star now..
+    xyz_pred = xyz_interp(xis)
+    resid = np.linalg.norm(xyz_pred - xyz_star)
+    print(f"final {resid=:2e}")
 
     return xis
 
