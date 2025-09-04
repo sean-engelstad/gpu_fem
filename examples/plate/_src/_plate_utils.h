@@ -10,7 +10,7 @@
 template <class Assembler>
 Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E, double nu,
                                double thick, double rho = 2500, double ys = 350e6,
-                               int nxe_per_comp = 1, int nye_per_comp = 1) {
+                               int nxe_per_comp = 1, int nye_per_comp = 1, bool v_constr = false) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -82,7 +82,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         int iy = nny - 1;
         int inode = nnx * iy + ix;
         // printf("new bc = %d\n", 6 * inode + 2);
-        my_bcs.push_back(6 * inode + 2);  // corresp dof 3 for w
+        if (v_constr) my_bcs.push_back(6 * inode + 1);  // also v constr here..
+        my_bcs.push_back(6 * inode + 2);                // corresp dof 3 for w
     }
 
     HostVec<int> bcs(my_bcs.size());
@@ -169,7 +170,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
 }
 
 template <typename T, class Phys>
-T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
+T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag,
+                 double in_plane_frac = 0.0) {
     /*
     make a rectangular plate mesh of shell elements
     simply supported with transverse constrant distributed load
@@ -203,6 +205,11 @@ T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
             T nodal_load = load_mag * sin(PI * x / Lx) * sin(PI * y / Ly);
             my_loads[Phys::vars_per_node * inode + 2] = nodal_load;
         }
+
+        int ix = nnx - 1;  // pos x1 edge for in-plane
+        int inode = nnx * iy + ix;
+        T x = ix * dx, y = iy * dy;
+        my_loads[Phys::vars_per_node * inode] = -load_mag * in_plane_frac;
     }
     return my_loads;
 }

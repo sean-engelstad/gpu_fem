@@ -38,7 +38,7 @@ class BsrMat {
     __HOST_DEVICE__ int *getRowPtr() { return bsr_data.rowp; }
     __HOST_DEVICE__ int *getColPtr() { return bsr_data.cols; }
 
-    __HOST__ void apply_bcs(DeviceVec<int> bcs) {
+    __HOST__ void apply_bcs(DeviceVec<int> bcs, bool include_cols = true) {
         /* apply bcs to the matrix values (rows + cols) */
         int nbcs = bcs.getSize();
         const index_t *rowPtr = bsr_data.rowp, *colPtr = bsr_data.cols, *iperm = bsr_data.iperm,
@@ -59,9 +59,12 @@ class BsrMat {
         apply_mat_bcs_rows_kernel<T, DeviceVec><<<grid, block>>>(
             bcs, rowPtr, colPtr, iperm, nnodes, valPtr, blocks_per_elem, nnz_per_block, block_dim);
 
-        apply_mat_bcs_cols_kernel<T, DeviceVec>
-            <<<grid, block>>>(bcs, tr_rowp, tr_cols, tr_block_map, iperm, nnodes, valPtr,
-                              blocks_per_elem, nnz_per_block, block_dim);
+        if (include_cols) {
+            apply_mat_bcs_cols_kernel<T, DeviceVec>
+                <<<grid, block>>>(bcs, tr_rowp, tr_cols, tr_block_map, iperm, nnodes, valPtr,
+                                  blocks_per_elem, nnz_per_block, block_dim);
+        }
+
         CHECK_CUDA(cudaDeviceSynchronize());
 #endif  // USE_GPU
     }
