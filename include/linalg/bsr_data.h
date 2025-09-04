@@ -14,7 +14,8 @@ typedef int index_t;  // for sparse utils
 
 // dependency to smdogroup/sparse-utils repo
 #include "sparse_utils/sparse_symbolic.h"
-#include "sparse_utils/sparse_utils.h"
+// #include "sparse_utils/sparse_utils.h"
+#include "sparse_utils/sparse_matrix.h"
 
 class BsrData {
     /* holds bsr sparsity pattern */

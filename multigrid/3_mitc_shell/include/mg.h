@@ -8,6 +8,13 @@ class ShellMultigrid {
    public:
     ShellMultigrid() = default;
 
+    void init_unstructured() {
+        /* initialize unstructured grid maps */
+        for (int ilevel = 0; ilevel < getNumLevels() - 1; ilevel++) {
+            grids[ilevel].init_unstructured_grid_maps(grids[ilevel]+1);
+        }
+    }
+
     int getNumLevels() { return grids.size(); }
 
     void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
