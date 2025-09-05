@@ -760,6 +760,7 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
         // Keep track of the maximum number of nodes defined by
         // any of the elements
         int max_element_conn = -1;
+        bool prev_caps_ignore_line = false;
 
         while (buffer_loc < buffer_len) {
             // Read the first line of the buffer
@@ -769,7 +770,18 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
                 break;
             }
 
-            if (line[0] != '$') {
+            // printf("%s\n", line);
+
+            // currently unsupported settings in the TACS Meshloader C++ version from ESP/CAPS
+            bool caps_ignored_line = strncmp(line, "PARAM", 5) == 0 || strncmp(line, "SPCADD", 6) == 0 || strncmp(line, "MAT", 3) == 0 || 
+                strncmp(line, "PSHELL", 6) == 0 || strncmp(line, "DESVAR", 6) == 0 || strncmp(line, "DVPREL", 6) == 0 || strncmp(line, "CORD", 4) == 0;
+            if (prev_caps_ignore_line && strncmp(line, "*", 1) == 0) {
+                caps_ignored_line = true;
+            }
+            prev_caps_ignore_line = caps_ignored_line;
+
+            if (line[0] != '$' && !caps_ignored_line) {
+
                 if (in_bulk &&
                     (strncmp(line, "END BULK", 8) == 0 || strncmp(line, "ENDDATA", 7) == 0)) {
                     buffer_temp_loc = buffer_len;
@@ -789,6 +801,13 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
                     double x, y, z;
                     parse_node_short_free_field(line, &node, &x, &y, &z);
                     num_nodes++;
+                } else if (strncmp(line, "SPC1*", 5) == 0) {
+                    // must check SPC1* before SPC cause SPC is subset of its letters
+                    bc_vars_size += 8;
+                    num_bcs++;
+                } else if (strncmp(line, "SPC1", 4) == 0) {
+                    bc_vars_size += 8;
+                    num_bcs++;
                 } else if (strncmp(line, "SPC", 3) == 0) {
                     bc_vars_size += 8;
                     num_bcs++;
@@ -896,6 +915,7 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
         // Keep track of the component numbers loaded from an
         // ICEM-generated bdf file
         int component_counter = 0;
+        prev_caps_ignore_line = false;
 
         while (buffer_loc < buffer_len) {
             // Read the first line of the buffer
@@ -904,6 +924,8 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
                 fail = 1;
                 break;
             }
+
+            // printf("2nd : %s\n", line);
 
             if (strncmp(line, "$       Shell", 13) == 0) {
                 // A standard icem output - description of each
@@ -921,7 +943,30 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
                     sscanf(comp, "%s", &component_descript[33 * comp_num]);
                 }
             }
-            if (line[0] != '$') {  // A comment line
+            if (strncmp(line, "$ Femap Property", 16) == 0) {
+                // caps2tacs femap output
+                char comp[33];
+                int comp_num = component_counter;
+                component_counter++;
+
+                strncpy(comp, &line[41], 32);
+                comp[32] = '\0';
+                // Remove white space
+                if (comp_num >= 0 && comp_num < num_components) {
+                    sscanf(comp, "%s", &component_descript[33 * comp_num]);
+                }
+            }
+
+
+            // currently unsupported settings in the TACS Meshloader C++ version from ESP/CAPS
+            bool caps_ignored_line = strncmp(line, "PARAM", 5) == 0 || strncmp(line, "SPCADD", 6) == 0 || strncmp(line, "MAT", 3) == 0 || 
+                strncmp(line, "PSHELL", 6) == 0 || strncmp(line, "DESVAR", 6) == 0 || strncmp(line, "DVPREL", 6) == 0 || strncmp(line, "CORD", 4) == 0;
+            if (prev_caps_ignore_line && strncmp(line, "*", 1) == 0) {
+                caps_ignored_line = true;
+            }
+            prev_caps_ignore_line = caps_ignored_line;
+
+            if (line[0] != '$' && !caps_ignored_line) {  // A comment line
                 if (in_bulk &&
                     (strncmp(line, "END BULK", 8) == 0 || strncmp(line, "ENDDATA", 7) == 0)) {
                     buffer_temp_loc = buffer_len;
@@ -949,6 +994,59 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
                     file_Xpts[3 * num_nodes + 1] = y;
                     file_Xpts[3 * num_nodes + 2] = z;
                     num_nodes++;
+                } else if (strncmp(line, "SPC1*", 5) == 0) {
+                    // This is a variable-length format. Read in grid points until
+                    // zero is reached. This is a fixed-width format
+                    // SPC1* SID D G1
+                    // must check SPC1* before SPC cause SPC is subset of its letters
+
+                    // Read in the nodal value
+                    char node[17];
+                    strncpy(node, &line[39], 16);
+                    node[16] = '\0';
+                    bc_nodes[num_bcs] = atoi(node) - 1;
+
+                    // Read in the dof that will be constrained
+                    for (int k = 23; k < 39; k++) {
+                        char dofs[9] = "12345678";
+
+                        for (int j = 0; j < 8; j++) {
+                            if (dofs[j] == line[k]) {
+                                bc_vars[bc_vars_size] = j;
+                                bc_vals[bc_vars_size] = 0.0; // SPC1* doesn't take nz values
+                                bc_vars_size++;
+                                break;
+                            }
+                        }
+                    }
+
+                    bc_ptr[num_bcs + 1] = bc_vars_size;
+                    num_bcs++;
+                } else if (strncmp(line, "SPC1", 4) == 0) {
+                    // SPC1 SID D G1
+
+                    // Read in the nodal value
+                    char node[9];
+                    strncpy(node, &line[24], 8);
+                    node[8] = '\0';
+                    bc_nodes[num_bcs] = atoi(node) - 1;
+
+                    // Read in the dof that will be constrained
+                    for (int k = 16; k < 24; k++) {
+                        char dofs[9] = "12345678";
+
+                        for (int j = 0; j < 8; j++) {
+                            if (dofs[j] == line[k]) {
+                                bc_vars[bc_vars_size] = j;
+                                bc_vals[bc_vars_size] = 0.0; // SPC1* doesn't take nz values
+                                bc_vars_size++;
+                                break;
+                            }
+                        }
+                    }
+
+                    bc_ptr[num_bcs + 1] = bc_vars_size;
+                    num_bcs++;
                 } else if (strncmp(line, "SPC", 3) == 0) {
                     // This is a variable-length format. Read in grid points until
                     // zero is reached. This is a fixed-width format
@@ -1014,6 +1112,7 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
                         }
 
                         if (strncmp(line, "CQUAD4", 6) == 0 || strncmp(line, "CQUADR", 6) == 0) {
+                            // printf("found CQUAD4 elem %d\n");
                             file_conn[elem_conn_size] = temp_nodes[0] - 1;
                             file_conn[elem_conn_size + 1] = temp_nodes[1] - 1;
                             file_conn[elem_conn_size + 2] = temp_nodes[3] - 1;
