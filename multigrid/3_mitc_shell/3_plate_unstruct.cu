@@ -17,7 +17,7 @@
 #include <chrono>
 
 /* command line args:
-    [direct/mg] [--nxe int] [--SR float] [--nvcyc int]
+    [--nxe int] [--SR float] [--nvcyc int]
     * nxe must be power of 2
 
     examples:
@@ -29,104 +29,6 @@ void to_lowercase(char *str) {
     for (; *str; ++str) {
         *str = std::tolower(*str);
     }
-}
-
-void direct_plate_solve(int nxe, double SR) {
-    using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
-    using Director = LinearizedRotation<T>;
-    using Basis = ShellQuadBasis<T, Quad, 2>;
-    using Geo = Basis::Geo;
-
-    constexpr bool has_ref_axis = false;
-    constexpr bool is_nonlinear = false;
-    using Data = ShellIsotropicData<T, has_ref_axis>;
-    using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-
-    auto start0 = std::chrono::high_resolution_clock::now();
-
-    int nye = nxe;
-    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-    int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
-    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
-
-    // BSR symbolic factorization
-    // must pass by ref to not corrupt pointers
-    auto& bsr_data = assembler.getBsrData();
-    double fillin = 10.0;  // 10.0
-    bool print = true;
-    bool full_LU = true;
-
-    if (full_LU) {
-        bsr_data.AMD_reordering();
-        bsr_data.compute_full_LU_pattern(fillin, print);
-    } else {
-        /*
-        RCM and reorderings actually hurt GMRES performance on the plate case
-        because the matrix already has a nice banded structure => RCM increases bandwidth (which means it just doesn't work well for this problem
-        as it's whole point is to decrease matrix bandwidth)
-        */
-
-        bsr_data.AMD_reordering();
-        // bsr_data.RCM_reordering();
-        // bsr_data.qorder_reordering(1.0);
-        
-        bsr_data.compute_ILUk_pattern(5, fillin);
-        // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
-    }
-    // printf("perm:");
-    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
-    assembler.moveBsrDataToDevice();
-
-    // get the loads
-    double Q = 1.0; // load magnitude
-    // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
-    T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
-
-    auto loads = assembler.createVarsVec(my_loads);
-    assembler.apply_bcs(loads);
-
-    // setup kmat and initial vecs
-    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-    auto soln = assembler.createVarsVec();
-    auto res = assembler.createVarsVec();
-    auto vars = assembler.createVarsVec();
-
-    // assemble the kmat
-    assembler.add_jacobian(res, kmat);
-    assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
-
-    auto end0 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> startup_time = end0 - start0;
-    auto start1 = std::chrono::high_resolution_clock::now();
-
-    // solve the linear system
-    if (full_LU) {
-        CUSPARSE::direct_LU_solve(kmat, loads, soln);
-    } else {
-        int n_iter = 200, max_iter = 400;
-        T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = true;
-        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
-
-        // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
-    }
-
-    auto end1 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> solve_time = end1 - start1;
-    int nx = nxe + 1;
-    int ndof = nx * nx;
-    double total = startup_time.count() + solve_time.count();
-    printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
-
-
-    // print some of the data of host residual
-    auto h_soln = soln.createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate.vtk");
 }
 
 void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
@@ -150,7 +52,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
 
-    using Prolongation = StructuredProlongation<PLATE>;
+    // using Prolongation = StructuredProlongation<PLATE>;
+    using Prolongation = UnstructuredProlongation<Basis>;
 
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
@@ -160,6 +63,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
 
     int nxe_min = nxe > 32 ? 32 : 4;
     // int nxe_min = nxe / 2; // two level
+    // int nxe_min = 4;
+    // int nxe_min = 16;
 
     // make each grid
     for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
@@ -183,6 +88,33 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
     }
+
+    if (!Prolongation::structured) {
+        mg.template init_unstructured<Basis>();
+        // return; // TEMP DEBUG
+    }
+
+    // // -------------------------------
+    // TEMP DEBUG unstructured
+    // int *d_perm1 = mg.grids[0].d_perm;
+
+    // mg.grids[1].direct_solve(false);
+    // mg.grids[0].prolongate(mg.grids[1].d_iperm, mg.grids[1].d_soln);
+    // auto h_soln1 = mg.grids[0].d_temp_vec.createPermuteVec(6, d_perm1).createHostVec();
+    // printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln1, "out/plate_mg_cf.vtk");
+
+    // // plot orig fine defect
+    // auto h_fdef = mg.grids[0].d_defect.createPermuteVec(6, d_perm1).createHostVec();
+    // printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fdef, "out/plate_mg_fine_defect.vtk");
+
+    // // now try restrict defect
+    // mg.grids[1].restrict_defect(
+    //                     mg.grids[0].nelems, mg.grids[0].d_iperm, mg.grids[0].d_defect);
+    // int *d_perm2 = mg.grids[1].d_perm;
+    // auto h_def2 = mg.grids[1].d_defect.createPermuteVec(6, d_perm2).createHostVec();
+    // printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_def2, "out/plate_mg_restrict.vtk");
+    // return;
+    // // -------------------------------
 
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
@@ -220,7 +152,6 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
 
 int main(int argc, char **argv) {
     // input ----------
-    bool is_multigrid = false;
     int nxe = 256; // default value
     double SR = 100.0; // default
     int n_vcycles = 50;
@@ -230,11 +161,7 @@ int main(int argc, char **argv) {
         char* arg = argv[i];
         to_lowercase(arg);
 
-        if (strcmp(arg, "direct") == 0) {
-            is_multigrid = false;
-        } else if (strcmp(arg, "mg") == 0) {
-            is_multigrid = true;
-        } else if (strcmp(arg, "--nxe") == 0) {
+        if (strcmp(arg, "--nxe") == 0) {
             if (i + 1 < argc) {
                 nxe = std::atoi(argv[++i]);
             } else {
@@ -263,11 +190,7 @@ int main(int argc, char **argv) {
     }
 
     // done reading arts, now run stuff
-    if (is_multigrid) {
-        multigrid_plate_solve(nxe, SR, n_vcycles);
-    } else {
-        direct_plate_solve(nxe, SR);
-    }
+    multigrid_plate_solve(nxe, SR, n_vcycles);
 
     return 0;
 

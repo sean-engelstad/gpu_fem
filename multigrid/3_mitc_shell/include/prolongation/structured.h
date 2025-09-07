@@ -6,10 +6,10 @@
 
 template <ProlongationGeom geom>
 class StructuredProlongation {
+  public:
     using T = double;
     static constexpr bool structured = true;
 
-   public:
     static void prolongate(int nelems_fine, int *d_coarse_iperm, int *d_fine_iperm,
                            DeviceVec<T> coarse_soln_in, DeviceVec<T> dx_fine, T *d_weights) {
         // zero temp so we can store dx in it

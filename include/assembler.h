@@ -99,6 +99,7 @@ class ElementAssembler {
     void get_elem_components(Vec<int> &elem_comp_out) {
         elem_components.copyValuesTo(elem_comp_out);
     }
+    Vec<int> getElemComponents() { return elem_components; }
 
     HostVec<T> createVarsHostVec(T *data, bool randomize);
     void setBsrData(BsrData new_bsr_data) { this->bsr_data = new_bsr_data; }
@@ -227,7 +228,7 @@ ElementAssembler<T, ElemGroup, Vec, Mat> ElementAssembler<T, ElemGroup, Vec, Mat
     HostVec<T> xpts_vec(spatial_dim * num_nodes, xpts);
     HostVec<Data> physData_vec(num_elements, single_data);
 
-    printf("num_components = %d\n", num_components);
+    // printf("num_components = %d\n", num_components);
 
     // call base constructor
     return ElementAssembler(num_nodes, num_nodes, num_elements, elem_conn_vec, elem_conn_vec,
