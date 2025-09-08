@@ -172,13 +172,39 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
         mg.grids.push_back(grid); // add new grid
     }
 
+    // // bool debug = false;
+    // bool debug = true;
+    // if (debug) {
+    //     int *d_perm1 = mg.grids[0].d_perm;
+    //     int *d_perm2 = mg.grids[1].d_perm;
+    //     mg.grids[1].direct_solve(false);
+    //     auto h_solnc1 = mg.grids[1].d_soln.createPermuteVec(6, d_perm2).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_solnc1, "out/cylinder_coarse_soln.vtk");
+
+    //     mg.grids[0].prolongate(mg.grids[1].d_iperm, mg.grids[1].d_soln);
+    //     auto h_soln1 = mg.grids[0].d_temp_vec.createPermuteVec(6, d_perm1).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln1, "out/cylinder_mg_cf.vtk");
+
+    //     // plot orig fine defect
+    //     auto h_fdef = mg.grids[0].d_defect.createPermuteVec(6, d_perm1).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fdef, "out/cylinder_mg_fine_defect.vtk");
+
+    //     // now try restrict defect
+    //     mg.grids[1].restrict_defect(
+    //                         mg.grids[0].nelems, mg.grids[0].d_iperm, mg.grids[0].d_defect);
+    //     auto h_def2 = mg.grids[1].d_defect.createPermuteVec(6, d_perm2).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_def2, "out/cylinder_mg_restrict.vtk");
+    //     return;
+    // }  
+
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
     // int pre_smooth = 1, post_smooth = 1;
-    int pre_smooth = 2, post_smooth = 2; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
+    int pre_smooth = 1, post_smooth = 2;
+    // int pre_smooth = 2, post_smooth = 2; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     // int pre_smooth = 4, post_smooth = 4;
     // bool print = true;
     bool print = false;

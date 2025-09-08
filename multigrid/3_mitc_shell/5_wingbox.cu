@@ -174,8 +174,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
 
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
-    int pre_smooth = 1, post_smooth = 1;
-    // int pre_smooth = 2, post_smooth = 2;
+    // int pre_smooth = 1, post_smooth = 1;
+    int pre_smooth = 2, post_smooth = 2;
     // int pre_smooth = 4, post_smooth = 4;
     // bool print = false;
     bool print = false;
