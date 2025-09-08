@@ -130,7 +130,10 @@ for prefix in ["uOML", "lOML"]:
         ).register_to(wing)
 
 # add constraints and loads
-caps2tacs.PinConstraint("root").register_to(tacs_model)
+# clamped vs SS root
+# caps2tacs.PinConstraint("root").register_to(tacs_model)
+caps2tacs.PinConstraint("root", dof_constraint=123456).register_to(tacs_model)
+
 # caps2tacs.GridForce("OML", direction=[0, 0, 1.0], magnitude=10).register_to(tacs_model) # don't need that here
 
 # run the tacs model setup and register to the funtofem model

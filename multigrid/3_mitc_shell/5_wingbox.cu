@@ -99,8 +99,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     }
 
     // -------------------------------
-    // bool debug = false;
-    bool debug = true;
+    bool debug = false;
+    // bool debug = true;
 
     if (debug) {
         // check n2e ptr for fine nodes 4909, 1098, 1097
