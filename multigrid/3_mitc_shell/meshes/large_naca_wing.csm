@@ -21,14 +21,14 @@ despmtr dihedral 3.0
 despmtr lesweep 15.0
 
 # airfoil shape parameters
-despmtr tc0 0.12
+despmtr tc0 0.24
 despmtr tcf 0.12
 despmtr camb0 0.05
 despmtr cambf 0.05
 
 # chip rib fractions
-despmtr rib_chip0 0.05
-despmtr rib_chipf 0.1
+despmtr rib_chipLE 0.05
+despmtr rib_chipTE 0.2
 
 # spar fraction despmtrs
 despmtr spar_a1 1.0
@@ -59,10 +59,10 @@ udprim naca thickness tc0 camber camb0 maxloc 0.3
 scale chord0
 rotatex 90 0 0
   
-box chord0*rib_chip0 0.1 2.0*tc0 -chord0*2*rib_chip0 -0.2 -4.0*tc0
+box chord0*rib_chipLE 0.1 2.0*tc0 -chord0*2*rib_chipLE -0.2 -4.0*tc0
 subtract
    
-box chord0*(1-rib_chip0) 0.1 2.0*tc0 chord0*2*rib_chip0 -0.2 -4.0*tc0
+box chord0*(1-rib_chipTE) 0.1 2.0*tc0 chord0*2*rib_chipTE -0.2 -4.0*tc0
 subtract
 # throw 999
 
@@ -70,9 +70,9 @@ subtract
 udprim naca thickness tcf camber cambf maxloc 0.3
 scale chordf
 rotatex 90 0 0
-box chordf*rib_chipf 0.1 2.0*tcf -chordf*2*rib_chipf -0.2 -4.0*tcf
+box chordf*rib_chipLE 0.1 2.0*tcf -chordf*2*rib_chipLE -0.2 -4.0*tcf
 subtract
-box chordf*(1-rib_chipf) 0.1 2.0*tcf chordf*2*rib_chipf -0.2 -4.0*tcf
+box chordf*(1-rib_chipTE) 0.1 2.0*tcf chordf*2*rib_chipTE -0.2 -4.0*tcf
 subtract
    
 translate xf -sspan zf

@@ -96,6 +96,7 @@ class ShellGrid {
             } else if (smoother == LEXIGRAPHIC_GS) {
                 if (reorder) {
                     bsr_data.RCM_reordering(1);
+                    // bsr_data.AMD_reordering();
                 }
                 // default or no colors..
                 num_colors = 1;
@@ -1098,7 +1099,7 @@ class ShellGrid {
         }  // next block-GS iteration
     }
 
-    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in, int n_smooth = 0) {
+    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in) {
         // prolongate from coarser grid to this fine grid
         cudaMemset(d_temp, 0.0, N * sizeof(T));
 
@@ -1123,16 +1124,6 @@ class ShellGrid {
         // so need 2 dot prods, one SpMV, see 'multigrid/_python_demos/4_gmg_shell/1_mg.py' also
         T sT_defect;
         CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_defect.getPtr(), 1, d_temp, 1, &sT_defect));
-
-        if (n_smooth > 0) {
-            // do smoothing on the coarse-fine update (kind of like AMG where you do smoothing on
-            // the prolongation operator) except here it's less efficient => does it on the
-            // prolongation step every time.. this will tell me whether AMG or some hybrid smoothing
-            // of the prolongation operator of GMG too would help
-
-            // copy current soln and defect into new temp vectors? then put these vecs in their
-            // place to do MGS-defect?
-        }
 
         T a = 1.0, b = 0.0;  // K * d_temp + 0 * d_temp2 => d_temp2
         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
@@ -1177,7 +1168,7 @@ class ShellGrid {
 
     void prolongate_debug(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in,
                           std::string file_prefix = "", std::string file_suffix = "",
-                          int n_smooth = 0) {
+                          int n_smooth = 0, T y_offset = -1.5) {
         // call main prolongate
         if (n_smooth == 0) {
             prolongate(d_coarse_iperm, coarse_soln_in);
@@ -1187,17 +1178,17 @@ class ShellGrid {
 
         // DEBUG : write out the cf update, defect update and before and after defects
         auto h_cf_update = d_temp_vec.createPermuteVec(6, d_perm).createHostVec();
-        T xpts_shift[3] = {0.0, -1.5, 1.5};
+        T xpts_shift[3] = {0.0, y_offset, 1.5};
         printToVTKDEBUG<Assembler, HostVec<T>>(
             assembler, h_cf_update, file_prefix + "post2_cf_soln" + file_suffix, xpts_shift);
 
         auto h_cf_loads = DeviceVec<T>(N, d_temp2).createPermuteVec(6, d_perm).createHostVec();
-        T xpts_shift2[3] = {0.0, -1.5, 3.0};
+        T xpts_shift2[3] = {0.0, y_offset, 3.0};
         printToVTKDEBUG<Assembler, HostVec<T>>(
             assembler, h_cf_loads, file_prefix + "post3_cf_loads" + file_suffix, xpts_shift2);
 
         auto h_defect2 = d_defect.createPermuteVec(6, d_perm).createHostVec();
-        T xpts_shift3[3] = {0.0, -1.5, 4.5};
+        T xpts_shift3[3] = {0.0, y_offset, 4.5};
         printToVTKDEBUG<Assembler, HostVec<T>>(
             assembler, h_defect2, file_prefix + "post4_cf_fin_defect" + file_suffix, xpts_shift3);
     }

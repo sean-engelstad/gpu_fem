@@ -24,7 +24,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--level",
     type=int,
-    choices=[0, 1, 2],
+    choices=[0, 1, 2, 3, 4],
     required=True,
     help="Mesh refinement level: 0 = coarsest, 1 = finer, 2 etc..",
 )
@@ -78,6 +78,29 @@ elif args.level == 2:
         global_mesh_size=0.005,
         max_surf_offset=0.005,
         max_dihedral_angle=3,
+    ).register_to(
+        tacs_model
+    )
+
+
+elif args.level == 3:
+    tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
+        edge_pt_min=54,
+        edge_pt_max=60,
+        global_mesh_size=0.0025,
+        max_surf_offset=0.0025,
+        max_dihedral_angle=1,
+    ).register_to(
+        tacs_model
+    )
+
+elif args.level == 4:
+    tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
+        edge_pt_min=108,
+        edge_pt_max=120,
+        global_mesh_size=0.0015,
+        max_surf_offset=0.0015,
+        max_dihedral_angle=0.8,
     ).register_to(
         tacs_model
     )
