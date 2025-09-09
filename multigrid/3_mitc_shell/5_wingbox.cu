@@ -51,6 +51,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
 
     auto start0 = std::chrono::high_resolution_clock::now();
     auto mg = MG();
+    std::vector<GRID> direct_grids;
 
     // make each wing multigrid object.. (highest mesh level is finest, this is flipped from MG object's convention)
     for (int i = level; i >= 0; i--) {
@@ -88,6 +89,15 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         }
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
+
+        if (i == level) {
+            // also makethe true fine grid
+            TACSMeshLoader mesh_loader2{comm};
+            mesh_loader2.scanBDFFile(fname.c_str());
+            auto assembler2 = Assembler::createFromBDF(mesh_loader2, Data(E, nu, thick));
+            auto direct_fine_grid = *GRID::buildFromAssembler(assembler2, my_loads, true, true);
+            direct_grids.push_back(direct_fine_grid); 
+        }
     }
 
     if (!Prolongation::structured) {
@@ -108,7 +118,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         // int fine_nodes[4] = {14803, 15947, 15948, 15977};
         // int fine_nodes[2] = {11132, 11133};
         // int fine_nodes[3] = {24064, 24095, 24125};
-        int fine_nodes[2] = {1539, 5316};
+        // int fine_nodes[2] = {1539, 5316};
+        int fine_nodes[3] = {11102, 14081, 14064};
 
         GRID &fine_grid = mg.grids[0];
         int n2e_nnz = fine_grid.n2e_nnz;
@@ -118,7 +129,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         int ncoarse_elems = fine_grid.ncoarse_elems;
         int *h_coarse_conn = DeviceVec<int>(4 * ncoarse_elems, fine_grid.d_coarse_conn).createHostVec().getPtr();
 
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             int _fine_node = fine_nodes[i];
             // int fine_node = _fine_node - 1;
             int fine_node = _fine_node;
@@ -139,32 +150,75 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
                 printf("\n");
             }
         }
+
+        // print the number of celems for each fine node to file..
+        T *h_n2e_cts = new T[6 * fine_grid.nnodes];
+        for (int inode = 0; inode < fine_grid.nnodes; inode++) {
+            for (int idof = 0; idof < 6; idof++) {
+                h_n2e_cts[6 * inode + idof] = h_n2e_ptr[inode + 1] - h_n2e_ptr[inode];
+            }
+        }
+        auto h_n2e_cts_vec = HostVec<T>(fine_grid.N, h_n2e_cts);
+        printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_n2e_cts_vec, "out/wing_num_celems.vtk");
     }
 
 
     // TEMP DEBUG unstructured
     if (debug) {
-        int *d_perm1 = mg.grids[0].d_perm;
-        int *d_perm2 = mg.grids[1].d_perm;
+        // mg.grids[1].restrict_defect(
+        //                     mg.grids[0].nelems, mg.grids[0].d_iperm, mg.grids[0].d_defect);
+
         mg.grids[1].direct_solve(false);
-        auto h_solnc1 = mg.grids[1].d_soln.createPermuteVec(6, d_perm2).createHostVec();
-        printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_solnc1, "out/wing_coarse_soln.vtk");
+        int n_smooth = 0; // regular prolong
+        // int n_smooth = 1;
+        // int n_smooth = 3;
+        mg.grids[0].prolongate_debug(mg.grids[1].d_iperm, mg.grids[1].d_soln, "out/wing_", ".vtk", n_smooth);
+        int *d_perm1 = mg.grids[0].d_perm;
+        auto h_soln_mg = mg.grids[0].d_soln.createPermuteVec(6, d_perm1).createHostVec();
 
-        mg.grids[0].prolongate(mg.grids[1].d_iperm, mg.grids[1].d_soln);
-        auto h_soln1 = mg.grids[0].d_temp_vec.createPermuteVec(6, d_perm1).createHostVec();
-        printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln1, "out/wing_mg_cf.vtk");
+        printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln_mg, "out/wing_soln_update.vtk");     
 
-        // plot orig fine defect
-        auto h_fdef = mg.grids[0].d_defect.createPermuteVec(6, d_perm1).createHostVec();
-        printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fdef, "out/wing_mg_fine_defect.vtk");
+        // compare to true fine grid soln
+        direct_grids[0].direct_solve(false);
+        int *d_perm2 = direct_grids[0].d_perm;
+        auto h_true_soln = direct_grids[0].d_soln.createPermuteVec(6, d_perm2).createHostVec();
+        printToVTK<Assembler,HostVec<T>>(direct_grids[0].assembler, h_true_soln, "out/wing_true_soln.vtk");    
 
-        // now try restrict defect
-        mg.grids[1].restrict_defect(
-                            mg.grids[0].nelems, mg.grids[0].d_iperm, mg.grids[0].d_defect);
-        auto h_def2 = mg.grids[1].d_defect.createPermuteVec(6, d_perm2).createHostVec();
-        printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_def2, "out/wing_mg_restrict.vtk");
+
+        // somehow compare the soln update to the true host solution?
         return;
-    }  
+    }
+
+    // if (debug) {
+    //     int *d_perm1 = mg.grids[0].d_perm;
+    //     int *d_perm2 = mg.grids[1].d_perm;
+
+    //     // plot orig fine defect
+    //     auto h_fdef = mg.grids[0].d_defect.createPermuteVec(6, d_perm1).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fdef, "out/wing_mg_fine_defect.vtk");
+
+    //     // now try restrict defect
+    //     mg.grids[1].restrict_defect(
+    //                         mg.grids[0].nelems, mg.grids[0].d_iperm, mg.grids[0].d_defect);
+    //     auto h_def2 = mg.grids[1].d_defect.createPermuteVec(6, d_perm2).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_def2, "out/wing_mg_restrict.vtk");
+
+    //     // coarse solve
+    //     mg.grids[1].direct_solve(false);
+    //     auto h_solnc1 = mg.grids[1].d_soln.createPermuteVec(6, d_perm2).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_solnc1, "out/wing_coarse_soln.vtk");
+
+    //     // prolongate
+    //     mg.grids[0].prolongate(mg.grids[1].d_iperm, mg.grids[1].d_soln);
+    //     auto h_soln1 = mg.grids[0].d_temp_vec.createPermuteVec(6, d_perm1).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln1, "out/wing_mg_cf.vtk");     
+        
+    //     // plot new fine defect
+    //     auto h_fdef2 = mg.grids[0].d_defect.createPermuteVec(6, d_perm1).createHostVec();
+    //     printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fdef2, "out/wing_mg_new_fine_defect.vtk");
+        
+    //     return;
+    // }  
     // -------------------------------
 
     auto end0 = std::chrono::high_resolution_clock::now();
@@ -181,10 +235,14 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.0;
-    int n_vcycles = 50;
-    // int n_vcycles = 100;
+    // T omega = 0.8; // may need lower omega to handle junctions better? less magnification there?
+    // T omega = 0.7;
+    // T omega = 0.1;
+    // int n_vcycles = 50;
+    int n_vcycles = 100;
 
-    bool double_smooth = true; // false
+    bool double_smooth = false;
+    // bool double_smooth = true; // false
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
     printf("done with v-cycle solve\n");
 

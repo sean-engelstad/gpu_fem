@@ -64,9 +64,12 @@ class ShellMultigrid {
             // now go back up the hierarchy
             for (int i_level = n_levels - 2; i_level >= 0; i_level--) {
                 // get coarse-fine correction from coarser grid to this grid
-                // printf("prolongate from grid %d => %d\n", i_level + 1, i_level);
                 grids[i_level].prolongate(grids[i_level + 1].d_iperm, grids[i_level + 1].d_soln);
                 // if (print) printf("\tlevel %d post-smooth\n", i_level);
+
+                // TEMP DEBUG a smoothed prolongation..
+                // grids[i_level].smoothed_prolongate(grids[i_level + 1].d_iperm,
+                //                                    grids[i_level + 1].d_soln, 30);
 
                 // post-smooth
                 // printf("post-smooth on level %d\n", i_level);

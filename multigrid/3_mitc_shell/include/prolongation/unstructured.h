@@ -47,8 +47,8 @@ class UnstructuredProlongation {
 
         // TRY not normalizing restriction (that kind of breaks P and P^T relationship..) to
         // comment, seems to be fine either way.. this out.. normalize
-        int nblock2 = (N_coarse + 31) / 32;
-        dim3 grid2(nblock2);
-        k_vec_normalize<T><<<grid2, block>>>(N_coarse, coarse_defect_out.getPtr(), d_weights);
+        // int nblock2 = (N_coarse + 31) / 32;
+        // dim3 grid2(nblock2);
+        // k_vec_normalize<T><<<grid2, block>>>(N_coarse, coarse_defect_out.getPtr(), d_weights);
     }
 };
