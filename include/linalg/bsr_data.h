@@ -640,4 +640,7 @@ class BsrData {
     int32_t *perm, *iperm;
     int32_t *tr_rowp, *tr_cols, *tr_block_map;
     bool host;
+
+    // optional storage, for non-square matrices, other purposes
+    int *rows, mb, nb;
 };

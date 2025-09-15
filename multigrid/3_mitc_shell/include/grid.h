@@ -12,6 +12,8 @@
 #include "prolongation/_prolong.h"  // for prolongations
 #include "prolongation/unstruct_utils.h"
 #include "vtk.h"
+#include <set>
+#include <chrono>
 
 // for unstructured multigrid
 #include "coupled/locate_point.h"
@@ -121,9 +123,15 @@ class ShellGrid {
         int N = vars.getSize();
 
         // assemble the kmat
+        auto start0 = std::chrono::high_resolution_clock::now();
         assembler.add_jacobian(res, kmat);
         assembler.apply_bcs(res);
         assembler.apply_bcs(kmat);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end0 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> assembly_time = end0 - start0;
+        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
 
         return new ShellGrid(assembler, N, kmat, loads, h_color_rowp, full_LU);
     }
@@ -132,6 +140,8 @@ class ShellGrid {
     void init_unstructured_grid_maps(ShellGrid &coarse_grid, int ELEM_MAX = 4) {
         /* initialize the unstructured mesh prolongation map */
         // TBD, want to get the coarse nodes
+
+        auto start0 = std::chrono::high_resolution_clock::now();
 
         // -------------------------------------------------------
         // 1) prelim prolongation maps and data here..
@@ -252,9 +262,6 @@ class ShellGrid {
             }
         }
 
-        printf("f_ecomps_cts: ");
-        printVec<int>(30, f_ecomps_cts);
-
         f_ecomps_ptr0[0] = 0;
         for (int inode = 0; inode < nnodes_fine; inode++) {
             f_ecomps_ptr0[inode + 1] = f_ecomps_ptr0[inode] + f_ecomps_cts[inode];
@@ -283,12 +290,6 @@ class ShellGrid {
                 }
             }
         }
-
-        printf("f_ecomps_cts v2: ");  // no repeats allowed
-        printVec<int>(30, f_ecomps_cts);
-
-        printf("f_ecomps_comp v1: ");
-        printVec<int>(60, f_ecomps_comp0);
 
         // now that we've prevented repeats, adjust ptr size and write new comp and new nnz
         int *f_ecomps_ptr = new int[nnodes_fine + 1];
@@ -341,23 +342,10 @@ class ShellGrid {
             for (int i_nn = 0; i_nn < nn; i_nn++) {
                 int inode_c = nn_conn[nn * inode_f + i_nn];
 
-                // get nn xpts for checking dzeta each element
-                // T fine_nn_xpts[3 * nn_f];
-                // get_nodal_xpts<T>(nn_f, &nn_conn_fine[nn_f * inode_f], h_xpts_fine,
-                // fine_nn_xpts);
-
                 for (int jp = cnode_elem_ptr[inode_c]; jp < cnode_elem_ptr[inode_c + 1]; jp++) {
                     int ielem_c = cnode_elems[jp];
                     // get coarse element component
                     int c_comp = h_coarse_elem_comps[ielem_c];
-
-                    // int print_node = inode_f == 24064 || inode_f == 24095;
-                    // if (print_node) {
-                    //     printf(
-                    //         "fine node %d connected to celem %d with c_comp %d\n\tfine node "
-                    //         "comps:",
-                    //         inode_f, ielem_c, c_comp);
-                    // }
 
                     // check among comp ptr to see if fine node also belongs to this component
                     bool match_comp = false;
@@ -371,24 +359,11 @@ class ShellGrid {
                     T coarse_elem_xpts[12];
                     get_elem_xpts<T>(ielem_c, h_coarse_conn, h_xpts_coarse, coarse_elem_xpts);
 
-                    // // estimate of dzeta in nearest neighbors..
-                    // T dzeta = get_dzeta_estimate<T, Basis>(nn_f, coarse_elem_xpts, fine_nn_xpts);
-                    // // if (inode_f == 11133) {
-                    // //     printf("node %d dzeta estimate %.2e\n", inode_f, dzeta);
-                    // // }
-
                     // bool print_debug = inode_f == 1098;
                     bool print_debug = false;
 
                     T xi[3];
                     get_comp_coords<T, Basis>(coarse_elem_xpts, fine_node_xpts, xi, print_debug);
-
-                    // temp DEBUG (see if rounding improves defects..)
-                    // for (int m = 0; m < 2; m++) {
-                    //     if (abs(xi[m]) < 1e-3) xi[m] = 0.0;
-                    //     if (abs(xi[m] - 1) < 1e-2) xi[m] = 1.0;
-                    //     if (abs(xi[m] + 1) < 1e-2) xi[m] = -1.0;
-                    // }
 
                     // determine whether xi[3] is in bounds or not; xi & eta in [-1,1] and zeta in
                     // [-2,2] for max thick (or can ignore zeta..)
@@ -412,42 +387,9 @@ class ShellGrid {
                             fine_node_xis[2 * ELEM_MAX * inode_f + 2 * nelems_prev + 1] = xi[1];
                         }
                     }
-
-                    // if (inode_f == 11133) {  //  || inode_f == 1097
-                    //     // DEBUG
-                    //     std::string result = node_in_elem ? "yes" : "no";
-                    //     printf("fine node %d in coarse elem %d : %s\n", inode_f, ielem_c,
-                    //            result.c_str());
-                    //     printf("\txis: ");
-                    //     printVec<T>(3, xi);
-
-                    //     // get shell normal:
-                    //     T fn[3];
-                    //     ShellComputeCenterNormal<T, Basis>(coarse_elem_xpts, fn);
-                    //     printf("\tshell normal: ");
-                    //     printVec<T>(3, fn);
-                    // }
                 }
             }
         }
-
-        // printf("-------\nfine_nodes_celem_cts: ");
-        // printVec<int>(nnodes_fine, fine_nodes_celem_cts);
-        // printf("-------\nfine nodes celems: ");
-        // printVec<int>(ELEM_MAX * nnodes_fine, fine_nodes_celems);
-
-        // for (int inode = 0; inode < nnodes_fine; inode++) {
-        //     printf("fine node %d : celem_ct %d, celems ", inode, fine_nodes_celem_cts[inode]);
-        //     for (int j = 0; j < 4; j++) {
-        //         printf("%d ", fine_nodes_celems[4 * inode + j]);
-        //     }
-        //     printf("\n\t");
-        //     for (int j = 0; j < 4; j++) {
-        //         printf("xi%d %.2e eta%d %.2e,", j, fine_node_xis[8 * inode + 2 * j], j,
-        //                fine_node_xis[8 * inode + 2 * j + 1]);
-        //     }
-        //     printf("\n");
-        // }
 
         // now convert from cts to rowp, cols style as diff # elems per fine node
         int *fine_node2elem_ptr = new int[nnodes_fine + 1];
@@ -468,41 +410,223 @@ class ShellGrid {
             }
         }
 
-        // printf("-------\nfine_node2elem_ptr: ");
-        // printVec<int>(nnodes_fine + 1, fine_node2elem_ptr);
-        // printf("-------\nfine_node2elem_elems: ");
-        // printVec<int>(ntot_elems, fine_node2elem_elems);
-        // printf("-------\nfine_node2elem_xis: ");
-        // printVec<T>(2 * ntot_elems, fine_node2elem_xis);
-
-        // for (int inode = 0; inode < nnodes_fine; inode++) {
-        //     int start = fine_node2elem_ptr[inode];
-        //     int ct = fine_node2elem_ptr[inode + 1] - start;
-        //     printf("v2, fine node %d : celem_ct %d, celems ", inode, ct);
-        //     for (int j = 0; j < ct; j++) {
-        //         printf("%d ", fine_node2elem_elems[start + j]);
-        //     }
-        //     printf("\n\t");
-        //     for (int j = 0; j < ct; j++) {
-        //         printf("xi%d %.2e eta%d %.2e,", j, fine_node2elem_xis[2 * start + 2 * j], j,
-        //                fine_node2elem_xis[2 * start + 2 * j + 1]);
-        //     }
-        //     printf("\n");
-        // }
-
         // put these maps on the device now
         d_n2e_ptr = HostVec<int>(nnodes_fine + 1, fine_node2elem_ptr).createDeviceVec().getPtr();
         d_n2e_elems = HostVec<int>(ntot_elems, fine_node2elem_elems).createDeviceVec().getPtr();
         d_n2e_xis = HostVec<T>(2 * ntot_elems, fine_node2elem_xis).createDeviceVec().getPtr();
         d_coarse_conn = d_coarse_conn_vec.getPtr();
         n2e_nnz = ntot_elems;
-
         // and also store these maps on the coarser mesh also
         coarse_grid.restrict_d_n2e_ptr = d_n2e_ptr;
         coarse_grid.restrict_d_n2e_elems = d_n2e_elems;
         coarse_grid.restrict_d_n2e_xis = d_n2e_xis;
         coarse_grid.restrict_nnodes_fine = nnodes;
         coarse_grid.restrict_n2e_nnz = ntot_elems;
+
+        // assemble the prolongation matrix and its transpose on the device (in permuted form)
+        // for fast UnstructuredProlongation using assembled matrix
+        // --------------------------------------------------------
+
+        // now call assembler of P and PT matrices
+        if constexpr (Prolongation::assembly) {
+            int mb = nnodes_fine, nb = nnodes_coarse;
+            int *h_perm = DeviceVec<int>(nnodes_fine, d_perm).createHostVec().getPtr();
+            int *h_iperm = DeviceVec<int>(nnodes_fine, d_iperm).createHostVec().getPtr();
+            int *h_coarse_iperm = DeviceVec<int>(nnodes_coarse, coarse_grid.d_iperm).createHostVec().getPtr();
+
+            // compute the pattern here first, TODO is to clean this up and use less mem if possible at least free extra stuff
+            int *h_prol_row_cts = new int[nnodes_fine];
+            int *h_prolT_row_cts = new int[nnodes_coarse];
+            memset(h_prol_row_cts, 0.0, nnodes_fine * sizeof(int));
+            memset(h_prolT_row_cts, 0.0, nnodes_coarse * sizeof(int));
+            // TODO : clean much of this up with sparse symbolic later.. though sparse symbolic uses connectivity, not generating non-square matrices usually
+            // uses elem_conn which is like all of [1,2,7,8] connected, not the same as here where I have pairs [1] x [4,5,7,8] elements fine to coarse
+            // maybe need to make some new methods in sparse symbolic.. (but let's get it running first)
+
+            
+            for (int inf = 0; inf < nnodes_fine; inf++) {
+                int perm_inf = h_iperm[inf];
+                int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
+                std::set<int> conn_c_nodes;
+                
+                for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
+                    int ielem_c = fine_node2elem_elems[jp];
+                    const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
+
+                    // I might be including some extra sparsity for some nodes that are not contributing (like when fine node is on edge)
+                    // TBD could come back later and decrease the size? would maybe double or 1.5x the nnz
+
+                    for (int loc_node = 0; loc_node < 4; loc_node++) {
+                        int inc = c_elem_nodes[loc_node];
+                        int perm_inc = h_coarse_iperm[inc];
+                        
+                        // unique col cts?
+                        conn_c_nodes.insert(perm_inc);
+                    }
+                }
+
+                // if (inf == 0 || inf == 1) {
+                //     printf("inf %d, conn c nodes:", inf);
+                //     for (int perm_inc : conn_c_nodes) {
+                //         printf("%d ", perm_inc);
+                //     }
+                //     printf("\n");
+                // }
+
+                h_prol_row_cts[perm_inf] += conn_c_nodes.size();
+                for (int perm_inc : conn_c_nodes) {
+                    h_prolT_row_cts[perm_inc]++;
+                }
+            }
+
+            // printf("h_prol_row_cts:");
+            // printVec<int>(100, h_prol_row_cts);
+
+            // now construct rowp for P and PT
+            int *h_prol_rowp = new int[nnodes_fine + 1];
+            int *h_prolT_rowp = new int[nnodes_coarse + 1];
+            h_prol_rowp[0] = 0;
+            h_prolT_rowp[0] = 0;
+
+            for (int inf = 0; inf < nnodes_fine; inf++) {
+                h_prol_rowp[inf + 1] = h_prol_rowp[inf] + h_prol_row_cts[inf];
+            }
+            for (int inc = 0; inc < nnodes_coarse; inc++) {
+                h_prolT_rowp[inc + 1] = h_prolT_rowp[inc] + h_prolT_row_cts[inc];
+            }
+
+            // now construct cols
+            int P_nnzb = h_prol_rowp[nnodes_fine];
+            int PT_nnzb = h_prolT_rowp[nnodes_coarse];
+            int *h_prol_cols = new int[P_nnzb];
+            int *h_prolT_cols = new int[PT_nnzb];
+            int *P_next = new int[nnodes_fine]; // helper arrays to insert values into sparsity
+            memcpy(P_next, h_prol_rowp, nnodes_fine * sizeof(int));
+            int *PT_next = new int[nnodes_coarse];
+            memcpy(PT_next, h_prolT_rowp, nnodes_coarse * sizeof(int));
+            // loop back through previous maps to get the sparsity
+            // use perm_inf order here to help with PT sparsity
+            for (int perm_inf = 0; perm_inf < nnodes_fine; perm_inf++) {
+                int inf = h_perm[perm_inf];
+                int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
+                std::set<int> conn_c_nodes;
+                for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
+                    int ielem_c = fine_node2elem_elems[jp];
+                    const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
+                    for (int loc_node = 0; loc_node < 4; loc_node++) {
+                        int inc = c_elem_nodes[loc_node];
+                        int perm_inc = h_coarse_iperm[inc];
+                        
+                        // unique col cts?
+                        conn_c_nodes.insert(perm_inc);
+                    }
+                }
+
+                for (int perm_inc : conn_c_nodes) {
+                    h_prol_cols[P_next[perm_inf]++] = perm_inc; // P cols
+                    h_prolT_cols[PT_next[perm_inc]++] = perm_inf; // PT cols
+                }
+            }
+
+            // double check all values filled?
+            // for (int i = 0; i < nnodes_fine; i++) {
+            //     printf("P[i=%d,:] : ", i);
+            //     for (int jp = h_prol_rowp[i]; jp < h_prol_rowp[i+1]; jp++) {
+            //         int j = h_prol_cols[jp];
+            //         printf("%d, ", j);
+            //     }
+            //     printf("\n");
+            // }
+
+            // printf("h_prol_rowp:");
+            // printVec<int>(20, h_prol_rowp);
+            // printf("h_prol_cols:");
+            // printVec<int>(100, h_prol_cols);
+            // printf("h_prolT_rowp:");
+            // printVec<int>(20, h_prolT_rowp);
+            // printf("h_prolT_cols:");
+            // printVec<int>(100, h_prolT_cols);
+
+            // printf("h_prol_rowp last 10 vals: ");
+            // printVec<int>(10, &h_prol_rowp[nnodes_fine + 1 - 10]);
+            // printf("h_prol_cols last 10 vals:");
+            // printVec<int>(10, &h_prol_cols[P_nnzb - 10]);
+            
+            int *h_P_rows = new int[P_nnzb];
+            int *h_PT_rows = new int[PT_nnzb];
+            for (int inode = 0; inode < nnodes_fine; inode++) {
+                for (int jp = h_prol_rowp[inode]; jp < h_prol_rowp[inode + 1]; jp++) {
+                    h_P_rows[jp] = inode;
+                }
+            }
+            for (int inode = 0; inode < nnodes_coarse; inode++) {
+                for (int jp = h_prolT_rowp[inode]; jp < h_prolT_rowp[inode + 1]; jp++) {
+                    h_PT_rows[jp] = inode;
+                }
+            }
+            int *d_P_rows = HostVec<int>(P_nnzb, h_P_rows).createDeviceVec().getPtr();
+            int *d_PT_rows = HostVec<int>(PT_nnzb, h_PT_rows).createDeviceVec().getPtr();
+
+            // now put these on the device with BsrData objects for P and PT
+            // TODO : later is to just assemble P and then write my own transpose Bsrmv method in CUDA
+            int P_block_dim = 1;
+            // int P_block_dim = block_dim; // would lead to bsr here..
+
+            int block_dim2 = P_block_dim * P_block_dim; // should be 36
+            auto d_P_rowp = HostVec<int>(nnodes_fine + 1, h_prol_rowp).createDeviceVec().getPtr();
+            auto d_P_cols = HostVec<int>(P_nnzb, h_prol_cols).createDeviceVec().getPtr();
+            auto d_P_vals = DeviceVec<T>(block_dim2 * P_nnzb);
+            auto P_bsr_data = BsrData(nnodes_fine, P_block_dim, P_nnzb, d_P_rowp, d_P_cols, d_perm, d_iperm, false);
+            P_bsr_data.mb = nnodes_fine, P_bsr_data.nb = nnodes_coarse;
+            P_bsr_data.rows = d_P_rows;
+
+            P_mat = BsrMat<DeviceVec<T>>(P_bsr_data, d_P_vals);
+            // TODO : technically I need to have BsrData capable of non-square matrices also
+
+            auto d_PT_rowp = HostVec<int>(nnodes_coarse + 1, h_prolT_rowp).createDeviceVec().getPtr();
+            auto d_PT_cols = HostVec<int>(PT_nnzb, h_prolT_cols).createDeviceVec().getPtr();
+            auto d_PT_vals = DeviceVec<T>(block_dim2 * PT_nnzb);
+            auto PT_bsr_data = BsrData(nnodes_coarse, P_block_dim, PT_nnzb, d_PT_rowp, d_PT_cols, 
+                coarse_grid.d_perm, coarse_grid.d_iperm, false);
+            PT_bsr_data.mb = nnodes_coarse, PT_bsr_data.nb = nnodes_fine;
+            PT_bsr_data.rows = d_PT_rows; // for each nnz, which row is it (not same as rowp), helps for efficient mat-prods
+            auto PT_mat = BsrMat<DeviceVec<T>>(PT_bsr_data, d_PT_vals); // only store this matrix on the coarse grid
+            
+            // printf("assemble matrices pre\n");
+            printf("assemble P and PT matrices with nnodes_fine %d and nnodes_coarse %d\n", nnodes_fine, nnodes_coarse);
+            Prolongation::assemble_matrices(d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis, P_mat, PT_mat);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            // printf("assemble matrices post\n");
+            coarse_grid.restrict_PT_mat = PT_mat;
+
+            // TEMP DEBUG
+            // T *h_P_vals = d_P_vals.createHostVec().getPtr();
+            // printf("h_P_vals:\n");
+            // for (int i = 0; i < 2; i++) {
+            //     for (int jp = h_prol_rowp[i]; jp < h_prol_rowp[i+1];  jp++) {
+            //         int j = h_prol_cols[jp];
+            //         T val = h_P_vals[36 * jp];
+            //         printf("P[%d,%d] nodal : %.3e\n", i, j, val);
+            //     }
+            // }
+
+            // matrix descriptions for Bsrmv..
+            descrP = 0;
+            CHECK_CUSPARSE(cusparseCreateMatDescr(&descrP));
+            CHECK_CUSPARSE(cusparseSetMatType(descrP, CUSPARSE_MATRIX_TYPE_GENERAL));
+            CHECK_CUSPARSE(cusparseSetMatIndexBase(descrP, CUSPARSE_INDEX_BASE_ZERO));
+
+            coarse_grid.restrict_descrPT = 0;
+            CHECK_CUSPARSE(cusparseCreateMatDescr(&coarse_grid.restrict_descrPT));
+            CHECK_CUSPARSE(cusparseSetMatType(coarse_grid.restrict_descrPT, CUSPARSE_MATRIX_TYPE_GENERAL));
+            CHECK_CUSPARSE(cusparseSetMatIndexBase(coarse_grid.restrict_descrPT, CUSPARSE_INDEX_BASE_ZERO));
+
+        } // end of Prolongation::assembly case..
+
+        // printf("done with init unstructured grid maps\n");
+        auto end0 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> P_PT_time = end0 - start0;
+        printf("unstructured grid P,PT comp in %.2e sec\n", P_PT_time.count());
 
         // TBD: free up temp arrays
     }
@@ -910,7 +1034,7 @@ class ShellGrid {
             T defect_nrm;
             CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
             if (print && iter % print_freq == 0)
-                printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+                printf("\tLX-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
         }  // next block-GS iteration
     }
@@ -1015,13 +1139,20 @@ class ShellGrid {
         int *color_rowp = h_color_rowp.getPtr();
         // printf("mc BGS-fast with # colors = %d\n", num_colors);
 
+        // bool time_debug = false;
+        bool time_debug = true;
+
         // DEBUG
         // n_solns = n_iters * num_colors;
-        // h_solns = new T *[n_solns];
+        // h_solns = new T *[n_solns]
+        printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
 
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
                 // printf("\t\titer %d, color %d\n", iter, icolor);
+
+                if (time_debug) CHECK_CUDA(cudaDeviceSynchronize());
+                auto prelim_time = std::chrono::high_resolution_clock::now();
 
                 int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
                 // int _icolor2 = _icolor;  // no permutations.. about the same either way..
@@ -1035,25 +1166,41 @@ class ShellGrid {
                 T *d_defect_color = &d_defect.getPtr()[block_dim * start];
                 cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
                 T *d_temp_color = &d_temp[block_dim * start];
-                T *d_temp_color2 = &d_temp2[block_dim * start];
-                cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
-                cudaMemcpy(d_temp_color2, d_defect_color, nrows_color * sizeof(T),
-                           cudaMemcpyDeviceToDevice);
+                // T *d_temp_color2 = &d_temp2[block_dim * start];
+                // cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
+                // cudaMemcpy(d_temp_color2, d_defect_color, nrows_color * sizeof(T),
+                //            cudaMemcpyDeviceToDevice);
 
                 int block_dim2 = block_dim * block_dim;
                 int diag_inv_nnzb_color = nblock_rows_color;
                 T *d_diag_LU_vals_color = &d_diag_LU_vals[start * block_dim2];
 
+                // print out one LU matrix..
+                T *h_diag_LU_vals = DeviceVec<T>(36, d_diag_LU_vals_color).createHostVec().getPtr();
+                printf("h diag LU vals (one node): ");
+                for (int i = 0; i < 36; i++) {
+                    printf("%.12e, ", h_diag_LU_vals[i]);
+                }
+                printf("\n");
+
                 // T *h_defect = DeviceVec<T>(N, d_defect.getPtr()).createHostVec().getPtr();
                 // printf("h_defect fast, color %d with nnodes %d\n", icolor, nnodes);
                 // printVec<T>(nrows_color, &h_defect[block_dim * start]);
+
+                if (time_debug) {
+                    CHECK_CUDA(cudaDeviceSynchronize());
+                    auto end_prelim_time = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double> full_prelim_time = end_prelim_time - prelim_time;
+                    printf("\t\tprelim time on iter %d,color %d in %.2e sec\n", iter, icolor, full_prelim_time.count());
+                }
+                auto start_Dinv_LU_tmie = std::chrono::high_resolution_clock::now();
 
                 T a = 1.0, b = 0.0;
                 const double alpha = 1.0;
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
                     cusparseHandle, dir, trans_L, nblock_rows_color, diag_inv_nnzb_color, &alpha,
                     descr_L, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols, block_dim, info_L,
-                    d_temp_color2, d_resid, policy_L,
+                    d_defect_color, d_resid, policy_L,
                     pBuffer));  // prob only need U^-1 part for block diag.. TBD
 
                 // T *h_resid = DeviceVec<T>(N, d_resid).createHostVec().getPtr();
@@ -1070,6 +1217,14 @@ class ShellGrid {
                 // printf("h_temp_fast, color %d\n", icolor);
                 // printVec<T>(nrows_color, &h_temp[block_dim * start]);
 
+                if (time_debug) {
+                    CHECK_CUDA(cudaDeviceSynchronize());
+                    auto end_Dinv_LU_time = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double> Dinv_LU_time = end_Dinv_LU_time - start_Dinv_LU_tmie;
+                    printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor, Dinv_LU_time.count());
+                }
+                auto start_Bsrmv_time = std::chrono::high_resolution_clock::now();
+
                 // 2) update soln x_color += dx_color
 
                 T *d_soln_color = &d_soln.getPtr()[block_dim * start];
@@ -1079,12 +1234,163 @@ class ShellGrid {
 
                 a = -omega,
                 b = 1.0;  // so that defect := defect - mat*vec
-                // can't row slice this to remove redundant color * 0 subblock computations
-                // because K^T * vec not supported in cusparseDbsrmv routine.. see doc
-                CHECK_CUSPARSE(cusparseDbsrmv(
-                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
-                    block_dim, d_temp, &b, d_defect.getPtr()));
+
+                if constexpr (slice_prod) {
+                    a = 0.0; // TODO : need to slice the color matrices..
+
+                } else {
+                    // can't row slice this to remove redundant color * 0 subblock computations
+                    // because K^T * vec not supported in cusparseDbsrmv routine.. see doc
+                    CHECK_CUSPARSE(cusparseDbsrmv(
+                        cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                        nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                        block_dim, d_temp, &b, d_defect.getPtr()));
+                }
+
+                if (time_debug) {
+                    CHECK_CUDA(cudaDeviceSynchronize());
+                    auto end_Bsrmv_time = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double> bsrmv_time = end_Bsrmv_time - start_Bsrmv_time;
+                    printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor, bsrmv_time.count());
+                }
+                
+
+            }  // next color iteration
+
+            // printf("iter %d, done with color iterations\n", iter);
+
+            /* report progress of defect nrm if printing.. */
+            T defect_nrm;
+            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
+            if (print && iter % print_freq == 0)
+                printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+
+        }  // next block-GS iteration
+    }
+
+    void multicolorBlockGaussSeidel_inhouse_fast(int n_iters, bool print = false, int print_freq = 10,
+                                         T omega = 1.0, bool rev_colors = false) {
+        // faster version with custom in-house kernels
+
+        int num_colors = h_color_rowp.getSize() - 1;
+        int *color_rowp = h_color_rowp.getPtr();
+        // printf("mc BGS-fast with # colors = %d\n", num_colors);
+
+        // bool time_debug = false;
+        bool time_debug = true;
+
+        // DEBUG
+        // n_solns = n_iters * num_colors;
+        // h_solns = new T *[n_solns]
+        printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
+
+        for (int iter = 0; iter < n_iters; iter++) {
+            for (int _icolor = 0; _icolor < num_colors; _icolor++) {
+                // printf("\t\titer %d, color %d\n", iter, icolor);
+
+                if (time_debug) CHECK_CUDA(cudaDeviceSynchronize());
+                auto prelim_time = std::chrono::high_resolution_clock::now();
+
+                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
+                // int _icolor2 = _icolor;  // no permutations.. about the same either way..
+
+                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
+
+                // get active rows / cols for this color
+                int start = color_rowp[icolor], end = color_rowp[icolor + 1];
+                int nblock_rows_color = end - start;
+                int nrows_color = nblock_rows_color * block_dim;
+                T *d_defect_color = &d_defect.getPtr()[block_dim * start];
+                cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
+                T *d_temp_color = &d_temp[block_dim * start];
+                // T *d_temp_color2 = &d_temp2[block_dim * start];
+                // cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
+                // cudaMemcpy(d_temp_color2, d_defect_color, nrows_color * sizeof(T),
+                //            cudaMemcpyDeviceToDevice);
+
+                int block_dim2 = block_dim * block_dim;
+                int diag_inv_nnzb_color = nblock_rows_color;
+                T *d_diag_LU_vals_color = &d_diag_LU_vals[start * block_dim2];
+
+                // print out one LU matrix..
+                T *h_diag_LU_vals = DeviceVec<T>(36, d_diag_LU_vals_color).createHostVec().getPtr();
+                printf("h diag LU vals (one node): ");
+                for (int i = 0; i < 36; i++) {
+                    printf("%.12e, ", h_diag_LU_vals[i]);
+                }
+                printf("\n");
+
+                // T *h_defect = DeviceVec<T>(N, d_defect.getPtr()).createHostVec().getPtr();
+                // printf("h_defect fast, color %d with nnodes %d\n", icolor, nnodes);
+                // printVec<T>(nrows_color, &h_defect[block_dim * start]);
+
+                if (time_debug) {
+                    CHECK_CUDA(cudaDeviceSynchronize());
+                    auto end_prelim_time = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double> full_prelim_time = end_prelim_time - prelim_time;
+                    printf("\t\tprelim time on iter %d,color %d in %.2e sec\n", iter, icolor, full_prelim_time.count());
+                }
+                auto start_Dinv_LU_tmie = std::chrono::high_resolution_clock::now();
+
+                T a = 1.0, b = 0.0;
+                const double alpha = 1.0;
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, nblock_rows_color, diag_inv_nnzb_color, &alpha,
+                    descr_L, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols, block_dim, info_L,
+                    d_defect_color, d_resid, policy_L,
+                    pBuffer));  // prob only need U^-1 part for block diag.. TBD
+
+                // T *h_resid = DeviceVec<T>(N, d_resid).createHostVec().getPtr();
+                // printf("h_resid, color fast: %d\n", icolor);
+                // printVec<T>(nrows_color, h_resid);
+                // // printVec<T>(nrows_color, h_resid);
+
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, nblock_rows_color, diag_inv_nnzb_color, &alpha,
+                    descr_U, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols, block_dim, info_U,
+                    d_resid, d_temp_color, policy_U, pBuffer));
+
+                // T *h_temp = DeviceVec<T>(N, d_temp).createHostVec().getPtr();
+                // printf("h_temp_fast, color %d\n", icolor);
+                // printVec<T>(nrows_color, &h_temp[block_dim * start]);
+
+                if (time_debug) {
+                    CHECK_CUDA(cudaDeviceSynchronize());
+                    auto end_Dinv_LU_time = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double> Dinv_LU_time = end_Dinv_LU_time - start_Dinv_LU_tmie;
+                    printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor, Dinv_LU_time.count());
+                }
+                auto start_Bsrmv_time = std::chrono::high_resolution_clock::now();
+
+                // 2) update soln x_color += dx_color
+
+                T *d_soln_color = &d_soln.getPtr()[block_dim * start];
+                a = omega;
+                CHECK_CUBLAS(
+                    cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
+
+                a = -omega,
+                b = 1.0;  // so that defect := defect - mat*vec
+
+                if constexpr (slice_prod) {
+                    a = 0.0; // TODO : need to slice the color matrices..
+
+                } else {
+                    // can't row slice this to remove redundant color * 0 subblock computations
+                    // because K^T * vec not supported in cusparseDbsrmv routine.. see doc
+                    CHECK_CUSPARSE(cusparseDbsrmv(
+                        cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                        nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                        block_dim, d_temp, &b, d_defect.getPtr()));
+                }
+
+                if (time_debug) {
+                    CHECK_CUDA(cudaDeviceSynchronize());
+                    auto end_Bsrmv_time = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double> bsrmv_time = end_Bsrmv_time - start_Bsrmv_time;
+                    printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor, bsrmv_time.count());
+                }
+                
 
             }  // next color iteration
 
@@ -1107,8 +1413,15 @@ class ShellGrid {
             Prolongation::prolongate(nelems, d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec,
                                      d_weights);
         } else {
-            Prolongation::prolongate(nnodes, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
+            if constexpr (Prolongation::assembly) {
+                // permute coarse soln in
+                coarse_soln_in.permuteData(block_dim, d_coarse_iperm);
+                Prolongation::prolongate(cusparseHandle, descrP, P_mat, coarse_soln_in, d_temp_vec);
+            } else {
+                // slower version
+                Prolongation::prolongate(nnodes, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
                                      d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec);
+            }
         }
         // CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -1146,14 +1459,22 @@ class ShellGrid {
     void restrict_defect(int nelems_fine, int *d_iperm_fine, DeviceVec<T> fine_defect_in) {
         // transfer from finer mesh to this coarse mesh
         cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T));  // reset defect
+        // printf("start restrict defect\n");
 
         if constexpr (Prolongation::structured) {
             Prolongation::restrict_defect(nelems_fine, d_iperm, d_iperm_fine, fine_defect_in,
                                           d_defect, d_weights);
         } else {
-            Prolongation::restrict_defect(restrict_nnodes_fine, d_elem_conn, restrict_d_n2e_ptr,
+            if constexpr (Prolongation::assembly) {
+                // permute fine defect in
+                fine_defect_in.permuteData(block_dim, d_iperm_fine);
+                Prolongation::restrict_defect(cusparseHandle, restrict_descrPT, restrict_PT_mat, fine_defect_in, d_defect);
+            } else {
+                // slower restriction operator (not using sparse matrix-vec kernels)
+                Prolongation::restrict_defect(restrict_nnodes_fine, d_elem_conn, restrict_d_n2e_ptr,
                                           restrict_d_n2e_elems, restrict_d_n2e_xis, d_iperm,
                                           d_iperm_fine, fine_defect_in, d_defect, d_weights);
+            }
         }
 
         // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
@@ -1161,6 +1482,8 @@ class ShellGrid {
         d_defect.permuteData(block_dim, d_perm);  // better way to do this later?
         assembler.apply_bcs(d_defect);
         d_defect.permuteData(block_dim, d_iperm);
+
+        // printf("end restrict defect\n");
 
         // reset soln (with bcs zero here, TBD others later)
         cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
@@ -1203,8 +1526,15 @@ class ShellGrid {
             Prolongation::prolongate(nelems, d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec,
                                      d_weights);
         } else {
-            Prolongation::prolongate(nnodes, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
+            if constexpr (Prolongation::assembly) {
+                // permute coarse soln in
+                coarse_soln_in.permuteData(block_dim, d_coarse_iperm);
+                Prolongation::prolongate(cusparseHandle, descrP, P_mat, coarse_soln_in, d_temp_vec);
+            } else {
+                // slower version
+                Prolongation::prolongate(nnodes, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
                                      d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec);
+            }
         }
         // CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -1279,10 +1609,14 @@ class ShellGrid {
     // this is in someways describing the P matrix operator.. (could reformulate as that)
     int *d_n2e_ptr, *d_n2e_elems, *d_coarse_conn, n2e_nnz, ncoarse_elems;
     T *d_n2e_xis;
+    cusparseMatDescr_t descrP = 0;
+    BsrMat<DeviceVec<T>> P_mat;
 
     // unstruct prolong at the coarser mesh level (for restrict)
     int *restrict_d_n2e_ptr, *restrict_d_n2e_elems, restrict_nnodes_fine, restrict_n2e_nnz;
     T *restrict_d_n2e_xis;
+    cusparseMatDescr_t restrict_descrPT = 0;
+    BsrMat<DeviceVec<T>> restrict_PT_mat;
 
     // turn off private during debugging
    private:  // private data for cusparse and cublas

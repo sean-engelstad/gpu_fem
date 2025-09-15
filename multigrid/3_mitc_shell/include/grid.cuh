@@ -83,3 +83,6 @@ __global__ static void k_singleToDoublePointerVec(int nnodes, int block_dim, T *
         doublePtr[inode] = singlePtr + block_dim * tid;
     }
 }
+
+// template <typename T>
+// __global__ static void k_Dinv_LU_triang_solves()

@@ -59,14 +59,15 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
 
-    using Prolongation = UnstructuredProlongation<Basis>;
+    using Prolongation = UnstructuredProlongation<Basis>; // this appears to actually be a litle faster..
+    // using Prolongation = UnstructuredProlongationFast<Basis>;
 
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
     auto mg = MG();
-    std::vector<GRID> direct_grids;
+    // std::vector<GRID> direct_grids;
 
     // make each wing multigrid object.. (highest mesh level is finest, this is flipped from MG object's convention)
     for (int i = level; i >= 0; i--) {
@@ -128,14 +129,14 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
 
-        if (i == level) {
-            // also makethe true fine grid
-            TACSMeshLoader mesh_loader2{comm};
-            mesh_loader2.scanBDFFile(fname.c_str());
-            auto assembler2 = Assembler::createFromBDF(mesh_loader2, Data(E, nu, thick));
-            auto direct_fine_grid = *GRID::buildFromAssembler(assembler2, my_loads, true, true);
-            direct_grids.push_back(direct_fine_grid); 
-        }
+        // if (i == level) {
+        //     // also makethe true fine grid
+        //     TACSMeshLoader mesh_loader2{comm};
+        //     mesh_loader2.scanBDFFile(fname.c_str());
+        //     auto assembler2 = Assembler::createFromBDF(mesh_loader2, Data(E, nu, thick));
+        //     auto direct_fine_grid = *GRID::buildFromAssembler(assembler2, my_loads, true, true);
+        //     direct_grids.push_back(direct_fine_grid); 
+        // }
     }
 
     if (!Prolongation::structured) {
@@ -168,9 +169,12 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     int n_vcycles = 200;
     // int n_vcycles = 400;
 
-    // bool double_smooth = false;
-    bool double_smooth = true; // false
-    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
+    // bool time = false;
+    bool time = true;
+
+    bool double_smooth = false;
+    // bool double_smooth = true; // false
+    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth, time);
     printf("done with v-cycle solve\n");
 
     auto end1 = std::chrono::high_resolution_clock::now();
@@ -211,7 +215,8 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
     const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
 
-    using Prolongation = UnstructuredProlongation<Basis>;
+    // using Prolongation = UnstructuredProlongation<Basis>;
+    using Prolongation = UnstructuredProlongationFast<Basis>;
 
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
@@ -369,10 +374,18 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
     //     return;
     // }
 
+    bool write = true;
     if (write) {
         auto h_fine_defectn1 = mg.grids[0].d_defect.createPermuteVec(6, mg.grids[0].Kmat.getPerm()).createHostVec();
         printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fine_defectn1, "out/0_wing_fine_defect0.vtk");
     }
+
+    // // TEMP debug, test prolongate matrix-vec..
+    // printf("test prolongate\n");
+    // mg.grids[1].direct_solve(false); // false for don't print
+    // mg.grids[0].prolongate(mg.grids[1].d_iperm, mg.grids[1].d_soln);
+    // auto h_soln_debug = mg.grids[0].d_soln.createPermuteVec(6, mg.grids[0].Kmat.getPerm()).createHostVec();
+    // printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln_debug, "out/0_test_prolong.vtk");
 
     printf("starting v cycle solve\n");
     // init defect nrm
@@ -383,7 +396,6 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
     // int pre_smooth = 1, post_smooth = 1;
     int pre_smooth = 2, post_smooth = 2;
     bool print = true;
-    bool write = true;
     T omega = 1.0;
 
     // int n_vcycles = 5;
