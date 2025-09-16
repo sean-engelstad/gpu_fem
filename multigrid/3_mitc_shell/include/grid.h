@@ -21,6 +21,7 @@
 enum SMOOTHER : short {
     MULTICOLOR_GS,
     MULTICOLOR_GS_FAST,
+    MULTICOLOR_GS_FAST2,
     LEXIGRAPHIC_GS,
 };
 
@@ -51,12 +52,13 @@ class ShellGrid {
         kmat_nnzb = d_kmat_bsr_data.nnzb;
 
         // init helper methods
-        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
-            buildColorLocalRowPointers();
-        }
+        // if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
+        //     buildColorLocalRowPointers();
+        // }
         initCuda();
-        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
+        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
             buildDiagInvMat();
+            if (smoother == MULTICOLOR_GS_FAST2) buildTransposeColorMatrices();
         }
         if (smoother == LEXIGRAPHIC_GS && !full_LU) {
             initLowerMatForGaussSeidel();
@@ -83,7 +85,7 @@ class ShellGrid {
             _color_rowp[1] = assembler.get_num_nodes();
 
         } else {
-            if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
+            if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
                 if (reorder) {
                     bsr_data.multicolor_reordering(
                         num_colors,
@@ -410,6 +412,13 @@ class ShellGrid {
             }
         }
 
+        // printf("h_n2e_ptr: ");
+        // printVec<int>(3, fine_node2elem_ptr);
+        // printf("h_n2e_elems: ");
+        // printVec<int>(20, fine_node2elem_elems);
+        // printf("h_n2e_xis: ");
+        // printVec<T>(40, fine_node2elem_xis);
+
         // put these maps on the device now
         d_n2e_ptr = HostVec<int>(nnodes_fine + 1, fine_node2elem_ptr).createDeviceVec().getPtr();
         d_n2e_elems = HostVec<int>(ntot_elems, fine_node2elem_elems).createDeviceVec().getPtr();
@@ -464,14 +473,6 @@ class ShellGrid {
                         conn_c_nodes.insert(perm_inc);
                     }
                 }
-
-                // if (inf == 0 || inf == 1) {
-                //     printf("inf %d, conn c nodes:", inf);
-                //     for (int perm_inc : conn_c_nodes) {
-                //         printf("%d ", perm_inc);
-                //     }
-                //     printf("\n");
-                // }
 
                 h_prol_row_cts[perm_inf] += conn_c_nodes.size();
                 for (int perm_inc : conn_c_nodes) {
@@ -537,20 +538,6 @@ class ShellGrid {
             //     }
             //     printf("\n");
             // }
-
-            // printf("h_prol_rowp:");
-            // printVec<int>(20, h_prol_rowp);
-            // printf("h_prol_cols:");
-            // printVec<int>(100, h_prol_cols);
-            // printf("h_prolT_rowp:");
-            // printVec<int>(20, h_prolT_rowp);
-            // printf("h_prolT_cols:");
-            // printVec<int>(100, h_prolT_cols);
-
-            // printf("h_prol_rowp last 10 vals: ");
-            // printVec<int>(10, &h_prol_rowp[nnodes_fine + 1 - 10]);
-            // printf("h_prol_cols last 10 vals:");
-            // printVec<int>(10, &h_prol_cols[P_nnzb - 10]);
             
             int *h_P_rows = new int[P_nnzb];
             int *h_PT_rows = new int[PT_nnzb];
@@ -602,12 +589,14 @@ class ShellGrid {
             // TEMP DEBUG
             // T *h_P_vals = d_P_vals.createHostVec().getPtr();
             // printf("h_P_vals:\n");
-            // for (int i = 0; i < 2; i++) {
+            // for (int i = 0; i < 5; i++) {
+            //     printf("P mat row %d: ", i);
             //     for (int jp = h_prol_rowp[i]; jp < h_prol_rowp[i+1];  jp++) {
             //         int j = h_prol_cols[jp];
-            //         T val = h_P_vals[36 * jp];
-            //         printf("P[%d,%d] nodal : %.3e\n", i, j, val);
+            //         T val = h_P_vals[jp];
+            //         printf("[%d] %.3e, ", j, val);
             //     }
+            //     printf("\n");
             // }
 
             // matrix descriptions for Bsrmv..
@@ -722,14 +711,6 @@ class ShellGrid {
         int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
         int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
 
-        // printf("h_color_rowp:");
-        // printVec<int>(h_color_rowp.getSize() + 1, h_color_rowp.getPtr());
-        // printf("nnodes %d\n", nnodes);
-        // printf("h_kmat_rowp:");
-        // printVec<int>(20, h_kmat_rowp);
-        // printf("h_kmat_cols:");
-        // printVec<int>(100, h_kmat_cols);
-
         // now copy to device
         d_diag_rowp = HostVec<int>(nnodes + 1, h_diag_rowp).createDeviceVec().getPtr();
         d_diag_cols = HostVec<int>(nnodes, h_diag_cols).createDeviceVec().getPtr();
@@ -766,176 +747,212 @@ class ShellGrid {
         delete[] h_kmat_rowp;
         delete[] h_kmat_cols;
 
-        // bool use_cublas = true;  // getriBatched very slow for in-place, LU batched not working
-        // rn
-        bool use_cublas = false;
+        // use cusparse to get Dinv as LU factor and then we just do triang solves on
+        // block - diag perform_ilu0_factorization();
+        d_diag_LU_vals = d_diag_vals.getPtr();  // just copy these pointers..
+        // printf("performing ILU(0) factor\n");
 
-        // auto d_d = DeviceVec<T>(ndiag_vals);
-        // d_diag_inv_vals = d_diag_inv_vals_vec.getPtr();
+        CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
+                                                &pBuffer, nnodes, diag_inv_nnzb, block_dim,
+                                                d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
+                                                trans_U, policy_L, policy_U, dir);
+        // printf("did ILU(0) factor on block-diag D(K)\n");
 
-        // copy original D for DEBUG  (since LU decomp messes up comparison..)
-        // auto d_diag_vals_copy = DeviceVec<T>(ndiag_vals);
-        // cudaMemcpy(d_diag_vals_copy.getPtr(), d_diag_vals.getPtr(), ndiag_vals * sizeof(T),
-        //            cudaMemcpyDeviceToDevice);
+        // compute new Dinv_vals with LU operator..
+        // build_lu_inv_operator = false; // previous version
+        build_lu_inv_operator = smoother == MULTICOLOR_GS_FAST2 && !full_LU; // dense matrix should not modify LU vals on coarsest grid..
 
-        if (use_cublas) {
-            // make ptr-ptr objects.. that point to the D and Dinv single ptrs
-            d_diag_LU_batch_ptr = DeviceVec<T *>(nnodes).getPtr();
-            nblocks = (nnodes + 31) / 32;
-            dim3 grid2(nblocks);
-            k_singleToDoublePointer<T>
-                <<<grid2, block>>>(nnodes, block_dim, d_diag_vals.getPtr(), d_diag_LU_batch_ptr);
+        if (build_lu_inv_operator) { 
 
-            d_temp_batch_ptr = DeviceVec<T *>(nnodes).getPtr();
-            k_singleToDoublePointerVec<T>
-                <<<grid2, block>>>(nnodes, block_dim, d_temp, d_temp_batch_ptr);
+            // apply e1 through e6 (each dof per node for shell if 6 dof per node case)
+            // to get effective matrix.. need six temp vectors..
+            auto d_dinv_vals = DeviceVec<T>(ndiag_vals);
 
-            // T **d_diag_inv_batch_ptr = DeviceVec<T *>(nnodes).getPtr();
-            // k_singleToDoublePointer<T>
-            //     <<<grid2, block>>>(nnodes, block_dim, d_diag_inv_vals, d_diag_inv_batch_ptr);
+            for (int i = 0; i < block_dim; i++) {
+                // set d_temp to ei (one of e1 through e6 per block)
+                cudaMemset(d_temp, 0.0, N * sizeof(T));
+                dim3 block(32);
+                dim3 grid((nnodes + 31) / 32);
+                k_setBlockUnitVec<T><<<grid, block>>>(nnodes, block_dim, i, d_temp);
 
-            // // get row scaling..
-            // T *d_diag_scales = DeviceVec<T>(N).getPtr();
-            // // divide D by the row scales
-            // nblocks = (N + 31) / 32;
-            // dim3 grid3(nblocks);
-            // k_computeDiagRowScales<T>
-            //     <<<grid3, block>>>(nnodes, block_dim, d_diag_vals.getPtr(), d_diag_scales);
+                // debug
+                // T *h_temp = d_temp_vec.createHostVec().getPtr();
+                // printf("h_temp step %d: ", i);
+                // printVec<T>(12, h_temp);
 
-            // // then we'll do local 6x6 inverses D => Dinv of the block diag matrix into
-            // // d_diag_inv_vals
-            // cudaMemcpy(d_diag_inv_vals, d_diag_vals.getPtr(), ndiag_vals * sizeof(T),
-            //            cudaMemcpyDeviceToDevice);
+                // now compute D^-1 through U^-1 L^-1 triang solves and copy result into d_temp2
+                const double alpha = 1.0;
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, nnodes, nnodes, &alpha,
+                    descr_L, d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_L,
+                    d_temp, d_resid, policy_L,
+                    pBuffer));  // prob only need U^-1 part for block diag.. TBD
 
-            // now use cublas to do diag inv in batch (on diag), other option is to use cusparse
-            // if this is slow.. first we do in-place LU decomp,
-            // https://docs.nvidia.com/cuda/cublas/ first an in-place LU decomp P*A = L*U (with
-            // pivots on each 6x6 nodal block) in-place on d_diag_vals
-            d_piv = DeviceVec<int>(nnodes * block_dim).getPtr();
-            d_info = DeviceVec<int>(nnodes).getPtr();
-            cublasDgetrfBatched(cublasHandle, block_dim, d_diag_LU_batch_ptr, block_dim, d_piv,
-                                d_info, nnodes);  // LU decomp in place here..
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, nnodes, nnodes, &alpha,
+                    descr_U, d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_U,
+                    d_resid, d_temp2, policy_U, pBuffer));
 
-            // really singular block diag => need to use LU batched can't get accurate full D^-1
-            // directly
+                // now copy temp2 into columns of new operator
+                dim3 grid2((N + 31) / 32);
+                k_setLUinv_operator<T><<<grid2, block>>>(nnodes, block_dim, i, d_temp2, d_dinv_vals.getPtr());
+            } // this works!
 
-            // then do an inversion from d_diag_vals LU decomp => d_diag_inv_vals ptr
-            // get ri batched is really inaccurate..
-            // this is really inaccurate on first call especially if matrices ill-conditioned, often
-            // are.. NOTE : could do newton-schulz refinement for matrix inversion:
-            //    X_{k+1} = X_k * (2I - D * X_k)
-            // OR like here I'm just going to set D = S * A where S is scaling 6x6 diag matrix
-            // and A has ones on diag, so scaled to O(1), thus each row is normalized by diag(S)
-            // cublasDgetriBatched(cublasHandle, block_dim, d_diag_batch_ptr, block_dim, d_piv,
-            //                     d_diag_inv_batch_ptr, block_dim, d_info, nnodes);
+            D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_dinv_vals);
+            d_diag_LU_vals = d_dinv_vals.getPtr(); // now LU vals technically holds Dinv form of LU as linear operator (no triang solves needed since only on diag)
 
-            // // undo the row scalings..
-            // k_reapplyDiagRowScales<T><<<grid3, block>>>(nnodes, block_dim, d_diag_scales,
-            //                                             d_diag_vals.getPtr(), d_diag_inv_vals);
-
-        }  // end of cublas
-
-        if (!use_cublas) {
-            // use cusparse to get Dinv as LU factor and then we just do triang solves on
-            // block - diag perform_ilu0_factorization();
-            d_diag_LU_vals = d_diag_vals.getPtr();  // just copy these pointers..
-            // printf("performing ILU(0) factor\n");
-
-            CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
-                                                 &pBuffer, nnodes, diag_inv_nnzb, block_dim,
-                                                 d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
-                                                 trans_U, policy_L, policy_U, dir);
-            // printf("did ILU(0) factor on block-diag D(K)\n");
+        } else {
+            D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_diag_vals);
         }
-
-        // // DEBUG: check the 6x6 diag and diag inv matrices..
-        // T *h_diag_vals = d_diag_vals.createHostVec().getPtr();
-        // // printf("step 4\n");
-        // for (int inode = 0; inode < 3; inode++) {
-        //     printf("node %d D vs Dinv\n", inode);
-
-        //     for (int icol = 0; icol < 6; icol++) {
-        //         cudaMemset(d_temp, 0.0, N * sizeof(T));
-        //         k_setSingleVal<<<1, 1>>>(N, 6 * inode + icol, 1.0, d_temp);
-
-        //         printf("\tD[:,%d]: ", icol);
-        //         // sym so actually row printout here
-        //         printVec<T>(6, &h_diag_vals[36 * inode + 6 * icol]);
-
-        //         // test the Dinv using getrsbatched on unit vecs
-        //         cublasDgetrsBatched(cublasHandle, CUBLAS_OP_N, block_dim, 1, d_diag_LU_batch_ptr,
-        //                             block_dim, d_piv, d_temp_batch_ptr, block_dim, d_info,
-        //                             nnodes);
-
-        //         T *h_temp = new T[6];
-        //         cudaMemcpy(h_temp, &d_temp[6 * inode], 6 * sizeof(T), cudaMemcpyDeviceToHost);
-
-        //         printf("\tLU=>Dinv[:,%d]: ", icol);
-        //         // sym so actually row printout here
-        //         printVec<T>(6, h_temp);
-        //     }
-        // }
-
-        // test t
-
-        // printf("here1\n");
-        // d_diag_vals.free();
-        // // delete[] d_diag_batch_ptr;
-        // // delete[] d_diag_inv_batch_ptr;
-        // printf("here2\n");
-
-        // and make a BsrMat for it..
-        D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_diag_vals);
-        // printf("here3\n");
     }
 
-    void buildColorLocalRowPointers() {
-        // build local row pointers for row-slicing by color (of Kmat)
-        // int *h_color_vals_ptr, *h_color_local_rowp_ptr, *d_color_local_rowps;
+    void buildTransposeColorMatrices() {
+        // build color transpose matrices (one for each color)
+        // only needed for fastest MC-BGS method..
 
-        // init the color pointers
+        // compute the sparsity patterns of each col-subcolor matrix N x N_c (as N x N_c matrix)
+        // stored in one data structure (basicaly each nodal block is stored in different order, with a few extra pointers than the Kmat)
+        // kernels for some of these steps (initialization / assembly) may not be fully optimized yet..
+
         int num_colors = h_color_rowp.getSize() - 1;
         int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each color
-        h_color_bnz_ptr =
-            new int[num_colors + 1];  // says which block nz bounds for each color in cols, Kmat
-        h_color_local_rowp_ptr =
-            new int[num_colors + 1];  // pointer for bounds of d_color_local_rowps
-        int *h_color_local_rowps = new int[nnodes + num_colors];
+
+        int **h_color_submat_rowp = new int*[num_colors];
+        int **h_color_submat_rows = new int*[num_colors];
+        int **h_color_submat_cols = new int*[num_colors];
+        int *h_color_nnzb = new int[num_colors]; // what is the nnzb for each submat
 
         // copy kmat pointers to host
         int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
         int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
 
-        // build each pointer..
-        h_color_bnz_ptr[0] = 0;
-        h_color_local_rowp_ptr[0] = 0;
-        int offset = 0;
+        // get sparsity for each color-sliced matrix
         for (int icolor = 0; icolor < num_colors; icolor++) {
-            int brow_start = color_rowp[icolor], brow_end = color_rowp[icolor + 1];
-            int bnz_start = h_kmat_rowp[brow_start], bnz_end = h_kmat_rowp[brow_end];
+            int start_node = color_rowp[icolor], end_node = color_rowp[icolor + 1];
+            int ncols = end_node - start_node;
+            int mb = nnodes, nb = ncols; // dimensions of column sub-matrix
 
-            int nnzb_color = bnz_end - bnz_start;
-            h_color_bnz_ptr[icolor + 1] = h_color_bnz_ptr[icolor] + nnzb_color;
-
-            // now set the local rowp arrays for this color
-            int nbrows_color = brow_end - brow_start;
-            h_color_local_rowp_ptr[icolor + 1] = h_color_local_rowp_ptr[icolor] + nbrows_color + 1;
-            h_color_local_rowps[offset] = 0;
-            for (int local_row = 0; local_row < nbrows_color; local_row++) {
-                int row_diff =
-                    h_kmat_rowp[brow_start + local_row + 1] - h_kmat_rowp[brow_start + local_row];
-                h_color_local_rowps[local_row + 1 + offset] =
-                    h_color_local_rowps[local_row + offset] + row_diff;
+            // construct a rowp and cols for each sub-matrix
+            int *_row_cts = new int[nnodes];
+            int *_rowp = new int[nnodes + 1];
+            _rowp[0] = 0;
+            for (int i = 0; i < nnodes; i++) {
+                for (int jp = h_kmat_rowp[i], jp < h_kmat_rowp[i+1]; jp++) {
+                    j = h_kmat_cols[jp];
+                    if (start_node <= j && j < end_node) {
+                        _row_cts[i]++;
+                    }
+                }
+                _rowp[i+1] = _rowp[i] + _row_cts[i];
             }
-            offset += nbrows_color + 1;
+            h_color_submat_rowp[icolor] = _rowp;
+
+            int _nnzb = _rowp[nnodes];
+            int *_rows = new int[_nnzb];
+            for (int i = 0; i < nnodes; i++) {
+                for (int jp = _rowp[i], jp < _rowp[i+1]; jp++) {
+                    _rows[jp] = i;
+                }
+            }
+            h_color_submat_rows[icolor] = _rows;
+
+            int *_cols = new int[_nnzb];
+            int *_next = new int[nnodes]; // help for inserting matrix
+            memcpy(_next, _rowp, nnodes * sizeof(int));
+            for (int i = 0; i < nnodes; i++) {
+                for (int jp = h_kmat_rowp[i], jp < h_kmat_rowp[i+1]; jp++) {
+                    j = h_kmat_cols[jp];
+                    if (start_node <= j && j < end_node) {
+                        j2 = j - start_node;
+                        _cols[_next[i]++] = j2;
+                    }
+                }
+            }
+            delete[] _next;
+            h_color_submat_cols[icolor] = _cols;
         }
 
-        delete[] h_kmat_rowp;
-        delete[] h_kmat_cols;
+        // now double check that, better way is maybe a transpose mat-vec product.. but that may not be as fast as you think?
+        for (int icolor = 0; icolor < num_colors; icolor++) {
+            // submat comes out of T **d_submat_vals then by color..
 
-        d_color_local_rowps =
-            HostVec<int>(nnodes + num_colors, h_color_local_rowps).createDeviceVec().getPtr();
+            // put pointers on device..
+            k_copy_color_submat<T><<<grid, block>>>(nnodes, start, end, color_rows, color_cols, kmat_rowp, kmat_cols, kmat_vals, submat_vals);
+
+
+            
+        }
+
+        // now copy kmat into the color sub-matrices..
+        
+
+
+        // 1) compute the sparsity patterns of the full transpose matrix
+        // --------------------------------------------------------------
+        // since sym matrix, the sparsity of transpose is the same, values the same right?
+
+        // 2) copy values into the transpose matrix
+        // ----------------------------------------
+        // again from step 1, no need to do anything here..
+
+        // 3) compute row-sliced (by color) rowp, cols of color submatrices (of transpose)
+        // -------------------------------------------------------------------------------
+        
+        // do need the color-sliced rowp, cols (for only certain columns and a sub-matrix)
+        // some parts here similar to next method buildColorLocalRowPointers
+        // we do reuse a few states from that..
+
+
+
     }
+
+    // void buildColorLocalRowPointers() {
+    //     // build local row pointers for row-slicing by color (of Kmat)
+    //     // int *h_color_vals_ptr, *h_color_local_rowp_ptr, *d_color_local_rowps;
+
+    //     // init the color pointers
+    //     int num_colors = h_color_rowp.getSize() - 1;
+    //     int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each color
+    //     h_color_bnz_ptr =
+    //         new int[num_colors + 1];  // says which block nz bounds for each color in cols, Kmat
+    //     h_color_local_rowp_ptr =
+    //         new int[num_colors + 1];  // pointer for bounds of d_color_local_rowps
+    //     int *h_color_local_rowps = new int[nnodes + num_colors];
+
+    //     // copy kmat pointers to host
+    //     int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
+    //     int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
+
+    //     // build each pointer..
+    //     h_color_bnz_ptr[0] = 0;
+    //     h_color_local_rowp_ptr[0] = 0;
+    //     int offset = 0;
+    //     for (int icolor = 0; icolor < num_colors; icolor++) {
+    //         int brow_start = color_rowp[icolor], brow_end = color_rowp[icolor + 1];
+    //         int bnz_start = h_kmat_rowp[brow_start], bnz_end = h_kmat_rowp[brow_end];
+
+    //         int nnzb_color = bnz_end - bnz_start;
+    //         h_color_bnz_ptr[icolor + 1] = h_color_bnz_ptr[icolor] + nnzb_color;
+
+    //         // now set the local rowp arrays for this color
+    //         int nbrows_color = brow_end - brow_start;
+    //         h_color_local_rowp_ptr[icolor + 1] = h_color_local_rowp_ptr[icolor] + nbrows_color + 1;
+    //         h_color_local_rowps[offset] = 0;
+    //         for (int local_row = 0; local_row < nbrows_color; local_row++) {
+    //             int row_diff =
+    //                 h_kmat_rowp[brow_start + local_row + 1] - h_kmat_rowp[brow_start + local_row];
+    //             h_color_local_rowps[local_row + 1 + offset] =
+    //                 h_color_local_rowps[local_row + offset] + row_diff;
+    //         }
+    //         offset += nbrows_color + 1;
+    //     }
+
+    //     delete[] h_kmat_rowp;
+    //     delete[] h_kmat_cols;
+
+    //     d_color_local_rowps =
+    //         HostVec<int>(nnodes + num_colors, h_color_local_rowps).createDeviceVec().getPtr();
+    // }
 
     void direct_solve(bool print = false) {
         // T defect_nrm;
@@ -998,6 +1015,8 @@ class ShellGrid {
             multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega, rev_colors);
         } else if (smoother == MULTICOLOR_GS_FAST) {
             multicolorBlockGaussSeidel_fast(n_iters, print, print_freq, omega, rev_colors);
+        } else if (smoother == MULTICOLOR_GS_FAST2) {
+            multicolorBlockGaussSeidel_fast2(n_iters, print, print_freq, omega, rev_colors);
         } else if (smoother == LEXIGRAPHIC_GS) {
             lexigraphicBlockGS(n_iters, print, print_freq);
         }
@@ -1052,17 +1071,10 @@ class ShellGrid {
         int num_colors = h_color_rowp.getSize() - 1;
         int *color_rowp = h_color_rowp.getPtr();
 
-        // DEBUG
-        // n_solns = n_iters * num_colors;
-        // h_solns = new T *[n_solns];
-
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
-                // printf("\t\titer %d, color %d\n", iter, icolor);
 
-                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
-                // int _icolor2 = _icolor;  // no permutations.. about the same either way..
-
+                int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
                 int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
 
                 // get active rows / cols for this color
@@ -1077,10 +1089,6 @@ class ShellGrid {
                 cudaMemcpy(d_temp_color2, d_defect_color, nblock_rows_color * block_dim * sizeof(T),
                            cudaMemcpyDeviceToDevice);
 
-                // T *h_defect = DeviceVec<T>(N, d_defect.getPtr()).createHostVec().getPtr();
-                // printf("h_defect slow, color %d with grid nnodes = %d\n", icolor, nnodes);
-                // printVec<T>(nrows_color, &h_defect[block_dim * start]);
-
                 T a = 1.0, b = 0.0;
                 const double alpha = 1.0;
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
@@ -1088,18 +1096,10 @@ class ShellGrid {
                     d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp2, d_resid,
                     policy_L, pBuffer));  // prob only need U^-1 part for block diag.. TBD
 
-                // T *h_resid = DeviceVec<T>(N, d_resid).createHostVec().getPtr();
-                // printf("h_resid_slow, color %d\n", icolor);
-                // printVec<T>(nrows_color, &h_resid[block_dim * start]);
-
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes,
                                                      diag_inv_nnzb, &alpha, descr_U, d_diag_LU_vals,
                                                      d_diag_rowp, d_diag_cols, block_dim, info_U,
                                                      d_resid, d_temp, policy_U, pBuffer));
-
-                // T *h_temp = DeviceVec<T>(N, d_temp).createHostVec().getPtr();
-                // printf("h_temp slow, color %d\n", icolor);
-                // printVec<T>(nrows_color, &h_temp[block_dim * start]);
 
                 // 2) update soln x_color += dx_color
                 T *d_soln_color = &d_soln.getPtr()[block_dim * start];
@@ -1131,32 +1131,24 @@ class ShellGrid {
                                          T omega = 1.0, bool rev_colors = false) {
         // faster version
 
-        // T init_defect_nrm;
-        // CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &init_defect_nrm));
-        // if (print) printf("Multicolor Block-GS init defect nrm = %.4e\n", init_defect_nrm);
-
         int num_colors = h_color_rowp.getSize() - 1;
         int *color_rowp = h_color_rowp.getPtr();
         // printf("mc BGS-fast with # colors = %d\n", num_colors);
 
-        // bool time_debug = false;
-        bool time_debug = true;
-
-        // DEBUG
-        // n_solns = n_iters * num_colors;
-        // h_solns = new T *[n_solns]
-        printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
+        bool time_debug = false;
+        // bool time_debug = true;
+        if (time_debug) printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
 
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
-                // printf("\t\titer %d, color %d\n", iter, icolor);
+
+                // -------------------------------------------------------------
+                // prelim block (getting color sub-vectors ready)
 
                 if (time_debug) CHECK_CUDA(cudaDeviceSynchronize());
                 auto prelim_time = std::chrono::high_resolution_clock::now();
 
-                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
-                // int _icolor2 = _icolor;  // no permutations.. about the same either way..
-
+                int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
                 int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
 
                 // get active rows / cols for this color
@@ -1166,26 +1158,9 @@ class ShellGrid {
                 T *d_defect_color = &d_defect.getPtr()[block_dim * start];
                 cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
                 T *d_temp_color = &d_temp[block_dim * start];
-                // T *d_temp_color2 = &d_temp2[block_dim * start];
-                // cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
-                // cudaMemcpy(d_temp_color2, d_defect_color, nrows_color * sizeof(T),
-                //            cudaMemcpyDeviceToDevice);
-
                 int block_dim2 = block_dim * block_dim;
                 int diag_inv_nnzb_color = nblock_rows_color;
                 T *d_diag_LU_vals_color = &d_diag_LU_vals[start * block_dim2];
-
-                // print out one LU matrix..
-                T *h_diag_LU_vals = DeviceVec<T>(36, d_diag_LU_vals_color).createHostVec().getPtr();
-                printf("h diag LU vals (one node): ");
-                for (int i = 0; i < 36; i++) {
-                    printf("%.12e, ", h_diag_LU_vals[i]);
-                }
-                printf("\n");
-
-                // T *h_defect = DeviceVec<T>(N, d_defect.getPtr()).createHostVec().getPtr();
-                // printf("h_defect fast, color %d with nnodes %d\n", icolor, nnodes);
-                // printVec<T>(nrows_color, &h_defect[block_dim * start]);
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1195,6 +1170,9 @@ class ShellGrid {
                 }
                 auto start_Dinv_LU_tmie = std::chrono::high_resolution_clock::now();
 
+                // --------------------------------------------------------------
+                // apply Dinv * vec on each color sub-vecotr
+                // use LU triang solves to apply Dinv * vec on each color (old method)
                 T a = 1.0, b = 0.0;
                 const double alpha = 1.0;
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
@@ -1203,26 +1181,22 @@ class ShellGrid {
                     d_defect_color, d_resid, policy_L,
                     pBuffer));  // prob only need U^-1 part for block diag.. TBD
 
-                // T *h_resid = DeviceVec<T>(N, d_resid).createHostVec().getPtr();
-                // printf("h_resid, color fast: %d\n", icolor);
-                // printVec<T>(nrows_color, h_resid);
-                // // printVec<T>(nrows_color, h_resid);
-
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
                     cusparseHandle, dir, trans_U, nblock_rows_color, diag_inv_nnzb_color, &alpha,
                     descr_U, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols, block_dim, info_U,
                     d_resid, d_temp_color, policy_U, pBuffer));
 
-                // T *h_temp = DeviceVec<T>(N, d_temp).createHostVec().getPtr();
-                // printf("h_temp_fast, color %d\n", icolor);
-                // printVec<T>(nrows_color, &h_temp[block_dim * start]);
-
+                // timing part
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_Dinv_LU_time = std::chrono::high_resolution_clock::now();
                     std::chrono::duration<double> Dinv_LU_time = end_Dinv_LU_time - start_Dinv_LU_tmie;
                     printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor, Dinv_LU_time.count());
                 }
+
+                // -----------------------------------------------------------------
+                // color soln update => defect update for each color
+                
                 auto start_Bsrmv_time = std::chrono::high_resolution_clock::now();
 
                 // 2) update soln x_color += dx_color
@@ -1232,20 +1206,12 @@ class ShellGrid {
                 CHECK_CUBLAS(
                     cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
 
-                a = -omega,
-                b = 1.0;  // so that defect := defect - mat*vec
-
-                if constexpr (slice_prod) {
-                    a = 0.0; // TODO : need to slice the color matrices..
-
-                } else {
-                    // can't row slice this to remove redundant color * 0 subblock computations
-                    // because K^T * vec not supported in cusparseDbsrmv routine.. see doc
-                    CHECK_CUSPARSE(cusparseDbsrmv(
-                        cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                        nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
-                        block_dim, d_temp, &b, d_defect.getPtr()));
-                }
+                a = -omega, b = 1.0;  // so that defect := defect - mat*vec
+                // this does full mat-vec product, so much slower..
+                CHECK_CUSPARSE(cusparseDbsrmv(
+                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                    block_dim, d_temp, &b, d_defect.getPtr()));
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1254,10 +1220,8 @@ class ShellGrid {
                     printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor, bsrmv_time.count());
                 }
                 
-
+            // -------------------------------------------------------------------------------------
             }  // next color iteration
-
-            // printf("iter %d, done with color iterations\n", iter);
 
             /* report progress of defect nrm if printing.. */
             T defect_nrm;
@@ -1265,35 +1229,32 @@ class ShellGrid {
             if (print && iter % print_freq == 0)
                 printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
+        // --------------------------------------------------------------------------------
         }  // next block-GS iteration
     }
 
-    void multicolorBlockGaussSeidel_inhouse_fast(int n_iters, bool print = false, int print_freq = 10,
+    void multicolorBlockGaussSeidel_fast2(int n_iters, bool print = false, int print_freq = 10,
                                          T omega = 1.0, bool rev_colors = false) {
-        // faster version with custom in-house kernels
+        // faster version
 
         int num_colors = h_color_rowp.getSize() - 1;
         int *color_rowp = h_color_rowp.getPtr();
         // printf("mc BGS-fast with # colors = %d\n", num_colors);
 
-        // bool time_debug = false;
-        bool time_debug = true;
-
-        // DEBUG
-        // n_solns = n_iters * num_colors;
-        // h_solns = new T *[n_solns]
-        printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
+        bool time_debug = false;
+        // bool time_debug = true;
+        if (time_debug) printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
 
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
-                // printf("\t\titer %d, color %d\n", iter, icolor);
+
+                // -------------------------------------------------------------
+                // prelim block (getting color sub-vectors ready)
 
                 if (time_debug) CHECK_CUDA(cudaDeviceSynchronize());
                 auto prelim_time = std::chrono::high_resolution_clock::now();
 
-                int _icolor2 = (_icolor + iter) % 4;  // permute order as you go
-                // int _icolor2 = _icolor;  // no permutations.. about the same either way..
-
+                int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
                 int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
 
                 // get active rows / cols for this color
@@ -1303,26 +1264,9 @@ class ShellGrid {
                 T *d_defect_color = &d_defect.getPtr()[block_dim * start];
                 cudaMemset(d_temp, 0.0, N * sizeof(T));  // holds dx_color
                 T *d_temp_color = &d_temp[block_dim * start];
-                // T *d_temp_color2 = &d_temp2[block_dim * start];
-                // cudaMemset(d_temp2, 0.0, N * sizeof(T));  // DEBUG
-                // cudaMemcpy(d_temp_color2, d_defect_color, nrows_color * sizeof(T),
-                //            cudaMemcpyDeviceToDevice);
-
                 int block_dim2 = block_dim * block_dim;
                 int diag_inv_nnzb_color = nblock_rows_color;
                 T *d_diag_LU_vals_color = &d_diag_LU_vals[start * block_dim2];
-
-                // print out one LU matrix..
-                T *h_diag_LU_vals = DeviceVec<T>(36, d_diag_LU_vals_color).createHostVec().getPtr();
-                printf("h diag LU vals (one node): ");
-                for (int i = 0; i < 36; i++) {
-                    printf("%.12e, ", h_diag_LU_vals[i]);
-                }
-                printf("\n");
-
-                // T *h_defect = DeviceVec<T>(N, d_defect.getPtr()).createHostVec().getPtr();
-                // printf("h_defect fast, color %d with nnodes %d\n", icolor, nnodes);
-                // printVec<T>(nrows_color, &h_defect[block_dim * start]);
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1330,36 +1274,30 @@ class ShellGrid {
                     std::chrono::duration<double> full_prelim_time = end_prelim_time - prelim_time;
                     printf("\t\tprelim time on iter %d,color %d in %.2e sec\n", iter, icolor, full_prelim_time.count());
                 }
+
+                // --------------------------------------------------------------
+                // apply Dinv * vec on each color sub-vector
+                
                 auto start_Dinv_LU_tmie = std::chrono::high_resolution_clock::now();
-
+                // use Dinv linear operator built from LU factor of D diag matrix to apply Dinv * vec on each color (new method)
                 T a = 1.0, b = 0.0;
-                const double alpha = 1.0;
-                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-                    cusparseHandle, dir, trans_L, nblock_rows_color, diag_inv_nnzb_color, &alpha,
-                    descr_L, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols, block_dim, info_L,
-                    d_defect_color, d_resid, policy_L,
-                    pBuffer));  // prob only need U^-1 part for block diag.. TBD
+                // note in this case d_diag_LU_vals_color refers to Dinv form of LU factors on each nodal block
+                CHECK_CUSPARSE(cusparseDbsrmv( // NOTE just uses descrKmat cause would be the same as descrDinv (convenience)
+                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    nblock_rows_color, nblock_rows_color, diag_inv_nnzb_color, &a, descrKmat, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols,
+                    block_dim, d_defect_color, &b, d_temp_color));
 
-                // T *h_resid = DeviceVec<T>(N, d_resid).createHostVec().getPtr();
-                // printf("h_resid, color fast: %d\n", icolor);
-                // printVec<T>(nrows_color, h_resid);
-                // // printVec<T>(nrows_color, h_resid);
-
-                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-                    cusparseHandle, dir, trans_U, nblock_rows_color, diag_inv_nnzb_color, &alpha,
-                    descr_U, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols, block_dim, info_U,
-                    d_resid, d_temp_color, policy_U, pBuffer));
-
-                // T *h_temp = DeviceVec<T>(N, d_temp).createHostVec().getPtr();
-                // printf("h_temp_fast, color %d\n", icolor);
-                // printVec<T>(nrows_color, &h_temp[block_dim * start]);
-
+                // timing part
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_Dinv_LU_time = std::chrono::high_resolution_clock::now();
                     std::chrono::duration<double> Dinv_LU_time = end_Dinv_LU_time - start_Dinv_LU_tmie;
                     printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor, Dinv_LU_time.count());
                 }
+
+                // -----------------------------------------------------------------
+                // color soln update => defect update for each color
+                
                 auto start_Bsrmv_time = std::chrono::high_resolution_clock::now();
 
                 // 2) update soln x_color += dx_color
@@ -1369,20 +1307,10 @@ class ShellGrid {
                 CHECK_CUBLAS(
                     cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
 
-                a = -omega,
-                b = 1.0;  // so that defect := defect - mat*vec
+                a = -omega, b = -1.0;  // so that defect := defect - mat*vec
 
-                if constexpr (slice_prod) {
-                    a = 0.0; // TODO : need to slice the color matrices..
-
-                } else {
-                    // can't row slice this to remove redundant color * 0 subblock computations
-                    // because K^T * vec not supported in cusparseDbsrmv routine.. see doc
-                    CHECK_CUSPARSE(cusparseDbsrmv(
-                        cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                        nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
-                        block_dim, d_temp, &b, d_defect.getPtr()));
-                }
+                // TODO : need sliced products here by color (maybe Bsrmv transpose product)
+                // transposes here..
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1391,10 +1319,8 @@ class ShellGrid {
                     printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor, bsrmv_time.count());
                 }
                 
-
+            // -------------------------------------------------------------------------------------
             }  // next color iteration
-
-            // printf("iter %d, done with color iterations\n", iter);
 
             /* report progress of defect nrm if printing.. */
             T defect_nrm;
@@ -1402,6 +1328,7 @@ class ShellGrid {
             if (print && iter % print_freq == 0)
                 printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
+        // --------------------------------------------------------------------------------
         }  // next block-GS iteration
     }
 
@@ -1414,8 +1341,6 @@ class ShellGrid {
                                      d_weights);
         } else {
             if constexpr (Prolongation::assembly) {
-                // permute coarse soln in
-                coarse_soln_in.permuteData(block_dim, d_coarse_iperm);
                 Prolongation::prolongate(cusparseHandle, descrP, P_mat, coarse_soln_in, d_temp_vec);
             } else {
                 // slower version
@@ -1466,8 +1391,6 @@ class ShellGrid {
                                           d_defect, d_weights);
         } else {
             if constexpr (Prolongation::assembly) {
-                // permute fine defect in
-                fine_defect_in.permuteData(block_dim, d_iperm_fine);
                 Prolongation::restrict_defect(cusparseHandle, restrict_descrPT, restrict_PT_mat, fine_defect_in, d_defect);
             } else {
                 // slower restriction operator (not using sparse matrix-vec kernels)
@@ -1635,6 +1558,7 @@ class ShellGrid {
     int *d_piv, *d_info;
     T *d_diag_vals, *d_diag_LU_vals;
     T **d_diag_LU_batch_ptr, **d_temp_batch_ptr;
+    bool build_lu_inv_operator;
 
     // for kmat
     int kmat_nnzb, *d_kmat_rowp, *d_kmat_cols;

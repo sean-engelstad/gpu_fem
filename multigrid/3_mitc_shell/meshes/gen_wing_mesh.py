@@ -51,6 +51,17 @@ tacs_model = caps2tacs.TacsModel.build(csm_file="large_naca_wing.csm", comm=comm
 # global mesh size settings for each level..
 if args.level == 0:
     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
+        edge_pt_min=2,
+        edge_pt_max=5,
+        global_mesh_size=0.1,
+        max_surf_offset=0.08,
+        max_dihedral_angle=20,
+    ).register_to(
+        tacs_model
+    )
+
+if args.level == 1:
+    tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
         edge_pt_min=5,
         edge_pt_max=8,
         global_mesh_size=0.05,
@@ -60,7 +71,7 @@ if args.level == 0:
         tacs_model
     )
 
-elif args.level == 1:
+elif args.level == 2:
     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
         edge_pt_min=12,
         edge_pt_max=15,
@@ -71,7 +82,7 @@ elif args.level == 1:
         tacs_model
     )
 
-elif args.level == 2:
+elif args.level == 3:
     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
         edge_pt_min=26,
         edge_pt_max=30,
@@ -83,7 +94,7 @@ elif args.level == 2:
     )
 
 
-elif args.level == 3:
+elif args.level == 4:
     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
         edge_pt_min=54,
         edge_pt_max=60,
@@ -94,7 +105,7 @@ elif args.level == 3:
         tacs_model
     )
 
-elif args.level == 4:
+elif args.level == 5:
     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
         edge_pt_min=108,
         edge_pt_max=120,

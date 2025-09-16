@@ -84,5 +84,28 @@ __global__ static void k_singleToDoublePointerVec(int nnodes, int block_dim, T *
     }
 }
 
+template <typename T>
+__global__ static void k_setBlockUnitVec(int nnodes, int block_dim, int ii, T *vec) {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid < nnodes) {
+        int inode = tid;
+        vec[block_dim * inode + ii] = 1.0;
+    }
+}
+
+template <typename T>
+__global__ static void k_setLUinv_operator(int nnodes, int block_dim, int ii, const T *rhs, T *Dinv_vals) {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int block_dim2 = block_dim * block_dim;
+    int nvec = nnodes * block_dim;
+    if (tid < nvec) {
+        int inode = tid / block_dim;
+        int idof = tid % block_dim;
+
+        // copy values of this rhs result from (LU)^-1 triang solve linear operator into Dinv
+        Dinv_vals[block_dim2 * inode + block_dim * idof + ii] = rhs[tid];
+    }
+}
+
 // template <typename T>
 // __global__ static void k_Dinv_LU_triang_solves()

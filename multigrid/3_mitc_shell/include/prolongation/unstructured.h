@@ -109,14 +109,18 @@ class UnstructuredProlongationFast {
         // } else {
             // block_dim == 1, my own kernel here..
         dim3 block(32);
-        dim3 grid((nnzb + 31) / 32, 6);
+        dim3 grid((nnzb + 31) / 32);
 
         int *d_rows = P_bsr_data.rows;
         k_csr_mat_vec<T><<<grid, block>>>(nnzb, 6, d_rows, d_cols, d_vals, perm_coarse_soln_in.getPtr(), perm_dx_fine.getPtr());
         // }
 
-        CHECK_CUDA(cudaDeviceSynchronize());
-        printf("unstruct prolong fast end\n");
+        // T *h_perm_dx_fine = perm_dx_fine.createHostVec().getPtr();
+        // printf("hperm dx fine:");
+        // printVec<T>(100, h_perm_dx_fine);
+
+        // CHECK_CUDA(cudaDeviceSynchronize());
+        // printf("unstruct prolong fast end\n");
     }
 
     static void restrict_defect(cusparseHandle_t handle, cusparseMatDescr_t descr_PT, BsrMat<DeviceVec<T>> restrict_mat,
@@ -141,7 +145,7 @@ class UnstructuredProlongationFast {
         // } else {
         // block_dim == 1, my own kernel here..
         dim3 block(32);
-        dim3 grid((nnzb + 31) / 32, 6);
+        dim3 grid((nnzb + 31) / 32);
 
         int *d_rows = PT_bsr_data.rows;
         // int *h_rows = DeviceVec<int>(nnzb, d_rows).createHostVec().getPtr();
@@ -151,7 +155,7 @@ class UnstructuredProlongationFast {
         k_csr_mat_vec<T><<<grid, block>>>(nnzb, 6, d_rows, d_cols, d_vals, fine_defect_in.getPtr(), coarse_defect_out.getPtr());
         // }
 
-        CHECK_CUDA(cudaDeviceSynchronize());
-        printf("unstruct restrict defect fast end\n");
+        // CHECK_CUDA(cudaDeviceSynchronize());
+        // printf("unstruct restrict defect fast end\n");
     }
 };

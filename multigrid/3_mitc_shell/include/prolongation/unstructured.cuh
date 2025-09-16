@@ -116,6 +116,7 @@ __global__ static void k_prolong_mat_assembly(const int *d_coarse_iperm, const i
 
         // TODO : make this part faster.. not efficient yet (getting some basis coefficients here)
         // useful to use transpose product to get the FEA basis.. instead of derivs
+        // not sure this part actually works though..
         T c_elem_vals[24];
         memset(c_elem_vals, 0.0, 24 * sizeof(T));
         T f_node_vals[6];
@@ -123,11 +124,25 @@ __global__ static void k_prolong_mat_assembly(const int *d_coarse_iperm, const i
         f_node_vals[0] = 1.0;
         Basis::template interpFieldsTranspose<6, 6>(pt, f_node_vals, c_elem_vals);
 
+        // if (perm_fine_node == 2) {
+        //     printf("c_elem_vals on celem %d: ", ielem_c);
+        //     printVec<T>(24, c_elem_vals);
+        //     printf("xis on celem %d: ", ielem_c);
+        //     printVec<T>(2, pt);
+        //     printf("celem_nodes on celem %d: (block_dim = %d): ", ielem_c, block_dim);
+        //     for (int m = 0; m < 4; m++) {
+        //         printf("%d ", d_coarse_iperm[c_elem_nodes[m]]);
+        //     }
+        //     printf("\n");
+        //     // printVec<int>(4, c_elem_nodes);
+        // }
+
         // now entries 0,6,12, .. etc hold the coefficients of interp to each node (same for each [0,6) dof)
         T scale = 1.0 / (double) num_attached_elems;
         // dof and local node in element loop
-        for (int i = 0; i < 24; i++) {
-            int loc_node = i / 6, loc_dof = i % 6;
+        for (int i = 0; i < 4; i++) {
+            // int loc_node = i / 6, loc_dof = i % 6;
+            int loc_node = i; // in CSR version (same operator for each node)
             int coarse_node = c_elem_nodes[loc_node];
             int perm_coarse_node = d_coarse_iperm[coarse_node];
 
@@ -138,10 +153,12 @@ __global__ static void k_prolong_mat_assembly(const int *d_coarse_iperm, const i
                 T scale2 = scale * (col == perm_coarse_node);
 
                 // only add into diagonal entries in each nodal block.. (NOTE : this may be inefficient then, we'll see..)
-                int P_nz_ind = block_dim2 * jp2 + block_dim * loc_dof + loc_dof;
+                // int P_nz_ind = block_dim2 * jp2 + block_dim * loc_dof + loc_dof;
+                int P_nz_ind = jp2; // in new CSR version (same for each node)
+
                 // if (block_dim == 1) {
                 // csr case, divide scal2 by block_dim (temp hack)
-                scale2 /= 6;
+                // scale2 /= 6;
                 // }
 
                 atomicAdd(&d_vals[P_nz_ind], scale2 * N_cf);
@@ -183,8 +200,9 @@ __global__ static void k_restrict_mat_assembly(const int *d_coarse_iperm, const 
         // now entries 0,6,12, .. etc hold the coefficients of interp to each node (same for each [0,6) dof)
         T scale = 1.0 / (double) num_attached_elems;
         // dof and local node in element loop
-        for (int i = 0; i < 24; i++) {
-            int loc_node = i / 6, loc_dof = i % 6;
+        for (int i = 0; i < 4; i++) {
+            // int loc_node = i / 6, loc_dof = i % 6;
+            int loc_node = i; // in CSR version (same operator for each node)
             int coarse_node = c_elem_nodes[loc_node];
             int perm_coarse_node = d_coarse_iperm[coarse_node];
 
@@ -195,11 +213,12 @@ __global__ static void k_restrict_mat_assembly(const int *d_coarse_iperm, const 
                 T scale2 = scale * (col == perm_fine_node);
                 // if (block_dim == 1) {
                     // csr case, divide scal2 by block_dim (temp hack)
-                scale2 /= 6;
+                // scale2 /= 6;
                 // }
 
                 // only add into diagonal entries in each nodal block.. (NOTE : this may be inefficient then, we'll see..)
-                int PT_nz_ind = block_dim2 * jp2 + block_dim * loc_dof + loc_dof;
+                // int PT_nz_ind = block_dim2 * jp2 + block_dim * loc_dof + loc_dof;
+                int PT_nz_ind = jp2; // in new CSR version (same for each node)
 
                 atomicAdd(&d_vals[PT_nz_ind], scale2 * N_cf);
             } // end of loop through that row
@@ -211,14 +230,20 @@ template <typename T>
 __global__ static void k_csr_mat_vec(const int nnzb, const int block_dim, const int *d_rows, const int *d_cols, const T *d_vals, const T *vec_in, T *vec_out) {
     // fast CSR mat-vec kernel (does same prolong / restrict for every dof per node)
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    int idof = blockIdx.y;
-    if (tid > nnzb) return;
+    if (tid >= nnzb) return;
 
     // pseudo-csr block style prod..
     int row = d_rows[tid];
     int col = d_cols[tid];
+    T coeff = d_vals[tid];
 
-    T val_in = vec_in[block_dim * row + idof];
-    T term_out = d_vals[tid] * val_in;
-    atomicAdd(&vec_out[block_dim * col + idof], term_out);
+
+    for (int idof = 0; idof < 6; idof++) {
+        T val_in = vec_in[block_dim * col + idof];
+        // if (row == 500 && idof == 2) {
+        //     int dof_out = block_dim * row + idof;
+        //     printf("cpnode %d to fpnode %d, idof %d with val_in %.2e, A[r,c] %.2e and val_out %.2e\n", col, row, idof, val_in, coeff, val_in * coeff);
+        // }
+        atomicAdd(&vec_out[block_dim * row + idof], coeff * val_in);
+    }
 }

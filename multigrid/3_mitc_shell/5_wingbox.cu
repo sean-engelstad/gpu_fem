@@ -54,13 +54,16 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-    // multigrid objects
+    // old smoothers
     // const SMOOTHER smoother = MULTICOLOR_GS;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
 
-    using Prolongation = UnstructuredProlongation<Basis>; // this appears to actually be a litle faster..
-    // using Prolongation = UnstructuredProlongationFast<Basis>;
+    // two best smoothers
+    // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST2;
+
+    // using Prolongation = UnstructuredProlongation<Basis>;
+    using Prolongation = UnstructuredProlongationFast<Basis>;
 
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
@@ -147,6 +150,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         // return; // TEMP DEBUG
     }
 
+    // return; // temp degug
+
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
@@ -169,11 +174,11 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     int n_vcycles = 200;
     // int n_vcycles = 400;
 
-    // bool time = false;
-    bool time = true;
+    bool time = false;
+    // bool time = true;
 
-    bool double_smooth = false;
-    // bool double_smooth = true; // false
+    // bool double_smooth = false;
+    bool double_smooth = true; // false
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth, time);
     printf("done with v-cycle solve\n");
 
