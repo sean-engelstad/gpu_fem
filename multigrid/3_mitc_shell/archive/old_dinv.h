@@ -107,3 +107,52 @@
                 //     printf("%.12e, ", h_diag_LU_vals[i]);
                 // }
                 // printf("\n");
+
+
+// void buildColorLocalRowPointers() {
+    //     // build local row pointers for row-slicing by color (of Kmat)
+    //     // int *h_color_vals_ptr, *h_color_local_rowp_ptr, *d_color_local_rowps;
+
+    //     // init the color pointers
+    //     int num_colors = h_color_rowp.getSize() - 1;
+    //     int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each color
+    //     h_color_bnz_ptr =
+    //         new int[num_colors + 1];  // says which block nz bounds for each color in cols, Kmat
+    //     h_color_local_rowp_ptr =
+    //         new int[num_colors + 1];  // pointer for bounds of d_color_local_rowps
+    //     int *h_color_local_rowps = new int[nnodes + num_colors];
+
+    //     // copy kmat pointers to host
+    //     int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
+    //     int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
+
+    //     // build each pointer..
+    //     h_color_bnz_ptr[0] = 0;
+    //     h_color_local_rowp_ptr[0] = 0;
+    //     int offset = 0;
+    //     for (int icolor = 0; icolor < num_colors; icolor++) {
+    //         int brow_start = color_rowp[icolor], brow_end = color_rowp[icolor + 1];
+    //         int bnz_start = h_kmat_rowp[brow_start], bnz_end = h_kmat_rowp[brow_end];
+
+    //         int nnzb_color = bnz_end - bnz_start;
+    //         h_color_bnz_ptr[icolor + 1] = h_color_bnz_ptr[icolor] + nnzb_color;
+
+    //         // now set the local rowp arrays for this color
+    //         int nbrows_color = brow_end - brow_start;
+    //         h_color_local_rowp_ptr[icolor + 1] = h_color_local_rowp_ptr[icolor] + nbrows_color + 1;
+    //         h_color_local_rowps[offset] = 0;
+    //         for (int local_row = 0; local_row < nbrows_color; local_row++) {
+    //             int row_diff =
+    //                 h_kmat_rowp[brow_start + local_row + 1] - h_kmat_rowp[brow_start + local_row];
+    //             h_color_local_rowps[local_row + 1 + offset] =
+    //                 h_color_local_rowps[local_row + offset] + row_diff;
+    //         }
+    //         offset += nbrows_color + 1;
+    //     }
+
+    //     delete[] h_kmat_rowp;
+    //     delete[] h_kmat_cols;
+
+    //     d_color_local_rowps =
+    //         HostVec<int>(nnodes + num_colors, h_color_local_rowps).createDeviceVec().getPtr();
+    // }

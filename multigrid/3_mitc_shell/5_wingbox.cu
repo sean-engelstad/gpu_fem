@@ -60,7 +60,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
 
     // two best smoothers
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST2;
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
 
     // using Prolongation = UnstructuredProlongation<Basis>;
     using Prolongation = UnstructuredProlongationFast<Basis>;
@@ -103,8 +103,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         // TODO : make thinner later
 
         // internal struct and skin/OML thicknesses
-        T its_thick = 0.1, skin_thick = 1.0;
-        // T its_thick = 0.01, skin_thick = 0.1;
+        // T its_thick = 0.1, skin_thick = 1.0;
+        T its_thick = 0.008, skin_thick = 0.03;
         // T its_thick = 0.001, skin_thick = 0.01;
 
         bool is_int_struct[32] = {1, 1, 0, 1,   0, 0, 0, 1,   1, 1, 0, 1,   0, 0, 0, 1,
@@ -126,9 +126,10 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         bool reorder;
         if (smoother == LEXIGRAPHIC_GS) {
             reorder = false;
-        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
+        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
             reorder = true;
         }
+        // printf("reorder %d\n", reorder);
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
 
@@ -149,8 +150,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
         // printf("done with init unstructured\n");
         // return; // TEMP DEBUG
     }
-
-    // return; // temp degug
+    // return; // temp debug
 
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
@@ -169,6 +169,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     // T omega = 0.8; // may need lower omega to handle junctions better? less magnification there? doesn't seem to help much though.. actually slows it down
     // T omega = 0.7;
     // T omega = 0.1;
+    // int n_vcycles = 10;
     // int n_vcycles = 50;
     // int n_vcycles = 100;
     int n_vcycles = 200;

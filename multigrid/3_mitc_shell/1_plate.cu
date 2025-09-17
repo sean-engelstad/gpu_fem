@@ -148,7 +148,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     // multigrid objects
     // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST; // this is much faster than other two methods
+    // const SMOOTHER smoother = MULTICOLOR_GS_FAST; 
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
 
     using Prolongation = StructuredProlongation<PLATE>;
 
@@ -177,7 +178,7 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
         bool reorder;
         if (smoother == LEXIGRAPHIC_GS) {
             reorder = false;
-        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST) {
+        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
             reorder = true;
         }
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);

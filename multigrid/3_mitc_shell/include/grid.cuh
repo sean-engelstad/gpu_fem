@@ -107,5 +107,33 @@ __global__ static void k_setLUinv_operator(int nnodes, int block_dim, int ii, co
     }
 }
 
-// template <typename T>
-// __global__ static void k_Dinv_LU_triang_solves()
+template <typename T>
+__global__ static void k_copy_color_submat(const int nnodes, const int submat_nnzb, const int start_col, const int block_dim, 
+    const int *d_submat_rows, const int *d_submat_cols, const int *d_kmat_rowp, const int *d_kmat_cols, const T *d_kmat_vals, T *d_submat_vals) {
+
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    int block_dim2 = block_dim * block_dim;
+    int submat_nnz = submat_nnzb * block_dim2;
+    int block_ind = blockIdx.x;
+    if (tid >= submat_nnz) return; // escape condition
+
+    // get the row and column of this block nodal value
+    int brow = d_submat_rows[block_ind];
+    int bcol = d_submat_cols[block_ind] + start_col;
+
+    // find the pointer in kmat memory for this block node in Kmat
+    int _jp = 0;
+    // repeated for every thread currently...
+    for (int jp = d_kmat_rowp[brow]; jp < d_kmat_rowp[brow+1]; jp++) {
+        int bcol2 = d_kmat_cols[jp];
+        _jp += jp * (bcol2 == bcol); // GPU friendly if condition and set value here..
+    }
+    
+    // if (threadIdx.x == 0 && blockIdx.x < 3) {
+    //     printf("brow %d, bcol %d, block_ind %d, _jp %d\n", brow, bcol, block_ind, _jp);
+    // }
+
+    // now copy values in the nodal block
+    int iloc = threadIdx.x;
+    d_submat_vals[block_dim2 * block_ind + iloc] = d_kmat_vals[block_dim2 * _jp + iloc];
+}

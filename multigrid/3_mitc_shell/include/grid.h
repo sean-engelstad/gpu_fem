@@ -58,7 +58,7 @@ class ShellGrid {
         initCuda();
         if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
             buildDiagInvMat();
-            if (smoother == MULTICOLOR_GS_FAST2) buildTransposeColorMatrices();
+            if (smoother == MULTICOLOR_GS_FAST2 && !full_LU) buildTransposeColorMatrices();
         }
         if (smoother == LEXIGRAPHIC_GS && !full_LU) {
             initLowerMatForGaussSeidel();
@@ -113,6 +113,7 @@ class ShellGrid {
             // solvers for GMG compute nofill pattern
             bsr_data.compute_nofill_pattern();
         }
+        // printf("num_colors %d\n", num_colors);
         auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
 
         assembler.moveBsrDataToDevice();
@@ -816,11 +817,14 @@ class ShellGrid {
 
         int num_colors = h_color_rowp.getSize() - 1;
         int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each color
+        // printf("nnodes %d\n", nnodes);
+        // printf("color_rowp: ");
+        // printVec<int>(num_colors + 1, color_rowp);
 
         int **h_color_submat_rowp = new int*[num_colors];
         int **h_color_submat_rows = new int*[num_colors];
         int **h_color_submat_cols = new int*[num_colors];
-        int *h_color_nnzb = new int[num_colors]; // what is the nnzb for each submat
+        h_color_submat_nnzb = new int[num_colors]; // what is the nnzb for each submat
 
         // copy kmat pointers to host
         int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
@@ -828,131 +832,141 @@ class ShellGrid {
 
         // get sparsity for each color-sliced matrix
         for (int icolor = 0; icolor < num_colors; icolor++) {
+            // temp debug
+            // printf("color %d, ", icolor);
+
             int start_node = color_rowp[icolor], end_node = color_rowp[icolor + 1];
             int ncols = end_node - start_node;
             int mb = nnodes, nb = ncols; // dimensions of column sub-matrix
 
             // construct a rowp and cols for each sub-matrix
-            int *_row_cts = new int[nnodes];
-            int *_rowp = new int[nnodes + 1];
+            h_color_submat_rowp[icolor] = new int[nnodes + 1];
+            int *_rowp = h_color_submat_rowp[icolor];
             _rowp[0] = 0;
             for (int i = 0; i < nnodes; i++) {
-                for (int jp = h_kmat_rowp[i], jp < h_kmat_rowp[i+1]; jp++) {
-                    j = h_kmat_cols[jp];
+                int _row_ct = 0;
+                for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
+                    int j = h_kmat_cols[jp];
                     if (start_node <= j && j < end_node) {
-                        _row_cts[i]++;
+                        _row_ct++;
                     }
                 }
-                _rowp[i+1] = _rowp[i] + _row_cts[i];
+                _rowp[i+1] = _rowp[i] + _row_ct;
             }
-            h_color_submat_rowp[icolor] = _rowp;
 
             int _nnzb = _rowp[nnodes];
-            int *_rows = new int[_nnzb];
+            h_color_submat_rows[icolor] = new int[_nnzb];
+            int *_rows = h_color_submat_rows[icolor];
             for (int i = 0; i < nnodes; i++) {
-                for (int jp = _rowp[i], jp < _rowp[i+1]; jp++) {
+                for (int jp = _rowp[i]; jp < _rowp[i+1]; jp++) {
                     _rows[jp] = i;
                 }
             }
-            h_color_submat_rows[icolor] = _rows;
 
-            int *_cols = new int[_nnzb];
+            // // temp debug
+            // printf("_nnzb %d\b", _nnzb);
+            // printf("\th_kmat_rowp: ");
+            // printVec<int>(11, h_kmat_rowp);
+            // printf("\th_kmat_cols: ");
+            // printVec<int>(40, h_kmat_cols);
+
+            h_color_submat_cols[icolor] = new int[_nnzb];
+            int *_cols = h_color_submat_cols[icolor];
             int *_next = new int[nnodes]; // help for inserting matrix
             memcpy(_next, _rowp, nnodes * sizeof(int));
             for (int i = 0; i < nnodes; i++) {
-                for (int jp = h_kmat_rowp[i], jp < h_kmat_rowp[i+1]; jp++) {
-                    j = h_kmat_cols[jp];
+                for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
+                    int j = h_kmat_cols[jp];
                     if (start_node <= j && j < end_node) {
-                        j2 = j - start_node;
+                        int j2 = j - start_node;
                         _cols[_next[i]++] = j2;
                     }
                 }
             }
             delete[] _next;
-            h_color_submat_cols[icolor] = _cols;
+            h_color_submat_nnzb[icolor] = _nnzb;
+
+            // temp debug
+            // printf("_nnzb %d, submat cols %d to %d\b", _nnzb, start_node, end_node);
+            // printf("\t_rowp: ");
+            // printVec<int>(5, _rowp);
+            // printf("\t_rows: ");
+            // printVec<int>(30, _rows);
+            // printf("\t_cols: ");
+            // printVec<int>(30, _cols);
+            // return; // temp debug            
+
+            // // temp debug
+            // printf("_nnzb %d\b", _nnzb);
+            // printf("\t_rows: ");
+            // printVec<int>(11, _rowp);
+            // printf("\t_cols: ");
+            // printVec<int>(40, _cols);
         }
 
-        // now double check that, better way is maybe a transpose mat-vec product.. but that may not be as fast as you think?
+        int block_dim2 = block_dim * block_dim;
+        d_color_submat_rowp = new int*[num_colors];
+        d_color_submat_rows = new int*[num_colors];
+        d_color_submat_cols = new int*[num_colors];
+        d_color_submat_vals = new T*[num_colors];
+        // can't deref double pointers if stored on device, need outer double pointers stored on host so can deref on host
+        // cudaMalloc((void**)&d_color_submat_rowp, num_colors * sizeof(int *));
+        // cudaMalloc((void**)&d_color_submat_rows, num_colors * sizeof(int *));
+        // cudaMalloc((void**)&d_color_submat_cols, num_colors * sizeof(int *));
+        // cudaMalloc((void**)&d_color_submat_vals, num_colors * sizeof(T*));
+        
+        for (int icolor = 0; icolor < num_colors; icolor++) {
+            cudaMalloc((void**)&d_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int));
+            int submat_nnzb = h_color_submat_nnzb[icolor];
+            cudaMalloc((void**)&d_color_submat_rows[icolor], submat_nnzb * sizeof(int));
+            cudaMalloc((void**)&d_color_submat_cols[icolor], submat_nnzb * sizeof(int));
+            cudaMalloc((void**)&d_color_submat_vals[icolor], block_dim2 * submat_nnzb * sizeof(T));
+
+            // temp debug
+            // printf("_nnzb %d\b", submat_nnzb);
+            // printf("\t_rows: ");
+            // printVec<int>(11, h_color_submat_rows[icolor]);
+            // printf("\t_cols: ");
+            // printVec<int>(40, h_color_submat_cols[icolor]);
+
+            // copy data to device
+            cudaMemcpy(d_color_submat_rowp[icolor], h_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_color_submat_rows[icolor], h_color_submat_rows[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_color_submat_cols[icolor], h_color_submat_cols[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
+        }
+
+
+        // better way is maybe a transpose mat-vec product on row-sliced data?... but that may not be as fast as you think?
         for (int icolor = 0; icolor < num_colors; icolor++) {
             // submat comes out of T **d_submat_vals then by color..
+            int submat_nnzb = h_color_submat_nnzb[icolor];
+            int start_col = color_rowp[icolor];
+            // int submat_nnz = submat_nnzb * block_dim2;
 
-            // put pointers on device..
-            k_copy_color_submat<T><<<grid, block>>>(nnodes, start, end, color_rows, color_cols, kmat_rowp, kmat_cols, kmat_vals, submat_vals);
+            dim3 block(block_dim2);
+            dim3 grid(submat_nnzb);
 
+            // TODO : figure out good strategy to optimize this kernel later..
+            k_copy_color_submat<T><<<grid, block>>>(nnodes, submat_nnzb, start_col, block_dim, d_color_submat_rows[icolor], 
+                d_color_submat_cols[icolor], d_kmat_rowp, d_kmat_cols, d_kmat_vals, d_color_submat_vals[icolor]);
 
-            
+            // // now print out some of the submat vals..
+            // T *h_submat_vals = DeviceVec<T>(block_dim2 * submat_nnzb, d_color_submat_vals[icolor]).createHostVec().getPtr();
+            // T *h_kmat_vals = DeviceVec<T>(block_dim2 * kmat_nnzb, d_kmat_vals).createHostVec().getPtr();
+            // printf("h_submat_vals: \n");
+            // for (int inode = 0; inode < 3; inode++) {
+            //     printf("\tnodal block %d: ", inode);
+            //     printVec<T>(36, &h_submat_vals[36 * inode]);
+            // }
+            // printf("h_kmat_vals: \n");
+            // for (int inode = 0; inode < 3; inode++) {
+            //     printf("\tnodal block %d: ", inode);
+            //     printVec<T>(36, &h_kmat_vals[36 * inode]);
+            // }
         }
-
-        // now copy kmat into the color sub-matrices..
-        
-
-
-        // 1) compute the sparsity patterns of the full transpose matrix
-        // --------------------------------------------------------------
-        // since sym matrix, the sparsity of transpose is the same, values the same right?
-
-        // 2) copy values into the transpose matrix
-        // ----------------------------------------
-        // again from step 1, no need to do anything here..
-
-        // 3) compute row-sliced (by color) rowp, cols of color submatrices (of transpose)
-        // -------------------------------------------------------------------------------
-        
-        // do need the color-sliced rowp, cols (for only certain columns and a sub-matrix)
-        // some parts here similar to next method buildColorLocalRowPointers
-        // we do reuse a few states from that..
-
-
+        // return; // temp debug
 
     }
-
-    // void buildColorLocalRowPointers() {
-    //     // build local row pointers for row-slicing by color (of Kmat)
-    //     // int *h_color_vals_ptr, *h_color_local_rowp_ptr, *d_color_local_rowps;
-
-    //     // init the color pointers
-    //     int num_colors = h_color_rowp.getSize() - 1;
-    //     int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each color
-    //     h_color_bnz_ptr =
-    //         new int[num_colors + 1];  // says which block nz bounds for each color in cols, Kmat
-    //     h_color_local_rowp_ptr =
-    //         new int[num_colors + 1];  // pointer for bounds of d_color_local_rowps
-    //     int *h_color_local_rowps = new int[nnodes + num_colors];
-
-    //     // copy kmat pointers to host
-    //     int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
-    //     int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
-
-    //     // build each pointer..
-    //     h_color_bnz_ptr[0] = 0;
-    //     h_color_local_rowp_ptr[0] = 0;
-    //     int offset = 0;
-    //     for (int icolor = 0; icolor < num_colors; icolor++) {
-    //         int brow_start = color_rowp[icolor], brow_end = color_rowp[icolor + 1];
-    //         int bnz_start = h_kmat_rowp[brow_start], bnz_end = h_kmat_rowp[brow_end];
-
-    //         int nnzb_color = bnz_end - bnz_start;
-    //         h_color_bnz_ptr[icolor + 1] = h_color_bnz_ptr[icolor] + nnzb_color;
-
-    //         // now set the local rowp arrays for this color
-    //         int nbrows_color = brow_end - brow_start;
-    //         h_color_local_rowp_ptr[icolor + 1] = h_color_local_rowp_ptr[icolor] + nbrows_color + 1;
-    //         h_color_local_rowps[offset] = 0;
-    //         for (int local_row = 0; local_row < nbrows_color; local_row++) {
-    //             int row_diff =
-    //                 h_kmat_rowp[brow_start + local_row + 1] - h_kmat_rowp[brow_start + local_row];
-    //             h_color_local_rowps[local_row + 1 + offset] =
-    //                 h_color_local_rowps[local_row + offset] + row_diff;
-    //         }
-    //         offset += nbrows_color + 1;
-    //     }
-
-    //     delete[] h_kmat_rowp;
-    //     delete[] h_kmat_cols;
-
-    //     d_color_local_rowps =
-    //         HostVec<int>(nnodes + num_colors, h_color_local_rowps).createDeviceVec().getPtr();
-    // }
 
     void direct_solve(bool print = false) {
         // T defect_nrm;
@@ -1301,16 +1315,23 @@ class ShellGrid {
                 auto start_Bsrmv_time = std::chrono::high_resolution_clock::now();
 
                 // 2) update soln x_color += dx_color
-
                 T *d_soln_color = &d_soln.getPtr()[block_dim * start];
                 a = omega;
                 CHECK_CUBLAS(
                     cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
 
-                a = -omega, b = -1.0;  // so that defect := defect - mat*vec
+                
+                // get submat size, to do submat-vec product A[:,color] * dx[color]
+                int start_bcol = h_color_rowp[icolor], end_bcol = h_color_rowp[icolor+1];
+                int mb = nnodes, nb = end_bcol - start_bcol;
+                int submat_nnzb = h_color_submat_nnzb[icolor];
+                a = -omega, b = 1.0;  // so that defect := defect - mat*vec
 
-                // TODO : need sliced products here by color (maybe Bsrmv transpose product)
-                // transposes here..
+                CHECK_CUSPARSE(cusparseDbsrmv(
+                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                    mb, nb, submat_nnzb, &a, descrKmat, d_color_submat_vals[icolor], d_color_submat_rowp[icolor], d_color_submat_cols[icolor],
+                    block_dim, d_temp_color, &b, d_defect.getPtr()));
+
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1551,7 +1572,9 @@ class ShellGrid {
     void *buffer_MV = nullptr;
 
     // color rowp and nnzb pointers data for row-slicing
-    int *h_color_bnz_ptr, *h_color_local_rowp_ptr, *d_color_local_rowps;
+    int *h_color_submat_nnzb;
+    int **d_color_submat_rowp, **d_color_submat_rows, **d_color_submat_cols;
+    T **d_color_submat_vals;
 
     // for diag inv mat
     int diag_inv_nnzb, *d_diag_rowp, *d_diag_cols;
