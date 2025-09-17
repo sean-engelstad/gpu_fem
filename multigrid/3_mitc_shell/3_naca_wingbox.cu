@@ -55,10 +55,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // old smoothers
-    // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-
-    // two best smoothers
+    // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
 
@@ -157,6 +155,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
 
     T init_resid_nrm = mg.grids[0].getResidNorm();
 
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
     // int pre_smooth = 1, post_smooth = 1;
@@ -182,13 +181,14 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     // bool double_smooth = false;
     bool double_smooth = true; // false
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth, time);
-    printf("done with v-cycle solve\n");
-
+    
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
     int ndof = mg.grids[0].N;
     double total = startup_time.count() + solve_time.count();
-    printf("wingbox GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
+    double mem_MB = mg.get_memory_usage_mb();
+    printf("wingbox GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
 
     // double check with true resid nrm
     T resid_nrm = mg.grids[0].getResidNorm();
@@ -622,6 +622,10 @@ void solve_linear_direct(MPI_Comm &comm, int level) {
 
   // solve the linear system
   CUSPARSE::direct_LU_solve(kmat, loads, soln);
+
+  size_t bytes_per_double = sizeof(double);
+  double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
+  printf("direct LU solve uses memory(MB) %.2e\n", mem_mb);
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();

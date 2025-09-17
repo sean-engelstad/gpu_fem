@@ -96,6 +96,9 @@ void direct_solve(int nxe, double SR) {
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
 
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start1 = std::chrono::high_resolution_clock::now();
+
     // solve the linear system
     if (full_LU) {
         CUSPARSE::direct_LU_solve(kmat, loads, soln);
@@ -105,6 +108,13 @@ void direct_solve(int nxe, double SR) {
         bool print = true;
         CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
     }
+
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end1 - start1;
+
+    size_t bytes_per_double = sizeof(double);
+    double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
+    printf("cylinder direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem (MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_mb);
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
@@ -221,7 +231,8 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     std::chrono::duration<double> solve_time = end1 - start1;
     int ndof = mg.grids[0].N;
     double total = startup_time.count() + solve_time.count();
-    printf("cylinder GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
+    double mem_MB = mg.get_memory_usage_mb();
+    printf("cylinder GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
 
     // print some of the data of host residual
     int *d_perm = mg.grids[0].d_perm;

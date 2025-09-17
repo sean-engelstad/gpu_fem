@@ -19,6 +19,15 @@ class ShellMultigrid {
 
     int getNumLevels() { return grids.size(); }
 
+    double get_memory_usage_mb() {
+        // get total memory usage of each Kmat across all grids
+        double total_mem = 0.0;
+        for (int ilevel = 0; ilevel < getNumLevels(); ilevel++) {
+            total_mem += grids[ilevel].get_memory_usage_mb();
+        }
+        return total_mem;
+    }
+
     void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
                       T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false, bool time = false) {
         // init defect nrm

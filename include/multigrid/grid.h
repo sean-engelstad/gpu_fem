@@ -139,6 +139,16 @@ class ShellGrid {
         return new ShellGrid(assembler, N, kmat, loads, h_color_rowp, full_LU);
     }
 
+    double get_memory_usage_mb() {
+        // get memory usage for kmat in megabytes
+        size_t kmat_nnz = block_dim * block_dim * kmat_nnzb;
+        size_t bytes_per_double = sizeof(double);
+        size_t mem_bytes = kmat_nnz * bytes_per_double;
+        double mem_MB = static_cast<double>(mem_bytes) / (1024.0 * 1024.0);
+        // printf("kmat nnz = %d, mem_bytes %d\n", kmat_nnz, mem_bytes);
+        return mem_MB;
+    }
+
     template <class Basis>
     void init_unstructured_grid_maps(ShellGrid &coarse_grid, int ELEM_MAX = 4) {
         /* initialize the unstructured mesh prolongation map */

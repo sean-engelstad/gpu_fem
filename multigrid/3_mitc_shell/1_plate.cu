@@ -102,6 +102,7 @@ void direct_plate_solve(int nxe, double SR) {
 
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
 
     // solve the linear system
@@ -116,12 +117,15 @@ void direct_plate_solve(int nxe, double SR) {
         // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
     }
 
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
     int nx = nxe + 1;
     int ndof = nx * nx * 6;
     double total = startup_time.count() + solve_time.count();
-    printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
+    size_t bytes_per_double = sizeof(double);
+    double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
+    printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem (MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_mb);
 
 
     // print some of the data of host residual
@@ -146,8 +150,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
+    // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST; 
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
 
@@ -156,6 +160,7 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto start0 = std::chrono::high_resolution_clock::now();
     auto mg = MG();
 
@@ -185,6 +190,7 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
         mg.grids.push_back(grid); // add new grid
     }
 
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
@@ -215,6 +221,7 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     //     return;
     // }  
 
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
     int pre_smooth = 1, post_smooth = 1;
@@ -226,13 +233,18 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     T omega = 1.0;
     bool double_smooth = true; // false
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
-    printf("done with v-cycle solve\n");
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+    // printf("done with v-cycle solve\n");
+
+    // compute also the memory usage for the matrix storage..
+    double mem_mb = mg.get_memory_usage_mb();
 
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
     int ndof = mg.grids[0].N;
     double total = startup_time.count() + solve_time.count();
-    printf("plate GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
+    printf("plate GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, memory in MB %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_mb);
 
     // double check with true resid nrm
     T resid_nrm = mg.grids[0].getResidNorm();
