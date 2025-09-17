@@ -10,9 +10,9 @@
 #include "element/shell/shell_elem_group.h"
 
 // local multigrid imports
-#include "include/grid.h"
-#include "include/fea.h"
-#include "include/mg.h"
+#include "multigrid/grid.h"
+#include "multigrid/fea.h"
+#include "multigrid/mg.h"
 #include <string>
 #include <chrono>
 
@@ -160,8 +160,9 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
     // int pre_smooth = 1, post_smooth = 1;
-    int pre_smooth = 2, post_smooth = 2;
-    // int pre_smooth = 4, post_smooth = 4;
+    // int pre_smooth = 2, post_smooth = 2;
+    int pre_smooth = 4, post_smooth = 4;
+    // int pre_smooth = 8, post_smooth = 8;
     // bool print = false;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;

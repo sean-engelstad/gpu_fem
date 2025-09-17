@@ -10,14 +10,14 @@
 #include "element/shell/physics/isotropic_shell.h"
 
 // local multigrid imports
-#include "include/grid.h"
-#include "include/fea.h"
-#include "include/mg.h"
+#include "multigrid/grid.h"
+#include "multigrid/fea.h"
+#include "multigrid/mg.h"
 #include <string>
 #include <chrono>
 
 /* command line args:
-    [--nxe int] [--SR float] [--nvcyc int]
+    [direct/mg] [--nxe int] [--SR float] [--nvcyc int]
     * nxe must be power of 2
 
     examples:
@@ -31,7 +31,7 @@ void to_lowercase(char *str) {
     }
 }
 
-void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
+void multigrid_solve(int nxe, double SR, int n_vcycles) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -51,30 +51,33 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     // const SMOOTHER smoother = MULTICOLOR_GS;
     const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-
-    // using Prolongation = StructuredProlongation<PLATE>;
+    
     using Prolongation = UnstructuredProlongation<Basis>;
-
     using GRID = ShellGrid<Assembler, Prolongation, smoother>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
+
     auto mg = MG();
 
-    int nxe_min = nxe > 32 ? 32 : 4;
-    // int nxe_min = nxe / 2; // two level
     // int nxe_min = 4;
-    // int nxe_min = 16;
+    // int nxe_min = nxe / 2; // two level
+    int nxe_min = 32; // maybe really coarse cylinders have such horrible discretization (like diamond)
+    // that it affects the ovr conv, so make min size much larger..
 
     // make each grid
     for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
         // make the assembler
-        int c_nye = c_nxe;
-        double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-        int nxe_per_comp = c_nxe / 4, nye_per_comp = c_nye/4; // for now (should have 25 grids)
-        auto assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+        int c_nhe = c_nxe;
+        double L = 1.0, R = 0.5, thick = L / SR;
+        double E = 70e9, nu = 0.3;
+        // double rho = 2500, ys = 350e6;
+        bool imperfection = false; // option for geom imperfection
+        int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
+        auto assembler = createCylinderAssembler<Assembler>(c_nxe, c_nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
+        constexpr bool compressive = false;
         double Q = 1.0; // load magnitude
-        T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+        T *my_loads = getCylinderLoads<T, Physics, compressive>(c_nxe, c_nhe, L, R, Q);
         printf("making grid with nxe %d\n", c_nxe);
 
         // make the grid
@@ -94,60 +97,35 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
         // return; // TEMP DEBUG
     }
 
-    // // -------------------------------
-    // TEMP DEBUG unstructured
-    // int *d_perm1 = mg.grids[0].d_perm;
-
-    // mg.grids[1].direct_solve(false);
-    // mg.grids[0].prolongate(mg.grids[1].d_iperm, mg.grids[1].d_soln);
-    // auto h_soln1 = mg.grids[0].d_temp_vec.createPermuteVec(6, d_perm1).createHostVec();
-    // printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln1, "out/plate_mg_cf.vtk");
-
-    // // plot orig fine defect
-    // auto h_fdef = mg.grids[0].d_defect.createPermuteVec(6, d_perm1).createHostVec();
-    // printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fdef, "out/plate_mg_fine_defect.vtk");
-
-    // // now try restrict defect
-    // mg.grids[1].restrict_defect(
-    //                     mg.grids[0].nelems, mg.grids[0].d_iperm, mg.grids[0].d_defect);
-    // int *d_perm2 = mg.grids[1].d_perm;
-    // auto h_def2 = mg.grids[1].d_defect.createPermuteVec(6, d_perm2).createHostVec();
-    // printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_def2, "out/plate_mg_restrict.vtk");
-    // return;
-    // // -------------------------------
-
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
-    T init_resid_nrm = mg.grids[0].getResidNorm();
-
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
-    int pre_smooth = 1, post_smooth = 1;
-    // int pre_smooth = 2, post_smooth = 2;
+    // int pre_smooth = 1, post_smooth = 1;
+    int pre_smooth = 2, post_smooth = 2; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     // int pre_smooth = 4, post_smooth = 4;
-    // bool print = false;
+    // bool print = true;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.0;
-    bool double_smooth = true; // false
+    // bool double_smooth = false;
+    bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
+    // 0 input means starts on outer level (fine grid W-cycle)
+    // mg.wcycle_solve(0, pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega); // try stronger W-cycle solve here on cylinder
     printf("done with v-cycle solve\n");
 
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
     int ndof = mg.grids[0].N;
     double total = startup_time.count() + solve_time.count();
-    printf("plate GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
-
-    // double check with true resid nrm
-    T resid_nrm = mg.grids[0].getResidNorm();
-    printf("init resid_nrm = %.2e => final resid_nrm = %.2e\n", init_resid_nrm, resid_nrm);
+    printf("cylinder GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
 
     // print some of the data of host residual
     int *d_perm = mg.grids[0].d_perm;
     auto h_soln = mg.grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln, "out/plate_mg.vtk");
+    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln, "out/cylinder_mg.vtk");
 }
 
 int main(int argc, char **argv) {
@@ -190,7 +168,7 @@ int main(int argc, char **argv) {
     }
 
     // done reading arts, now run stuff
-    multigrid_plate_solve(nxe, SR, n_vcycles);
+    multigrid_solve(nxe, SR, n_vcycles);
 
     return 0;
 

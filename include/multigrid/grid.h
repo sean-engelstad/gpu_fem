@@ -1326,7 +1326,6 @@ class ShellGrid {
                 int mb = nnodes, nb = end_bcol - start_bcol;
                 int submat_nnzb = h_color_submat_nnzb[icolor];
                 a = -omega, b = 1.0;  // so that defect := defect - mat*vec
-
                 CHECK_CUSPARSE(cusparseDbsrmv(
                     cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
                     mb, nb, submat_nnzb, &a, descrKmat, d_color_submat_vals[icolor], d_color_submat_rowp[icolor], d_color_submat_cols[icolor],

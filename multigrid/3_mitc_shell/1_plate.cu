@@ -10,9 +10,9 @@
 #include "element/shell/physics/isotropic_shell.h"
 
 // local multigrid imports
-#include "include/grid.h"
-#include "include/fea.h"
-#include "include/mg.h"
+#include "multigrid/grid.h"
+#include "multigrid/fea.h"
+#include "multigrid/mg.h"
 #include <string>
 #include <chrono>
 
@@ -119,7 +119,7 @@ void direct_plate_solve(int nxe, double SR) {
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
     int nx = nxe + 1;
-    int ndof = nx * nx;
+    int ndof = nx * nx * 6;
     double total = startup_time.count() + solve_time.count();
     printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
 

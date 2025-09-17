@@ -10,9 +10,9 @@
 #include "element/shell/physics/isotropic_shell.h"
 
 // local multigrid imports
-#include "include/grid.h"
-#include "include/fea.h"
-#include "include/mg.h"
+#include "multigrid/grid.h"
+#include "multigrid/fea.h"
+#include "multigrid/mg.h"
 #include <string>
 #include <chrono>
 
