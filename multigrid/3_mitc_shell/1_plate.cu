@@ -153,7 +153,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST; 
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
+    // const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
+    const SMOOTHER smoother = DAMPED_JACOBI;
 
     using Prolongation = StructuredProlongation<PLATE>;
 
@@ -164,7 +165,13 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     auto start0 = std::chrono::high_resolution_clock::now();
     auto mg = MG();
 
-    int nxe_min = nxe > 32 ? 32 : 4;
+    // get nxe_min for not exactly power of 2 case
+    int pre_nxe_min = nxe > 32 ? 32 : 4;
+    int nxe_min = pre_nxe_min;
+    for (int c_nxe = nxe; c_nxe >= pre_nxe_min; c_nxe /= 2) {
+        nxe_min = c_nxe;
+    }
+
     // int nxe_min = nxe / 2; // two level
 
     // make each grid
@@ -185,6 +192,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
             reorder = false;
         } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
             reorder = true;
+        } else if (smoother == DAMPED_JACOBI) {
+            reorder = false;
         }
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
@@ -231,6 +240,7 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.0;
+    if (smoother == DAMPED_JACOBI) omega = 0.7;
     bool double_smooth = true; // false
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
 

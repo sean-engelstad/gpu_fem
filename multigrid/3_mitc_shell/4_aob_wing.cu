@@ -37,7 +37,7 @@ std::string time_string(int itime) {
     }
 }
 
-void solve_linear_multigrid(MPI_Comm &comm, int level) {
+void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     // geometric multigrid method here..
     // need to make a number of grids..
     // level gives the finest level here..
@@ -59,6 +59,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
+    // const SMOOTHER smoother = DAMPED_JACOBI;
 
     // using Prolongation = UnstructuredProlongation<Basis>;
     using Prolongation = UnstructuredProlongationFast<Basis>;
@@ -75,9 +76,10 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
 
         // read the ESP/CAPS => nastran mesh for TACS
         TACSMeshLoader mesh_loader{comm};
-        std::string fname = "meshes/naca_wing_L" + std::to_string(i) + ".bdf";
+        std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
         mesh_loader.scanBDFFile(fname.c_str());
-        double E = 70e9, nu = 0.3, thick = 1.0;  // material & thick properties (start thicker first try)
+        double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties (start thicker first try)
+        // double E = 70e9, nu = 0.3, thick = 1.0;  // material & thick properties (start thicker first try)
         // double E = 70e9, nu = 0.3, thick = 0.01;  // material & thick properties (start thicker first try)
         // double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
 
@@ -96,28 +98,30 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
             my_loads[6 * inode + 2] = load_mag;
         }
 
-        // set reasonable design variables (optional, otherwise const thick..)
-        int ndvs = assembler.get_num_dvs(); // 32 components
-        // TODO : make thinner later
+        // TODO : get optimized design from NACA case
+        // // set reasonable design variables (optional, otherwise const thick..)
+        // int ndvs = assembler.get_num_dvs(); // 32 components
+        // // TODO : make thinner later
 
-        // internal struct and skin/OML thicknesses
-        // T its_thick = 0.1, skin_thick = 1.0;
-        T its_thick = 0.008, skin_thick = 0.03;
-        // T its_thick = 0.001, skin_thick = 0.01;
+        // // internal struct and skin/OML thicknesses
+        // T its_thick = 0.5666 / SR, skin_thick = 0.5666 / SR;
+        // // T its_thick = 0.1, skin_thick = 1.0;
+        // // T its_thick = 0.008, skin_thick = 0.03;
+        // // T its_thick = 0.001, skin_thick = 0.01;
 
-        bool is_int_struct[32] = {1, 1, 0, 1,   0, 0, 0, 1,   1, 1, 0, 1,   0, 0, 0, 1,
-            1, 0, 0, 1,   0, 0, 1, 0,   0, 1, 0, 0,   1, 0, 0, 1 };
-        T *h_dvs_ptr = new T[32];
-        for (int j = 0; j < 32; j++) {
-            if (is_int_struct[j]) {
-                h_dvs_ptr[j] = its_thick;
-            } else {
-                h_dvs_ptr[j] = skin_thick;
-            }
-        }
-        auto h_dvs = HostVec<T>(32, h_dvs_ptr);
-        auto global_dvs = h_dvs.createDeviceVec();
-        assembler.set_design_variables(global_dvs);
+        // bool is_int_struct[32] = {1, 1, 0, 1,   0, 0, 0, 1,   1, 1, 0, 1,   0, 0, 0, 1,
+        //     1, 0, 0, 1,   0, 0, 1, 0,   0, 1, 0, 0,   1, 0, 0, 1 };
+        // T *h_dvs_ptr = new T[32];
+        // for (int j = 0; j < 32; j++) {
+        //     if (is_int_struct[j]) {
+        //         h_dvs_ptr[j] = its_thick;
+        //     } else {
+        //         h_dvs_ptr[j] = skin_thick;
+        //     }
+        // }
+        // auto h_dvs = HostVec<T>(32, h_dvs_ptr);
+        // auto global_dvs = h_dvs.createDeviceVec();
+        // assembler.set_design_variables(global_dvs);
 
         // make the grid
         bool full_LU = i == 0; // smallest grid is direct solve
@@ -126,29 +130,22 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
             reorder = false;
         } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
             reorder = true;
+        } else if (smoother == DAMPED_JACOBI) {
+            reorder = false;
         }
         // printf("reorder %d\n", reorder);
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         mg.grids.push_back(grid); // add new grid
-
-        // if (i == level) {
-        //     // also makethe true fine grid
-        //     TACSMeshLoader mesh_loader2{comm};
-        //     mesh_loader2.scanBDFFile(fname.c_str());
-        //     auto assembler2 = Assembler::createFromBDF(mesh_loader2, Data(E, nu, thick));
-        //     auto direct_fine_grid = *GRID::buildFromAssembler(assembler2, my_loads, true, true);
-        //     direct_grids.push_back(direct_fine_grid); 
-        // }
     }
 
     if (!Prolongation::structured) {
+        printf("begin unstructured map\n");
         // int ELEM_MAX = 4; // for plate, cylinder
         int ELEM_MAX = 10; // for wingbox esp near rib, spar, OML junctions
         mg.template init_unstructured<Basis>(ELEM_MAX);
-        // printf("done with init unstructured\n");
+        printf("done with init unstructured\n");
         // return; // TEMP DEBUG
     }
-    // return; // temp debug
 
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
@@ -158,29 +155,22 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
-    // int pre_smooth = 1, post_smooth = 1;
-    // int pre_smooth = 2, post_smooth = 2;
-    int pre_smooth = 4, post_smooth = 4;
-    // int pre_smooth = 8, post_smooth = 8;
+    int pre_smooth = nsmooth, post_smooth = nsmooth;
+    // best was V(4,4) before
     // bool print = false;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.0;
-    // T omega = 0.8; // may need lower omega to handle junctions better? less magnification there? doesn't seem to help much though.. actually slows it down
-    // T omega = 0.7;
-    // T omega = 0.1;
-    // int n_vcycles = 10;
-    // int n_vcycles = 50;
-    // int n_vcycles = 100;
-    int n_vcycles = 200;
-    // int n_vcycles = 400;
+    if (smoother == DAMPED_JACOBI) omega = 0.7; // damped jacobi diverges on wingbox
+    int n_cycles = 200;
 
     bool time = false;
     // bool time = true;
 
     // bool double_smooth = false;
     bool double_smooth = true; // false
-    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth, time);
+    mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, time);
+    // mg.wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
     
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
@@ -197,10 +187,10 @@ void solve_linear_multigrid(MPI_Comm &comm, int level) {
     // print some of the data of host residual
     int *d_perm = mg.grids[0].d_perm;
     auto h_soln = mg.grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln, "out/wing_mg.vtk");
+    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln, "out/aob_wing_mg.vtk");
 }
 
-void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
+void solve_linear_multigrid_debug(MPI_Comm &comm, int level, double SR) {
     // geometric multigrid method here..
     // need to make a number of grids..
     // level gives the finest level here..
@@ -219,7 +209,8 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
 
     // multigrid objects
     // const SMOOTHER smoother = MULTICOLOR_GS;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST;
+    // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST2;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
 
     // using Prolongation = UnstructuredProlongation<Basis>;
@@ -237,7 +228,7 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
 
         // read the ESP/CAPS => nastran mesh for TACS
         TACSMeshLoader mesh_loader{comm};
-        std::string fname = "meshes/naca_wing_L" + std::to_string(i) + ".bdf";
+        std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
         mesh_loader.scanBDFFile(fname.c_str());
         double E = 70e9, nu = 0.3, thick = 1.0;  // material & thick properties (start thicker first try)
 
@@ -256,24 +247,26 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
             my_loads[6 * inode + 2] = load_mag;
         }
 
-        // set reasonable design variables (optional, otherwise const thick..)
-        int ndvs = assembler.get_num_dvs(); // 32 components
-        // TODO : make thinner later
-        T its_thick = 0.1; // (internal struct thick - ribs / spars)
-        T skin_thick = 1.0;
-        bool is_int_struct[32] = {1, 1, 0, 1,   0, 0, 0, 1,   1, 1, 0, 1,   0, 0, 0, 1,
-            1, 0, 0, 1,   0, 0, 1, 0,   0, 1, 0, 0,   1, 0, 0, 1 };
-        T *h_dvs_ptr = new T[32];
-        for (int j = 0; j < 32; j++) {
-            if (is_int_struct[j]) {
-                h_dvs_ptr[j] = its_thick;
-            } else {
-                h_dvs_ptr[j] = skin_thick;
-            }
-        }
-        auto h_dvs = HostVec<T>(32, h_dvs_ptr);
-        auto global_dvs = h_dvs.createDeviceVec();
-        assembler.set_design_variables(global_dvs);
+        // TODO : get optimized design from NACA case..
+        // // set reasonable design variables (optional, otherwise const thick..)
+        // int ndvs = assembler.get_num_dvs(); // 32 components
+        // // TODO : make thinner later
+        // T its_thick = 0.5666 / SR, skin_thick = 0.5666 / SR;
+        // // T its_thick = 0.1; // (internal struct thick - ribs / spars)
+        // // T skin_thick = 1.0;
+        // bool is_int_struct[32] = {1, 1, 0, 1,   0, 0, 0, 1,   1, 1, 0, 1,   0, 0, 0, 1,
+        //     1, 0, 0, 1,   0, 0, 1, 0,   0, 1, 0, 0,   1, 0, 0, 1 };
+        // T *h_dvs_ptr = new T[32];
+        // for (int j = 0; j < 32; j++) {
+        //     if (is_int_struct[j]) {
+        //         h_dvs_ptr[j] = its_thick;
+        //     } else {
+        //         h_dvs_ptr[j] = skin_thick;
+        //     }
+        // }
+        // auto h_dvs = HostVec<T>(32, h_dvs_ptr);
+        // auto global_dvs = h_dvs.createDeviceVec();
+        // assembler.set_design_variables(global_dvs);
 
         // make the grid
         bool full_LU = i == 0; // smallest grid is direct solve
@@ -532,13 +525,13 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level) {
     printf("done with v-cycle solve, conv %.2e to %.2e ||defect|| in %d steps\n", init_defect_nrm, fin_defect_nrm, n_steps);
 }
 
-void solve_linear_direct(MPI_Comm &comm, int level) {
+void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   using T = double;
 
   auto start0 = std::chrono::high_resolution_clock::now();
 
   TACSMeshLoader mesh_loader{comm};
-  std::string fname = "meshes/naca_wing_L" + std::to_string(level) + ".bdf";
+  std::string fname = "meshes/aob_wing_L" + std::to_string(level) + ".bdf";
   mesh_loader.scanBDFFile(fname.c_str());
 
   using Quad = QuadLinearQuadrature<T>;
@@ -554,36 +547,32 @@ void solve_linear_direct(MPI_Comm &comm, int level) {
   using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
-  double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
+//   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
+double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties
 
   // make the assembler from the uCRM mesh
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
 
-  // internal struct and skin/OML thicknesses
-    T its_thick = 0.1, skin_thick = 1.0;
-    // T its_thick = 0.01, skin_thick = 0.1;
-    // T its_thick = 0.001, skin_thick = 0.01;
+//   // TODO : set this in from optimized design (this is from NACA case)
+//   // internal struct and skin/OML thicknesses
+//   T its_thick = 0.5666 / SR, skin_thick = 0.5666 / SR;
+//     // T its_thick = 0.1, skin_thick = 1.0;
+//     // T its_thick = 0.01, skin_thick = 0.1;
+//     // T its_thick = 0.001, skin_thick = 0.01;
 
-    bool is_int_struct[32] = {1, 1, 0, 1,   0, 0, 0, 1,   1, 1, 0, 1,   0, 0, 0, 1,
-        1, 0, 0, 1,   0, 0, 1, 0,   0, 1, 0, 0,   1, 0, 0, 1 };
-    T *h_dvs_ptr = new T[32];
-    for (int j = 0; j < 32; j++) {
-        if (is_int_struct[j]) {
-            h_dvs_ptr[j] = its_thick;
-        } else {
-            h_dvs_ptr[j] = skin_thick;
-        }
-    }
-    auto h_dvs = HostVec<T>(32, h_dvs_ptr);
-    auto global_dvs = h_dvs.createDeviceVec();
-    assembler.set_design_variables(global_dvs);
-
-  // temp debug, double check bcs
-//   auto d_bcs_vec = assembler.getBCs();
-//   int n_bcs = d_bcs_vec.getSize();
-//   int *h_bcs = d_bcs_vec.createHostVec().getPtr();
-//   printf("# bcs %d, bcs: ", n_bcs);
-//   printVec<int>(n_bcs, h_bcs);
+//     bool is_int_struct[32] = {1, 1, 0, 1,   0, 0, 0, 1,   1, 1, 0, 1,   0, 0, 0, 1,
+//         1, 0, 0, 1,   0, 0, 1, 0,   0, 1, 0, 0,   1, 0, 0, 1 };
+//     T *h_dvs_ptr = new T[32];
+//     for (int j = 0; j < 32; j++) {
+//         if (is_int_struct[j]) {
+//             h_dvs_ptr[j] = its_thick;
+//         } else {
+//             h_dvs_ptr[j] = skin_thick;
+//         }
+//     }
+//     auto h_dvs = HostVec<T>(32, h_dvs_ptr);
+//     auto global_dvs = h_dvs.createDeviceVec();
+//     assembler.set_design_variables(global_dvs);
 
   // T mass = assembler._compute_mass();
   // printf("mass %.4e\n", mass);
@@ -629,7 +618,7 @@ void solve_linear_direct(MPI_Comm &comm, int level) {
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/naca_direct_L" + std::to_string(level) + ".vtk");
+  printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/aob_direct_L" + std::to_string(level) + ".vtk");
 
   // free data
   assembler.free();
@@ -651,6 +640,8 @@ int main(int argc, char **argv) {
     int level = 0; // level mesh to solve..
     bool is_multigrid = true;
     bool is_debug = false;
+    double SR = 50.0;
+    int nsmooth = 4;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -663,6 +654,13 @@ int main(int argc, char **argv) {
             is_multigrid = true;
         } else if (strcmp(arg, "debug") == 0) {
             is_debug = true;
+        } else if (strcmp(arg, "--sr") == 0) {
+            if (i + 1 < argc) {
+                SR = std::atof(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --SR\n";
+                return 1;
+            }
         } else if (strcmp(arg, "--level") == 0) {
             if (i + 1 < argc) {
                 level = std::atoi(argv[++i]);
@@ -670,20 +668,27 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --level\n";
                 return 1;
             }
+        } else if (strcmp(arg, "--nsmooth") == 0) {
+            if (i + 1 < argc) {
+                nsmooth = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nsmooth\n";
+                return 1;
+            }
         } else {
             std::cerr << "Unknown argument: " << argv[i] << std::endl;
-            std::cerr << "Usage: " << argv[0] << " [direct/mg] [--level value]" << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [direct/mg] [--level int] [--SR double] [--nsmooth int]" << std::endl;
             return 1;
         }
     }
 
     // solve linear with directLU solve
     if (is_multigrid && !is_debug) {
-        solve_linear_multigrid(comm, level);
+        solve_linear_multigrid(comm, level, SR, nsmooth);
     } else if (is_multigrid && is_debug) {
-        solve_linear_multigrid_debug(comm, level);
+        solve_linear_multigrid_debug(comm, level, SR);
     } else {
-        solve_linear_direct(comm, level);
+        solve_linear_direct(comm, level, SR);
     }
 
     // TBD multigrid solve..

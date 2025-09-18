@@ -22,6 +22,7 @@ enum SMOOTHER : short {
     MULTICOLOR_GS,
     MULTICOLOR_GS_FAST,
     MULTICOLOR_GS_FAST2,
+    DAMPED_JACOBI,
     LEXIGRAPHIC_GS,
 };
 
@@ -56,7 +57,7 @@ class ShellGrid {
         //     buildColorLocalRowPointers();
         // }
         initCuda();
-        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
+        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) {
             buildDiagInvMat();
             if (smoother == MULTICOLOR_GS_FAST2 && !full_LU) buildTransposeColorMatrices();
         }
@@ -97,7 +98,7 @@ class ShellGrid {
                     _color_rowp[0] = 0;
                     _color_rowp[1] = assembler.get_num_nodes();
                 }
-            } else if (smoother == LEXIGRAPHIC_GS) {
+            } else if (smoother == LEXIGRAPHIC_GS || smoother == DAMPED_JACOBI) {
                 if (reorder) {
                     bsr_data.RCM_reordering(1);
                     // bsr_data.AMD_reordering();
@@ -218,7 +219,6 @@ class ShellGrid {
         int *cnode_elem_ptr = new int[nnodes_coarse + 1];
         int num_coarse_elems = coarse_grid.assembler.get_num_elements();
         ncoarse_elems = num_coarse_elems;
-        int n_coarse_node_elems = 4 * num_coarse_elems;
         for (int ielem = 0; ielem < num_coarse_elems; ielem++) {
             for (int iloc = 0; iloc < 4; iloc++) {
                 int cnode = h_coarse_conn[4 * ielem + iloc];
@@ -234,17 +234,17 @@ class ShellGrid {
         for (int inode = 0; inode < nnodes_coarse; inode++) {
             cnode_elem_ptr[inode + 1] = cnode_elem_ptr[inode] + cnode_elem_cts[inode];
         }
+        int n_coarse_node_elems = cnode_elem_ptr[nnodes_coarse];
 
         // now we put which elems each coarse node is connected to (like cols array here)
         // reset row cts to 0, so you can trick which local elem you're writing in..
-        memset(cnode_elem_cts, 0.0, nnodes_coarse * sizeof(int));
+        int *_cnode_next = new int[nnodes_coarse];
+        memcpy(_cnode_next, cnode_elem_ptr, nnodes_coarse * sizeof(int));
         int *cnode_elems = new int[n_coarse_node_elems];
         for (int ielem = 0; ielem < num_coarse_elems; ielem++) {
             for (int iloc = 0; iloc < 4; iloc++) {
                 int cnode = h_coarse_conn[4 * ielem + iloc];
-                int ind = cnode_elem_ptr[cnode] + cnode_elem_cts[cnode];
-                cnode_elems[ind] = ielem;
-                cnode_elem_cts[cnode] += 1;
+                cnode_elems[_cnode_next[cnode]++] = ielem;
             }
         }
 
@@ -260,6 +260,10 @@ class ShellGrid {
         int *h_coarse_elem_comps =
             coarse_grid.assembler.getElemComponents().createHostVec().getPtr();
         int *h_fine_conn = assembler.getConn().createHostVec().getPtr();
+
+        // printf("h_fine_elem_comps: ");
+        // printVec<int>(100, h_fine_elem_comps);
+
         // printf("h_fine_conn: ");
         // printVec<int>(30, h_fine_conn);
 
@@ -279,7 +283,7 @@ class ShellGrid {
         for (int inode = 0; inode < nnodes_fine; inode++) {
             f_ecomps_ptr0[inode + 1] = f_ecomps_ptr0[inode] + f_ecomps_cts[inode];
         }
-        int f_ecomps_nnz0 = f_ecomps_ptr0[nnodes_fine - 1];
+        int f_ecomps_nnz0 = f_ecomps_ptr0[nnodes_fine];
         int *f_ecomps_comp0 = new int[f_ecomps_nnz0];
         // reset counts to fill comp
         memset(f_ecomps_cts, 0, nnodes_fine * sizeof(int));
@@ -310,7 +314,7 @@ class ShellGrid {
         for (int inode = 0; inode < nnodes_fine; inode++) {
             f_ecomps_ptr[inode + 1] = f_ecomps_ptr[inode] + f_ecomps_cts[inode];
         }
-        int f_ecomps_nnz = f_ecomps_ptr[nnodes_fine - 1];
+        int f_ecomps_nnz = f_ecomps_ptr[nnodes_fine];
         int *f_ecomps_comp = new int[f_ecomps_nnz];
         // reset counts to fill comp
         memset(f_ecomps_cts, 0, nnodes_fine * sizeof(int));
@@ -335,8 +339,6 @@ class ShellGrid {
             }
         }
 
-        // now count number of unique..
-
         // ----------------------------------------------------------------
         // 3) get the coarse element(s) for each fine node (that it's contained in)
 
@@ -350,6 +352,7 @@ class ShellGrid {
 
         for (int inode_f = 0; inode_f < nnodes_fine; inode_f++) {
             T *fine_node_xpts = &h_xpts_fine[3 * inode_f];
+            // printf("inode_f %d\n", inode_f);
 
             // should be ~24 elems examined per coarse node (can parallelize this on GPU if needed)
             for (int i_nn = 0; i_nn < nn; i_nn++) {
@@ -591,7 +594,7 @@ class ShellGrid {
             auto PT_mat = BsrMat<DeviceVec<T>>(PT_bsr_data, d_PT_vals); // only store this matrix on the coarse grid
             
             // printf("assemble matrices pre\n");
-            printf("assemble P and PT matrices with nnodes_fine %d and nnodes_coarse %d\n", nnodes_fine, nnodes_coarse);
+            // printf("assemble P and PT matrices with nnodes_fine %d and nnodes_coarse %d\n", nnodes_fine, nnodes_coarse);
             Prolongation::assemble_matrices(d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis, P_mat, PT_mat);
             CHECK_CUDA(cudaDeviceSynchronize());
             // printf("assemble matrices post\n");
@@ -626,7 +629,7 @@ class ShellGrid {
         // printf("done with init unstructured grid maps\n");
         auto end0 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> P_PT_time = end0 - start0;
-        printf("unstructured grid P,PT comp in %.2e sec\n", P_PT_time.count());
+        printf("unstructured grid P,PT assembly in %.2e sec\n", P_PT_time.count());
 
         // TBD: free up temp arrays
     }
@@ -771,7 +774,7 @@ class ShellGrid {
 
         // compute new Dinv_vals with LU operator..
         // build_lu_inv_operator = false; // previous version
-        build_lu_inv_operator = smoother == MULTICOLOR_GS_FAST2 && !full_LU; // dense matrix should not modify LU vals on coarsest grid..
+        build_lu_inv_operator = (smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) && !full_LU; // dense matrix should not modify LU vals on coarsest grid..
 
         if (build_lu_inv_operator) { 
 
@@ -1041,6 +1044,8 @@ class ShellGrid {
             multicolorBlockGaussSeidel_fast(n_iters, print, print_freq, omega, rev_colors);
         } else if (smoother == MULTICOLOR_GS_FAST2) {
             multicolorBlockGaussSeidel_fast2(n_iters, print, print_freq, omega, rev_colors);
+        } else if (smoother == DAMPED_JACOBI) {
+            dampedJacobi(n_iters, print, print_freq, omega);
         } else if (smoother == LEXIGRAPHIC_GS) {
             lexigraphicBlockGS(n_iters, print, print_freq);
         }
@@ -1246,6 +1251,45 @@ class ShellGrid {
                 
             // -------------------------------------------------------------------------------------
             }  // next color iteration
+
+            /* report progress of defect nrm if printing.. */
+            T defect_nrm;
+            CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
+            if (print && iter % print_freq == 0)
+                printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+
+        // --------------------------------------------------------------------------------
+        }  // next block-GS iteration
+    }
+
+    void dampedJacobi(int n_iters, bool print = false, int print_freq = 10,
+                                         T omega = 0.8, bool rev_colors = false) {
+
+        bool time_debug = false;
+        // bool time_debug = true;
+
+        for (int iter = 0; iter < n_iters; iter++) {
+
+            // compute Dinv * defect => soln update (aka temp)
+            // -----------------------------------------------
+            T a = 1.0, b = 0.0;
+            // note in this case d_diag_LU_vals_color refers to Dinv form of LU factors on each nodal block
+            CHECK_CUSPARSE(cusparseDbsrmv( // NOTE just uses descrKmat cause would be the same as descrDinv (convenience)
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                nnodes, nnodes, nnodes, &a, descrKmat, d_diag_LU_vals, d_diag_rowp, d_diag_cols,
+                block_dim, d_defect.getPtr(), &b, d_temp));
+
+            // -----------------------------------------------------------------
+            // soln and defect update
+            a = omega;
+            CHECK_CUBLAS(
+                cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
+
+            a = -omega, b = 1.0;  // so that defect := defect - mat*vec
+            CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                block_dim, d_temp, &b, d_defect.getPtr()));
 
             /* report progress of defect nrm if printing.. */
             T defect_nrm;

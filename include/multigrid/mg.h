@@ -45,9 +45,8 @@ class ShellMultigrid {
 
             // go down each level smoothing and restricting until lowest level
             for (int i_level = 0; i_level < n_levels; i_level++) {
-                // int exp_smooth_factor = double_smooth ? 1<<i_level : 1; // power of 2 more
-                // smoothing at each level..
-                int exp_smooth_factor = 1.0;  // only on post-steps..
+                int exp_smooth_factor = double_smooth ? 1<<i_level : 1; // power of 2 more
+                // int exp_smooth_factor = 1.0;  // only smooth post-steps if this
 
                 // if not last  (pre-smooth)
                 if (i_level < n_levels - 1) {
@@ -159,7 +158,7 @@ class ShellMultigrid {
         /* W-cycle may have greater performance than V-cycle? what about also F-cycle? */
 
         bool is_outer_call = n_wcycles > 2 && i_level == 0;
-        printf("i_level %d, n_wcycles %d, is outer call %d\n", i_level, n_wcycles, is_outer_call);
+        // printf("i_level %d, n_wcycles %d, is outer call %d\n", i_level, n_wcycles, is_outer_call);
         T init_defect_nrm, fin_defect_nrm;
         if (is_outer_call) {  // only for outer call..
             // init defect nrm
@@ -203,7 +202,7 @@ class ShellMultigrid {
                 grids[i_level].smoothDefect(post_smooth, print, post_smooth - 1, omega, rev_colors);
             }
 
-            // compute fine grid defect of V-cycle (outer call only)
+            // compute fine grid defect of V-cycle (outer call only)++ 
             T defect_nrm;
             if (is_outer_call) {
                 defect_nrm = grids[i_level].getDefectNorm();

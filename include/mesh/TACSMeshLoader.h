@@ -774,7 +774,7 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
 
             // currently unsupported settings in the TACS Meshloader C++ version from ESP/CAPS
             bool caps_ignored_line = strncmp(line, "PARAM", 5) == 0 || strncmp(line, "SPCADD", 6) == 0 || strncmp(line, "MAT", 3) == 0 || 
-                strncmp(line, "PSHELL", 6) == 0 || strncmp(line, "DESVAR", 6) == 0 || strncmp(line, "DVPREL", 6) == 0 || strncmp(line, "CORD", 4) == 0;
+                strncmp(line, "PSHELL", 6) == 0 || strncmp(line, "PCOMP", 5) == 0 || strncmp(line, "DESVAR", 6) == 0 || strncmp(line, "DVPREL", 6) == 0 || strncmp(line, "CORD", 4) == 0;
             if (prev_caps_ignore_line && strncmp(line, "*", 1) == 0) {
                 caps_ignored_line = true;
             }
@@ -960,7 +960,7 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
 
             // currently unsupported settings in the TACS Meshloader C++ version from ESP/CAPS
             bool caps_ignored_line = strncmp(line, "PARAM", 5) == 0 || strncmp(line, "SPCADD", 6) == 0 || strncmp(line, "MAT", 3) == 0 || 
-                strncmp(line, "PSHELL", 6) == 0 || strncmp(line, "DESVAR", 6) == 0 || strncmp(line, "DVPREL", 6) == 0 || strncmp(line, "CORD", 4) == 0;
+                strncmp(line, "PSHELL", 6) == 0  || strncmp(line, "PCOMP", 5) == 0 || strncmp(line, "DESVAR", 6) == 0 || strncmp(line, "DVPREL", 6) == 0 || strncmp(line, "CORD", 4) == 0;
             if (prev_caps_ignore_line && strncmp(line, "*", 1) == 0) {
                 caps_ignored_line = true;
             }

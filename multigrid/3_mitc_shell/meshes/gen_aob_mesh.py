@@ -1,52 +1,50 @@
 """
-fro funtofem/examples/framework/1_*py naca wing example
+Sean P. Engelstad, Georgia Tech 2023
+
+Local machine optimization for the panel thicknesses using nribs-1 OML panels and nribs-1 LE panels
 """
 
 from funtofem import *
-from tacs import caps2tacs
-import openmdao.api as om
-from mpi4py import MPI
+import numpy as np
+import time
+start_time = time.time()
+import argparse
 import shutil, os
 from pyNastran.bdf.bdf import BDF
-import argparse
 
-
-"""
-argparse:
-python gen_wing_mesh.py --level 0     => generates L0 mesh (coarsest)
-python gen_wing_mesh.py --level 1     => generates L1 mesh
-etc..
-"""
-
-parser = argparse.ArgumentParser(
-    description="Generate wing mesh at different refinement levels."
-)
-parser.add_argument(
+parent_parser = argparse.ArgumentParser(add_help=False)
+parent_parser.add_argument("--spanMult", type=float, default=1.0) # recommend 1.0, 1.1, 1.2, 1.3
+parent_parser.add_argument(
     "--level",
     type=int,
     choices=[0, 1, 2, 3, 4],
     required=True,
     help="Mesh refinement level: 0 = coarsest, 1 = finer, 2 etc..",
 )
-args = parser.parse_args()
+args = parent_parser.parse_args()
 
-# approx # elements per level..
-# level 0 : 7k elements
-# level 1 : 24k elements
-# level 2 : 90k elements
+# import openmdao.api as om
+from mpi4py import MPI
+from tacs import caps2tacs, pytacs
+import os
 
-# --------------------------------------------------------------#
-# Setup CAPS Problem and FUNtoFEM model
-# --------------------------------------------------------------#
+
 comm = MPI.COMM_WORLD
-f2f_model = FUNtoFEMmodel("tacs_wing")
-wing = Body.aeroelastic(
-    "wing"
-)  # says aeroelastic but not coupled, may want to make new classmethods later...
 
+base_dir = os.path.dirname(os.path.abspath(__file__))
+csm_path = os.path.join(base_dir, "aob_geom", "gbm.csm")
 
-# define the Tacs model
-tacs_model = caps2tacs.TacsModel.build(csm_file="large_naca_wing.csm", comm=comm)
+# F2F MODEL and SHAPE MODELS
+# ----------------------------------------
+
+f2f_model = FUNtoFEMmodel('model')
+tacs_model = caps2tacs.TacsModel.build(
+    csm_file=csm_path,
+    comm=comm,
+    problem_name="capsStruct",
+    active_procs=[0],
+    verbosity=1,
+)
 
 # global mesh size settings for each level..
 if args.level == 0:
@@ -116,77 +114,124 @@ elif args.level == 5:
         tacs_model
     )
 
-tacs_aim = tacs_model.tacs_aim
 
-aluminum = caps2tacs.Isotropic.aluminum().register_to(tacs_model)
-
-# setup the thickness design variables + automatic shell properties
-# using Composite functions, this part has to go after all funtofem variables are defined...
-nribs = int(tacs_model.get_config_parameter("nribs"))
-nspars = int(tacs_model.get_config_parameter("nspars"))
-nOML = int(tacs_aim.get_output_parameter("nOML"))
-
-init_thickness = 0.08
-for irib in range(1, nribs + 1):
-    name = f"rib{irib}"
-    caps2tacs.ShellProperty(
-        caps_group=name, material=aluminum, membrane_thickness=init_thickness
-    ).register_to(tacs_model)
-    Variable.structural(name, value=init_thickness).set_bounds(
-        lower=0.01, upper=0.2, scale=100.0
-    ).register_to(wing)
-
-for ispar in range(1, nspars + 1):
-    name = f"spar{ispar}"
-    caps2tacs.ShellProperty(
-        caps_group=name, material=aluminum, membrane_thickness=init_thickness
-    ).register_to(tacs_model)
-    Variable.structural(name, value=init_thickness).set_bounds(
-        lower=0.01, upper=0.2, scale=100.0
-    ).register_to(wing)
-
-for name in ["LEspar", "TEspar"]:
-    caps2tacs.ShellProperty(
-        caps_group=name, material=aluminum, membrane_thickness=init_thickness
-    ).register_to(tacs_model)
-    Variable.structural(name, value=init_thickness).set_bounds(
-        lower=0.01, upper=0.2, scale=100.0
-    ).register_to(wing)
-
-for prefix in ["uOML", "lOML"]:
-    for iOML in range(1, nOML + 1):
-        name = prefix + str(iOML)
-        caps2tacs.ShellProperty(
-            caps_group=name, material=aluminum, membrane_thickness=init_thickness
-        ).register_to(tacs_model)
-        Variable.structural(name, value=init_thickness).set_bounds(
-            lower=0.01, upper=0.2, scale=100.0
-        ).register_to(wing)
-
-# add constraints and loads
-# clamped vs SS root
-# caps2tacs.PinConstraint("root").register_to(tacs_model)
-caps2tacs.PinConstraint("root", dof_constraint=123456).register_to(tacs_model)
-
-# caps2tacs.GridForce("OML", direction=[0, 0, 1.0], magnitude=10).register_to(tacs_model) # don't need that here
-
-# run the tacs model setup and register to the funtofem model
 f2f_model.structural = tacs_model
 
-# register the funtofem Body to the model
+tacs_aim = tacs_model.tacs_aim
+tacs_aim.set_config_parameter("view:flow", 0)
+tacs_aim.set_config_parameter("view:struct", 1)
+# tacs_aim.set_design_parameter("spanMult", args.spanMult)
+#tacs_aim.set_config_parameter("fullRootRib", 0)
+
+egads_aim = tacs_model.mesh_aim
+
+# # 17000 if elem_mult = 1
+# # 70000 if elem_mult = 2
+# elem_mult = 2
+
+# if comm.rank == 0:
+#     aim = egads_aim.aim
+#     aim.input.Mesh_Sizing = {
+#         "chord": {"numEdgePoints": 20*elem_mult},
+#         "span": {"numEdgePoints": 10*elem_mult},
+#         "vert": {"numEdgePoints": 10*elem_mult},
+#     }
+
+# BODIES AND STRUCT DVs
+# -------------------------------------------------
+
+wing = Body.aeroelastic("wing", boundary=2)
+# aerothermoelastic
+
+# setup the material and shell properties
+nribs = int(tacs_model.get_config_parameter("nribs"))
+nOML = nribs - 1
+null_material = caps2tacs.Orthotropic.null().register_to(tacs_model)
+
+def num_to_padstr(mynum):
+    # if mynum < 10:
+    #     return "0" + str(mynum)
+    # else:
+    #     return str(mynum)
+    return str(mynum) # not really needed tbh.. as long as it does lOML then uOML, then ribs and spars, etc.
+
+# create the design variables by components now
+# since this mirrors the way TACS creates design variables
+component_groups = ["rib" + num_to_padstr(irib) for irib in range(1, nribs + 1)]
+for prefix in ["spLE", "spTE", "uOML", "lOML"]:
+    component_groups += [prefix + num_to_padstr(iOML) for iOML in range(1, nOML + 1)]
+component_groups = sorted(component_groups)
+
+# print(f"{component_groups=}")
+# exit()
+
+# delim = "-"
+delim = "_" # had to change to _ so pynastran doesn't complain about prop to DV definitions (just for this case)
+
+for icomp, comp in enumerate(component_groups):
+    caps2tacs.CompositeProperty.null(comp, null_material).register_to(tacs_model)
+
+    # NOTE : need to make the struct DVs in TACS in the same order as the blade callback
+    # which is done by components and then a local order
+
+    # panel length variable
+    if "rib" in comp:
+        panel_length = 0.38
+    elif "sp" in comp:
+        panel_length = 0.36
+    elif "OML" in comp:
+        panel_length = 0.65
+    Variable.structural(
+        f"{comp}{delim}" + TacsSteadyInterface.LENGTH_VAR, value=panel_length
+    ).set_bounds(
+        lower=0.0,
+        scale=1.0,
+        state=True,  # need the length & width to be state variables
+    ).register_to(
+        wing
+    )
+
+    # stiffener pitch variable
+    Variable.structural(f"{comp}{delim}spitch", value=0.20).set_bounds(
+        lower=0.05, upper=0.5, scale=1.0
+    ).register_to(wing)
+
+    # panel thickness variable, shortened DV name for ESP/CAPS, nastran requirement here
+    Variable.structural(f"{comp}{delim}T", value=0.02).set_bounds(
+        lower=0.002, upper=0.1, scale=100.0
+    ).register_to(wing)
+
+    # stiffener height
+    Variable.structural(f"{comp}{delim}sheight", value=0.05).set_bounds(
+        lower=0.002, upper=0.1, scale=10.0
+    ).register_to(wing)
+
+    # stiffener thickness
+    Variable.structural(f"{comp}{delim}sthick", value=0.02).set_bounds(
+        lower=0.002, upper=0.1, scale=100.0
+    ).register_to(wing)
+
+    Variable.structural(
+        f"{comp}{delim}" + TacsSteadyInterface.WIDTH_VAR, value=panel_length
+    ).set_bounds(
+        lower=0.0,
+        scale=1.0,
+        state=True,  # need the length & width to be state variables
+    ).register_to(
+        wing
+    )
+
+# caps2tacs.PinConstraint("root", dof_constraint=12346).register_to(tacs_model)
+# caps2tacs.PinConstraint("root", dof_constraint=2346).register_to(tacs_model)
+caps2tacs.PinConstraint("root", dof_constraint=246).register_to(tacs_model)
+caps2tacs.PinConstraint("sob", dof_constraint=13).register_to(tacs_model)
+
+# register the wing body to the model
 wing.register_to(f2f_model)
 
-# make the scenario(s)
-tacs_scenario = Scenario.steady("tacs", steps=100)
-Function.ksfailure(ks_weight=10.0).optimize(
-    scale=30.0, upper=0.267, objective=False, plot=True
-).register_to(tacs_scenario)
-Function.mass().optimize(scale=1.0e-2, objective=True, plot=True).register_to(
-    tacs_scenario
-)
-tacs_scenario.register_to(f2f_model)
+# INITIAL STRUCTURE MESH, SINCE NO STRUCT SHAPE VARS
+# --------------------------------------------------
 
-# make the BDF and DAT file for TACS structural analysis
 tacs_aim.setup_aim()
 tacs_aim.pre_analysis()
 
@@ -195,16 +240,16 @@ tacs_aim.pre_analysis()
 # can't read BDF + DAT file pair like pynastran..
 
 orig_bdf = os.path.join("capsStruct_0", "Scratch", "tacs", "tacs.dat")
-final_bdf = "naca_wing_L" + str(args.level) + ".bdf"
+final_bdf = "aob_wing_L" + str(args.level) + ".bdf"
 
 model = BDF()
 model.read_bdf(orig_bdf, xref=True)
 
-# Write out as a single combined BDF
-model.write_bdf(final_bdf, size=16)
+# Write out as a single combined BDF (orig)
+model.write_bdf(final_bdf, size=16) #, sort_ids=False)
 
+# TODO : still doesn't quite work yet..
 
-# TODO : this still doesn't quite work yet for running case..
 # # --------------------------------------------------
 # # try writing out BDF file in more benign order of elems (ESP/CAPS has strange order of actual nodes, elems despite writing out components in right order)
 # # the CQUAD4 1,2,3, etc are spTE3  then next block is spTE4 and rib3? so here I try to fix that by rebuilding BDF more structured way
