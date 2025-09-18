@@ -1016,6 +1016,20 @@ class ShellGrid {
         return def_nrm;
     }
 
+    void zeroSolution() {
+        cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
+    }
+
+    void setDefect(DeviceVec<T> new_defect) {
+        // set the defect on the finest grid
+        new_defect.copyValuesTo(d_defect);
+    }
+
+    void getSolution(DeviceVec<T> soln_out) {
+        // copy solution to another device vec outside this class
+        d_soln.copyValuesTo(soln_out);
+    }
+
     T getResidNorm() {
         /* double check the linear system is actually solved */
 

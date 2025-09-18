@@ -29,7 +29,7 @@ class ShellMultigrid {
     }
 
     void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
-                      T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false, bool time = false) {
+                      T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false, bool time = false, int print_freq = 1) {
         // init defect nrm
         T init_defect_nrm = grids[0].getDefectNorm();
         printf("V-cycles: ||init_defect|| = %.2e\n", init_defect_nrm);
@@ -138,7 +138,7 @@ class ShellMultigrid {
             // compute fine grid defect of V-cycle
             T defect_nrm = grids[0].getDefectNorm();
             fin_defect_nrm = defect_nrm;
-            printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
+            if (i_vcycle % print_freq == 0) printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
             if (time) CHECK_CUDA(cudaDeviceSynchronize());
 
             if (defect_nrm < atol + rtol * init_defect_nrm) {

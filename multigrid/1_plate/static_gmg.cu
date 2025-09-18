@@ -153,8 +153,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST; 
-    // const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
-    const SMOOTHER smoother = DAMPED_JACOBI;
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
+    // const SMOOTHER smoother = DAMPED_JACOBI;
 
     using Prolongation = StructuredProlongation<PLATE>;
 
