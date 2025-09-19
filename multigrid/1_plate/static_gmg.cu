@@ -230,6 +230,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     //     return;
     // }  
 
+    // return;
+
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");

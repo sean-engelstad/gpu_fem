@@ -28,6 +28,12 @@ class ShellMultigrid {
         return total_mem;
     }
 
+    void set_design_variables(DeviceVec<T> dvs) {
+        for (int ilevel = 0; ilevel < getNumLevels(); ilevel++) {
+            grids[ilevel].assembler.set_design_variables(dvs);
+        }
+    }
+
     void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
                       T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false, bool time = false, int print_freq = 1) {
         // init defect nrm
@@ -36,6 +42,8 @@ class ShellMultigrid {
 
         T fin_defect_nrm = init_defect_nrm;
         int n_steps = n_vcycles;
+
+        printf("V-cycle : print_freq %d\n", print_freq);
 
         int n_levels = getNumLevels();
         // if (print) printf("n_levels %d\n", n_levels);
@@ -54,9 +62,6 @@ class ShellMultigrid {
 
                     if (time) CHECK_CUDA(cudaDeviceSynchronize());
                     auto pre_smooth_time = std::chrono::high_resolution_clock::now();
-
-                    // pre-smooth; TODO : do fast version later.. but let's demo with slow version
-                    // first
                     
                     grids[i_level].smoothDefect(pre_smooth * exp_smooth_factor, print,
                                                 pre_smooth * exp_smooth_factor - 1, omega);

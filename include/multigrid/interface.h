@@ -69,7 +69,8 @@ class TacsMGInterface {
         // make this more general later.. 
         mg.grids[0].zeroSolution();
         mg.grids[0].setDefect(this->loads);
-        mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq);
+        bool inner_print = false, inner_time = false;
+        mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega, double_smooth, inner_time, print_freq);
         mg.grids[0].getSolution(this->soln);
         this->soln.copyValuesTo(this->vars);
 
@@ -87,13 +88,22 @@ class TacsMGInterface {
     void set_design_variables(Vec &x) {
         this->resetSoln();
         this->assembler.set_design_variables(x);
+        this->mg.set_design_variables(x);
         this->_update_assembly();
     }
 
     void _update_assembly() {
         /* update kmat with new design */
         if (this->print) printf("updating assembly\n");
-        // TODO : need multigrid call to update each assembler and Dinv also
+        // for nonlinear case this will change and have to be Galerkin GMG not new coarse grid matrices, TBD on that though
+        for (int ilevel = 0; ilevel < mg.getNumLevels(); ilevel++) {
+            auto &res = mg.grids[ilevel].d_temp_vec;
+            auto &kmat = mg.grids[ilevel].Kmat;
+            auto &i_assembler = mg.grids[ilevel].assembler;
+            i_assembler.add_jacobian(res, kmat);
+            i_assembler.apply_bcs(kmat);
+            mg.grids[ilevel].update_after_assembly();
+        }
     }
 
     void solve_adjoint(MyFunction &func, const Vec *adj_rhs = nullptr) {
@@ -119,7 +129,8 @@ class TacsMGInterface {
             // make this more general later.. solves adjoint problem here
             mg.grids[0].zeroSolution();
             mg.grids[0].setDefect(this->dfdu);
-            mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq);
+            bool inner_print = false, inner_time = false;
+            mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega, double_smooth, inner_time, print_freq);
             mg.grids[0].getSolution(this->psi);
             assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }
@@ -127,9 +138,11 @@ class TacsMGInterface {
         func.dv_sens.zeroValues();
         assembler.evalFunctionDVSens(func);
         if (func.has_adjoint) assembler.evalFunctionAdjResProduct(psi, func);
-        // DVsens is then stored in func.dv_sens
-        // TODO : get XptSens also
-        // TODO : could add coupled adjoint jac product here too
+    }
+
+    void writeAdjointSolution(std::string filename) {
+        psi.copyValuesTo(vars);
+        writeSoln(filename);
     }
 
     void free() {
@@ -145,8 +158,6 @@ class TacsMGInterface {
         }
     }
 
-    // void solve(Vec &struct_loads);  // virtual
-
    protected:
     Multigrid mg;
     Assembler assembler;
@@ -159,6 +170,6 @@ class TacsMGInterface {
     // mg solver settings
     T rtol = 1e-6, atol = 1e-6;
     T omega = 1.0;
-    int pre_smooth = 1, post_smooth = 1, n_cycles = 200, print_freq = 1;
+    int pre_smooth = 1, post_smooth = 1, n_cycles = 200, print_freq = 3;
     bool double_smooth = true;
 };

@@ -56,13 +56,24 @@ class ShellGrid {
         // if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
         //     buildColorLocalRowPointers();
         // }
-        initCuda();
+        const bool startup = true;
+        initCuda<startup>();
         if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) {
-            buildDiagInvMat();
-            if (smoother == MULTICOLOR_GS_FAST2 && !full_LU) buildTransposeColorMatrices();
+            buildDiagInvMat<startup>();
+            if (smoother == MULTICOLOR_GS_FAST2 && !full_LU) buildTransposeColorMatrices<startup>();
         }
         if (smoother == LEXIGRAPHIC_GS && !full_LU) {
             initLowerMatForGaussSeidel();
+        }
+    }
+
+    void update_after_assembly() {
+        // update dependent ILU and other matrices from new assembly
+        const bool startup = false; // false here, just assembly no new startup pieces
+        initCuda<startup>();
+        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) {
+            buildDiagInvMat<startup>();
+            if (smoother == MULTICOLOR_GS_FAST2 && !full_LU) buildTransposeColorMatrices<startup>();
         }
     }
 
@@ -121,15 +132,15 @@ class ShellGrid {
         auto loads = assembler.createVarsVec(h_loads);
         assembler.apply_bcs(loads);
         auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-        auto soln = assembler.createVarsVec();
+        // auto soln = assembler.createVarsVec();
         auto res = assembler.createVarsVec();
-        auto vars = assembler.createVarsVec();
-        int N = vars.getSize();
+        // auto vars = assembler.createVarsVec();
+        int N = res.getSize();
 
         // assemble the kmat
         auto start0 = std::chrono::high_resolution_clock::now();
         assembler.add_jacobian(res, kmat);
-        assembler.apply_bcs(res);
+        // assembler.apply_bcs(res);
         assembler.apply_bcs(kmat);
         CHECK_CUDA(cudaDeviceSynchronize());
         auto end0 = std::chrono::high_resolution_clock::now();
@@ -634,45 +645,52 @@ class ShellGrid {
         // TBD: free up temp arrays
     }
 
+    template <bool startup = true>
     void initCuda() {
         // init handles
-        CHECK_CUBLAS(cublasCreate(&cublasHandle));
-        CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+        if constexpr (startup) {
+            CHECK_CUBLAS(cublasCreate(&cublasHandle));
+            CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-        // init some util vecs
-        d_defect = DeviceVec<T>(N);
-        d_soln = DeviceVec<T>(N);
-        d_temp_vec = DeviceVec<T>(N);
-        d_temp = d_temp_vec.getPtr();
-        d_temp2 = DeviceVec<T>(N).getPtr();
-        d_weights = DeviceVec<T>(N).getPtr();
-        d_resid = DeviceVec<T>(N).getPtr();
-        d_int_temp = DeviceVec<int>(N).getPtr();
+            // init some util vecs
+            d_defect = DeviceVec<T>(N);
+            d_soln = DeviceVec<T>(N);
+            d_temp_vec = DeviceVec<T>(N);
+            d_temp = d_temp_vec.getPtr();
+            d_temp2 = DeviceVec<T>(N).getPtr();
+            d_weights = DeviceVec<T>(N).getPtr();
+            d_resid = DeviceVec<T>(N).getPtr();
+            d_int_temp = DeviceVec<int>(N).getPtr();
 
-        // get perm pointers
-        d_perm = Kmat.getPerm();
-        d_iperm = Kmat.getIPerm();
-        auto d_bsr_data = Kmat.getBsrData();
-        d_elem_conn = d_bsr_data.elem_conn;
-        nelems = d_bsr_data.nelems;
+            // get perm pointers
+            d_perm = Kmat.getPerm();
+            d_iperm = Kmat.getIPerm();
+            auto d_bsr_data = Kmat.getBsrData();
+            d_elem_conn = d_bsr_data.elem_conn;
+            nelems = d_bsr_data.nelems;
 
-        // copy rhs into defect
-        d_rhs.permuteData(block_dim, d_iperm);  // permute rhs to permuted form
-        cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
-        // d_defect.permuteData(block_dim, d_iperm);
+            // copy rhs into defect
+            d_rhs.permuteData(block_dim, d_iperm);  // permute rhs to permuted form
+            cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+            // d_defect.permuteData(block_dim, d_iperm);
 
-        // make mat handles for SpMV
-        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
-        CHECK_CUSPARSE(cusparseSetMatType(descrKmat, CUSPARSE_MATRIX_TYPE_GENERAL));
-        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrKmat, CUSPARSE_INDEX_BASE_ZERO));
+            // make mat handles for SpMV
+            CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
+            CHECK_CUSPARSE(cusparseSetMatType(descrKmat, CUSPARSE_MATRIX_TYPE_GENERAL));
+            CHECK_CUSPARSE(cusparseSetMatIndexBase(descrKmat, CUSPARSE_INDEX_BASE_ZERO));
 
-        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
-        CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
-        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
+            CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
+            CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
+            CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
 
-        // also init kmat for direct LU solves..
+            if (full_LU) {
+                d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
+            }
+        }
+        
+
+        // also init kmat for direct LU solves.. this is for re-assembly here
         if (full_LU) {
-            d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
             CHECK_CUDA(cudaMemcpy(d_kmat_lu_vals, d_kmat_vals, Kmat.get_nnz() * sizeof(T),
                                   cudaMemcpyDeviceToDevice));
 
@@ -706,93 +724,103 @@ class ShellGrid {
         CHECK_CUSPARSE(cusparseDbsrsv2_analysis(cusparseHandle, dir, trans_L, nnodes, kmat_nnzb,
                                                 descr_kmat_L, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
                                                 block_dim, info_kmat_L, policy_L, kmat_pBuffer));
-        CHECK_CUDA(cudaDeviceSynchronize());
+        // CHECK_CUDA(cudaDeviceSynchronize());
     }
 
+    template <bool startup = true>
     void buildDiagInvMat() {
         // first need to construct rowp and cols for diagonal (fairly easy)
-        int *h_diag_rowp = new int[nnodes + 1];
-        diag_inv_nnzb = nnodes;
-        int *h_diag_cols = new int[nnodes];
-        h_diag_rowp[0] = 0;
 
-        for (int i = 0; i < nnodes; i++) {
-            h_diag_rowp[i + 1] = i + 1;
-            h_diag_cols[i] = i;
-        }
+        // startup section
+        if constexpr (startup) {
+            int *h_diag_rowp = new int[nnodes + 1];
+            diag_inv_nnzb = nnodes;
+            int *h_diag_cols = new int[nnodes];
+            h_diag_rowp[0] = 0;
 
-        // on host, get the pointer locations in Kmat of the block diag entries..
-        int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
-        int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
+            for (int i = 0; i < nnodes; i++) {
+                h_diag_rowp[i + 1] = i + 1;
+                h_diag_cols[i] = i;
+            }
 
-        // now copy to device
-        d_diag_rowp = HostVec<int>(nnodes + 1, h_diag_rowp).createDeviceVec().getPtr();
-        d_diag_cols = HostVec<int>(nnodes, h_diag_cols).createDeviceVec().getPtr();
+            // on host, get the pointer locations in Kmat of the block diag entries..
+            int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
+            int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
 
-        // create the bsr data object on device
-        auto d_diag_bsr_data =
-            BsrData(nnodes, 6, diag_inv_nnzb, d_diag_rowp, d_diag_cols, nullptr, nullptr, false);
-        delete[] h_diag_rowp;
-        delete[] h_diag_cols;
+            // now copy to device
+            d_diag_rowp = HostVec<int>(nnodes + 1, h_diag_rowp).createDeviceVec().getPtr();
+            d_diag_cols = HostVec<int>(nnodes, h_diag_cols).createDeviceVec().getPtr();
 
-        // now allocate DeviceVec for the values
-        int ndiag_vals = block_dim * block_dim * nnodes;
-        auto d_diag_vals = DeviceVec<T>(ndiag_vals);
+            // create the bsr data object on device
+            d_diag_bsr_data =
+                BsrData(nnodes, 6, diag_inv_nnzb, d_diag_rowp, d_diag_cols, nullptr, nullptr, false);
+            delete[] h_diag_rowp;
+            delete[] h_diag_cols;
 
-        int *h_kmat_diagp = new int[nnodes];
-        for (int block_row = 0; block_row < nnodes; block_row++) {
-            for (int jp = h_kmat_rowp[block_row]; jp < h_kmat_rowp[block_row + 1]; jp++) {
-                int block_col = h_kmat_cols[jp];
-                // printf("row %d, col %d\n", block_row, block_col);
-                if (block_row == block_col) {
-                    h_kmat_diagp[block_row] = jp;
+            // now allocate DeviceVec for the values
+            int ndiag_vals = block_dim * block_dim * nnodes;
+            d_diag_vals = DeviceVec<T>(ndiag_vals);
+            d_diag_LU_vals = d_diag_vals.getPtr();  // just copy these pointers..
+
+            int *h_kmat_diagp = new int[nnodes];
+            for (int block_row = 0; block_row < nnodes; block_row++) {
+                for (int jp = h_kmat_rowp[block_row]; jp < h_kmat_rowp[block_row + 1]; jp++) {
+                    int block_col = h_kmat_cols[jp];
+                    // printf("row %d, col %d\n", block_row, block_col);
+                    if (block_row == block_col) {
+                        h_kmat_diagp[block_row] = jp;
+                    }
                 }
             }
-        }
 
-        int *d_kmat_diagp = HostVec<int>(nnodes, h_kmat_diagp).createDeviceVec().getPtr();
+            d_kmat_diagp = HostVec<int>(nnodes, h_kmat_diagp).createDeviceVec().getPtr();
+
+            delete[] h_kmat_rowp;
+            delete[] h_kmat_cols;
+        }
+        
 
         // call the kernel to copy out diag vals first
+        int ndiag_vals = block_dim * block_dim * nnodes;
         dim3 block(32);
         int nblocks = (ndiag_vals + 31) / 32;
         dim3 grid(nblocks);
         k_copyBlockDiagFromBsrMat<T>
-            <<<grid, block>>>(nnodes, block_dim, d_kmat_diagp, d_kmat_vals, d_diag_vals.getPtr());
-        delete[] h_kmat_rowp;
-        delete[] h_kmat_cols;
+            <<<grid, block>>>(nnodes, block_dim, d_kmat_diagp, d_kmat_vals, d_diag_LU_vals);
 
-        // use cusparse to get Dinv as LU factor and then we just do triang solves on
-        // block - diag perform_ilu0_factorization();
-        d_diag_LU_vals = d_diag_vals.getPtr();  // just copy these pointers..
-        // printf("performing ILU(0) factor\n");
+        // T *h_diag_LU_vals1 = new T[100];
+        // cudaMemcpy(h_diag_LU_vals1, &d_diag_LU_vals[300], 100 * sizeof(T), cudaMemcpyDeviceToHost);
+        // printf("h_diag_LU_vals1, startup %d: ", startup);
+        // printVec<T>(100, h_diag_LU_vals1);
 
+        // then on each nodal block of D matrix, cusparse computes LU factorization
         CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
                                                 &pBuffer, nnodes, diag_inv_nnzb, block_dim,
                                                 d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
                                                 trans_U, policy_L, policy_U, dir);
-        // printf("did ILU(0) factor on block-diag D(K)\n");
 
-        // compute new Dinv_vals with LU operator..
-        // build_lu_inv_operator = false; // previous version
+        // T *h_diag_LU_vals2 = new T[100];
+        // cudaMemcpy(h_diag_LU_vals2, &d_diag_LU_vals[300], 100 * sizeof(T), cudaMemcpyDeviceToHost);
+        // printf("h_diag_LU_vals2, startup %d: ", startup);
+        // printVec<T>(100, h_diag_LU_vals2);
+
+        // now compute Dinv linear operator from LU triang solves (so don't need triang solves in main solve), costs 6 triang solves of D^-1 = U^-1 L^-1
         build_lu_inv_operator = (smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) && !full_LU; // dense matrix should not modify LU vals on coarsest grid..
-
         if (build_lu_inv_operator) { 
+
+            // startup part of Dinv linear operator
+            if constexpr (startup) {
+                d_dinv_vals = DeviceVec<T>(ndiag_vals);
+            }
 
             // apply e1 through e6 (each dof per node for shell if 6 dof per node case)
             // to get effective matrix.. need six temp vectors..
-            auto d_dinv_vals = DeviceVec<T>(ndiag_vals);
-
             for (int i = 0; i < block_dim; i++) {
                 // set d_temp to ei (one of e1 through e6 per block)
                 cudaMemset(d_temp, 0.0, N * sizeof(T));
                 dim3 block(32);
                 dim3 grid((nnodes + 31) / 32);
                 k_setBlockUnitVec<T><<<grid, block>>>(nnodes, block_dim, i, d_temp);
-
-                // debug
-                // T *h_temp = d_temp_vec.createHostVec().getPtr();
-                // printf("h_temp step %d: ", i);
-                // printVec<T>(12, h_temp);
 
                 // now compute D^-1 through U^-1 L^-1 triang solves and copy result into d_temp2
                 const double alpha = 1.0;
@@ -812,14 +840,18 @@ class ShellGrid {
                 k_setLUinv_operator<T><<<grid2, block>>>(nnodes, block_dim, i, d_temp2, d_dinv_vals.getPtr());
             } // this works!
 
-            D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_dinv_vals);
-            d_diag_LU_vals = d_dinv_vals.getPtr(); // now LU vals technically holds Dinv form of LU as linear operator (no triang solves needed since only on diag)
+            if constexpr (startup) {
+                D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_dinv_vals);
+            }          
 
         } else {
-            D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_diag_vals);
-        }
+            if constexpr (startup) {
+                D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_diag_vals);
+            }
+        } // end of Dinv linear operator if block
     }
 
+    template <bool startup = true>
     void buildTransposeColorMatrices() {
         // build color transpose matrices (one for each color)
         // only needed for fastest MC-BGS method..
@@ -829,126 +861,89 @@ class ShellGrid {
         // kernels for some of these steps (initialization / assembly) may not be fully optimized yet..
 
         int num_colors = h_color_rowp.getSize() - 1;
-        int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each color
-        // printf("nnodes %d\n", nnodes);
-        // printf("color_rowp: ");
-        // printVec<int>(num_colors + 1, color_rowp);
-
-        int **h_color_submat_rowp = new int*[num_colors];
-        int **h_color_submat_rows = new int*[num_colors];
-        int **h_color_submat_cols = new int*[num_colors];
-        h_color_submat_nnzb = new int[num_colors]; // what is the nnzb for each submat
-
-        // copy kmat pointers to host
-        int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
-        int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
-
-        // get sparsity for each color-sliced matrix
-        for (int icolor = 0; icolor < num_colors; icolor++) {
-            // temp debug
-            // printf("color %d, ", icolor);
-
-            int start_node = color_rowp[icolor], end_node = color_rowp[icolor + 1];
-            int ncols = end_node - start_node;
-            int mb = nnodes, nb = ncols; // dimensions of column sub-matrix
-
-            // construct a rowp and cols for each sub-matrix
-            h_color_submat_rowp[icolor] = new int[nnodes + 1];
-            int *_rowp = h_color_submat_rowp[icolor];
-            _rowp[0] = 0;
-            for (int i = 0; i < nnodes; i++) {
-                int _row_ct = 0;
-                for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
-                    int j = h_kmat_cols[jp];
-                    if (start_node <= j && j < end_node) {
-                        _row_ct++;
-                    }
-                }
-                _rowp[i+1] = _rowp[i] + _row_ct;
-            }
-
-            int _nnzb = _rowp[nnodes];
-            h_color_submat_rows[icolor] = new int[_nnzb];
-            int *_rows = h_color_submat_rows[icolor];
-            for (int i = 0; i < nnodes; i++) {
-                for (int jp = _rowp[i]; jp < _rowp[i+1]; jp++) {
-                    _rows[jp] = i;
-                }
-            }
-
-            // // temp debug
-            // printf("_nnzb %d\b", _nnzb);
-            // printf("\th_kmat_rowp: ");
-            // printVec<int>(11, h_kmat_rowp);
-            // printf("\th_kmat_cols: ");
-            // printVec<int>(40, h_kmat_cols);
-
-            h_color_submat_cols[icolor] = new int[_nnzb];
-            int *_cols = h_color_submat_cols[icolor];
-            int *_next = new int[nnodes]; // help for inserting matrix
-            memcpy(_next, _rowp, nnodes * sizeof(int));
-            for (int i = 0; i < nnodes; i++) {
-                for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
-                    int j = h_kmat_cols[jp];
-                    if (start_node <= j && j < end_node) {
-                        int j2 = j - start_node;
-                        _cols[_next[i]++] = j2;
-                    }
-                }
-            }
-            delete[] _next;
-            h_color_submat_nnzb[icolor] = _nnzb;
-
-            // temp debug
-            // printf("_nnzb %d, submat cols %d to %d\b", _nnzb, start_node, end_node);
-            // printf("\t_rowp: ");
-            // printVec<int>(5, _rowp);
-            // printf("\t_rows: ");
-            // printVec<int>(30, _rows);
-            // printf("\t_cols: ");
-            // printVec<int>(30, _cols);
-            // return; // temp debug            
-
-            // // temp debug
-            // printf("_nnzb %d\b", _nnzb);
-            // printf("\t_rows: ");
-            // printVec<int>(11, _rowp);
-            // printf("\t_cols: ");
-            // printVec<int>(40, _cols);
-        }
-
+        int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each 
         int block_dim2 = block_dim * block_dim;
-        d_color_submat_rowp = new int*[num_colors];
-        d_color_submat_rows = new int*[num_colors];
-        d_color_submat_cols = new int*[num_colors];
-        d_color_submat_vals = new T*[num_colors];
-        // can't deref double pointers if stored on device, need outer double pointers stored on host so can deref on host
-        // cudaMalloc((void**)&d_color_submat_rowp, num_colors * sizeof(int *));
-        // cudaMalloc((void**)&d_color_submat_rows, num_colors * sizeof(int *));
-        // cudaMalloc((void**)&d_color_submat_cols, num_colors * sizeof(int *));
-        // cudaMalloc((void**)&d_color_submat_vals, num_colors * sizeof(T*));
-        
-        for (int icolor = 0; icolor < num_colors; icolor++) {
-            cudaMalloc((void**)&d_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int));
-            int submat_nnzb = h_color_submat_nnzb[icolor];
-            cudaMalloc((void**)&d_color_submat_rows[icolor], submat_nnzb * sizeof(int));
-            cudaMalloc((void**)&d_color_submat_cols[icolor], submat_nnzb * sizeof(int));
-            cudaMalloc((void**)&d_color_submat_vals[icolor], block_dim2 * submat_nnzb * sizeof(T));
 
-            // temp debug
-            // printf("_nnzb %d\b", submat_nnzb);
-            // printf("\t_rows: ");
-            // printVec<int>(11, h_color_submat_rows[icolor]);
-            // printf("\t_cols: ");
-            // printVec<int>(40, h_color_submat_cols[icolor]);
+        if constexpr (startup) { // on startup block (not reassembly)
+            int **h_color_submat_rowp = new int*[num_colors];
+            int **h_color_submat_rows = new int*[num_colors];
+            int **h_color_submat_cols = new int*[num_colors];
+            h_color_submat_nnzb = new int[num_colors]; // what is the nnzb for each submat
 
-            // copy data to device
-            cudaMemcpy(d_color_submat_rowp[icolor], h_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_color_submat_rows[icolor], h_color_submat_rows[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_color_submat_cols[icolor], h_color_submat_cols[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
-        }
+            // copy kmat pointers to host
+            int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
+            int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
+
+            // get sparsity for each color-sliced matrix
+            for (int icolor = 0; icolor < num_colors; icolor++) {
+                // temp debug
+                // printf("color %d, ", icolor);
+
+                int start_node = color_rowp[icolor], end_node = color_rowp[icolor + 1];
+                // int ncols = end_node - start_node;
+                // int mb = nnodes, nb = ncols; // dimensions of column sub-matrix
+
+                // construct a rowp and cols for each sub-matrix
+                h_color_submat_rowp[icolor] = new int[nnodes + 1];
+                int *_rowp = h_color_submat_rowp[icolor];
+                _rowp[0] = 0;
+                for (int i = 0; i < nnodes; i++) {
+                    int _row_ct = 0;
+                    for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
+                        int j = h_kmat_cols[jp];
+                        if (start_node <= j && j < end_node) {
+                            _row_ct++;
+                        }
+                    }
+                    _rowp[i+1] = _rowp[i] + _row_ct;
+                }
+
+                int _nnzb = _rowp[nnodes];
+                h_color_submat_rows[icolor] = new int[_nnzb];
+                int *_rows = h_color_submat_rows[icolor];
+                for (int i = 0; i < nnodes; i++) {
+                    for (int jp = _rowp[i]; jp < _rowp[i+1]; jp++) {
+                        _rows[jp] = i;
+                    }
+                }
+
+                h_color_submat_cols[icolor] = new int[_nnzb];
+                int *_cols = h_color_submat_cols[icolor];
+                int *_next = new int[nnodes]; // help for inserting matrix
+                memcpy(_next, _rowp, nnodes * sizeof(int));
+                for (int i = 0; i < nnodes; i++) {
+                    for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
+                        int j = h_kmat_cols[jp];
+                        if (start_node <= j && j < end_node) {
+                            int j2 = j - start_node;
+                            _cols[_next[i]++] = j2;
+                        }
+                    }
+                }
+                delete[] _next;
+                h_color_submat_nnzb[icolor] = _nnzb;
+            }
+            d_color_submat_rowp = new int*[num_colors];
+            d_color_submat_rows = new int*[num_colors];
+            d_color_submat_cols = new int*[num_colors];
+            d_color_submat_vals = new T*[num_colors];
+            
+            for (int icolor = 0; icolor < num_colors; icolor++) {
+                cudaMalloc((void**)&d_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int));
+                int submat_nnzb = h_color_submat_nnzb[icolor];
+                cudaMalloc((void**)&d_color_submat_rows[icolor], submat_nnzb * sizeof(int));
+                cudaMalloc((void**)&d_color_submat_cols[icolor], submat_nnzb * sizeof(int));
+                cudaMalloc((void**)&d_color_submat_vals[icolor], block_dim2 * submat_nnzb * sizeof(T));
+
+                // copy data to device
+                cudaMemcpy(d_color_submat_rowp[icolor], h_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_color_submat_rows[icolor], h_color_submat_rows[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_color_submat_cols[icolor], h_color_submat_cols[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
+            }
+        } // end of startup block       
 
 
+        // re-assembly part.. need to copy values from new Kmat into submatrices for each color
         // better way is maybe a transpose mat-vec product on row-sliced data?... but that may not be as fast as you think?
         for (int icolor = 0; icolor < num_colors; icolor++) {
             // submat comes out of T **d_submat_vals then by color..
@@ -962,22 +957,7 @@ class ShellGrid {
             // TODO : figure out good strategy to optimize this kernel later..
             k_copy_color_submat<T><<<grid, block>>>(nnodes, submat_nnzb, start_col, block_dim, d_color_submat_rows[icolor], 
                 d_color_submat_cols[icolor], d_kmat_rowp, d_kmat_cols, d_kmat_vals, d_color_submat_vals[icolor]);
-
-            // // now print out some of the submat vals..
-            // T *h_submat_vals = DeviceVec<T>(block_dim2 * submat_nnzb, d_color_submat_vals[icolor]).createHostVec().getPtr();
-            // T *h_kmat_vals = DeviceVec<T>(block_dim2 * kmat_nnzb, d_kmat_vals).createHostVec().getPtr();
-            // printf("h_submat_vals: \n");
-            // for (int inode = 0; inode < 3; inode++) {
-            //     printf("\tnodal block %d: ", inode);
-            //     printVec<T>(36, &h_submat_vals[36 * inode]);
-            // }
-            // printf("h_kmat_vals: \n");
-            // for (int inode = 0; inode < 3; inode++) {
-            //     printf("\tnodal block %d: ", inode);
-            //     printVec<T>(36, &h_kmat_vals[36 * inode]);
-            // }
         }
-        // return; // temp debug
 
     }
 
@@ -1023,11 +1003,19 @@ class ShellGrid {
     void setDefect(DeviceVec<T> new_defect) {
         // set the defect on the finest grid
         new_defect.copyValuesTo(d_defect);
+        d_defect.permuteData(block_dim, d_iperm); // unperm to permuted
+    }
+
+    void getDefect(DeviceVec<T> defect_out) {
+        // copy solution to another device vec outside this class
+        d_defect.copyValuesTo(defect_out);
+        defect_out.permuteData(block_dim, d_perm); // permuted to unperm order
     }
 
     void getSolution(DeviceVec<T> soln_out) {
         // copy solution to another device vec outside this class
         d_soln.copyValuesTo(soln_out);
+        soln_out.permuteData(block_dim, d_perm); // permuted to unperm order
     }
 
     T getResidNorm() {
@@ -1279,7 +1267,7 @@ class ShellGrid {
     void dampedJacobi(int n_iters, bool print = false, int print_freq = 10,
                                          T omega = 0.8, bool rev_colors = false) {
 
-        bool time_debug = false;
+        // bool time_debug = false;
         // bool time_debug = true;
 
         for (int iter = 0; iter < n_iters; iter++) {
@@ -1326,6 +1314,7 @@ class ShellGrid {
         bool time_debug = false;
         // bool time_debug = true;
         if (time_debug) printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
+        print_freq = max(print_freq, 1); // so not zero
 
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
@@ -1335,7 +1324,6 @@ class ShellGrid {
 
                 if (time_debug) CHECK_CUDA(cudaDeviceSynchronize());
                 auto prelim_time = std::chrono::high_resolution_clock::now();
-
                 int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
                 int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
 
@@ -1348,7 +1336,7 @@ class ShellGrid {
                 T *d_temp_color = &d_temp[block_dim * start];
                 int block_dim2 = block_dim * block_dim;
                 int diag_inv_nnzb_color = nblock_rows_color;
-                T *d_diag_LU_vals_color = &d_diag_LU_vals[start * block_dim2];
+                T *d_dinv_vals_color = &d_dinv_vals.getPtr()[start * block_dim2]; // from LU factor
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
@@ -1366,7 +1354,7 @@ class ShellGrid {
                 // note in this case d_diag_LU_vals_color refers to Dinv form of LU factors on each nodal block
                 CHECK_CUSPARSE(cusparseDbsrmv( // NOTE just uses descrKmat cause would be the same as descrDinv (convenience)
                     cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    nblock_rows_color, nblock_rows_color, diag_inv_nnzb_color, &a, descrKmat, d_diag_LU_vals_color, d_diag_rowp, d_diag_cols,
+                    nblock_rows_color, nblock_rows_color, diag_inv_nnzb_color, &a, descrKmat, d_dinv_vals_color, d_diag_rowp, d_diag_cols,
                     block_dim, d_defect_color, &b, d_temp_color));
 
                 // timing part
@@ -1387,6 +1375,12 @@ class ShellGrid {
                 a = omega;
                 CHECK_CUBLAS(
                     cublasDaxpy(cublasHandle, nrows_color, &a, d_temp_color, 1, d_soln_color, 1));
+
+                // // print submat vals here here..
+                // T *h_submat_vals = new T[100];
+                // cudaMemcpy(h_submat_vals, d_color_submat_vals[icolor], 100 * sizeof(T), cudaMemcpyDeviceToHost);
+                // printf("h_submat_vals: ");
+                // printVec<T>(100, h_submat_vals);
 
                 
                 // get submat size, to do submat-vec product A[:,color] * dx[color]
@@ -1601,6 +1595,10 @@ class ShellGrid {
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp2, 1, d_defect.getPtr(), 1));
     }
 
+    void free() {
+        // TBD::
+    }
+
     // data
     Assembler assembler;
     int N, nelems, block_dim, nnodes;
@@ -1646,9 +1644,13 @@ class ShellGrid {
     // for diag inv mat
     int diag_inv_nnzb, *d_diag_rowp, *d_diag_cols;
     int *d_piv, *d_info;
-    T *d_diag_vals, *d_diag_LU_vals;
+    DeviceVec<T> d_diag_vals;
+    T *d_diag_LU_vals;
     T **d_diag_LU_batch_ptr, **d_temp_batch_ptr;
     bool build_lu_inv_operator;
+    int *d_kmat_diagp;
+    BsrData d_diag_bsr_data;
+    DeviceVec<T> d_dinv_vals;
 
     // for kmat
     int kmat_nnzb, *d_kmat_rowp, *d_kmat_cols;
