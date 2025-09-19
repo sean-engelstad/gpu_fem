@@ -406,7 +406,7 @@ Assembler createPlateDistortedAssembler(int nxe, int nye, double Lx, double Ly, 
 template <class Assembler>
 Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E, double nu,
                                   double thick, bool imperfection = false, int imp_x = 5,
-                                  int imp_hoop = 4) {
+                                  int imp_hoop = 4, double rho = 2500, double ys = 350e6, int nx_comp = 1, int ny_comp = 1) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -519,20 +519,40 @@ Assembler createCylinderAssembler(int nxe, int nhe, double L, double R, double E
 
     // printf("checkpoint 4 - post xpts\n");
 
-    HostVec<Data> physData(num_elements, Data(E, nu, thick));
+    HostVec<Data> physData(num_elements, Data(E, nu, thick, rho, ys));
 
     // printf("checkpoint 5 - create physData\n");
 
+    // make elem_components
+    assert(nxe % nx_comp == 0);
+    assert(nhe % ny_comp == 0);
+    int num_components = nx_comp * ny_comp;
+    int nxe_per_comp = nxe / nx_comp;
+    int nye_per_comp = nhe / ny_comp;
+
+    HostVec<int> elem_components(num_elements);
+    for (int iye = 0; iye < nhe; iye++) {
+        for (int ixe = 0; ixe < nxe; ixe++) {
+            int ielem = nxe * iye + ixe;
+            int ix_comp = ixe / nxe_per_comp;
+            int iy_comp = iye / nye_per_comp;
+
+            int icomp = nx_comp * iy_comp + ix_comp;
+
+            elem_components[ielem] = icomp;
+        }
+    }
+
     // make the assembler
     Assembler assembler(num_nodes, num_nodes, num_elements, geo_conn, vars_conn, xpts, bcs,
-                        physData);
+                        physData, num_components, elem_components);
 
     // printf("checkpoint 6 - create assembler\n");
 
     return assembler;
 }
 
-template <typename T, class Phys, bool compressive = false>
+template <typename T, class Phys, int load_case = 2>
 T *getCylinderLoads(int nxe, int nhe, double L, double R, double load_mag) {
     /*
     make compressive loads on the xpos edge of cylinder whose axis is in the (1,0,0) or x-direction
@@ -558,17 +578,28 @@ T *getCylinderLoads(int nxe, int nhe, double L, double R, double load_mag) {
             T y = R * sin(th);
             T z = R * cos(th);
             int inode = nnx * ih + ix;
-            if constexpr (compressive) {
+            if constexpr (load_case == 1) {
                 if (ix == nnx - 1) {
                     // on xpos edge, make compressive loads in x-direction
                     // printf("compressive load on %d\n", inode);
                     my_loads[Phys::vars_per_node * inode] = -load_mag;
                 }
-            } else {  // otherwise transverse
+            } else if (load_case == 2) {  // otherwise transverse simply sine-sine load
                 // transverse sinusoidal magnitude
                 T x_hat = x / L;
                 T th_hat = th / 2 / M_PI;
                 T mag = load_mag * sin(x_hat * 5 * M_PI) * sin(th_hat * 4 * M_PI);
+
+                // y and z transverse loads in radial direction only
+                my_loads[Phys::vars_per_node * inode + 1] = sin(th) * mag;
+                my_loads[Phys::vars_per_node * inode + 2] = cos(th) * mag;
+            } else if (load_case == 3) {  // petal load
+                // rose shape in hoop, chirp in x direction
+                T x_hat = x / L;
+                T th_hat = th / 2 / M_PI;
+                // T mag = load_mag * (0.7 * cos(5 * th) + 0.3 * cos(10 * th + 3.14159 / 6.0)) * sin(2 * M_PI * x_hat + 0.5 * 2.0 * x_hat * x_hat);
+                T mag = load_mag * (0.3 * cos(5 * th + 2.0 * M_PI * x_hat) + 0.7 * cos(10 * th + 3.14159 / 6.0 + 5.3 * M_PI * x_hat)) * 
+                    sin(5 * M_PI * x_hat + 0.5 * 2.0 * x_hat * x_hat);
 
                 // y and z transverse loads in radial direction only
                 my_loads[Phys::vars_per_node * inode + 1] = sin(th) * mag;

@@ -114,7 +114,8 @@ void direct_solve(int nxe, double SR) {
 
     size_t bytes_per_double = sizeof(double);
     double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-    printf("cylinder direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem (MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_mb);
+    int ndof = assembler.get_num_vars();
+    printf("cylinder direct solve, ndof %d : solve time %.2e, with mem (MB) %.2e\n", ndof, solve_time.count(), mem_mb);
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
@@ -139,7 +140,8 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
 
     // multigrid objects
     // const SMOOTHER smoother = MULTICOLOR_GS;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST;
+    // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST2;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
     
     using Prolongation = StructuredProlongation<CYLINDER>;
@@ -166,8 +168,9 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
         int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
         auto assembler = createCylinderAssembler<Assembler>(c_nxe, c_nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
         constexpr bool compressive = false;
+        const int load_case = 3; // petal and chirp load
         double Q = 1.0; // load magnitude
-        T *my_loads = getCylinderLoads<T, Physics, compressive>(c_nxe, c_nhe, L, R, Q);
+        T *my_loads = getCylinderLoads<T, Physics, load_case>(c_nxe, c_nhe, L, R, Q);
         printf("making grid with nxe %d\n", c_nxe);
 
         // make the grid
@@ -244,7 +247,7 @@ int main(int argc, char **argv) {
     // input ----------
     bool is_multigrid = false;
     int nxe = 256; // default value
-    double SR = 100.0; // default
+    double SR = 50.0; // default
     int n_vcycles = 50;
 
     // Parse arguments
