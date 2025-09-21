@@ -35,7 +35,8 @@ class ShellMultigrid {
     }
 
     void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
-                      T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false, bool time = false, int print_freq = 1) {
+                      T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false,
+                      bool time = false, int print_freq = 1) {
         // init defect nrm
         T init_defect_nrm = grids[0].getDefectNorm();
         printf("V-cycles: ||init_defect|| = %.2e\n", init_defect_nrm);
@@ -43,7 +44,7 @@ class ShellMultigrid {
         T fin_defect_nrm = init_defect_nrm;
         int n_steps = n_vcycles;
 
-        printf("V-cycle : print_freq %d\n", print_freq);
+        // printf("V-cycle : print_freq %d\n", print_freq);
 
         int n_levels = getNumLevels();
         // if (print) printf("n_levels %d\n", n_levels);
@@ -53,7 +54,7 @@ class ShellMultigrid {
 
             // go down each level smoothing and restricting until lowest level
             for (int i_level = 0; i_level < n_levels; i_level++) {
-                int exp_smooth_factor = double_smooth ? 1<<i_level : 1; // power of 2 more
+                int exp_smooth_factor = double_smooth ? 1 << i_level : 1;  // power of 2 more
                 // int exp_smooth_factor = 1.0;  // only smooth post-steps if this
 
                 // if not last  (pre-smooth)
@@ -62,18 +63,19 @@ class ShellMultigrid {
 
                     if (time) CHECK_CUDA(cudaDeviceSynchronize());
                     auto pre_smooth_time = std::chrono::high_resolution_clock::now();
-                    
+
                     grids[i_level].smoothDefect(pre_smooth * exp_smooth_factor, print,
                                                 pre_smooth * exp_smooth_factor - 1, omega);
 
                     if (time) {
                         CHECK_CUDA(cudaDeviceSynchronize());
                         auto post_smooth_time = std::chrono::high_resolution_clock::now();
-                        std::chrono::duration<double> smooth_time1 = post_smooth_time - pre_smooth_time;
-                        printf("\tsmoothDefect[%d]-down in %.2e sec\n", i_level, smooth_time1.count());
+                        std::chrono::duration<double> smooth_time1 =
+                            post_smooth_time - pre_smooth_time;
+                        printf("\tsmoothDefect[%d]-down in %.2e sec\n", i_level,
+                               smooth_time1.count());
                     }
                     auto pre_restr_time = std::chrono::high_resolution_clock::now();
-        
 
                     // restrict defect
                     grids[i_level + 1].restrict_defect(
@@ -98,7 +100,8 @@ class ShellMultigrid {
                     if (time) {
                         CHECK_CUDA(cudaDeviceSynchronize());
                         auto post_direct_time = std::chrono::high_resolution_clock::now();
-                        std::chrono::duration<double> direct_time = post_direct_time - pre_direct_time;
+                        std::chrono::duration<double> direct_time =
+                            post_direct_time - pre_direct_time;
                         printf("\tdirect-solve[%d] in in %.2e sec\n", i_level, direct_time.count());
                     }
                 }
@@ -119,7 +122,8 @@ class ShellMultigrid {
                 if (time) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto post_prolong_time = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double> prolong_time = post_prolong_time - pre_prolong_time;
+                    std::chrono::duration<double> prolong_time =
+                        post_prolong_time - pre_prolong_time;
                     printf("\tprolong-soln[%d] up in in %.2e sec\n", i_level, prolong_time.count());
                 }
                 auto pre_smooth_up_time = std::chrono::high_resolution_clock::now();
@@ -135,15 +139,18 @@ class ShellMultigrid {
                 if (time) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto post_smooth_up_time = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double> smooth_up_time = post_smooth_up_time - pre_smooth_up_time;
-                    printf("\tpost-smooth[%d] up in in %.2e sec\n", i_level, smooth_up_time.count());
+                    std::chrono::duration<double> smooth_up_time =
+                        post_smooth_up_time - pre_smooth_up_time;
+                    printf("\tpost-smooth[%d] up in in %.2e sec\n", i_level,
+                           smooth_up_time.count());
                 }
             }
 
             // compute fine grid defect of V-cycle
             T defect_nrm = grids[0].getDefectNorm();
             fin_defect_nrm = defect_nrm;
-            if (i_vcycle % print_freq == 0) printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
+            if (i_vcycle % print_freq == 0)
+                printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
             if (time) CHECK_CUDA(cudaDeviceSynchronize());
 
             if (defect_nrm < atol + rtol * init_defect_nrm) {
@@ -163,7 +170,8 @@ class ShellMultigrid {
         /* W-cycle may have greater performance than V-cycle? what about also F-cycle? */
 
         bool is_outer_call = n_wcycles > 2 && i_level == 0;
-        // printf("i_level %d, n_wcycles %d, is outer call %d\n", i_level, n_wcycles, is_outer_call);
+        // printf("i_level %d, n_wcycles %d, is outer call %d\n", i_level, n_wcycles,
+        // is_outer_call);
         T init_defect_nrm, fin_defect_nrm;
         if (is_outer_call) {  // only for outer call..
             // init defect nrm
@@ -207,7 +215,7 @@ class ShellMultigrid {
                 grids[i_level].smoothDefect(post_smooth, print, post_smooth - 1, omega, rev_colors);
             }
 
-            // compute fine grid defect of V-cycle (outer call only)++ 
+            // compute fine grid defect of V-cycle (outer call only)++
             T defect_nrm;
             if (is_outer_call) {
                 defect_nrm = grids[i_level].getDefectNorm();

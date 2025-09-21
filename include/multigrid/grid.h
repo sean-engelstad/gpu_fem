@@ -8,12 +8,13 @@
 #include "solvers/linear_static/bsr_direct_LU.h"
 
 // local includes for shell multigrid
+#include <chrono>
+#include <set>
+
 #include "grid.cuh"
 #include "prolongation/_prolong.h"  // for prolongations
 #include "prolongation/unstruct_utils.h"
 #include "vtk.h"
-#include <set>
-#include <chrono>
 
 // for unstructured multigrid
 #include "coupled/locate_point.h"
@@ -22,11 +23,18 @@ enum SMOOTHER : short {
     MULTICOLOR_GS,
     MULTICOLOR_GS_FAST,
     MULTICOLOR_GS_FAST2,
+    MULTICOLOR_GS_FAST2_JUNCTION,
     DAMPED_JACOBI,
     LEXIGRAPHIC_GS,
 };
 
-template <class Assembler, class Prolongation, SMOOTHER smoother>
+enum SCALER : short {
+    NONE,
+    LINE_SEARCH,
+    PCG,
+};
+
+template <class Assembler, class Prolongation, SMOOTHER smoother, SCALER scaler>
 class ShellGrid {
    public:
     using T = double;
@@ -53,14 +61,19 @@ class ShellGrid {
         kmat_nnzb = d_kmat_bsr_data.nnzb;
 
         // init helper methods
-        // if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
+        // if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother ==
+        // MULTICOLOR_GS_FAST2) {
         //     buildColorLocalRowPointers();
         // }
         const bool startup = true;
         initCuda<startup>();
-        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) {
+        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST ||
+            smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION ||
+            smoother == DAMPED_JACOBI) {
             buildDiagInvMat<startup>();
-            if (smoother == MULTICOLOR_GS_FAST2 && !full_LU) buildTransposeColorMatrices<startup>();
+            if ((smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION) &&
+                !full_LU)
+                buildTransposeColorMatrices<startup>();
         }
         if (smoother == LEXIGRAPHIC_GS && !full_LU) {
             initLowerMatForGaussSeidel();
@@ -69,11 +82,15 @@ class ShellGrid {
 
     void update_after_assembly() {
         // update dependent ILU and other matrices from new assembly
-        const bool startup = false; // false here, just assembly no new startup pieces
+        const bool startup = false;  // false here, just assembly no new startup pieces
         initCuda<startup>();
-        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) {
+        if constexpr (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST ||
+                      smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION ||
+                      smoother == DAMPED_JACOBI) {
             buildDiagInvMat<startup>();
-            if (smoother == MULTICOLOR_GS_FAST2 && !full_LU) buildTransposeColorMatrices<startup>();
+            if ((smoother == MULTICOLOR_GS_FAST2 && smoother == MULTICOLOR_GS_FAST2_JUNCTION) &&
+                !full_LU)
+                buildTransposeColorMatrices<startup>();
         }
     }
 
@@ -97,12 +114,22 @@ class ShellGrid {
             _color_rowp[1] = assembler.get_num_nodes();
 
         } else {
-            if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
+            if constexpr (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST ||
+                          smoother == MULTICOLOR_GS_FAST2 ||
+                          smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
                 if (reorder) {
-                    bsr_data.multicolor_reordering(
-                        num_colors,
-                        _color_rowp);  // TODO : add this method.. (I guess I
-                                       // can just do host for now..)
+                    if (smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
+                        printf("pre MC junction reordering\n");
+                        int _nnodes = assembler.get_num_nodes();
+                        bool *is_interior_node;
+                        get_interior_node_flags(assembler, is_interior_node);
+                        bsr_data.multicolor_junction_reordering(is_interior_node, num_colors,
+                                                                _color_rowp);
+                        printf("num_colors %d, color rowp: ", num_colors);
+                        printVec<int>(num_colors, _color_rowp);
+                    } else {
+                        bsr_data.multicolor_reordering(num_colors, _color_rowp);
+                    }
                 } else {
                     num_colors = 1;
                     _color_rowp = new int[2];
@@ -147,8 +174,65 @@ class ShellGrid {
         std::chrono::duration<double> assembly_time = end0 - start0;
         printf("\tassemble kmat time %.2e\n", assembly_time.count());
 
-
         return new ShellGrid(assembler, N, kmat, loads, h_color_rowp, full_LU);
+    }
+
+    static void get_interior_node_flags(Assembler &assembler, bool *&is_interior_node) {
+        // get for each node whether it's an interior node (not touching junction or multiple
+        // components) or whether it's on a junction (connected to multiple comopnents)
+
+        int _nnodes = assembler.get_num_nodes();
+        is_interior_node = new bool[_nnodes];
+        memset(is_interior_node, false, _nnodes * sizeof(bool));
+        int nelems = assembler.get_num_elements();
+        int *h_elem_comps = assembler.getElemComponents().createHostVec().getPtr();
+        int *h_elem_conn = assembler.getConn().createHostVec().getPtr();
+
+        // first compute the components (with repeats) each node touches (sparse data structure)
+        int *node_comp_cts = new int[_nnodes];
+        memset(node_comp_cts, 0, _nnodes * sizeof(int));
+        for (int ielem = 0; ielem < nelems; ielem++) {
+            // generalize this later to more than 4-node elems
+            for (int lnode = 0; lnode < 4; lnode++) {
+                int inode = h_elem_conn[4 * ielem + lnode];
+                node_comp_cts[inode]++;
+            }
+        }
+        int *node_comp_ptr = new int[_nnodes + 1];
+        node_comp_ptr[0] = 0;
+        for (int inode = 0; inode < _nnodes; inode++) {
+            node_comp_ptr[inode + 1] = node_comp_ptr[inode] + node_comp_cts[inode];
+        }
+        int _nnz = node_comp_ptr[_nnodes];
+        int *insert_helper = new int[_nnodes];
+        memcpy(insert_helper, node_comp_ptr, _nnodes * sizeof(int));
+        int *node_comp_vals = new int[_nnz];
+        for (int ielem = 0; ielem < nelems; ielem++) {
+            int icomp = h_elem_comps[ielem];
+            // generalize this later to more than 4-node elems
+            for (int lnode = 0; lnode < 4; lnode++) {
+                int inode = h_elem_conn[4 * ielem + lnode];
+                node_comp_vals[insert_helper[inode]++] = icomp;
+            }
+        }
+
+        // check if all components on the node are the same (then it's interior), don't actually
+        // need to know how many unique
+        for (int inode = 0; inode < _nnodes; inode++) {
+            bool interior = true;
+            int first_comp_on_node = node_comp_vals[node_comp_ptr[inode]];
+            for (int jp = node_comp_ptr[inode]; jp < node_comp_ptr[inode + 1]; jp++) {
+                int icomp = node_comp_vals[jp];
+                if (icomp != first_comp_on_node) {
+                    interior = false;
+                    break;
+                }
+            }
+            is_interior_node[inode] = interior;
+            // printf("\tnode %d interior = %d\n", inode, is_interior_node[inode]);
+        }
+
+        // TODO : free up temp arrays here..
     }
 
     double get_memory_usage_mb() {
@@ -282,7 +366,7 @@ class ShellGrid {
         memset(f_ecomps_cts, 0, nnodes_fine * sizeof(int));
         int *f_ecomps_ptr0 = new int[nnodes_fine + 1];
         for (int ielem = 0; ielem < num_fine_elems; ielem++) {
-            int fine_comp = h_fine_elem_comps[ielem];
+            // int fine_comp = h_fine_elem_comps[ielem];
             for (int iloc = 0; iloc < 4; iloc++) {
                 int fnode = h_fine_conn[4 * ielem + iloc];
                 // printf("fine elem %d, node %d\n", ielem, fnode);
@@ -463,37 +547,41 @@ class ShellGrid {
 
         // now call assembler of P and PT matrices
         if constexpr (Prolongation::assembly) {
-            int mb = nnodes_fine, nb = nnodes_coarse;
+            // int mb = nnodes_fine, nb = nnodes_coarse;
             int *h_perm = DeviceVec<int>(nnodes_fine, d_perm).createHostVec().getPtr();
             int *h_iperm = DeviceVec<int>(nnodes_fine, d_iperm).createHostVec().getPtr();
-            int *h_coarse_iperm = DeviceVec<int>(nnodes_coarse, coarse_grid.d_iperm).createHostVec().getPtr();
+            int *h_coarse_iperm =
+                DeviceVec<int>(nnodes_coarse, coarse_grid.d_iperm).createHostVec().getPtr();
 
-            // compute the pattern here first, TODO is to clean this up and use less mem if possible at least free extra stuff
+            // compute the pattern here first, TODO is to clean this up and use less mem if possible
+            // at least free extra stuff
             int *h_prol_row_cts = new int[nnodes_fine];
             int *h_prolT_row_cts = new int[nnodes_coarse];
             memset(h_prol_row_cts, 0.0, nnodes_fine * sizeof(int));
             memset(h_prolT_row_cts, 0.0, nnodes_coarse * sizeof(int));
-            // TODO : clean much of this up with sparse symbolic later.. though sparse symbolic uses connectivity, not generating non-square matrices usually
-            // uses elem_conn which is like all of [1,2,7,8] connected, not the same as here where I have pairs [1] x [4,5,7,8] elements fine to coarse
-            // maybe need to make some new methods in sparse symbolic.. (but let's get it running first)
+            // TODO : clean much of this up with sparse symbolic later.. though sparse symbolic uses
+            // connectivity, not generating non-square matrices usually uses elem_conn which is like
+            // all of [1,2,7,8] connected, not the same as here where I have pairs [1] x [4,5,7,8]
+            // elements fine to coarse maybe need to make some new methods in sparse symbolic.. (but
+            // let's get it running first)
 
-            
             for (int inf = 0; inf < nnodes_fine; inf++) {
                 int perm_inf = h_iperm[inf];
-                int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
+                // int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
                 std::set<int> conn_c_nodes;
-                
+
                 for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
                     int ielem_c = fine_node2elem_elems[jp];
                     const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
 
-                    // I might be including some extra sparsity for some nodes that are not contributing (like when fine node is on edge)
-                    // TBD could come back later and decrease the size? would maybe double or 1.5x the nnz
+                    // I might be including some extra sparsity for some nodes that are not
+                    // contributing (like when fine node is on edge) TBD could come back later and
+                    // decrease the size? would maybe double or 1.5x the nnz
 
                     for (int loc_node = 0; loc_node < 4; loc_node++) {
                         int inc = c_elem_nodes[loc_node];
                         int perm_inc = h_coarse_iperm[inc];
-                        
+
                         // unique col cts?
                         conn_c_nodes.insert(perm_inc);
                     }
@@ -526,7 +614,7 @@ class ShellGrid {
             int PT_nnzb = h_prolT_rowp[nnodes_coarse];
             int *h_prol_cols = new int[P_nnzb];
             int *h_prolT_cols = new int[PT_nnzb];
-            int *P_next = new int[nnodes_fine]; // helper arrays to insert values into sparsity
+            int *P_next = new int[nnodes_fine];  // helper arrays to insert values into sparsity
             memcpy(P_next, h_prol_rowp, nnodes_fine * sizeof(int));
             int *PT_next = new int[nnodes_coarse];
             memcpy(PT_next, h_prolT_rowp, nnodes_coarse * sizeof(int));
@@ -534,7 +622,7 @@ class ShellGrid {
             // use perm_inf order here to help with PT sparsity
             for (int perm_inf = 0; perm_inf < nnodes_fine; perm_inf++) {
                 int inf = h_perm[perm_inf];
-                int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
+                // int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
                 std::set<int> conn_c_nodes;
                 for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
                     int ielem_c = fine_node2elem_elems[jp];
@@ -542,15 +630,15 @@ class ShellGrid {
                     for (int loc_node = 0; loc_node < 4; loc_node++) {
                         int inc = c_elem_nodes[loc_node];
                         int perm_inc = h_coarse_iperm[inc];
-                        
+
                         // unique col cts?
                         conn_c_nodes.insert(perm_inc);
                     }
                 }
 
                 for (int perm_inc : conn_c_nodes) {
-                    h_prol_cols[P_next[perm_inf]++] = perm_inc; // P cols
-                    h_prolT_cols[PT_next[perm_inc]++] = perm_inf; // PT cols
+                    h_prol_cols[P_next[perm_inf]++] = perm_inc;    // P cols
+                    h_prolT_cols[PT_next[perm_inc]++] = perm_inf;  // PT cols
                 }
             }
 
@@ -563,7 +651,7 @@ class ShellGrid {
             //     }
             //     printf("\n");
             // }
-            
+
             int *h_P_rows = new int[P_nnzb];
             int *h_PT_rows = new int[PT_nnzb];
             for (int inode = 0; inode < nnodes_fine; inode++) {
@@ -580,33 +668,40 @@ class ShellGrid {
             int *d_PT_rows = HostVec<int>(PT_nnzb, h_PT_rows).createDeviceVec().getPtr();
 
             // now put these on the device with BsrData objects for P and PT
-            // TODO : later is to just assemble P and then write my own transpose Bsrmv method in CUDA
+            // TODO : later is to just assemble P and then write my own transpose Bsrmv method in
+            // CUDA
             int P_block_dim = 1;
             // int P_block_dim = block_dim; // would lead to bsr here..
 
-            int block_dim2 = P_block_dim * P_block_dim; // should be 36
+            int block_dim2 = P_block_dim * P_block_dim;  // should be 36
             auto d_P_rowp = HostVec<int>(nnodes_fine + 1, h_prol_rowp).createDeviceVec().getPtr();
             auto d_P_cols = HostVec<int>(P_nnzb, h_prol_cols).createDeviceVec().getPtr();
             auto d_P_vals = DeviceVec<T>(block_dim2 * P_nnzb);
-            auto P_bsr_data = BsrData(nnodes_fine, P_block_dim, P_nnzb, d_P_rowp, d_P_cols, d_perm, d_iperm, false);
+            auto P_bsr_data = BsrData(nnodes_fine, P_block_dim, P_nnzb, d_P_rowp, d_P_cols, d_perm,
+                                      d_iperm, false);
             P_bsr_data.mb = nnodes_fine, P_bsr_data.nb = nnodes_coarse;
             P_bsr_data.rows = d_P_rows;
 
             P_mat = BsrMat<DeviceVec<T>>(P_bsr_data, d_P_vals);
             // TODO : technically I need to have BsrData capable of non-square matrices also
 
-            auto d_PT_rowp = HostVec<int>(nnodes_coarse + 1, h_prolT_rowp).createDeviceVec().getPtr();
+            auto d_PT_rowp =
+                HostVec<int>(nnodes_coarse + 1, h_prolT_rowp).createDeviceVec().getPtr();
             auto d_PT_cols = HostVec<int>(PT_nnzb, h_prolT_cols).createDeviceVec().getPtr();
             auto d_PT_vals = DeviceVec<T>(block_dim2 * PT_nnzb);
-            auto PT_bsr_data = BsrData(nnodes_coarse, P_block_dim, PT_nnzb, d_PT_rowp, d_PT_cols, 
-                coarse_grid.d_perm, coarse_grid.d_iperm, false);
+            auto PT_bsr_data = BsrData(nnodes_coarse, P_block_dim, PT_nnzb, d_PT_rowp, d_PT_cols,
+                                       coarse_grid.d_perm, coarse_grid.d_iperm, false);
             PT_bsr_data.mb = nnodes_coarse, PT_bsr_data.nb = nnodes_fine;
-            PT_bsr_data.rows = d_PT_rows; // for each nnz, which row is it (not same as rowp), helps for efficient mat-prods
-            auto PT_mat = BsrMat<DeviceVec<T>>(PT_bsr_data, d_PT_vals); // only store this matrix on the coarse grid
-            
+            PT_bsr_data.rows = d_PT_rows;  // for each nnz, which row is it (not same as rowp),
+                                           // helps for efficient mat-prods
+            auto PT_mat = BsrMat<DeviceVec<T>>(
+                PT_bsr_data, d_PT_vals);  // only store this matrix on the coarse grid
+
             // printf("assemble matrices pre\n");
-            // printf("assemble P and PT matrices with nnodes_fine %d and nnodes_coarse %d\n", nnodes_fine, nnodes_coarse);
-            Prolongation::assemble_matrices(d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis, P_mat, PT_mat);
+            // printf("assemble P and PT matrices with nnodes_fine %d and nnodes_coarse %d\n",
+            // nnodes_fine, nnodes_coarse);
+            Prolongation::assemble_matrices(d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis, P_mat,
+                                            PT_mat);
             CHECK_CUDA(cudaDeviceSynchronize());
             // printf("assemble matrices post\n");
             coarse_grid.restrict_PT_mat = PT_mat;
@@ -632,10 +727,12 @@ class ShellGrid {
 
             coarse_grid.restrict_descrPT = 0;
             CHECK_CUSPARSE(cusparseCreateMatDescr(&coarse_grid.restrict_descrPT));
-            CHECK_CUSPARSE(cusparseSetMatType(coarse_grid.restrict_descrPT, CUSPARSE_MATRIX_TYPE_GENERAL));
-            CHECK_CUSPARSE(cusparseSetMatIndexBase(coarse_grid.restrict_descrPT, CUSPARSE_INDEX_BASE_ZERO));
+            CHECK_CUSPARSE(
+                cusparseSetMatType(coarse_grid.restrict_descrPT, CUSPARSE_MATRIX_TYPE_GENERAL));
+            CHECK_CUSPARSE(
+                cusparseSetMatIndexBase(coarse_grid.restrict_descrPT, CUSPARSE_INDEX_BASE_ZERO));
 
-        } // end of Prolongation::assembly case..
+        }  // end of Prolongation::assembly case..
 
         // printf("done with init unstructured grid maps\n");
         auto end0 = std::chrono::high_resolution_clock::now();
@@ -687,7 +784,6 @@ class ShellGrid {
                 d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
             }
         }
-        
 
         // also init kmat for direct LU solves.. this is for re-assembly here
         if (full_LU) {
@@ -752,8 +848,8 @@ class ShellGrid {
             d_diag_cols = HostVec<int>(nnodes, h_diag_cols).createDeviceVec().getPtr();
 
             // create the bsr data object on device
-            d_diag_bsr_data =
-                BsrData(nnodes, 6, diag_inv_nnzb, d_diag_rowp, d_diag_cols, nullptr, nullptr, false);
+            d_diag_bsr_data = BsrData(nnodes, 6, diag_inv_nnzb, d_diag_rowp, d_diag_cols, nullptr,
+                                      nullptr, false);
             delete[] h_diag_rowp;
             delete[] h_diag_cols;
 
@@ -778,7 +874,6 @@ class ShellGrid {
             delete[] h_kmat_rowp;
             delete[] h_kmat_cols;
         }
-        
 
         // call the kernel to copy out diag vals first
         int ndiag_vals = block_dim * block_dim * nnodes;
@@ -789,25 +884,28 @@ class ShellGrid {
             <<<grid, block>>>(nnodes, block_dim, d_kmat_diagp, d_kmat_vals, d_diag_LU_vals);
 
         // T *h_diag_LU_vals1 = new T[100];
-        // cudaMemcpy(h_diag_LU_vals1, &d_diag_LU_vals[300], 100 * sizeof(T), cudaMemcpyDeviceToHost);
-        // printf("h_diag_LU_vals1, startup %d: ", startup);
+        // cudaMemcpy(h_diag_LU_vals1, &d_diag_LU_vals[300], 100 * sizeof(T),
+        // cudaMemcpyDeviceToHost); printf("h_diag_LU_vals1, startup %d: ", startup);
         // printVec<T>(100, h_diag_LU_vals1);
 
         // then on each nodal block of D matrix, cusparse computes LU factorization
         CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
-                                                &pBuffer, nnodes, diag_inv_nnzb, block_dim,
-                                                d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
-                                                trans_U, policy_L, policy_U, dir);
+                                             &pBuffer, nnodes, diag_inv_nnzb, block_dim,
+                                             d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
+                                             trans_U, policy_L, policy_U, dir);
 
         // T *h_diag_LU_vals2 = new T[100];
-        // cudaMemcpy(h_diag_LU_vals2, &d_diag_LU_vals[300], 100 * sizeof(T), cudaMemcpyDeviceToHost);
-        // printf("h_diag_LU_vals2, startup %d: ", startup);
+        // cudaMemcpy(h_diag_LU_vals2, &d_diag_LU_vals[300], 100 * sizeof(T),
+        // cudaMemcpyDeviceToHost); printf("h_diag_LU_vals2, startup %d: ", startup);
         // printVec<T>(100, h_diag_LU_vals2);
 
-        // now compute Dinv linear operator from LU triang solves (so don't need triang solves in main solve), costs 6 triang solves of D^-1 = U^-1 L^-1
-        build_lu_inv_operator = (smoother == MULTICOLOR_GS_FAST2 || smoother == DAMPED_JACOBI) && !full_LU; // dense matrix should not modify LU vals on coarsest grid..
-        if (build_lu_inv_operator) { 
-
+        // now compute Dinv linear operator from LU triang solves (so don't need triang solves in
+        // main solve), costs 6 triang solves of D^-1 = U^-1 L^-1
+        build_lu_inv_operator =
+            (smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION ||
+             smoother == DAMPED_JACOBI) &&
+            !full_LU;  // dense matrix should not modify LU vals on coarsest grid..
+        if (build_lu_inv_operator) {
             // startup part of Dinv linear operator
             if constexpr (startup) {
                 d_dinv_vals = DeviceVec<T>(ndiag_vals);
@@ -825,30 +923,30 @@ class ShellGrid {
                 // now compute D^-1 through U^-1 L^-1 triang solves and copy result into d_temp2
                 const double alpha = 1.0;
                 CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-                    cusparseHandle, dir, trans_L, nnodes, nnodes, &alpha,
-                    descr_L, d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_L,
-                    d_temp, d_resid, policy_L,
+                    cusparseHandle, dir, trans_L, nnodes, nnodes, &alpha, descr_L, d_diag_LU_vals,
+                    d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp, d_resid, policy_L,
                     pBuffer));  // prob only need U^-1 part for block diag.. TBD
 
-                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
-                    cusparseHandle, dir, trans_U, nnodes, nnodes, &alpha,
-                    descr_U, d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim, info_U,
-                    d_resid, d_temp2, policy_U, pBuffer));
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes, nnodes,
+                                                     &alpha, descr_U, d_diag_LU_vals, d_diag_rowp,
+                                                     d_diag_cols, block_dim, info_U, d_resid,
+                                                     d_temp2, policy_U, pBuffer));
 
                 // now copy temp2 into columns of new operator
                 dim3 grid2((N + 31) / 32);
-                k_setLUinv_operator<T><<<grid2, block>>>(nnodes, block_dim, i, d_temp2, d_dinv_vals.getPtr());
-            } // this works!
+                k_setLUinv_operator<T>
+                    <<<grid2, block>>>(nnodes, block_dim, i, d_temp2, d_dinv_vals.getPtr());
+            }  // this works!
 
             if constexpr (startup) {
                 D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_dinv_vals);
-            }          
+            }
 
         } else {
             if constexpr (startup) {
                 D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_diag_vals);
             }
-        } // end of Dinv linear operator if block
+        }  // end of Dinv linear operator if block
     }
 
     template <bool startup = true>
@@ -857,18 +955,19 @@ class ShellGrid {
         // only needed for fastest MC-BGS method..
 
         // compute the sparsity patterns of each col-subcolor matrix N x N_c (as N x N_c matrix)
-        // stored in one data structure (basicaly each nodal block is stored in different order, with a few extra pointers than the Kmat)
-        // kernels for some of these steps (initialization / assembly) may not be fully optimized yet..
+        // stored in one data structure (basicaly each nodal block is stored in different order,
+        // with a few extra pointers than the Kmat) kernels for some of these steps (initialization
+        // / assembly) may not be fully optimized yet..
 
         int num_colors = h_color_rowp.getSize() - 1;
-        int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each 
+        int *color_rowp = h_color_rowp.getPtr();  // says which rows in d_kmat_rowp are each
         int block_dim2 = block_dim * block_dim;
 
-        if constexpr (startup) { // on startup block (not reassembly)
-            int **h_color_submat_rowp = new int*[num_colors];
-            int **h_color_submat_rows = new int*[num_colors];
-            int **h_color_submat_cols = new int*[num_colors];
-            h_color_submat_nnzb = new int[num_colors]; // what is the nnzb for each submat
+        if constexpr (startup) {  // on startup block (not reassembly)
+            int **h_color_submat_rowp = new int *[num_colors];
+            int **h_color_submat_rows = new int *[num_colors];
+            int **h_color_submat_cols = new int *[num_colors];
+            h_color_submat_nnzb = new int[num_colors];  // what is the nnzb for each submat
 
             // copy kmat pointers to host
             int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
@@ -889,30 +988,30 @@ class ShellGrid {
                 _rowp[0] = 0;
                 for (int i = 0; i < nnodes; i++) {
                     int _row_ct = 0;
-                    for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
+                    for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i + 1]; jp++) {
                         int j = h_kmat_cols[jp];
                         if (start_node <= j && j < end_node) {
                             _row_ct++;
                         }
                     }
-                    _rowp[i+1] = _rowp[i] + _row_ct;
+                    _rowp[i + 1] = _rowp[i] + _row_ct;
                 }
 
                 int _nnzb = _rowp[nnodes];
                 h_color_submat_rows[icolor] = new int[_nnzb];
                 int *_rows = h_color_submat_rows[icolor];
                 for (int i = 0; i < nnodes; i++) {
-                    for (int jp = _rowp[i]; jp < _rowp[i+1]; jp++) {
+                    for (int jp = _rowp[i]; jp < _rowp[i + 1]; jp++) {
                         _rows[jp] = i;
                     }
                 }
 
                 h_color_submat_cols[icolor] = new int[_nnzb];
                 int *_cols = h_color_submat_cols[icolor];
-                int *_next = new int[nnodes]; // help for inserting matrix
+                int *_next = new int[nnodes];  // help for inserting matrix
                 memcpy(_next, _rowp, nnodes * sizeof(int));
                 for (int i = 0; i < nnodes; i++) {
-                    for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i+1]; jp++) {
+                    for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i + 1]; jp++) {
                         int j = h_kmat_cols[jp];
                         if (start_node <= j && j < end_node) {
                             int j2 = j - start_node;
@@ -923,28 +1022,32 @@ class ShellGrid {
                 delete[] _next;
                 h_color_submat_nnzb[icolor] = _nnzb;
             }
-            d_color_submat_rowp = new int*[num_colors];
-            d_color_submat_rows = new int*[num_colors];
-            d_color_submat_cols = new int*[num_colors];
-            d_color_submat_vals = new T*[num_colors];
-            
+            d_color_submat_rowp = new int *[num_colors];
+            d_color_submat_rows = new int *[num_colors];
+            d_color_submat_cols = new int *[num_colors];
+            d_color_submat_vals = new T *[num_colors];
+
             for (int icolor = 0; icolor < num_colors; icolor++) {
-                cudaMalloc((void**)&d_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int));
+                cudaMalloc((void **)&d_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int));
                 int submat_nnzb = h_color_submat_nnzb[icolor];
-                cudaMalloc((void**)&d_color_submat_rows[icolor], submat_nnzb * sizeof(int));
-                cudaMalloc((void**)&d_color_submat_cols[icolor], submat_nnzb * sizeof(int));
-                cudaMalloc((void**)&d_color_submat_vals[icolor], block_dim2 * submat_nnzb * sizeof(T));
+                cudaMalloc((void **)&d_color_submat_rows[icolor], submat_nnzb * sizeof(int));
+                cudaMalloc((void **)&d_color_submat_cols[icolor], submat_nnzb * sizeof(int));
+                cudaMalloc((void **)&d_color_submat_vals[icolor],
+                           block_dim2 * submat_nnzb * sizeof(T));
 
                 // copy data to device
-                cudaMemcpy(d_color_submat_rowp[icolor], h_color_submat_rowp[icolor], (nnodes + 1) * sizeof(int), cudaMemcpyHostToDevice);
-                cudaMemcpy(d_color_submat_rows[icolor], h_color_submat_rows[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
-                cudaMemcpy(d_color_submat_cols[icolor], h_color_submat_cols[icolor], submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_color_submat_rowp[icolor], h_color_submat_rowp[icolor],
+                           (nnodes + 1) * sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_color_submat_rows[icolor], h_color_submat_rows[icolor],
+                           submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_color_submat_cols[icolor], h_color_submat_cols[icolor],
+                           submat_nnzb * sizeof(int), cudaMemcpyHostToDevice);
             }
-        } // end of startup block       
-
+        }  // end of startup block
 
         // re-assembly part.. need to copy values from new Kmat into submatrices for each color
-        // better way is maybe a transpose mat-vec product on row-sliced data?... but that may not be as fast as you think?
+        // better way is maybe a transpose mat-vec product on row-sliced data?... but that may not
+        // be as fast as you think?
         for (int icolor = 0; icolor < num_colors; icolor++) {
             // submat comes out of T **d_submat_vals then by color..
             int submat_nnzb = h_color_submat_nnzb[icolor];
@@ -955,10 +1058,11 @@ class ShellGrid {
             dim3 grid(submat_nnzb);
 
             // TODO : figure out good strategy to optimize this kernel later..
-            k_copy_color_submat<T><<<grid, block>>>(nnodes, submat_nnzb, start_col, block_dim, d_color_submat_rows[icolor], 
-                d_color_submat_cols[icolor], d_kmat_rowp, d_kmat_cols, d_kmat_vals, d_color_submat_vals[icolor]);
+            k_copy_color_submat<T><<<grid, block>>>(
+                nnodes, submat_nnzb, start_col, block_dim, d_color_submat_rows[icolor],
+                d_color_submat_cols[icolor], d_kmat_rowp, d_kmat_cols, d_kmat_vals,
+                d_color_submat_vals[icolor]);
         }
-
     }
 
     void direct_solve(bool print = false) {
@@ -996,26 +1100,25 @@ class ShellGrid {
         return def_nrm;
     }
 
-    void zeroSolution() {
-        cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
-    }
+    void zeroSolution() { cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T)); }
+    void zeroDefect() { cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T)); }
 
     void setDefect(DeviceVec<T> new_defect) {
         // set the defect on the finest grid
         new_defect.copyValuesTo(d_defect);
-        d_defect.permuteData(block_dim, d_iperm); // unperm to permuted
+        d_defect.permuteData(block_dim, d_iperm);  // unperm to permuted
     }
 
     void getDefect(DeviceVec<T> defect_out) {
         // copy solution to another device vec outside this class
         d_defect.copyValuesTo(defect_out);
-        defect_out.permuteData(block_dim, d_perm); // permuted to unperm order
+        defect_out.permuteData(block_dim, d_perm);  // permuted to unperm order
     }
 
     void getSolution(DeviceVec<T> soln_out) {
         // copy solution to another device vec outside this class
         d_soln.copyValuesTo(soln_out);
-        soln_out.permuteData(block_dim, d_perm); // permuted to unperm order
+        soln_out.permuteData(block_dim, d_perm);  // permuted to unperm order
     }
 
     T getResidNorm() {
@@ -1044,7 +1147,7 @@ class ShellGrid {
             multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega, rev_colors);
         } else if (smoother == MULTICOLOR_GS_FAST) {
             multicolorBlockGaussSeidel_fast(n_iters, print, print_freq, omega, rev_colors);
-        } else if (smoother == MULTICOLOR_GS_FAST2) {
+        } else if (smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
             multicolorBlockGaussSeidel_fast2(n_iters, print, print_freq, omega, rev_colors);
         } else if (smoother == DAMPED_JACOBI) {
             dampedJacobi(n_iters, print, print_freq, omega);
@@ -1104,7 +1207,6 @@ class ShellGrid {
 
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
-
                 int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
                 int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
 
@@ -1172,7 +1274,6 @@ class ShellGrid {
 
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
-
                 // -------------------------------------------------------------
                 // prelim block (getting color sub-vectors ready)
 
@@ -1197,7 +1298,8 @@ class ShellGrid {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_prelim_time = std::chrono::high_resolution_clock::now();
                     std::chrono::duration<double> full_prelim_time = end_prelim_time - prelim_time;
-                    printf("\t\tprelim time on iter %d,color %d in %.2e sec\n", iter, icolor, full_prelim_time.count());
+                    printf("\t\tprelim time on iter %d,color %d in %.2e sec\n", iter, icolor,
+                           full_prelim_time.count());
                 }
                 auto start_Dinv_LU_tmie = std::chrono::high_resolution_clock::now();
 
@@ -1221,13 +1323,15 @@ class ShellGrid {
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_Dinv_LU_time = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double> Dinv_LU_time = end_Dinv_LU_time - start_Dinv_LU_tmie;
-                    printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor, Dinv_LU_time.count());
+                    std::chrono::duration<double> Dinv_LU_time =
+                        end_Dinv_LU_time - start_Dinv_LU_tmie;
+                    printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor,
+                           Dinv_LU_time.count());
                 }
 
                 // -----------------------------------------------------------------
                 // color soln update => defect update for each color
-                
+
                 auto start_Bsrmv_time = std::chrono::high_resolution_clock::now();
 
                 // 2) update soln x_color += dx_color
@@ -1248,10 +1352,11 @@ class ShellGrid {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_Bsrmv_time = std::chrono::high_resolution_clock::now();
                     std::chrono::duration<double> bsrmv_time = end_Bsrmv_time - start_Bsrmv_time;
-                    printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor, bsrmv_time.count());
+                    printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor,
+                           bsrmv_time.count());
                 }
-                
-            // -------------------------------------------------------------------------------------
+
+                // -------------------------------------------------------------------------------------
             }  // next color iteration
 
             /* report progress of defect nrm if printing.. */
@@ -1260,38 +1365,37 @@ class ShellGrid {
             if (print && iter % print_freq == 0)
                 printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
-        // --------------------------------------------------------------------------------
+            // --------------------------------------------------------------------------------
         }  // next block-GS iteration
     }
 
-    void dampedJacobi(int n_iters, bool print = false, int print_freq = 10,
-                                         T omega = 0.8, bool rev_colors = false) {
-
+    void dampedJacobi(int n_iters, bool print = false, int print_freq = 10, T omega = 0.8,
+                      bool rev_colors = false) {
         // bool time_debug = false;
         // bool time_debug = true;
 
         for (int iter = 0; iter < n_iters; iter++) {
-
             // compute Dinv * defect => soln update (aka temp)
             // -----------------------------------------------
             T a = 1.0, b = 0.0;
-            // note in this case d_diag_LU_vals_color refers to Dinv form of LU factors on each nodal block
-            CHECK_CUSPARSE(cusparseDbsrmv( // NOTE just uses descrKmat cause would be the same as descrDinv (convenience)
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                nnodes, nnodes, nnodes, &a, descrKmat, d_diag_LU_vals, d_diag_rowp, d_diag_cols,
-                block_dim, d_defect.getPtr(), &b, d_temp));
+            // note in this case d_diag_LU_vals_color refers to Dinv form of LU factors on each
+            // nodal block
+            CHECK_CUSPARSE(cusparseDbsrmv(  // NOTE just uses descrKmat cause would be the same as
+                                            // descrDinv (convenience)
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes,
+                nnodes, nnodes, &a, descrKmat, d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim,
+                d_defect.getPtr(), &b, d_temp));
 
             // -----------------------------------------------------------------
             // soln and defect update
             a = omega;
-            CHECK_CUBLAS(
-                cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
 
             a = -omega, b = 1.0;  // so that defect := defect - mat*vec
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                nnodes, nnodes, kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
-                block_dim, d_temp, &b, d_defect.getPtr()));
+            CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                          CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes,
+                                          kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp,
+                                          d_kmat_cols, block_dim, d_temp, &b, d_defect.getPtr()));
 
             /* report progress of defect nrm if printing.. */
             T defect_nrm;
@@ -1299,12 +1403,12 @@ class ShellGrid {
             if (print && iter % print_freq == 0)
                 printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
-        // --------------------------------------------------------------------------------
+            // --------------------------------------------------------------------------------
         }  // next block-GS iteration
     }
 
     void multicolorBlockGaussSeidel_fast2(int n_iters, bool print = false, int print_freq = 10,
-                                         T omega = 1.0, bool rev_colors = false) {
+                                          T omega = 1.0, bool rev_colors = false) {
         // faster version
 
         int num_colors = h_color_rowp.getSize() - 1;
@@ -1314,11 +1418,10 @@ class ShellGrid {
         bool time_debug = false;
         // bool time_debug = true;
         if (time_debug) printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
-        print_freq = max(print_freq, 1); // so not zero
+        print_freq = max(print_freq, 1);  // so not zero
 
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
-
                 // -------------------------------------------------------------
                 // prelim block (getting color sub-vectors ready)
 
@@ -1336,38 +1439,45 @@ class ShellGrid {
                 T *d_temp_color = &d_temp[block_dim * start];
                 int block_dim2 = block_dim * block_dim;
                 int diag_inv_nnzb_color = nblock_rows_color;
-                T *d_dinv_vals_color = &d_dinv_vals.getPtr()[start * block_dim2]; // from LU factor
+                T *d_dinv_vals_color = &d_dinv_vals.getPtr()[start * block_dim2];  // from LU factor
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_prelim_time = std::chrono::high_resolution_clock::now();
                     std::chrono::duration<double> full_prelim_time = end_prelim_time - prelim_time;
-                    printf("\t\tprelim time on iter %d,color %d in %.2e sec\n", iter, icolor, full_prelim_time.count());
+                    printf("\t\tprelim time on iter %d,color %d in %.2e sec\n", iter, icolor,
+                           full_prelim_time.count());
                 }
 
                 // --------------------------------------------------------------
                 // apply Dinv * vec on each color sub-vector
-                
+
                 auto start_Dinv_LU_tmie = std::chrono::high_resolution_clock::now();
-                // use Dinv linear operator built from LU factor of D diag matrix to apply Dinv * vec on each color (new method)
+                // use Dinv linear operator built from LU factor of D diag matrix to apply Dinv *
+                // vec on each color (new method)
                 T a = 1.0, b = 0.0;
-                // note in this case d_diag_LU_vals_color refers to Dinv form of LU factors on each nodal block
-                CHECK_CUSPARSE(cusparseDbsrmv( // NOTE just uses descrKmat cause would be the same as descrDinv (convenience)
+                // note in this case d_diag_LU_vals_color refers to Dinv form of LU factors on each
+                // nodal block
+                CHECK_CUSPARSE(cusparseDbsrmv(  // NOTE just uses descrKmat cause would be the same
+                                                // as descrDinv (convenience)
                     cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    nblock_rows_color, nblock_rows_color, diag_inv_nnzb_color, &a, descrKmat, d_dinv_vals_color, d_diag_rowp, d_diag_cols,
-                    block_dim, d_defect_color, &b, d_temp_color));
+                    nblock_rows_color, nblock_rows_color, diag_inv_nnzb_color, &a, descrKmat,
+                    d_dinv_vals_color, d_diag_rowp, d_diag_cols, block_dim, d_defect_color, &b,
+                    d_temp_color));
 
                 // timing part
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_Dinv_LU_time = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double> Dinv_LU_time = end_Dinv_LU_time - start_Dinv_LU_tmie;
-                    printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor, Dinv_LU_time.count());
+                    std::chrono::duration<double> Dinv_LU_time =
+                        end_Dinv_LU_time - start_Dinv_LU_tmie;
+                    printf("\t\tDinv LU time on iter %d,color %d in %.2e sec\n", iter, icolor,
+                           Dinv_LU_time.count());
                 }
 
                 // -----------------------------------------------------------------
                 // color soln update => defect update for each color
-                
+
                 auto start_Bsrmv_time = std::chrono::high_resolution_clock::now();
 
                 // 2) update soln x_color += dx_color
@@ -1378,30 +1488,30 @@ class ShellGrid {
 
                 // // print submat vals here here..
                 // T *h_submat_vals = new T[100];
-                // cudaMemcpy(h_submat_vals, d_color_submat_vals[icolor], 100 * sizeof(T), cudaMemcpyDeviceToHost);
-                // printf("h_submat_vals: ");
-                // printVec<T>(100, h_submat_vals);
+                // cudaMemcpy(h_submat_vals, d_color_submat_vals[icolor], 100 * sizeof(T),
+                // cudaMemcpyDeviceToHost); printf("h_submat_vals: "); printVec<T>(100,
+                // h_submat_vals);
 
-                
                 // get submat size, to do submat-vec product A[:,color] * dx[color]
-                int start_bcol = h_color_rowp[icolor], end_bcol = h_color_rowp[icolor+1];
+                int start_bcol = h_color_rowp[icolor], end_bcol = h_color_rowp[icolor + 1];
                 int mb = nnodes, nb = end_bcol - start_bcol;
                 int submat_nnzb = h_color_submat_nnzb[icolor];
                 a = -omega, b = 1.0;  // so that defect := defect - mat*vec
                 CHECK_CUSPARSE(cusparseDbsrmv(
-                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                    mb, nb, submat_nnzb, &a, descrKmat, d_color_submat_vals[icolor], d_color_submat_rowp[icolor], d_color_submat_cols[icolor],
-                    block_dim, d_temp_color, &b, d_defect.getPtr()));
-
+                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb,
+                    nb, submat_nnzb, &a, descrKmat, d_color_submat_vals[icolor],
+                    d_color_submat_rowp[icolor], d_color_submat_cols[icolor], block_dim,
+                    d_temp_color, &b, d_defect.getPtr()));
 
                 if (time_debug) {
                     CHECK_CUDA(cudaDeviceSynchronize());
                     auto end_Bsrmv_time = std::chrono::high_resolution_clock::now();
                     std::chrono::duration<double> bsrmv_time = end_Bsrmv_time - start_Bsrmv_time;
-                    printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor, bsrmv_time.count());
+                    printf("\t\tbsrmv time on iter %d,color %d in %.2e sec\n", iter, icolor,
+                           bsrmv_time.count());
                 }
-                
-            // -------------------------------------------------------------------------------------
+
+                // -------------------------------------------------------------------------------------
             }  // next color iteration
 
             /* report progress of defect nrm if printing.. */
@@ -1410,7 +1520,7 @@ class ShellGrid {
             if (print && iter % print_freq == 0)
                 printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
-        // --------------------------------------------------------------------------------
+            // --------------------------------------------------------------------------------
         }  // next block-GS iteration
     }
 
@@ -1427,7 +1537,7 @@ class ShellGrid {
             } else {
                 // slower version
                 Prolongation::prolongate(nnodes, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
-                                     d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec);
+                                         d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec);
             }
         }
         // CHECK_CUDA(cudaDeviceSynchronize());
@@ -1437,24 +1547,34 @@ class ShellGrid {
         assembler.apply_bcs(d_temp_vec);
         d_temp_vec.permuteData(block_dim, d_iperm);
 
-        // rescale coarse-fine using 1DOF min energy step
-        // since FEA restrict and prolong operations are not energy minimally scaled
-        // if u = u0 + omega * s, with s the proposed d_temp or du here (or line search)
-        // then min energy omega from 1DOF galerkin is omega = <s, defect> / <s, Ks>
-        // so need 2 dot prods, one SpMV, see 'multigrid/_python_demos/4_gmg_shell/1_mg.py' also
-        T sT_defect;
-        CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_defect.getPtr(), 1, d_temp, 1, &sT_defect));
-
+        // compute rhs update
         T a = 1.0, b = 0.0;  // K * d_temp + 0 * d_temp2 => d_temp2
         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
                                       CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, kmat_nnzb,
                                       &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
                                       block_dim, d_temp, &b, d_temp2));
 
-        T sT_Ks;
-        CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_temp2, 1, d_temp, 1, &sT_Ks));
-        T omega = sT_defect / sT_Ks;
-        // if (debug) printf("omega = %.2e\n", omega);
+        T omega;
+        if constexpr (scaler == NONE) {
+            // no rescaling
+            omega = 1.0;
+        } else if (scaler == LINE_SEARCH) {
+            // one DOF, min energy scaling (one DOF line search)
+            // so need 2 dot prods, one SpMV, see 'multigrid/_python_demos/4_gmg_shell/1_mg.py' also
+            T sT_defect;
+            CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_defect.getPtr(), 1, d_temp, 1, &sT_defect));
+
+            T sT_Ks;
+            CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_temp2, 1, d_temp, 1, &sT_Ks));
+            omega = sT_defect / sT_Ks;
+        }
+        // else if (scaler == PCG) {
+        //     // TODO : K-cycle rescalings and orthonorm here..
+        // }
+        // TODO : also could look at other K-cycle and 2DOF line search in energy too (see old GMG
+        // cylinder paper)
+
+        // printf("omega = %.2e\n", omega);
 
         // now add coarse-fine dx into soln and update defect (with u = u0 + omega * d_temp)
         a = omega;
@@ -1473,12 +1593,13 @@ class ShellGrid {
                                           d_defect, d_weights);
         } else {
             if constexpr (Prolongation::assembly) {
-                Prolongation::restrict_defect(cusparseHandle, restrict_descrPT, restrict_PT_mat, fine_defect_in, d_defect);
+                Prolongation::restrict_defect(cusparseHandle, restrict_descrPT, restrict_PT_mat,
+                                              fine_defect_in, d_defect);
             } else {
                 // slower restriction operator (not using sparse matrix-vec kernels)
                 Prolongation::restrict_defect(restrict_nnodes_fine, d_elem_conn, restrict_d_n2e_ptr,
-                                          restrict_d_n2e_elems, restrict_d_n2e_xis, d_iperm,
-                                          d_iperm_fine, fine_defect_in, d_defect, d_weights);
+                                              restrict_d_n2e_elems, restrict_d_n2e_xis, d_iperm,
+                                              d_iperm_fine, fine_defect_in, d_defect, d_weights);
             }
         }
 
@@ -1538,7 +1659,7 @@ class ShellGrid {
             } else {
                 // slower version
                 Prolongation::prolongate(nnodes, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
-                                     d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec);
+                                         d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec);
             }
         }
         // CHECK_CUDA(cudaDeviceSynchronize());

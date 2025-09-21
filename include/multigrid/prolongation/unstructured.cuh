@@ -102,7 +102,7 @@ __global__ static void k_prolong_mat_assembly(const int *d_coarse_iperm, const i
 
     int perm_fine_node = d_fine_iperm[fine_node]; // for writing into perm fine soln
     int num_attached_elems = node2elem_ptr[fine_node + 1] - node2elem_ptr[fine_node];
-    int block_dim2 = block_dim * block_dim;
+    // int block_dim2 = block_dim * block_dim;
     
     // attached element loop
     for (int jp = node2elem_ptr[fine_node]; jp < node2elem_ptr[fine_node + 1]; jp++) {
@@ -173,7 +173,7 @@ __global__ static void k_restrict_mat_assembly(const int *d_coarse_iperm, const 
 
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int fine_node = tid;
-    int block_dim2 = block_dim * block_dim;
+    // int block_dim2 = block_dim * block_dim;
     if (fine_node >= nnodes_fine) return;
 
     int perm_fine_node = d_fine_iperm[fine_node]; // for writing into perm fine soln

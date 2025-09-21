@@ -12,10 +12,10 @@
 #include "element/shell/shell_elem_group.h"
 
 // multigrid imports
-#include "multigrid/grid.h"
 #include "multigrid/fea.h"
-#include "multigrid/mg.h"
+#include "multigrid/grid.h"
 #include "multigrid/interface.h"
+#include "multigrid/mg.h"
 
 // copied and modified from ../uCRM/_src/optim.h (uCRM optimization example)
 
@@ -33,18 +33,19 @@ class TacsGpuMultigridSolver {
 
     // multigrid objects
     using Prolongation = StructuredProlongation<PLATE>;
-    using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2>;
+    using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2, LINE_SEARCH>;
     using MG = ShellMultigrid<GRID>;
-    using StructSolver = TacsMGInterface<T, Assembler, MG>; 
+    using StructSolver = TacsMGInterface<T, Assembler, MG>;
 
     // functions
     using DMass = Mass<T, DeviceVec>;
     using DKSFail = KSFailure<T, DeviceVec>;
 
-    TacsGpuMultigridSolver(double rhoKS = 100.0, double safety_factor = 1.5, double load_mag = 100.0,
-        int nxe = 100, int nx_comp = 5, int ny_comp = 5, double SR = 50.0) {
+    TacsGpuMultigridSolver(double rhoKS = 100.0, double safety_factor = 1.5,
+                           double load_mag = 100.0, T omega = 1.0, int nxe = 100, int nx_comp = 5,
+                           int ny_comp = 5, double SR = 50.0) {
         // 1) Build mesh & assembler
-        assert(nxe % nx_comp == 0); // evenly divisible by number of elems_per_comp
+        assert(nxe % nx_comp == 0);  // evenly divisible by number of elems_per_comp
         int nye = nxe;
         assert(nye % ny_comp == 0);
 
@@ -52,7 +53,8 @@ class TacsGpuMultigridSolver {
         auto mg = MG();
 
         // get nxe_min for not exactly power of 2 case
-        int pre_nxe_min = nxe > 32 ? 32 : 4;
+        int pre_pre_nxe_min = max(32, nx_comp);
+        int pre_nxe_min = nxe > pre_pre_nxe_min ? pre_pre_nxe_min : 4;
         int nxe_min = pre_nxe_min;
         for (int c_nxe = nxe; c_nxe >= pre_nxe_min; c_nxe /= 2) {
             nxe_min = c_nxe;
@@ -63,17 +65,18 @@ class TacsGpuMultigridSolver {
             // make the assembler
             int c_nye = c_nxe;
             double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-            int nxe_per_comp = c_nxe / nx_comp, nye_per_comp = c_nye/ny_comp; 
-            auto assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
-            double Q = load_mag; // load magnitude
+            int nxe_per_comp = c_nxe / nx_comp, nye_per_comp = c_nye / ny_comp;
+            auto assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick,
+                                                             rho, ys, nxe_per_comp, nye_per_comp);
+            double Q = load_mag;  // load magnitude
             T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
             printf("making grid with nxe %d\n", c_nxe);
 
             // make the grid
-            bool full_LU = c_nxe == nxe_min; // smallest grid is direct solve
-            bool reorder = true; // color reorder
+            bool full_LU = c_nxe == nxe_min;  // smallest grid is direct solve
+            bool reorder = true;              // color reorder
             auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
-            mg.grids.push_back(grid); // add new grid
+            mg.grids.push_back(grid);  // add new grid
         }
 
         // now make the solver interface
@@ -81,15 +84,16 @@ class TacsGpuMultigridSolver {
         solver = std::make_unique<StructSolver>(mg, print);
         T atol = 1e-6, rtol = 1e-6;
         int n_cycles = 200, pre_smooth = 1, post_smooth = 1, print_freq = 3;
-        solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq);
+        bool double_smooth = true;
+        solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq,
+                                       double_smooth, omega);
 
         // get struct loads on finest grid
         auto fine_grid = mg.grids[0];
         d_loads = DeviceVec<T>(fine_grid.N);
         mg.grids[0].getDefect(d_loads);
-        
 
-        // initialize any vecs needed at this level 
+        // initialize any vecs needed at this level
         auto &assembler = mg.grids[0].assembler;
         nvars = assembler.get_num_vars();
         int nn = assembler.get_num_nodes();
@@ -121,7 +125,7 @@ class TacsGpuMultigridSolver {
         //     dvs_changed = true;
         //     first_solve = false;
         // }
-        dvs_changed = true; // debug
+        dvs_changed = true;  // debug
 
         if (dvs_changed) {
             prev_dvs = dvs;

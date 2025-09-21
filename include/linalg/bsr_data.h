@@ -267,9 +267,9 @@ class BsrData {
         // iperm = su_mat2->perm;
     }
 
-    static int _get_avail_color(std::vector<int> my_adj_colors) {
+    static int _get_avail_color(std::vector<int> my_adj_colors, int min_color = 0) {
         int final_avail_color = -1;
-        for (int avail_color = 0; avail_color < 20; avail_color++) {
+        for (int avail_color = min_color; avail_color < 20; avail_color++) {
             bool conflict = false;
             for (auto color : my_adj_colors) {
                 if (avail_color == color) {
@@ -313,6 +313,104 @@ class BsrData {
 
             // compute the min avail color for Saad greedy coloring algorithm
             int avail_color = _get_avail_color(adj_colors);
+            if (avail_color > max_color) {
+                max_color = avail_color;
+            }
+            colors[row] = avail_color;
+        }
+
+        // printf("colors:");
+        // printVec<int>(nnodes, colors);
+        // printf("max color %d, num_colors = %d\n", max_color, max_color + 1);
+
+        n_colors = max_color + 1;
+        color_rowp = new int[n_colors + 1];
+        color_rowp[0] = 0;
+
+        // now compute perm and i_perm from the color list
+        int ct = -1;
+        for (int i_color = 0; i_color < max_color + 1; i_color++) {
+            for (int inode = 0; inode < nnodes; inode++) {
+                if (colors[inode] == i_color) {
+                    ct++;
+                    // perm[inode] = ct;
+                    // iperm[ct] = inode;
+                    iperm[inode] = ct;
+                    perm[ct] = inode;
+                }
+            }
+            color_rowp[i_color + 1] = ct + 1;
+        }
+
+        // printf("color_rowp:");
+        // printVec<int>(n_colors + 1, color_rowp);
+        // printf("iperm:");
+        // printVec<int>(nnodes, iperm);
+
+        // then delete old rowp, cols
+        delete[] colors;
+        // delete[] rowp;
+        // delete[] cols;
+
+        // and then we'll call a nofill or fill pattern after this..
+    }
+
+    __HOST__ void multicolor_junction_reordering(bool is_interior_node[], int &n_colors,
+                                                 int *&color_rowp) {
+        /* a multicolor reordering for colored Gauss-seidel multigrid, custom made for wingbox and
+        multi-junction structures is_interior_node says true if node is interior (only touching one
+        component), false if touching multiple components such as on a junction */
+
+        // we just need to get the permutations for coloring (use greedy coloring algorithm on
+        // serial) later I'll put this on GPU to be faster..
+
+        int *colors = new int[nnodes];
+        memset(colors, -1.0, nnodes * sizeof(int));
+
+        // first compute nofill pattern (so that we have the adjacency map, or which nodes each node
+        // is connected to)
+        compute_nofill_pattern();
+
+        // perform greedy coloring algorithm from Saad (TODO : later put this on GPU with parallel
+        // friendly version)
+        int max_color = -1;
+        for (int row = 0; row < nnodes; row++) {
+            if (!is_interior_node[row]) continue;  // no junction nodes considered yet
+
+            // get list of adjacent colors
+            std::vector<int> adj_colors;
+            for (int jp = rowp[row]; jp < rowp[row + 1]; jp++) {
+                int col = cols[jp];
+                if (row == col)
+                    continue;  // only care about adjacent nodes (not itself for color algorithm)
+                adj_colors.push_back(colors[col]);
+            }
+
+            // compute the min avail color for Saad greedy coloring algorithm
+            int avail_color = _get_avail_color(adj_colors);
+            if (avail_color > max_color) {
+                max_color = avail_color;
+            }
+            colors[row] = avail_color;
+        }
+        int max_interior_color = max_color;
+
+        // now color the junction nodes
+        for (int row = 0; row < nnodes; row++) {
+            if (is_interior_node[row]) continue;  // now only junction nodes considered for coloring
+
+            // get list of adjacent colors
+            std::vector<int> adj_colors;
+            for (int jp = rowp[row]; jp < rowp[row + 1]; jp++) {
+                int col = cols[jp];
+                if (row == col)
+                    continue;  // only care about adjacent nodes (not itself for color algorithm)
+                adj_colors.push_back(colors[col]);
+            }
+
+            // compute the min avail color for Saad greedy coloring algorithm
+            int _min_color = max_interior_color + 1;
+            int avail_color = _get_avail_color(adj_colors, _min_color);
             if (avail_color > max_color) {
                 max_color = avail_color;
             }

@@ -156,9 +156,10 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
     // const SMOOTHER smoother = DAMPED_JACOBI;
 
-    using Prolongation = StructuredProlongation<PLATE>;
+    const SCALER scaler  = LINE_SEARCH;
 
-    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
+    using Prolongation = StructuredProlongation<PLATE>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = ShellMultigrid<GRID>;
 
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -241,7 +242,8 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     // bool print = false;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
-    T omega = 1.0;
+    // T omega = 1.0;
+    T omega = 0.85; // a bit faster than 1.0 (and actually smooths it)
     if (smoother == DAMPED_JACOBI) omega = 0.7;
     bool double_smooth = true; // false
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);

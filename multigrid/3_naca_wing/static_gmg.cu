@@ -61,10 +61,12 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
     // const SMOOTHER smoother = DAMPED_JACOBI;
 
+    const SCALER scaler = LINE_SEARCH;
+
     // using Prolongation = UnstructuredProlongation<Basis>;
     using Prolongation = UnstructuredProlongationFast<Basis>;
 
-    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();

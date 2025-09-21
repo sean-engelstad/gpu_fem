@@ -8,14 +8,11 @@ namespace py = pybind11;
 PYBIND11_MODULE(gpusolver, m) {
     py::class_<TacsGpuMultigridSolver>(m, "TacsGpuMultigridSolver")
         // only expose (rhoKS, load_mag)
-        .def(py::init<double, double, double, double, int, int, int, double>(),
+        .def(py::init<double, double, double, int, double>(),
              py::arg("rhoKS")    = 100.0,
              py::arg("safety_factor") = 1.5,
              py::arg("load_mag") = 100.0,
-             py::arg("omega") = 1.0,
-             py::arg("nxe") = 100,
-             py::arg("nx_comp") = 5,
-             py::arg("ny_comp") = 5,
+             py::arg("mesh_level") = 3,
              py::arg("SR") = 50.0)
         .def("set_design_variables", &TacsGpuMultigridSolver::set_design_variables)
         .def("get_num_vars",         &TacsGpuMultigridSolver::get_num_vars)

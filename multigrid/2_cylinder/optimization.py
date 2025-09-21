@@ -11,6 +11,9 @@ import argparse
 # ndvs_per_side = 8
 # ndvs_per_side = 16
 ndvs_per_side = 32
+# ndvs_per_side = 64
+# TODO : high number of DVs currently forces the coarsest grid to be that problem size
+# can somewhat slow down the multigrid solve.. would like to fix that by allowing some DV interp to coarser grids
 
 # setup GPU solver
 solver = gpusolver.TacsGpuMultigridSolver(

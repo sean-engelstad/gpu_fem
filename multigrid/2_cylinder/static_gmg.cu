@@ -143,9 +143,11 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
+
+    const SCALER scaler = LINE_SEARCH;
     
     using Prolongation = StructuredProlongation<CYLINDER>;
-    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
@@ -216,13 +218,18 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     auto start1 = std::chrono::high_resolution_clock::now();
     printf("starting v cycle solve\n");
     // int pre_smooth = 1, post_smooth = 1;
-    int pre_smooth = 1, post_smooth = 2;
-    // int pre_smooth = 2, post_smooth = 2; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
+    // int pre_smooth = 1, post_smooth = 2;
+    int pre_smooth = 2, post_smooth = 2; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     // int pre_smooth = 4, post_smooth = 4;
     // bool print = true;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
-    T omega = 1.0;
+
+    T omega = 1.5;
+    // T omega = 1.3;
+    // T omega = 1.2; // worse than <1 for cylinder
+    // T omega = 1.0;
+    // T omega = 0.85; // a bit faster than 1.0 (and actually smooths it)
     // bool double_smooth = false;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
     mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);

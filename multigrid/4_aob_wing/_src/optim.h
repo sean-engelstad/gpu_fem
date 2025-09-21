@@ -4,6 +4,7 @@
 #include "chrono"
 #include "coupled/_coupled.h"
 #include "linalg/_linalg.h"
+#include "mesh/TACSMeshLoader.h"
 #include "solvers/_solvers.h"
 
 // shell imports
@@ -32,7 +33,7 @@ class TacsGpuMultigridSolver {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    using Prolongation = StructuredProlongation<CYLINDER>;
+    using Prolongation = UnstructuredProlongationFast<Basis>;
     using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2, LINE_SEARCH>;
     using MG = ShellMultigrid<GRID>;
     using StructSolver = TacsMGInterface<T, Assembler, MG>;
@@ -42,53 +43,62 @@ class TacsGpuMultigridSolver {
     using DKSFail = KSFailure<T, DeviceVec>;
 
     TacsGpuMultigridSolver(double rhoKS = 100.0, double safety_factor = 1.5,
-                           double load_mag = 100.0, double omega = 1.0, int nxe = 100,
-                           int nx_comp = 5, int ny_comp = 5, double SR = 50.0) {
-        // 1) Build mesh & assembler
-        assert(nxe % nx_comp == 0);  // evenly divisible by number of elems_per_comp
-        int nye = nxe;
-        assert(nye % ny_comp == 0);
+                           double load_mag = 100.0, int mesh_level = 3, double SR = 50.0) {
+        // init MPI comm
+        MPI_Init(NULL, NULL);
+        MPI_Comm comm = MPI_COMM_WORLD;
 
-        // start building multigrid object
+        // 1) Build mesh & assembler & multigrids
         auto mg = MG();
 
-        // get nxe_min for not exactly power of 2 case
-        int pre_pre_nxe_min = max(32, nx_comp);
-        int pre_nxe_min = nxe > pre_pre_nxe_min ? pre_pre_nxe_min : 4;
-        int nxe_min = pre_nxe_min;
-        for (int c_nxe = nxe; c_nxe >= pre_nxe_min; c_nxe /= 2) {
-            nxe_min = c_nxe;
-        }
+        // object's convention)
+        for (int i = mesh_level; i >= 0; i--) {
+            // read the ESP/CAPS => nastran mesh for TACS
+            TACSMeshLoader mesh_loader{comm};
+            std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
+            mesh_loader.scanBDFFile(fname.c_str());
+            double E = 70e9, nu = 0.3,
+                   thick = 2.0 / SR;  // material & thick properties (start thicker first try)
+            double rho = 2500, ys = 350e6;
 
-        // make each grid
-        for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
-            // make the assembler
-            int c_nhe = c_nxe;
-            double L = 1.0, R = 0.5, thick = L / SR;
-            double E = 70e9, nu = 0.3, rho = 2500, ys = 350e6;
-            // double rho = 2500, ys = 350e6;
-            bool imperfection = false;    // option for geom imperfection
-            int imp_x = 1, imp_hoop = 1;  // no imperfection this input doesn't matter rn..
-            auto assembler =
-                createCylinderAssembler<Assembler>(c_nxe, c_nhe, L, R, E, nu, thick, imperfection,
-                                                   imp_x, imp_hoop, rho, ys, nx_comp, ny_comp);
-            constexpr int load_case = 3;
-            double Q = load_mag;  // load magnitude
-            T *my_loads = getCylinderLoads<T, Physics, load_case>(c_nxe, c_nhe, L, R, Q);
-            printf("making grid with nxe %d\n", c_nxe);
+            printf("making assembler+GMG for mesh '%s'\n", fname.c_str());
+
+            // create the TACS Assembler from the mesh loader
+            auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick, rho, ys));
+
+            // create the loads (really only needed on finer mesh.. TBD how to setup nonlinear
+            // case..)
+            int nvars = assembler.get_num_vars();
+            int nnodes = assembler.get_num_nodes();
+            HostVec<T> h_loads(nvars);
+            double load_mag = 10.0;
+            double *my_loads = h_loads.getPtr();
+            for (int inode = 0; inode < nnodes; inode++) {
+                my_loads[6 * inode + 2] = load_mag;
+            }
 
             // make the grid
-            bool full_LU = c_nxe == nxe_min;  // smallest grid is direct solve
-            bool reorder = true;              // to allow multicolor smoothing
+            bool full_LU = i == 0;  // smallest grid is direct solve
+            bool reorder = true;    // to do multicolor
+            // printf("reorder %d\n", reorder);
             auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
             mg.grids.push_back(grid);  // add new grid
+        }
+
+        if (!Prolongation::structured) {
+            printf("begin unstructured map\n");
+            // int ELEM_MAX = 4; // for plate, cylinder
+            int ELEM_MAX = 10;  // for wingbox esp near rib, spar, OML junctions
+            mg.template init_unstructured<Basis>(ELEM_MAX);
+            printf("done with init unstructured\n");
+            // return; // TEMP DEBUG
         }
 
         // now make the solver interface
         bool print = true;
         solver = std::make_unique<StructSolver>(mg, print);
         T atol = 1e-6, rtol = 1e-6;
-        int n_cycles = 200, pre_smooth = 2, post_smooth = 2, print_freq = 3;
+        int n_cycles = 300, pre_smooth = 4, post_smooth = 4, print_freq = 10;
         solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq);
 
         // get struct loads on finest grid

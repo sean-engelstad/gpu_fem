@@ -43,8 +43,9 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
 
     // multigrid objects
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
+    const SCALER scaler  = LINE_SEARCH;
     using Prolongation = StructuredProlongation<PLATE>;
-    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = ShellMultigrid<GRID>;
     using MGInterface = TacsMGInterface<T, Assembler, MG>; // for optimization
     

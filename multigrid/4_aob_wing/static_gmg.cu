@@ -58,13 +58,16 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS;
     // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
+    // const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
     // const SMOOTHER smoother = DAMPED_JACOBI;
+    const SMOOTHER smoother = MULTICOLOR_GS_FAST2_JUNCTION;
+
+    const SCALER scaler = LINE_SEARCH;
 
     // using Prolongation = UnstructuredProlongation<Basis>;
     using Prolongation = UnstructuredProlongationFast<Basis>;
 
-    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
@@ -128,7 +131,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
         bool reorder;
         if (smoother == LEXIGRAPHIC_GS) {
             reorder = false;
-        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
+        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 
+            || smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
             reorder = true;
         } else if (smoother == DAMPED_JACOBI) {
             reorder = false;
@@ -160,15 +164,24 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     // bool print = false;
     bool print = false;
     T atol = 1e-6, rtol = 1e-6;
-    T omega = 1.0;
+    // T omega = 2.0;
+    // T omega = 1.8;
+    // T omega = 1.7;
+    // T omega = 1.6;
+    T omega = 1.5;
+    // T omega = 1.4;
+    // T omega = 1.3;
+    // T omega = 1.2;
+    // T omega = 1.0;
+    // T omega = 0.85;
     if (smoother == DAMPED_JACOBI) omega = 0.7; // damped jacobi diverges on wingbox
     int n_cycles = 200;
 
     bool time = false;
     // bool time = true;
 
-    // bool double_smooth = false;
-    bool double_smooth = true; // false
+    bool double_smooth = false;
+    // bool double_smooth = true; // false
     mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, time);
     // mg.wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
     
@@ -213,10 +226,12 @@ void solve_linear_multigrid_debug(MPI_Comm &comm, int level, double SR) {
     const SMOOTHER smoother = MULTICOLOR_GS_FAST2;
     // const SMOOTHER smoother = LEXIGRAPHIC_GS;
 
+    const SCALER scaler = LINE_SEARCH;
+
     // using Prolongation = UnstructuredProlongation<Basis>;
     using Prolongation = UnstructuredProlongationFast<Basis>;
 
-    using GRID = ShellGrid<Assembler, Prolongation, smoother>;
+    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = ShellMultigrid<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
