@@ -275,6 +275,60 @@ def block_gauss_seidel_6dof(A, b: np.ndarray, x0: np.ndarray, num_iter=1):
 
             # Check for singular or ill-conditioned diagonal block
             try:
+                # import matplotlib.pyplot as plt
+                # plt.imshow(np.log(1 + Aii**2))
+                # plt.show()
+                # print(f"{Aii=}")
+                x[row_block_start:row_block_end] = np.linalg.solve(Aii, rhs)
+            except np.linalg.LinAlgError:
+                print(f"Warning: singular block at node {i}, skipping update.")
+                continue
+
+    return x
+
+def block_gauss_seidel_6dof_v2(A, b: np.ndarray, x0: np.ndarray, num_iter=1):
+    """
+    Perform Block Gauss-Seidel smoothing for 6 DOF per node.
+    A: csr_matrix of size (6*nnodes, 6*nnodes)
+    b: RHS vector (6*nnodes,)
+    x0: initial guess (6*nnodes,)
+    num_iter: number of smoothing iterations
+    Returns updated solution vector x
+    """
+    x = x0.copy()
+    ndof = 6
+    n = A.shape[0] // ndof
+
+    for it in range(num_iter):
+        for i in range(n):
+            row_block_start = i * ndof
+            row_block_end = (i + 1) * ndof
+
+            # Initialize block and RHS
+            Aii = np.zeros((ndof, ndof))
+            rhs = b[row_block_start:row_block_end].copy()
+
+            for row_local, row in enumerate(range(row_block_start, row_block_end)):
+                for idx in range(A.indptr[row], A.indptr[row + 1]):
+                    col = A.indices[idx]
+                    val = A.data[idx]
+
+                    j = col // ndof
+                    dof_j = col % ndof
+
+                    # col_block_start = j * ndof
+                    # col_block_end = (j + 1) * ndof
+
+                    if j == i and dof_j <= row_local:
+                        # print(f"{Aii=}")
+                        Aii[row_local, dof_j] = val  # Fill local diag block only in L + D parts
+                    elif i > j: # below-diag get to keep the full coupling cause that's just updates.. and still in L part
+                        rhs[row_local] -= val * x[col]
+
+            # Check for singular or ill-conditioned diagonal block
+            try:
+                # zero strict upper-triang part..
+                # print(f"{Aii=}")
                 x[row_block_start:row_block_end] = np.linalg.solve(Aii, rhs)
             except np.linalg.LinAlgError:
                 print(f"Warning: singular block at node {i}, skipping update.")

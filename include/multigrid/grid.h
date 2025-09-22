@@ -120,10 +120,17 @@ class ShellGrid {
                 if (reorder) {
                     if (smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
                         int _nnodes = assembler.get_num_nodes();
-                        bool *is_interior_node;
-                        get_interior_node_flags(assembler, is_interior_node);
-                        bsr_data.multicolor_junction_reordering(is_interior_node, num_colors,
-                                                                _color_rowp);
+                        // V1
+                        // bool *is_interior_node;
+                        // get_interior_node_flags(assembler, is_interior_node);
+                        // bsr_data.multicolor_junction_reordering(is_interior_node, num_colors,
+                        //                                         _color_rowp);
+
+                        // V2 more stable one with one less color
+                        int *nodal_num_comps, *node_geom_ind;
+                        get_nodal_geom_indices(assembler, nodal_num_comps, node_geom_ind);
+                        bsr_data.multicolor_junction_reordering_v2(node_geom_ind, num_colors, _color_rowp);
+
                     } else {
                         bsr_data.multicolor_reordering(num_colors, _color_rowp);
                     }
@@ -228,6 +235,98 @@ class ShellGrid {
             is_interior_node[inode] = interior;
             // printf("\tnode %d interior = %d\n", inode, is_interior_node[inode]);
         }
+
+        // TODO : free up temp arrays here..
+    }
+
+    static void get_nodal_geom_indices(Assembler &assembler, int *&nodal_num_comps, int *&node_geom_ind) {
+        // get for each node whether it's an interior node (not touching junction or multiple
+        // components) or whether it's on a junction (connected to multiple comopnents)
+
+        int _nnodes = assembler.get_num_nodes();
+        int nelems = assembler.get_num_elements();
+        int *h_elem_comps = assembler.getElemComponents().createHostVec().getPtr();
+        int *h_elem_conn = assembler.getConn().createHostVec().getPtr();
+
+        // first compute the components (with repeats) each node touches (sparse data structure)
+        int *node_comp_cts = new int[_nnodes];
+        memset(node_comp_cts, 0, _nnodes * sizeof(int));
+        for (int ielem = 0; ielem < nelems; ielem++) {
+            // generalize this later to more than 4-node elems
+            for (int lnode = 0; lnode < 4; lnode++) {
+                int inode = h_elem_conn[4 * ielem + lnode];
+                node_comp_cts[inode]++;
+            }
+        }
+        int *node_comp_ptr = new int[_nnodes + 1];
+        node_comp_ptr[0] = 0;
+        for (int inode = 0; inode < _nnodes; inode++) {
+            node_comp_ptr[inode + 1] = node_comp_ptr[inode] + node_comp_cts[inode];
+        }
+        int _nnz = node_comp_ptr[_nnodes];
+        int *insert_helper = new int[_nnodes];
+        memcpy(insert_helper, node_comp_ptr, _nnodes * sizeof(int));
+        int *node_comp_vals = new int[_nnz];
+        for (int ielem = 0; ielem < nelems; ielem++) {
+            int icomp = h_elem_comps[ielem];
+            // generalize this later to more than 4-node elems
+            for (int lnode = 0; lnode < 4; lnode++) {
+                int inode = h_elem_conn[4 * ielem + lnode];
+                node_comp_vals[insert_helper[inode]++] = icomp;
+            }
+        }
+
+        // get number of unique components on each node
+        nodal_num_comps = new int[_nnodes];
+        for (int inode = 0; inode < _nnodes; inode++) {
+            int start = node_comp_ptr[inode], end = node_comp_ptr[inode + 1];
+            std::set<int> unique(&node_comp_vals[start], &node_comp_vals[end]);
+            nodal_num_comps[inode] = unique.size();
+        }
+
+        // now for node hierarchies..
+        // value 0 - interior/face nodes which belong to only 1 component
+        // value 1 - edge nodes belong to two or more components
+        // value 2 - corner nodes belong on an edge and connect two or more edges
+        //     and belong to more components than their neighboring edge nodes in same element (if ties then there is no corner)
+        node_geom_ind = new int[_nnodes];
+        memset(node_geom_ind, 0, _nnodes * sizeof(int));
+        // first label some nodes as edge nodes from nodal_num_comps (if num comps on the node > 1)
+        for (int inode = 0; inode < _nnodes; inode++) {
+            node_geom_ind[inode] = nodal_num_comps[inode] > 1 ? 1 : 0;
+        }
+
+        for (int ielem = 0; ielem < nelems; ielem++) {
+            // check if any nodes in element are edge nodes
+            bool any_edge_nodes = false;
+            for (int lnode = 0; lnode < 4; lnode++) {
+                int inode = h_elem_conn[4 * ielem + lnode];
+                any_edge_nodes += node_geom_ind[inode] == 1;
+            }
+
+            if (!any_edge_nodes) continue; // go to next element, no edge nodes here
+
+            // then if edge nodes, check for corner nodes
+            std::set<int> edge_node_comp_nums;
+            for (int lnode = 0; lnode < 4; lnode++) {
+                int inode = h_elem_conn[4 * ielem + lnode];
+                // in case previous corner node was flagged, include it too so we don't mess up and confuse another edge node as corner node
+                if (node_geom_ind[inode] >= 1) edge_node_comp_nums.insert(nodal_num_comps[inode]);
+            }
+            // if more than one unique number of edge comp nums (there will be a corner node, which is the node with max # comps it belongs to)
+            int n_edge_set = edge_node_comp_nums.size();
+            if (n_edge_set == 1) continue;
+            // if didn't continue, then we have a corner node, let's find it
+            int max_ncomp = *edge_node_comp_nums.rbegin();
+            // now let's get the inode for the max value and mark it as a corner node
+
+            for (int lnode = 0; lnode < 4; lnode++) {
+                int inode = h_elem_conn[4 * ielem + lnode];
+                if (nodal_num_comps[inode] == max_ncomp) {
+                    node_geom_ind[inode] = 2; // corner node!
+                }
+            }
+        } // end of element corner node labels
 
         // TODO : free up temp arrays here..
     }
@@ -571,9 +670,8 @@ class ShellGrid {
                     int ielem_c = fine_node2elem_elems[jp];
                     const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
 
-                    // I might be including some extra sparsity for some nodes that are not
-                    // contributing (like when fine node is on edge) TBD could come back later and
-                    // decrease the size? would maybe double or 1.5x the nnz
+                    // get xi to interp the fine node (so we can check if some local nodes in element aren't really used)
+                    // like when the fine node is on the edge node. Can just compute transpose interp map, BUT ONLY DO THIS AFTER TRY SMOOTH PROLONG WITHOUT PRUNING MEM HERE FIRST
 
                     for (int loc_node = 0; loc_node < 4; loc_node++) {
                         int inc = c_elem_nodes[loc_node];
@@ -667,9 +765,7 @@ class ShellGrid {
             // now put these on the device with BsrData objects for P and PT
             // TODO : later is to just assemble P and then write my own transpose Bsrmv method in
             // CUDA
-            int P_block_dim = 1;
-            // int P_block_dim = block_dim; // would lead to bsr here..
-
+            int P_block_dim = Prolongation::is_bsr ? block_dim : 1; // if !is_bsr then it does same prolong on each dof_per_node
             int block_dim2 = P_block_dim * P_block_dim;  // should be 36
             auto d_P_rowp = HostVec<int>(nnodes_fine + 1, h_prol_rowp).createDeviceVec().getPtr();
             auto d_P_cols = HostVec<int>(P_nnzb, h_prol_cols).createDeviceVec().getPtr();
@@ -678,9 +774,7 @@ class ShellGrid {
                                       d_iperm, false);
             P_bsr_data.mb = nnodes_fine, P_bsr_data.nb = nnodes_coarse;
             P_bsr_data.rows = d_P_rows;
-
             P_mat = BsrMat<DeviceVec<T>>(P_bsr_data, d_P_vals);
-            // TODO : technically I need to have BsrData capable of non-square matrices also
 
             auto d_PT_rowp =
                 HostVec<int>(nnodes_coarse + 1, h_prolT_rowp).createDeviceVec().getPtr();
@@ -944,6 +1038,29 @@ class ShellGrid {
                 D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_diag_vals);
             }
         }  // end of Dinv linear operator if block
+    }
+
+    void smooth_prolongation(int n_iters) {
+        // only is doing MC-BGS right now.. (assuming Dinv matrix is computed)
+
+        // P_bsr_data.mb = nnodes_fine, P_bsr_data.nb = nnodes_coarse;
+        //     P_bsr_data.rows = d_P_rows;
+        //     P_mat = BsrMat<DeviceVec<T>>(P_bsr_data, d_P_vals);
+
+        // apply bcs to the prolongation matrix rows (all zeroes, no ones this time for Dirichlet, later could add ones I guess)
+        auto d_bcs = assembler.getBCs();
+        bool include_cols = false;
+        P_mat.apply_bcs(d_bcs, include_cols);
+
+        // compute initial A * P0 => prolong defect matrix Pd
+        
+
+        // for (int iter = 0; iter < n_iters; iter++) {
+        //     // perform MC-BGS iterations on prolongation soln P and defect matrix Pd
+        // }
+
+
+        // copy P to PT (transpose matrix copy)
     }
 
     template <bool startup = true>

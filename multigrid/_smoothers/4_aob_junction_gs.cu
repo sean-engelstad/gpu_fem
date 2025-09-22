@@ -17,10 +17,15 @@
 #include <chrono>
 
 template <typename T, class Assembler, class Grid>
-void plotSolution(Grid *grid, DeviceVec<T> vec, std::string filename) {
+void plotSolution(Grid *grid, DeviceVec<T> vec, std::string filename, bool perm = true) {
     // shortcut for the many plot solutions in here
-    auto h_soln = vec.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(grid->assembler, h_soln, filename);
+    if (perm) {
+        auto h_soln = vec.createPermuteVec(6, grid->Kmat.getPerm()).createHostVec();
+        printToVTK<Assembler,HostVec<T>>(grid->assembler, h_soln, filename);
+    } else {
+        auto h_soln = vec.createHostVec();
+        printToVTK<Assembler,HostVec<T>>(grid->assembler, h_soln, filename);
+    }
 }
 
 void multigrid_junction_solve(MPI_Comm comm, double SR, int n_iters, double omega, std::string smooth_name) {
@@ -101,19 +106,62 @@ void multigrid_junction_solve(MPI_Comm comm, double SR, int n_iters, double omeg
     // beginning of a new smoother
     // ---------------------------
 
+    // plot the previous coloring (check)
+    int *h_perm_v1 = DeviceVec<int>(fine_grid->nnodes, fine_grid->d_perm).createHostVec().getPtr();
+    auto h_color_rowp = fine_grid->h_color_rowp;
+    int _num_colors_v1 = h_color_rowp.getSize();
+    printf("_num_colors_v1: %d\n", _num_colors_v1);
+    int *_color_rowp_v1 = h_color_rowp.getPtr();
+    T *colors_v1 = new T[fine_grid->N];
+    memset(colors_v1, 0.0, fine_grid->N * sizeof(T));
+    for (int icolor = 0; icolor < _num_colors_v1; icolor++) {
+        for (int jp = _color_rowp_v1[icolor]; jp < _color_rowp_v1[icolor + 1]; jp++) {
+            int inode = jp;
+            // int perm_inode = h_perm_v1[inode];
+            for (int idof = 0; idof < 6; idof++) {
+                colors_v1[6 * inode + idof] = icolor; // keep it in permuted form cause plotSolution does un-permute
+            }
+        }
+    }
+    DeviceVec<T> d_colors_v1(fine_grid->N);
+    cudaMemcpy(d_colors_v1.getPtr(), colors_v1, fine_grid->N * sizeof(T), cudaMemcpyHostToDevice);
+    plotSolution<T, Assembler, GRID>(fine_grid, d_colors_v1, "out/_aob_colors1.vtk");
+
+
     // 1) compute new colored order with face, edge, corner hierarchy of the coloring
     // we're going a step further than interior vs junction nodes (so we can do supernodes better)
     // because corner supernodes will use edges + face nodes
 
     int _nnodes = fine_assembler.get_num_nodes();
-    bool *is_interior_node;
-    int num_colors, *_color_rowp;
-    fine_grid->get_interior_node_flags(fine_assembler, is_interior_node);
-    auto &bsr_data = fine_assembler.getBsrData();
-    bsr_data.multicolor_junction_reordering(is_interior_node, num_colors,
-                                            _color_rowp);
-    printf("num_colors %d, color_rowp: ", num_colors);
-    printVec<int>(num_colors + 1, _color_rowp);
+    int *nodal_num_comps, *node_geom_ind;
+    fine_grid->get_nodal_geom_indices(fine_assembler, nodal_num_comps, node_geom_ind);
+
+    // plot all 6 DOF instead of just nodal value so we can write to VTK
+    HostVec<T> h_nodal_num_comps(fine_grid->N), h_node_geom_ind(fine_grid->N);
+    for (int i = 0; i < fine_grid->N; i++) {
+        int inode = i / 6;
+        h_nodal_num_comps[i] = nodal_num_comps[inode];
+        h_node_geom_ind[i] = node_geom_ind[inode];
+    }
+    auto d_nodal_num_comps = h_nodal_num_comps.createDeviceVec();
+    auto d_node_geom_ind = h_node_geom_ind.createDeviceVec();
+    plotSolution<T, Assembler, GRID>(fine_grid, d_nodal_num_comps, "out/_aob_nodal_num_comps.vtk", false);
+    plotSolution<T, Assembler, GRID>(fine_grid, d_node_geom_ind, "out/_aob_node_geom_ind.vtk", false);
+
+    // 2) now develop color ordering based on num_comps and node_geom_ind and supernodes..
+    // ------------------------------------------------------------------------------------
+    // a) interior nodes are colored with no supernodes (colors 1-4) or block_dim = 6
+    // b) edge nodes with 2 comps have 3 group-supernodes or block_dim = 18
+    // c) edge nodes with 3 comps have 4 group-supernodes or block_dim = 24
+    // d) corner nodes with 3 comps have 7 group-supernodes combining edge + interior or block_dim = 42
+    // e) corner nodes with 5 comps have 10 group-supernodes or block_dim = 60
+
+
+    // auto &bsr_data = fine_assembler.getBsrData();
+    // bsr_data.multicolor_junction_reordering(is_interior_node, num_colors,
+    //                                         _color_rowp);
+    // printf("num_colors %d, color_rowp: ", num_colors);
+    // printVec<int>(num_colors + 1, _color_rowp);
     
 
     // write smoother output

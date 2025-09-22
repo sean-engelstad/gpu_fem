@@ -453,6 +453,119 @@ class BsrData {
         // and then we'll call a nofill or fill pattern after this..
     }
 
+    __HOST__ void multicolor_junction_reordering_v2(int node_geom_ind[], int &n_colors,
+                                                 int *&color_rowp) {
+        /* a multicolor reordering for colored Gauss-seidel multigrid, using 0,1,2 geom levels for 
+        face, edge and corner node */
+
+        int *colors = new int[nnodes];
+        memset(colors, -1.0, nnodes * sizeof(int));
+
+        // first compute nofill pattern (so that we have the adjacency map, or which nodes each node
+        // is connected to)
+        compute_nofill_pattern();
+
+        // perform greedy coloring algorithm from Saad (TODO : later put this on GPU with parallel
+        // friendly version)
+        int max_color = -1;
+        for (int row = 0; row < nnodes; row++) {
+            if (node_geom_ind[row] != 0) continue;  // only face nodes first
+
+            // get list of adjacent colors
+            std::vector<int> adj_colors;
+            for (int jp = rowp[row]; jp < rowp[row + 1]; jp++) {
+                int col = cols[jp];
+                if (row == col)
+                    continue;  // only care about adjacent nodes (not itself for color algorithm)
+                adj_colors.push_back(colors[col]);
+            }
+
+            // compute the min avail color for Saad greedy coloring algorithm
+            int avail_color = _get_avail_color(adj_colors);
+            if (avail_color > max_color) {
+                max_color = avail_color;
+            }
+            colors[row] = avail_color;
+        }
+        int max_face_color = max_color;
+
+        // now color the edge nodes
+        for (int row = 0; row < nnodes; row++) {
+            if (node_geom_ind[row] != 1) continue; // just edge nodes now
+
+            // get list of adjacent colors
+            std::vector<int> adj_colors;
+            for (int jp = rowp[row]; jp < rowp[row + 1]; jp++) {
+                int col = cols[jp];
+                if (row == col)
+                    continue;  // only care about adjacent nodes (not itself for color algorithm)
+                adj_colors.push_back(colors[col]);
+            }
+
+            // compute the min avail color for Saad greedy coloring algorithm
+            int _min_color = max_face_color + 1;
+            int avail_color = _get_avail_color(adj_colors, _min_color);
+            if (avail_color > max_color) {
+                max_color = avail_color;
+            }
+            colors[row] = avail_color;
+        }
+        int max_edge_color = max_color;
+
+        // now color the corner nodes
+        for (int row = 0; row < nnodes; row++) {
+            if (node_geom_ind[row] != 2) continue; // just corner nodes now
+
+            // get list of adjacent colors
+            std::vector<int> adj_colors;
+            for (int jp = rowp[row]; jp < rowp[row + 1]; jp++) {
+                int col = cols[jp];
+                if (row == col)
+                    continue;  // only care about adjacent nodes (not itself for color algorithm)
+                adj_colors.push_back(colors[col]);
+            }
+
+            // compute the min avail color for Saad greedy coloring algorithm
+            int _min_color = max_edge_color + 1;
+            int avail_color = _get_avail_color(adj_colors, _min_color);
+            if (avail_color > max_color) {
+                max_color = avail_color;
+            }
+            colors[row] = avail_color;
+        }
+
+        n_colors = max_color + 1;
+        color_rowp = new int[n_colors + 1];
+        color_rowp[0] = 0;
+
+        // now compute perm and i_perm from the color list
+        int ct = -1;
+        for (int i_color = 0; i_color < max_color + 1; i_color++) {
+            for (int inode = 0; inode < nnodes; inode++) {
+                if (colors[inode] == i_color) {
+                    ct++;
+                    // perm[inode] = ct;
+                    // iperm[ct] = inode;
+                    iperm[inode] = ct;
+                    perm[ct] = inode;
+                }
+            }
+            color_rowp[i_color + 1] = ct + 1;
+        }
+
+        // printf("color_rowp:");
+        // printVec<int>(n_colors + 1, color_rowp);
+        // printf("iperm:");
+        // printVec<int>(nnodes, iperm);
+
+        // then delete old rowp, cols
+        delete[] colors;
+        // delete[] rowp;
+        // delete[] cols;
+
+        // and then we'll call a nofill or fill pattern after this..
+    }
+
     __HOST__ void RCM_reordering(int num_rcm_iters = 1) {
         /* reverse cuthill McKee reordering to reduce matrix bandwidth and
            # nz in the sparsity pattern */

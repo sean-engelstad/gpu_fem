@@ -171,3 +171,169 @@
 //     BsrData bsr_data;
 //     BsrMat K_mat, Dinv_mat;
 // };
+
+
+
+template <class Basis>
+class UnstructuredProlongationBsr {
+   public:
+    using T = double;
+    static constexpr bool structured = false;
+    static constexpr bool assembly = false;
+    static constexpr int is_bsr = true;
+
+    static void assemble_matrices(int *d_coarse_conn, int *d_n2e_ptr, int *d_n2e_elems,
+                                  T *d_n2e_xis, BsrMat<DeviceVec<T>> &P_mat,
+                                  BsrMat<DeviceVec<T>> &PT_mat) {
+        // get some data out..
+        auto P_bsr_data = P_mat.getBsrData();
+        auto PT_bsr_data = PT_mat.getBsrData();
+        int nnodes_fine = P_bsr_data.nnodes;
+        // int nnodes_coarse = PT_bsr_data.nnodes;
+        int *d_coarse_iperm = PT_bsr_data.iperm;
+        int *d_fine_iperm = P_bsr_data.iperm;
+        int block_dim = P_bsr_data.block_dim;
+
+        // assemble P mat
+        dim3 block(32);
+        dim3 grid((nnodes_fine + 31) / 32);
+        int *d_P_rowp = P_bsr_data.rowp, *d_P_cols = P_bsr_data.cols;
+        T *d_P_vals = P_mat.getPtr();
+        k_prolong_mat_assembly<T, Basis, is_bsr>
+            <<<grid, block>>>(d_coarse_iperm, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
+                              nnodes_fine, d_fine_iperm, d_P_rowp, d_P_cols, block_dim, d_P_vals);
+
+        // assemble PT mat
+        int *d_PT_rowp = PT_bsr_data.rowp, *d_PT_cols = PT_bsr_data.cols;
+        T *d_PT_vals = PT_mat.getPtr();
+        k_restrict_mat_assembly<T, Basis, is_bsr><<<grid, block>>>(
+            d_coarse_iperm, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis, nnodes_fine,
+            d_fine_iperm, d_PT_rowp, d_PT_cols, block_dim, d_PT_vals);
+    }
+
+    static void prolongate(int nnodes_fine, int *d_coarse_conn, int *d_n2e_ptr, int *d_n2e_elems,
+                           T *d_n2e_xis, int *d_coarse_iperm, int *d_fine_iperm,
+                           DeviceVec<T> coarse_soln_in, DeviceVec<T> dx_fine) {
+        // zero anything out again
+        int N_coarse = coarse_soln_in.getSize();  // this includes dof per node (not num nodes here)
+        int N_fine = dx_fine.getSize();
+
+        dim3 block(32);
+        int nblocks = (nnodes_fine + 31) / 32;
+        dim3 grid(nblocks);
+
+        k_unstruct_prolongate<T, Basis>
+            <<<grid, block>>>(coarse_soln_in.getPtr(), d_coarse_iperm, d_coarse_conn, d_n2e_ptr,
+                              d_n2e_elems, d_n2e_xis, nnodes_fine, d_fine_iperm, dx_fine.getPtr());
+        // CHECK_CUDA(cudaDeviceSynchronize());
+    }
+
+    static void restrict_defect(int nnodes_fine, const int *d_coarse_conn, int *d_n2e_ptr,
+                                int *d_n2e_elems, T *d_n2e_xis, int *d_coarse_iperm,
+                                int *d_fine_iperm, DeviceVec<T> fine_defect_in,
+                                DeviceVec<T> coarse_defect_out, T *d_weights) {
+        // zero anything out again
+        int N_coarse =
+            coarse_defect_out.getSize();  // this includes dof per node (not num nodes here)
+        int N_fine = fine_defect_in.getSize();
+        cudaMemset(d_weights, 0.0, N_fine * sizeof(T));
+
+        dim3 block(32);
+        int nblocks = (nnodes_fine + 31) / 32;
+        dim3 grid(nblocks);
+
+        k_unstruct_restrict<T, Basis><<<grid, block>>>(
+            fine_defect_in.getPtr(), d_coarse_iperm, d_coarse_conn, d_n2e_ptr, d_n2e_elems,
+            d_n2e_xis, nnodes_fine, d_fine_iperm, coarse_defect_out.getPtr(), d_weights);
+        // CHECK_CUDA(cudaDeviceSynchronize());
+
+        // TRY not normalizing restriction (that kind of breaks P and P^T relationship..) to
+        // comment, seems to be fine either way.. this out.. normalize
+        // int nblock2 = (N_coarse + 31) / 32;
+        // dim3 grid2(nblock2);
+        // k_vec_normalize<T><<<grid2, block>>>(N_coarse, coarse_defect_out.getPtr(), d_weights);
+    }
+};
+
+template <typename T, class Basis>
+__global__ static void k_unstruct_prolongate(const T *coarse_soln, const int *d_coarse_iperm, const int *coarse_elem_conn, const int *node2elem_ptr, const int *node2elem_elems, 
+    const T *node2elem_xis, const int nnodes_fine, const int *d_fine_iperm, T *fine_soln) {
+
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int fine_node = tid;
+    if (fine_node >= nnodes_fine) return;
+
+    int perm_fine_node = d_fine_iperm[fine_node]; // for writing into perm fine soln
+    int num_attached_elems = node2elem_ptr[fine_node + 1] - node2elem_ptr[fine_node];
+    
+    for (int jp = node2elem_ptr[fine_node]; jp < node2elem_ptr[fine_node + 1]; jp++) {
+        int ielem_c = node2elem_elems[jp];
+        const int *c_elem_nodes = &coarse_elem_conn[4 * ielem_c];
+
+        // get comp coords for interp of coarse-fine
+        T pt[2];
+        pt[0] = node2elem_xis[2 * jp];
+        pt[1] = node2elem_xis[2 * jp + 1];
+
+        // get local coarse elem disps.. (with permutations here?)
+        T c_elem_disps[24];
+        for (int i = 0; i < 24; i++) {
+            int loc_node = i / 6, loc_dof = i % 6;
+            int coarse_node = c_elem_nodes[loc_node];
+            int perm_coarse_node = d_coarse_iperm[coarse_node];
+
+            c_elem_disps[i] = coarse_soln[6 * perm_coarse_node + loc_dof];
+        }
+
+        // interp the disps from coarse disps
+        T fine_disp_add[6];
+        Basis::template interpFields<6, 6>(pt, c_elem_disps, fine_disp_add);
+
+        // now add into the fine solution and fine weights
+        T scale = 1.0 / (double) num_attached_elems;
+        for (int idof = 0; idof < 6; idof++) {
+            atomicAdd(&fine_soln[6 * perm_fine_node + idof], fine_disp_add[idof] * scale);
+        }
+    }
+}
+
+template <typename T, class Basis>
+__global__ static void k_unstruct_restrict(const T *fine_defect_in, const int *d_coarse_iperm, const int *coarse_elem_conn, const int *node2elem_ptr, const int *node2elem_elems, 
+    const T *node2elem_xis, const int nnodes_fine, const int *d_fine_iperm, T *coarse_soln_out, T *coarse_wts) {
+
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int fine_node = tid;
+    if (fine_node >= nnodes_fine) return;
+
+    int perm_fine_node = d_fine_iperm[fine_node]; // for writing into perm fine soln
+    int num_attached_elems = node2elem_ptr[fine_node + 1] - node2elem_ptr[fine_node];
+
+    for (int jp = node2elem_ptr[fine_node]; jp < node2elem_ptr[fine_node + 1]; jp++) {
+        int ielem_c = node2elem_elems[jp];
+        const int *c_elem_nodes = &coarse_elem_conn[4 * ielem_c];
+
+        // get comp coords for interp of coarse-fine
+        T pt[2];
+        pt[0] = node2elem_xis[2 * jp];
+        pt[1] = node2elem_xis[2 * jp + 1];
+
+        // get fine defect disps..
+        const T *fine_nodal_defect = &fine_defect_in[6 * perm_fine_node];
+
+        // now do interpFieldsTranspose to coarse defect on each node in element
+        T coarse_elem_defect[24];
+        memset(coarse_elem_defect, 0.0, 24 * sizeof(T));
+        Basis::template interpFieldsTranspose<6, 6>(pt, fine_nodal_defect, coarse_elem_defect);
+
+        for (int i = 0; i < 24; i++) {
+            int loc_node = i / 6, loc_dof = i % 6;
+            int coarse_node = c_elem_nodes[loc_node];
+            int perm_coarse_node = d_coarse_iperm[coarse_node];
+
+            T scale = 1.0 / (double) num_attached_elems;
+            atomicAdd(&coarse_soln_out[6 * perm_coarse_node + loc_dof], 
+                coarse_elem_defect[i] * scale);
+            atomicAdd(&coarse_wts[6 * perm_coarse_node + loc_dof], scale);
+        }
+    }
+}
