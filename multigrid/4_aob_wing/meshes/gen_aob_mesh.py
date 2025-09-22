@@ -58,6 +58,18 @@ if args.level == 0:
         tacs_model
     )
 
+# finer level 0
+# if args.level == 0:
+#     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
+#         edge_pt_min=2,
+#         edge_pt_max=4,
+#         global_mesh_size=0.2,
+#         max_surf_offset=0.16,
+#         max_dihedral_angle=40,
+#     ).register_to(
+#         tacs_model
+#     )
+
 if args.level == 1:
     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
         edge_pt_min=5,

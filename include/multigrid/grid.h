@@ -88,7 +88,7 @@ class ShellGrid {
                       smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION ||
                       smoother == DAMPED_JACOBI) {
             buildDiagInvMat<startup>();
-            if ((smoother == MULTICOLOR_GS_FAST2 && smoother == MULTICOLOR_GS_FAST2_JUNCTION) &&
+            if ((smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION) &&
                 !full_LU)
                 buildTransposeColorMatrices<startup>();
         }
@@ -119,14 +119,11 @@ class ShellGrid {
                           smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
                 if (reorder) {
                     if (smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
-                        printf("pre MC junction reordering\n");
                         int _nnodes = assembler.get_num_nodes();
                         bool *is_interior_node;
                         get_interior_node_flags(assembler, is_interior_node);
                         bsr_data.multicolor_junction_reordering(is_interior_node, num_colors,
                                                                 _color_rowp);
-                        printf("num_colors %d, color rowp: ", num_colors);
-                        printVec<int>(num_colors, _color_rowp);
                     } else {
                         bsr_data.multicolor_reordering(num_colors, _color_rowp);
                     }
@@ -1749,7 +1746,9 @@ class ShellGrid {
     BsrMat<DeviceVec<T>> restrict_PT_mat;
 
     // turn off private during debugging
-   private:  // private data for cusparse and cublas
+    //    private:  // private data for cusparse and cublas
+    // ----------------------------------------------------
+
     // private data
     cublasHandle_t cublasHandle = NULL;
     cusparseHandle_t cusparseHandle = NULL;

@@ -34,7 +34,7 @@ class TacsGpuMultigridSolver {
 
     // multigrid objects
     using Prolongation = UnstructuredProlongationFast<Basis>;
-    using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2, LINE_SEARCH>;
+    using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2_JUNCTION, LINE_SEARCH>;
     using MG = ShellMultigrid<GRID>;
     using StructSolver = TacsMGInterface<T, Assembler, MG>;
 
@@ -43,7 +43,8 @@ class TacsGpuMultigridSolver {
     using DKSFail = KSFailure<T, DeviceVec>;
 
     TacsGpuMultigridSolver(double rhoKS = 100.0, double safety_factor = 1.5,
-                           double load_mag = 100.0, int mesh_level = 3, double SR = 50.0) {
+                           double load_mag = 100.0, double omega = 1.5, int mesh_level = 3,
+                           double SR = 50.0) {
         // init MPI comm
         MPI_Init(NULL, NULL);
         MPI_Comm comm = MPI_COMM_WORLD;
@@ -98,8 +99,14 @@ class TacsGpuMultigridSolver {
         bool print = true;
         solver = std::make_unique<StructSolver>(mg, print);
         T atol = 1e-6, rtol = 1e-6;
-        int n_cycles = 300, pre_smooth = 4, post_smooth = 4, print_freq = 10;
-        solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq);
+        // int pre_smooth = 2, post_smooth = 2;
+        // int pre_smooth = 4, post_smooth = 4;
+        int pre_smooth = 6, post_smooth = 6;
+        int n_cycles = 300, print_freq = 10;
+        // bool double_smooth = false;  // actually don't need this on the wing maybe
+        bool double_smooth = true;
+        solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq,
+                                       double_smooth, omega);
 
         // get struct loads on finest grid
         auto fine_grid = mg.grids[0];

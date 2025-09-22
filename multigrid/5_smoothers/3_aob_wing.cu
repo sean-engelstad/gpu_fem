@@ -24,7 +24,7 @@ void plotSolution(Grid *grid, DeviceVec<T> vec, std::string filename) {
 }
 
 template <SMOOTHER smoother>
-void multigrid_plate_solve(MPI_Comm comm, double SR, int n_iters, double omega, std::string smooth_name) {
+void multigrid_solve(MPI_Comm comm, double SR, int n_iters, double omega, std::string smooth_name) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -116,7 +116,8 @@ void multigrid_plate_solve(MPI_Comm comm, double SR, int n_iters, double omega, 
 int main() {
     // multigrid objects
 
-    double SR = 10.0;
+    double SR = 1.0;
+    // double SR = 10.0;
     // int n_iters = 5;
     // int n_iters = 10;
     int n_iters = 30;
@@ -125,13 +126,15 @@ int main() {
     MPI_Comm comm = MPI_COMM_WORLD;
 
     // special and new one here..
-    double omega = 0.85;
-    multigrid_plate_solve<MULTICOLOR_GS_FAST2_JUNCTION>(comm, SR, n_iters, omega, "MULTICOLOR_GS_FAST2_JUNCTION");
+    // double omega = 0.85;
+    // multigrid_plate_solve<MULTICOLOR_GS_FAST2_JUNCTION>(comm, SR, n_iters, omega, "MULTICOLOR_GS_FAST2_JUNCTION");
 
+    double omega = 1.5;
     // double omega = 0.7;
-    // multigrid_plate_solve<DAMPED_JACOBI>(comm, SR, n_iters, omega, "DAMPED_JACOBI");
-    // multigrid_plate_solve<LEXIGRAPHIC_GS>(comm, SR, n_iters, omega, "LEXIGRAPHIC_GS");
-    // multigrid_plate_solve<MULTICOLOR_GS_FAST2>(comm, SR, n_iters, omega, "MULTICOLOR_GS_FAST2");
+    // multigrid_solve<DAMPED_JACOBI>(comm, SR, n_iters, omega, "DAMPED_JACOBI"); // diverges
+    multigrid_solve<LEXIGRAPHIC_GS>(comm, SR, n_iters, omega, "LEXIGRAPHIC_GS");
+    multigrid_solve<MULTICOLOR_GS_FAST2>(comm, SR, n_iters, omega, "MULTICOLOR_GS_FAST2");
+    multigrid_solve<MULTICOLOR_GS_FAST2_JUNCTION>(comm, SR, n_iters, omega, "MULTICOLOR_GS_FAST2_JUNCTION");
 
     // omega = 1.0;
     // multigrid_plate_solve<DAMPED_JACOBI>(comm, SR, n_iters, omega, "DAMPED_JACOBI");

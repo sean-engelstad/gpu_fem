@@ -13,8 +13,7 @@ class TacsMGInterface {
     // using Mat = typename Assembler::template MatType<Vec>;
     using MyFunction = typename Assembler::MyFunction;
 
-    TacsMGInterface(Multigrid &mg, bool print = true,
-                   bool include_adjoint_vars = true)
+    TacsMGInterface(Multigrid &mg, bool print = true, bool include_adjoint_vars = true)
         : mg(mg),
           assembler(mg.grids[0].assembler),
           include_adjoint_vars(include_adjoint_vars),
@@ -33,9 +32,11 @@ class TacsMGInterface {
         }
     }
 
-    void set_mg_solver_settings(T rtol_, T atol_, int n_cycles_, int pre_smooth_, int post_smooth_, int print_freq_ = 1, bool double_smooth_ = true, T omega_ = 1.0) {
+    void set_mg_solver_settings(T rtol_, T atol_, int n_cycles_, int pre_smooth_, int post_smooth_,
+                                int print_freq_ = 1, bool double_smooth_ = true, T omega_ = 1.0) {
         rtol = rtol_, atol = atol_, omega = omega_;
-        n_cycles = n_cycles_, pre_smooth = pre_smooth_, post_smooth = post_smooth_, print_freq = print_freq_;
+        n_cycles = n_cycles_, pre_smooth = pre_smooth_, post_smooth = post_smooth_,
+        print_freq = print_freq_;
         double_smooth = double_smooth_;
     }
 
@@ -66,11 +67,12 @@ class TacsMGInterface {
         struct_loads.copyValuesTo(this->loads);
         this->assembler.apply_bcs(this->loads);
 
-        // make this more general later.. 
+        // make this more general later..
         mg.grids[0].zeroSolution();
         mg.grids[0].setDefect(this->loads);
         bool inner_print = false, inner_time = false;
-        mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega, double_smooth, inner_time, print_freq);
+        mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
+                        double_smooth, inner_time, print_freq);
         mg.grids[0].getSolution(this->soln);
         this->soln.copyValuesTo(this->vars);
 
@@ -95,7 +97,8 @@ class TacsMGInterface {
     void _update_assembly() {
         /* update kmat with new design */
         if (this->print) printf("updating assembly\n");
-        // for nonlinear case this will change and have to be Galerkin GMG not new coarse grid matrices, TBD on that though
+        // for nonlinear case this will change and have to be Galerkin GMG not new coarse grid
+        // matrices, TBD on that though
         for (int ilevel = 0; ilevel < mg.getNumLevels(); ilevel++) {
             auto &res = mg.grids[ilevel].d_temp_vec;
             auto &kmat = mg.grids[ilevel].Kmat;
@@ -130,7 +133,8 @@ class TacsMGInterface {
             mg.grids[0].zeroSolution();
             mg.grids[0].setDefect(this->dfdu);
             bool inner_print = false, inner_time = false;
-            mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega, double_smooth, inner_time, print_freq);
+            mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
+                            double_smooth, inner_time, print_freq);
             mg.grids[0].getSolution(this->psi);
             assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }

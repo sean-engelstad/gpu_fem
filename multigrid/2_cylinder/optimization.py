@@ -21,6 +21,7 @@ solver = gpusolver.TacsGpuMultigridSolver(
     safety_factor=1.5,
     load_mag=30000.0,
     # nxe=512,
+    omega=1.5, # over-relaxation (faster solves usually)
     nxe=128,
     nx_comp=ndvs_per_side, # num dvs in x-direction
     ny_comp=ndvs_per_side, # num dvs/comps in y-direction

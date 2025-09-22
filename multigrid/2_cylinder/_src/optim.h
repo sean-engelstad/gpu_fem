@@ -88,8 +88,10 @@ class TacsGpuMultigridSolver {
         bool print = true;
         solver = std::make_unique<StructSolver>(mg, print);
         T atol = 1e-6, rtol = 1e-6;
+        bool double_smooth = true;
         int n_cycles = 200, pre_smooth = 2, post_smooth = 2, print_freq = 3;
-        solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq);
+        solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq,
+                                       double_smooth, omega);
 
         // get struct loads on finest grid
         auto fine_grid = mg.grids[0];
