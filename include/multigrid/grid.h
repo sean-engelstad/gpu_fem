@@ -29,6 +29,7 @@ enum SMOOTHER : short {
 };
 
 enum SCALER : short {
+    ZERO, // doesn't add directly into defect
     NONE,
     LINE_SEARCH,
     PCG,
@@ -106,9 +107,15 @@ class ShellGrid {
         if (full_LU) {
             // coarsest grid just gets AMD ordering and full LU pattern (AMD uses less memory for
             // direct solves + tends to be fast)
-            bsr_data.AMD_reordering();
+            bsr_data.AMD_reordering(); // old reasonable reordering
+            
+            // try multicolor reordering here to expose more parallelism
+            // int *nodal_num_comps, *node_geom_ind;
+            // get_nodal_geom_indices(assembler, nodal_num_comps, node_geom_ind);
+            // bsr_data.multicolor_junction_reordering_v2(node_geom_ind, num_colors, _color_rowp);
+
             bsr_data.compute_full_LU_pattern(10.0, false);
-            num_colors = 1;
+            num_colors = 1; // if doing AMD reordering
             _color_rowp = new int[2];
             _color_rowp[0] = 0;
             _color_rowp[1] = assembler.get_num_nodes();
@@ -130,6 +137,9 @@ class ShellGrid {
                         int *nodal_num_comps, *node_geom_ind;
                         get_nodal_geom_indices(assembler, nodal_num_comps, node_geom_ind);
                         bsr_data.multicolor_junction_reordering_v2(node_geom_ind, num_colors, _color_rowp);
+
+                        // printf("num colors %d, h_color_rowp: ", num_colors);
+                        // printVec<int>(num_colors + 1, _color_rowp);
 
                     } else {
                         bsr_data.multicolor_reordering(num_colors, _color_rowp);
@@ -1255,14 +1265,14 @@ class ShellGrid {
     }
 
     void smoothDefect(int n_iters, bool print = false, int print_freq = 10, T omega = 1.0,
-                      bool rev_colors = false) {
+                      bool symmetric = false) {
         /* calls either multicolor smoother or lexigraphic GS depending on tempalte smoother type */
         if (smoother == MULTICOLOR_GS) {
-            multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega, rev_colors);
+            multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega, symmetric);
         } else if (smoother == MULTICOLOR_GS_FAST) {
-            multicolorBlockGaussSeidel_fast(n_iters, print, print_freq, omega, rev_colors);
+            multicolorBlockGaussSeidel_fast(n_iters, print, print_freq, omega, symmetric);
         } else if (smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
-            multicolorBlockGaussSeidel_fast2(n_iters, print, print_freq, omega, rev_colors);
+            multicolorBlockGaussSeidel_fast2(n_iters, print, print_freq, omega, symmetric);
         } else if (smoother == DAMPED_JACOBI) {
             dampedJacobi(n_iters, print, print_freq, omega);
         } else if (smoother == LEXIGRAPHIC_GS) {
@@ -1307,7 +1317,7 @@ class ShellGrid {
     }
 
     void multicolorBlockGaussSeidel_slow(int n_iters, bool print = false, int print_freq = 10,
-                                         T omega = 1.0, bool rev_colors = false) {
+                                         T omega = 1.0, bool symmetric = false) {
         // slower version of do multicolor BSRmat block gauss-seidel on the defect
         // slower in the sense that it uses full mat-vec and full triang solves (does work right)
         // would like a faster version with color slicing next..
@@ -1322,7 +1332,7 @@ class ShellGrid {
         for (int iter = 0; iter < n_iters; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
                 int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
-                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
+                int icolor = symmetric ? num_colors - 1 - _icolor2 : _icolor2;
 
                 // get active rows / cols for this color
                 int start = color_rowp[icolor], end = color_rowp[icolor + 1];
@@ -1375,7 +1385,7 @@ class ShellGrid {
     }
 
     void multicolorBlockGaussSeidel_fast(int n_iters, bool print = false, int print_freq = 10,
-                                         T omega = 1.0, bool rev_colors = false) {
+                                         T omega = 1.0, bool symmetric = false) {
         // faster version
 
         int num_colors = h_color_rowp.getSize() - 1;
@@ -1395,7 +1405,7 @@ class ShellGrid {
                 auto prelim_time = std::chrono::high_resolution_clock::now();
 
                 int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
-                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
+                int icolor = symmetric ? num_colors - 1 - _icolor2 : _icolor2;
 
                 // get active rows / cols for this color
                 int start = color_rowp[icolor], end = color_rowp[icolor + 1];
@@ -1522,7 +1532,7 @@ class ShellGrid {
     }
 
     void multicolorBlockGaussSeidel_fast2(int n_iters, bool print = false, int print_freq = 10,
-                                          T omega = 1.0, bool rev_colors = false) {
+                                          T omega = 1.0, bool symmetric = false) {
         // faster version
 
         int num_colors = h_color_rowp.getSize() - 1;
@@ -1534,15 +1544,18 @@ class ShellGrid {
         if (time_debug) printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
         print_freq = max(print_freq, 1);  // so not zero
 
-        for (int iter = 0; iter < n_iters; iter++) {
+        int m = symmetric ? 2*n_iters : n_iters;
+
+        for (int iter = 0; iter < m; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
                 // -------------------------------------------------------------
                 // prelim block (getting color sub-vectors ready)
 
                 if (time_debug) CHECK_CUDA(cudaDeviceSynchronize());
                 auto prelim_time = std::chrono::high_resolution_clock::now();
-                int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
-                int icolor = rev_colors ? num_colors - 1 - _icolor2 : _icolor2;
+                // int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
+                bool rev_colors = symmetric ? iter % 2 == 0 : false;
+                int icolor = rev_colors ? num_colors - 1 - _icolor : _icolor;
 
                 // get active rows / cols for this color
                 int start = color_rowp[icolor], end = color_rowp[icolor + 1];
@@ -1668,6 +1681,10 @@ class ShellGrid {
                                       &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
                                       block_dim, d_temp, &b, d_temp2));
 
+        
+        if constexpr (scaler == ZERO) {
+            return; // no update to solution, just keep soln update in temp and use that in outer K-cycle
+        }
         T omega;
         if constexpr (scaler == NONE) {
             // no rescaling
@@ -1897,7 +1914,7 @@ class ShellGrid {
     cusparseMatDescr_t descr_L = 0, descr_U = 0;
     bsrsv2Info_t info_L = 0, info_U = 0;
     void *pBuffer = 0;
-    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL,
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_USE_LEVEL,
                                 policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
     const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
                               trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;

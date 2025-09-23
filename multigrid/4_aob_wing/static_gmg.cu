@@ -12,7 +12,7 @@
 // local multigrid imports
 #include "multigrid/grid.h"
 #include "multigrid/fea.h"
-#include "multigrid/mg.h"
+#include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
 
@@ -69,7 +69,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     using Prolongation = UnstructuredProlongation<Basis, is_bsr>; 
 
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = ShellMultigrid<GRID>;
+    using MG = GeometricMultigridSolver<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
     auto mg = MG();
@@ -128,15 +128,6 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
         // return; // TEMP DEBUG
     }
 
-    // smooth prolongation
-    // if constexpr (is_bsr && !Prolongation::structured) {
-    //     int nlevels = mg.getNumLevels();
-    //     for (int ilevel = 0; ilevel < nlevels; ilevel++) {
-    //         int n_mm_iters = 6; // TBD on how to set this
-    //         mg.grid[ilevel].smoothProlongation(n_mm_iters);
-    //     }
-    // }
-
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
@@ -148,7 +139,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     int pre_smooth = nsmooth, post_smooth = nsmooth;
     // best was V(4,4) before
     // bool print = false;
-    bool print = false;
+    bool print = true;
     T atol = 1e-6, rtol = 1e-6;
     T omega = 1.5; // good GS-SSOR parameter (speedups up convergence)
     // T omega = 1.0;
@@ -156,13 +147,20 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     if (smoother == LEXIGRAPHIC_GS) omega = 1.4;
     if (smoother == DAMPED_JACOBI) omega = 0.7; // damped jacobi diverges on wingbox
     int n_cycles = 200;
+    if (SR > 100.0) n_cycles = 1000;
 
     bool time = false;
     // bool time = true;
 
+    bool symmetric = false;
+    // bool symmetric = true;
+
+    // int print_freq = 1;
+    int print_freq = 5;
+
     // bool double_smooth = false;
     bool double_smooth = true; // false
-    mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, time);
+    mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq, symmetric, time);
     // mg.wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
     
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -204,6 +202,7 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
 
   using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+  using GRID = ShellGrid<Assembler, UnstructuredProlongation<Basis,true>, MULTICOLOR_GS_FAST2_JUNCTION, NONE>;
 
   //   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
   double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties
@@ -218,6 +217,12 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   double fillin = 10.0;  // 10.0
   bool print = true;
   bsr_data.AMD_reordering();
+
+//   // TRY INSTEAD Mc REORDERING
+//   int num_colors, *_color_rowp, *nodal_num_comps, *node_geom_ind;
+//   GRID::get_nodal_geom_indices(assembler, nodal_num_comps, node_geom_ind);
+//   bsr_data.multicolor_junction_reordering_v2(node_geom_ind, num_colors, _color_rowp);
+
   bsr_data.compute_full_LU_pattern(fillin, print);
   assembler.moveBsrDataToDevice();
 
@@ -245,12 +250,19 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
 
+  CHECK_CUDA(cudaDeviceSynchronize());
+  auto start1 = std::chrono::high_resolution_clock::now();
+
   // solve the linear system
   CUSPARSE::direct_LU_solve(kmat, loads, soln);
 
+  CHECK_CUDA(cudaDeviceSynchronize());
+  auto end1 = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> solve_time = end1 - start1;
+
   size_t bytes_per_double = sizeof(double);
   double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-  printf("direct LU solve uses memory(MB) %.2e\n", mem_mb);
+  printf("direct LU solve uses memory(MB) %.2e in %.2e sec\n", mem_mb, solve_time.count());
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();

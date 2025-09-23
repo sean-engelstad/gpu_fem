@@ -1,12 +1,12 @@
 #pragma once
 
 template <class GRID>
-class ShellMultigrid {
-    /* shell elem geomtric multigrid solver class */
+class GeometricMultigridSolver {
+    /* a standard geomtric multigrid solver class */
     using T = double;
 
    public:
-    ShellMultigrid() = default;
+    GeometricMultigridSolver() = default;
 
     template <class Basis>
     void init_unstructured(int ELEM_MAX = 4) {
@@ -34,12 +34,12 @@ class ShellMultigrid {
         }
     }
 
-    void vcycle_solve(int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
+    void vcycle_solve(int starting_level, int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
                       T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false,
-                      bool time = false, int print_freq = 1) {
+                      int print_freq = 1, bool symmetric = false, bool time = false, bool debug = false) {
         // init defect nrm
         T init_defect_nrm = grids[0].getDefectNorm();
-        printf("V-cycles: ||init_defect|| = %.2e\n", init_defect_nrm);
+        if (print) printf("V-cycles: ||init_defect|| = %.2e\n", init_defect_nrm);
 
         T fin_defect_nrm = init_defect_nrm;
         int n_steps = n_vcycles;
@@ -53,7 +53,7 @@ class ShellMultigrid {
             // printf("V cycle step %d\n", i_vcycle);
 
             // go down each level smoothing and restricting until lowest level
-            for (int i_level = 0; i_level < n_levels; i_level++) {
+            for (int i_level = starting_level; i_level < n_levels; i_level++) {
                 int exp_smooth_factor = double_smooth ? 1 << i_level : 1;  // power of 2 more
                 // int exp_smooth_factor = 1.0;  // only smooth post-steps if this
 
@@ -64,8 +64,8 @@ class ShellMultigrid {
                     if (time) CHECK_CUDA(cudaDeviceSynchronize());
                     auto pre_smooth_time = std::chrono::high_resolution_clock::now();
 
-                    grids[i_level].smoothDefect(pre_smooth * exp_smooth_factor, print,
-                                                pre_smooth * exp_smooth_factor - 1, omega);
+                    grids[i_level].smoothDefect(pre_smooth * exp_smooth_factor, debug,
+                                                pre_smooth * exp_smooth_factor - 1, omega, symmetric);
 
                     if (time) {
                         CHECK_CUDA(cudaDeviceSynchronize());
@@ -89,7 +89,7 @@ class ShellMultigrid {
                     }
 
                 } else {
-                    if (print) printf("\t--level %d full-solve\n", i_level);
+                    if (debug) printf("\t--level %d full-solve\n", i_level);
                     // printf("pre-direct-solve\n");
                     if (time) CHECK_CUDA(cudaDeviceSynchronize());
                     auto pre_direct_time = std::chrono::high_resolution_clock::now();
@@ -108,7 +108,7 @@ class ShellMultigrid {
             }
 
             // now go back up the hierarchy
-            for (int i_level = n_levels - 2; i_level >= 0; i_level--) {
+            for (int i_level = n_levels - 2; i_level >= starting_level; i_level--) {
                 if (time) CHECK_CUDA(cudaDeviceSynchronize());
                 auto pre_prolong_time = std::chrono::high_resolution_clock::now();
 
@@ -132,9 +132,8 @@ class ShellMultigrid {
                 // printf("post-smooth on level %d\n", i_level);
                 int exp_smooth_factor =
                     double_smooth ? 1 << i_level : 1;  // power of 2 more smoothing at each level..
-                bool rev_colors = true;
-                grids[i_level].smoothDefect(post_smooth * exp_smooth_factor, print,
-                                            post_smooth * exp_smooth_factor - 1, omega, rev_colors);
+                grids[i_level].smoothDefect(post_smooth * exp_smooth_factor, debug,
+                                            post_smooth * exp_smooth_factor - 1, omega, symmetric);
 
                 if (time) {
                     CHECK_CUDA(cudaDeviceSynchronize());
@@ -147,9 +146,9 @@ class ShellMultigrid {
             }
 
             // compute fine grid defect of V-cycle
-            T defect_nrm = grids[0].getDefectNorm();
+            T defect_nrm = grids[starting_level].getDefectNorm();
             fin_defect_nrm = defect_nrm;
-            if (i_vcycle % print_freq == 0)
+            if (i_vcycle % print_freq == 0 && print)
                 printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
             if (time) CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -161,8 +160,8 @@ class ShellMultigrid {
             }
         }
 
-        printf("done with v-cycle solve, conv %.2e to %.2e ||defect|| in %d steps\n",
-               init_defect_nrm, fin_defect_nrm, n_steps);
+        if (print) printf("done with v-cycle solve from start level %d, conv %.2e to %.2e ||defect|| in %d steps\n",
+               starting_level, init_defect_nrm, fin_defect_nrm, n_steps);
     }
 
     void wcycle_solve(int i_level, int pre_smooth, int post_smooth, int n_wcycles = 100,

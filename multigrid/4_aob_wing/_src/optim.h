@@ -16,7 +16,7 @@
 #include "multigrid/fea.h"
 #include "multigrid/grid.h"
 #include "multigrid/interface.h"
-#include "multigrid/mg.h"
+#include "multigrid/solvers/gmg.h"
 
 // copied and modified from ../uCRM/_src/optim.h (uCRM optimization example)
 
@@ -33,9 +33,9 @@ class TacsGpuMultigridSolver {
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects
-    using Prolongation = UnstructuredProlongationFast<Basis>;
+    using Prolongation = UnstructuredProlongation<Basis, false>;
     using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2_JUNCTION, LINE_SEARCH>;
-    using MG = ShellMultigrid<GRID>;
+    using MG = GeometricMultigridSolver<GRID>;
     using StructSolver = TacsMGInterface<T, Assembler, MG>;
 
     // functions

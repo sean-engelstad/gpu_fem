@@ -71,8 +71,8 @@ class TacsMGInterface {
         mg.grids[0].zeroSolution();
         mg.grids[0].setDefect(this->loads);
         bool inner_print = false, inner_time = false;
-        mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
-                        double_smooth, inner_time, print_freq);
+        mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
+                        double_smooth, print_freq, inner_time);
         mg.grids[0].getSolution(this->soln);
         this->soln.copyValuesTo(this->vars);
 
@@ -133,8 +133,8 @@ class TacsMGInterface {
             mg.grids[0].zeroSolution();
             mg.grids[0].setDefect(this->dfdu);
             bool inner_print = false, inner_time = false;
-            mg.vcycle_solve(pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
-                            double_smooth, inner_time, print_freq);
+            mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
+                            double_smooth,  print_freq, inner_time);
             mg.grids[0].getSolution(this->psi);
             assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }

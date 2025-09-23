@@ -36,7 +36,7 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     if (can_print) {
         printf("direct LU cusparse solve\n");
     }
-    auto start = std::chrono::high_resolution_clock::now();
+    // auto start = std::chrono::high_resolution_clock::now();
 
     // copy important inputs for Bsr structure out of BsrMat
     // TODO : was trying to make some of these const but didn't accept it in
@@ -81,6 +81,10 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
                                          nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
                                          trans_U, policy_L, policy_U, dir);
 
+    // temp debug, time the triang solves only
+    // cudaDeviceSynchronize();
+    // auto start = std::chrono::high_resolution_clock::now();
+
     // triangular solve L*z = x
     const double alpha = 1.0;
     CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_L, mb, nnzb, &alpha, descr_L,
@@ -91,6 +95,15 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
     CHECK_CUSPARSE(cusparseDbsrsv2_solve(handle, dir, trans_U, mb, nnzb, &alpha, descr_U,
                                          d_vals_ILU0, d_rowp, d_cols, block_dim, info_U, d_temp,
                                          d_soln, policy_U, pBuffer));
+
+    // print timing data
+    // cudaDeviceSynchronize();
+    // auto stop = std::chrono::high_resolution_clock::now();
+    // auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+    // double dt = duration.count() / 1e6;
+    // if (can_print) {
+    //     printf("\tfinished in %.4e sec\n", dt);
+    // }
 
     // free resources
     cudaFree(pBuffer);
@@ -108,13 +121,5 @@ void direct_LU_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> 
         permute_soln<BsrMat<DeviceVec<T>>, DeviceVec<T>>(mat, soln);
     }
     
-
-    // print timing data
-    auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-    double dt = duration.count() / 1e6;
-    if (can_print) {
-        printf("\tfinished in %.4e sec\n", dt);
-    }
 }
 }  // namespace CUSPARSE

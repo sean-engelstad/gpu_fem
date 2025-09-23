@@ -12,7 +12,7 @@
 // local multigrid imports
 #include "multigrid/grid.h"
 #include "multigrid/fea.h"
-#include "multigrid/mg.h"
+#include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
 
@@ -148,7 +148,7 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     
     using Prolongation = StructuredProlongation<CYLINDER>;
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = ShellMultigrid<GRID>;
+    using MG = GeometricMultigridSolver<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
 
@@ -232,7 +232,7 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     // T omega = 0.85; // a bit faster than 1.0 (and actually smooths it)
     // bool double_smooth = false;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
-    mg.vcycle_solve(pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
+    mg.vcycle_solve(0, pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
     // 0 input means starts on outer level (fine grid W-cycle)
     // mg.wcycle_solve(0, pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega); // try stronger W-cycle solve here on cylinder
     printf("done with v-cycle solve\n");
