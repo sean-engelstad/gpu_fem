@@ -1,5 +1,8 @@
 #pragma once
 
+// original multilevel Vcycle solver
+// V1 I should say..
+
 template <class GRID>
 class GeometricMultigridSolver {
     /* a standard geomtric multigrid solver class */

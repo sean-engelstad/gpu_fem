@@ -1227,22 +1227,22 @@ class ShellGrid {
     void zeroSolution() { cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T)); }
     void zeroDefect() { cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T)); }
 
-    void setDefect(DeviceVec<T> new_defect) {
+    void setDefect(DeviceVec<T> new_defect, bool perm = true) {
         // set the defect on the finest grid
         new_defect.copyValuesTo(d_defect);
-        d_defect.permuteData(block_dim, d_iperm);  // unperm to permuted
+        if (perm) d_defect.permuteData(block_dim, d_iperm);  // unperm to permuted
     }
 
-    void getDefect(DeviceVec<T> defect_out) {
+    void getDefect(DeviceVec<T> defect_out, bool perm = true) {
         // copy solution to another device vec outside this class
         d_defect.copyValuesTo(defect_out);
-        defect_out.permuteData(block_dim, d_perm);  // permuted to unperm order
+        if (perm) defect_out.permuteData(block_dim, d_perm);  // permuted to unperm order
     }
 
-    void getSolution(DeviceVec<T> soln_out) {
+    void getSolution(DeviceVec<T> soln_out, bool perm = true) {
         // copy solution to another device vec outside this class
         d_soln.copyValuesTo(soln_out);
-        soln_out.permuteData(block_dim, d_perm);  // permuted to unperm order
+        if (perm) soln_out.permuteData(block_dim, d_perm);  // permuted to unperm order
     }
 
     T getResidNorm() {
