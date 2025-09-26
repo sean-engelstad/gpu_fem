@@ -12,7 +12,7 @@
 // local multigrid imports
 #include "multigrid/grid.h"
 #include "multigrid/fea.h"
-#include "multigrid/mg.h"
+#include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
 
@@ -63,7 +63,7 @@ void solve_linear_pcg_kcycle_gmg(MPI_Comm &comm, int level, double SR, int nsmoo
     using Prolongation = UnstructuredProlongation<Basis, is_bsr>; 
 
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = ShellMultigrid<GRID>;
+    using MG = GeometricMultigridSolver<GRID>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
     auto mg = MG();
@@ -221,7 +221,8 @@ void solve_linear_pcg_kcycle_gmg(MPI_Comm &comm, int level, double SR, int nsmoo
             int print_freq = 1;
             // bool symmetric = true;
             bool symmetric = false; // this is tsronger smoother and doesn't really help PCG? some reason
-            mg.vcycle_solve(0, pre_smooth, post_smooth, ncycles, inner_print, atol, rtol, omega, double_smooth, print_freq, symmetric);
+            mg.vcycle_solve(0, pre_smooth, post_smooth, ncycles, inner_print, atol, rtol, omega, double_smooth, print_freq, symmetric); // V-cycle with precond actually faster than F-cycle..
+            // mg.fcycle_solve(0, pre_smooth, post_smooth, ncycles, inner_print, atol, rtol, omega, double_smooth, print_freq, symmetric);
 
             // copy out of fine grid temp vec into z the prolong solution
             cudaMemcpy(d_z, mg.grids[0].d_soln.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);

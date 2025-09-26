@@ -146,7 +146,7 @@ void solve_linear_pcg_kcycle_gmg(MPI_Comm &comm, int level, double SR, int nsmoo
         nvcyc_inner = 1, nvcyc_outer = ncycles, nkcyc_inner = 2, nkcyc_outer = 200;
     } else {
         // nvcyc_inner = 1, nvcyc_outer = ncycles, nkcyc_inner = 2, nkcyc_outer = 200;
-        int nvcyc_inner = ncycles, nvcyc_outer = ncycles, nkcyc_inner = ncycles, nkcyc_outer = 200; // cascades some (exponential inc num direct solves by levels) - high smoothing?
+        nvcyc_inner = ncycles, nvcyc_outer = ncycles, nkcyc_inner = ncycles, nkcyc_outer = 200; // cascades some (exponential inc num direct solves by levels) - high smoothing?
         // TODO : exploring other settings..
     }
     

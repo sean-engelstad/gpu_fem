@@ -32,13 +32,14 @@ class TacsMGInterface {
         }
     }
 
-    void set_mg_solver_settings(T rtol_, T atol_, int n_cycles_, int pre_smooth_, int post_smooth_,
-                                int print_freq_ = 1, bool double_smooth_ = true, T omega_ = 1.0) {
-        rtol = rtol_, atol = atol_, omega = omega_;
-        n_cycles = n_cycles_, pre_smooth = pre_smooth_, post_smooth = post_smooth_,
-        print_freq = print_freq_;
-        double_smooth = double_smooth_;
-    }
+    // TODO : have this method write into the inner MG solver..
+    // void set_mg_solver_settings(T rtol_, T atol_, int n_cycles_, int pre_smooth_, int post_smooth_,
+    //                             int print_freq_ = 1, bool double_smooth_ = true, T omega_ = 1.0) {
+    //     rtol = rtol_, atol = atol_, omega = omega_;
+    //     n_cycles = n_cycles_, pre_smooth = pre_smooth_, post_smooth = post_smooth_,
+    //     print_freq = print_freq_;
+    //     double_smooth = double_smooth_;
+    // }
 
     int get_num_nodes() { return assembler.get_num_nodes(); }
     int get_num_dvs() { return assembler.get_num_dvs(); }
@@ -70,9 +71,10 @@ class TacsMGInterface {
         // make this more general later..
         mg.grids[0].zeroSolution();
         mg.grids[0].setDefect(this->loads);
-        bool inner_print = false, inner_time = false;
-        mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
-                        double_smooth, print_freq, inner_time);
+        // bool inner_print = false, inner_time = false;
+        mg.solve();
+        // mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
+        //                 double_smooth, print_freq, inner_time);
         mg.grids[0].getSolution(this->soln);
         this->soln.copyValuesTo(this->vars);
 
@@ -132,9 +134,10 @@ class TacsMGInterface {
             // make this more general later.. solves adjoint problem here
             mg.grids[0].zeroSolution();
             mg.grids[0].setDefect(this->dfdu);
-            bool inner_print = false, inner_time = false;
-            mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
-                            double_smooth,  print_freq, inner_time);
+            // bool inner_print = false, inner_time = false;
+            mg.solve();
+            // mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
+            //                 double_smooth,  print_freq, inner_time);
             mg.grids[0].getSolution(this->psi);
             assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }

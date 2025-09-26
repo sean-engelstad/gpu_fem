@@ -24,6 +24,8 @@ public:
 
         for (int icycle = 0; icycle < options.ncycles; icycle++) {
 
+            // printf("icycle %d / %d\n", icycle, options.ncycles);
+
             // presmooth and restrict
             fine_grid->smoothDefect(options.nsmooth, options.debug, options.nsmooth-1, options.omega, options.symmetric);
             coarse_grid->restrict_defect(fine_grid->nelems, fine_grid->d_iperm, fine_grid->d_defect);

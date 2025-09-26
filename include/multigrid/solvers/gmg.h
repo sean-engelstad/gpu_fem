@@ -155,7 +155,7 @@ class GeometricMultigridSolver {
                 printf("v-cycle step %d, ||defect|| = %.3e\n", i_vcycle, defect_nrm);
             if (time) CHECK_CUDA(cudaDeviceSynchronize());
 
-            if (defect_nrm < atol + rtol * init_defect_nrm) {
+            if (defect_nrm < atol + rtol * init_defect_nrm && print) {
                 printf("V-cycle GMG converged in %d steps to defect nrm %.2e from init_nrm %.2e\n",
                        i_vcycle + 1, defect_nrm, init_defect_nrm);
                 n_steps = i_vcycle + 1;
@@ -164,6 +164,72 @@ class GeometricMultigridSolver {
         }
 
         if (print) printf("done with v-cycle solve from start level %d, conv %.2e to %.2e ||defect|| in %d steps\n",
+               starting_level, init_defect_nrm, fin_defect_nrm, n_steps);
+    }
+
+    void fcycle_solve(int starting_level, int pre_smooth, int post_smooth, int n_fcycles = 100, bool print = false,
+                      T atol = 1e-6, T rtol = 1e-6, T omega = 1.0, bool double_smooth = false,
+                      int print_freq = 1, bool symmetric = false, bool time = false, bool debug = false) {
+        // init defect nrm
+        T init_defect_nrm = grids[0].getDefectNorm();
+        if (print) printf("F-cycles: ||init_defect|| = %.2e\n", init_defect_nrm);
+
+        T fin_defect_nrm = init_defect_nrm;
+        int n_steps = n_fcycles;
+
+        // printf("V-cycle : print_freq %d\n", print_freq);
+
+        int n_levels = getNumLevels();
+        // if (print) printf("n_levels %d\n", n_levels);
+        int i_level = starting_level;
+
+        for (int i_cycle = 0; i_cycle < n_fcycles; i_cycle++) {
+
+            // pre-smooth and restrict
+            if (i_level < n_levels - 1) {
+                grids[i_level].smoothDefect(pre_smooth, debug, pre_smooth - 1, omega, symmetric);
+
+                // restrict defect
+                grids[i_level + 1].restrict_defect(
+                    grids[i_level].nelems, grids[i_level].d_iperm, grids[i_level].d_defect);
+            }
+
+            // call inner F-cycle 1 time
+            if (i_level < n_levels - 1) {
+                int pre_smooth_l = double_smooth ? pre_smooth * 2 : pre_smooth;
+                int post_smooth_l = double_smooth ? post_smooth * 2 : post_smooth;
+
+                fcycle_solve(i_level + 1, pre_smooth_l, post_smooth_l, 1, false, atol, rtol, omega, double_smooth);
+            } else {
+                grids[i_level].direct_solve(false);
+            }
+
+            // post-smooth and restrict
+            if (i_level < n_levels - 1) {
+                grids[i_level].prolongate(grids[i_level + 1].d_iperm, grids[i_level + 1].d_soln);
+
+                grids[i_level].smoothDefect(post_smooth, debug, post_smooth, omega, symmetric);
+            }
+
+            // then call V-cycle at this level (one iteration)
+            vcycle_solve(i_level, pre_smooth, post_smooth, 1, false, atol, rtol, omega, double_smooth);
+
+            // compute fine grid defect of V-cycle
+            T defect_nrm = grids[i_level].getDefectNorm();
+            fin_defect_nrm = defect_nrm;
+            if (i_cycle % print_freq == 0 && print)
+                printf("F-cycle step %d, ||defect|| = %.3e\n", i_cycle, defect_nrm);
+            if (time) CHECK_CUDA(cudaDeviceSynchronize());
+
+            if (defect_nrm < atol + rtol * init_defect_nrm && print) {
+                printf("F-cycle GMG converged in %d steps to defect nrm %.2e from init_nrm %.2e\n",
+                       i_cycle + 1, defect_nrm, init_defect_nrm);
+                n_steps = i_cycle + 1;
+                break;
+            }
+        }
+
+        if (print) printf("done with F-cycle solve from start level %d, conv %.2e to %.2e ||defect|| in %d steps\n",
                starting_level, init_defect_nrm, fin_defect_nrm, n_steps);
     }
 

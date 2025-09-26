@@ -2,7 +2,7 @@
 import numpy as np
 from src import EBAssembler, plot_hermite_cubic
 from src import TSAssembler
-from src import HybridAssembler
+from src import HybridSchurAssembler
 
 # verify the hybrid assembler solution against exact Timoshenko beam theory solution for constant distributed load
 
@@ -35,20 +35,13 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
     # nxe = num_elements = int(2e3)
     # nxe = 3
     # nxe = 5
-    # nxe = 5
-
-    # nxe = 2
-    nxe = 4
-    # nxe = 10
-    # nxe = 100
-
     # nxe = num_elements = 100
-    # nxe = num_elements = int(1e3)
+    nxe = num_elements = int(1e3)
     # nxe = num_elements = int(4e3)
 
     # num DVs
     # nxh = 100 if nxe > 5 else nxe 
-    nxh = nxe
+    nxh = 10
     hvec = np.array([thick] * nxh)
 
     # plot_hermite_cubic()
@@ -56,12 +49,12 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
     # 3) hybrid beam analysis
     # ------------------------
 
-    hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
+    hyb_beam = HybridSchurAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
     hyb_beam.solve_forward(hvec)
     # hyb_beam.plot_disp()
 
     # numerical solution for center deflection
-    w_vec = hyb_beam.u[0::3]
+    w_vec = hyb_beam.u[0::2]
     nnodes = w_vec.shape[0]
     center = (0 + nnodes - 1) // 2
     pred_disp = w_vec[center]
@@ -121,7 +114,7 @@ plt.xscale('log'); plt.yscale('log')
 plt.xlabel("slenderness")
 plt.ylabel("Beam center deflection")
 plt.margins(x=0.05, y=0.05)
-plt.savefig("hybrid-beam-SR.png", dpi=400)
+plt.savefig("hybrid-schur-beam-SR.png", dpi=400)
 plt.close('all')
 
 # plot cond #s
@@ -134,49 +127,49 @@ plt.xscale('log'); plt.yscale('log')
 plt.xlabel("slenderness")
 plt.ylabel("Kmat Cond #")
 plt.margins(x=0.05, y=0.05)
-plt.savefig("hybrid-beam-cond.png", dpi=400)
+plt.savefig("hybrid-schur-beam-cond.png", dpi=400)
 plt.close('all')
 
 # plot disps in slender case
 # ---------------------------
 
-SR = 1.0
-thick = 1.0 / SR
-qmag = 1e4 * thick**3
-hvec[:] = thick
+# SR = 1.0
+# thick = 1.0 / SR
+# qmag = 1e4 * thick**3
+# hvec[:] = thick
 
-hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
-hyb_beam.solve_forward(hvec)
-disp = hyb_beam.u
-w = disp[0::3]
-w_x = disp[1::3] / hyb_beam.dx / 0.5
-th_s = disp[2::3]
+# hyb_beam = HybridSchurAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
+# hyb_beam.solve_forward(hvec)
+# disp = hyb_beam.u
+# w = disp[0::2]
+# w_x = disp[1::2] / hyb_beam.dx / 0.5
+# # th_s = disp[2::3]
 
-th = w_x - th_s
-xvec = np.linspace(0.0, L, w.shape[0])
-fig, ax = plt.subplots(1, 2, figsize=(10, 7))
-ax[0].plot(xvec, w_x, label='dw/dx')
-ax[0].plot(xvec, -th_s, label='-th_s')
-ax[0].plot(xvec, th, label='theta')
-ax[0].legend()
-ax[0].set_title("Hybrid TS")
+# # th = w_x - th_s
+# xvec = np.linspace(0.0, L, w.shape[0])
+# fig, ax = plt.subplots(1, 2, figsize=(10, 7))
+# ax[0].plot(xvec, w_x, label='dw/dx')
+# # ax[0].plot(xvec, -th_s, label='-th_s')
+# # ax[0].plot(xvec, th, label='theta')
+# ax[0].legend()
+# ax[0].set_title("Hybrid TS")
 
-# exact
-xi = xvec / L
-I = b * thick**3 / 12.0
-A = b * thick
-w_exact = qmag * L**4 / 24.0 / E / I * (xi - 2 * xi**3 + xi**4) + qmag * L**2 / 24.0 / G / A / Ks * (xi - xi**2)
-wx_exact = qmag * L**3 / 24.0 / E / I * (1.0 - 6 * xi**2 + 4.0 * xi**3) + qmag * L / 24.0 / G / A / Ks * (1.0 - 2.0 * xi)
-th_exact = qmag * L**3 / 24.0 / E / I * (1 - 6 * xi**2 + 4.0 * xi**3)
-ths_exact = wx_exact - th_exact
-ax[1].plot(xvec, wx_exact, label='dw/dx')
-ax[1].plot(xvec, -ths_exact, label='-th_s')
-ax[1].plot(xvec, th_exact, label='theta')
-ax[1].legend()
-ax[1].set_title("Exact TS")
+# # exact
+# xi = xvec / L
+# I = b * thick**3 / 12.0
+# A = b * thick
+# w_exact = qmag * L**4 / 24.0 / E / I * (xi - 2 * xi**3 + xi**4) + qmag * L**2 / 24.0 / G / A / Ks * (xi - xi**2)
+# wx_exact = qmag * L**3 / 24.0 / E / I * (1.0 - 6 * xi**2 + 4.0 * xi**3) + qmag * L / 24.0 / G / A / Ks * (1.0 - 2.0 * xi)
+# th_exact = qmag * L**3 / 24.0 / E / I * (1 - 6 * xi**2 + 4.0 * xi**3)
+# ths_exact = wx_exact - th_exact
+# ax[1].plot(xvec, wx_exact, label='dw/dx')
+# ax[1].plot(xvec, -ths_exact, label='-th_s')
+# ax[1].plot(xvec, th_exact, label='theta')
+# ax[1].legend()
+# ax[1].set_title("Exact TS")
 
-# plt.show()
-plt.savefig("hybrid-beam-defl.png", dpi=400)
+# # plt.show()
+# plt.savefig("hybrid-schur-beam-defl.png", dpi=400)
 
 # ---------------------
 # old debug

@@ -12,9 +12,16 @@
 // local multigrid imports
 #include "multigrid/grid.h"
 #include "multigrid/fea.h"
-#include "multigrid/mg.h"
+// #include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
+
+// new multigrid imports for K-cycles, etc.
+#include "multigrid/solvers/solve_utils.h"
+#include "multigrid/solvers/direct/cusp_directLU.h"
+#include "multigrid/solvers/krylov/bsr_pcg.h"
+#include "multigrid/solvers/multilevel/kcycle.h"
+#include "multigrid/solvers/multilevel/twolevel.h"
 
 // optimization with GMG imports
 #include "multigrid/interface.h"
@@ -46,10 +53,16 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     const SCALER scaler  = LINE_SEARCH;
     using Prolongation = StructuredProlongation<PLATE>;
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = ShellMultigrid<GRID>;
-    using MGInterface = TacsMGInterface<T, Assembler, MG>; // for optimization
+    // using MG = ShellMultigrid<GRID>;
+
+    using DirectSolve = CusparseMGDirectLU<GRID>;
+    using KrylovSolve = PCGSolver<T, GRID>;
+    using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
+    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using MGInterface = TacsMGInterface<T, Assembler, KMG>;
+
     
-    auto mg = MG();
+    auto mg = KMG();
 
     // get nxe_min for not exactly power of 2 case
     int pre_nxe_min = nxe > 32 ? 32 : 4;
@@ -79,12 +92,19 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
         mg.grids.push_back(grid); // add new grid
     }
 
-    // now make the solver interface
     bool print = true;
-    auto interface = MGInterface(mg, print);
+    // bool double_smooth = true;
+    int nsmooth = 1, ninnercyc = 2, print_freq = 3;
+    int n_krylov = 100;
     T atol = 1e-6, rtol = 1e-6;
-    int n_cycles = 200, pre_smooth = 1, post_smooth = 1, print_freq = 3;
-    interface.set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq);
+    T omega = 0.85;
+    mg.init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);
+
+    // now make the solver interface
+    auto interface = MGInterface(mg, print);
+    // T atol = 1e-6, rtol = 1e-6;
+    // int n_cycles = 200, pre_smooth = 1, post_smooth = 1, print_freq = 3;
+    // interface.set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq);
 
     // get struct loads on finest grid
     auto fine_grid = mg.grids[0];
@@ -100,25 +120,27 @@ void multigrid_plate_solve(int nxe, double SR, int n_vcycles) {
     interface.solve(d_loads);
     interface.writeSoln("out/plate_mg1.vtk");
 
+    // define function objects
+    auto mass = Mass<T, DeviceVec>();
+    T rhoKS = 100.0, safety_factor = 1.5;
+    auto ksfail = KSFailure<T, DeviceVec>(rhoKS, safety_factor);
+
     // compute the function values
     T mass_val = interface.evalFunction(mass);
     T ksfail_val = interface.evalFunction(ksfail);
     printf("mass %.2e, ksfail %.2e\n", mass_val, ksfail_val);
 
     // try solving an adjoint problem
-    auto mass = Mass<T, DeviceVec>();
-    T rhoKS = 100.0, safety_factor = 1.5;
-    auto ksfail = KSFailure<T, DeviceVec>(rhoKS, safety_factor);
     interface.evalFunction(ksfail);
     interface.solve_adjoint(ksfail);
     interface.writeAdjointSolution("out/plate_mg_adj1.vtk");
 
     // compute the design gradient
-    T *dptr = ksfail->dv_sens.getPtr();
-    T *h_dvgrad = new T[10];
-    cudaMemcpy(h_dvgrad, dptr, 10 * sizeof(T), cudaMemcpyDeviceToHost);
-    printf("h_dvgrad: ");
-    printVec<T>(10, h_dvgrad);
+    // T *dptr = ksfail->dv_sens.getPtr();
+    // T *h_dvgrad = new T[10];
+    // cudaMemcpy(h_dvgrad, dptr, 10 * sizeof(T), cudaMemcpyDeviceToHost);
+    // printf("h_dvgrad: ");
+    // printVec<T>(10, h_dvgrad);
 
     // try setting design variables and solving again
     d_dvs.setFullVecToConstValue(thick * 2.0);

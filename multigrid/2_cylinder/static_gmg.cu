@@ -16,6 +16,13 @@
 #include <string>
 #include <chrono>
 
+// new multigrid imports for K-cycles, etc.
+#include "multigrid/solvers/solve_utils.h"
+#include "multigrid/solvers/direct/cusp_directLU.h"
+#include "multigrid/solvers/krylov/bsr_pcg.h"
+#include "multigrid/solvers/multilevel/kcycle.h"
+#include "multigrid/solvers/multilevel/twolevel.h"
+
 /* command line args:
     [direct/mg] [--nxe int] [--SR float] [--nvcyc int]
     * nxe must be power of 2
@@ -122,7 +129,7 @@ void direct_solve(int nxe, double SR) {
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/cylinder.vtk");
 }
 
-void multigrid_solve(int nxe, double SR, int n_vcycles) {
+void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -150,14 +157,29 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = GeometricMultigridSolver<GRID>;
 
+    // for K-cycles
+    using DirectSolve = CusparseMGDirectLU<GRID>;
+    using KrylovSolve = PCGSolver<T, GRID>;
+    using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
+    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+
     auto start0 = std::chrono::high_resolution_clock::now();
 
-    auto mg = MG();
+    MG *mg;
+    KMG *kmg;
 
-    // int nxe_min = 4;
-    // int nxe_min = nxe / 2; // two level
-    int nxe_min = 32; // maybe really coarse cylinders have such horrible discretization (like diamond)
-    // that it affects the ovr conv, so make min size much larger..
+    bool is_kcycle = cycle_type == "K";
+    if (is_kcycle) {
+        kmg = new KMG();
+    } else {
+        mg = new MG();
+    }
+
+    int pre_nxe_min = nxe > 32 ? 32 : 4;
+    int nxe_min = pre_nxe_min;
+    for (int c_nxe = nxe; c_nxe >= pre_nxe_min; c_nxe /= 2) {
+        nxe_min = c_nxe;
+    }
 
     // make each grid
     for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
@@ -184,7 +206,12 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
             reorder = true;
         }
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
-        mg.grids.push_back(grid); // add new grid
+
+        if (is_kcycle) {
+            kmg->grids.push_back(grid);
+        } else {
+            mg->grids.push_back(grid);
+        }
     }
 
     // // bool debug = false;
@@ -216,13 +243,9 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     std::chrono::duration<double> startup_time = end0 - start0;
 
     auto start1 = std::chrono::high_resolution_clock::now();
-    printf("starting v cycle solve\n");
-    // int pre_smooth = 1, post_smooth = 1;
-    // int pre_smooth = 1, post_smooth = 2;
-    int pre_smooth = 2, post_smooth = 2; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
-    // int pre_smooth = 4, post_smooth = 4;
-    // bool print = true;
-    bool print = false;
+    int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
+    bool print = true;
+    // bool print = false;
     T atol = 1e-6, rtol = 1e-6;
 
     T omega = 1.5;
@@ -232,22 +255,44 @@ void multigrid_solve(int nxe, double SR, int n_vcycles) {
     // T omega = 0.85; // a bit faster than 1.0 (and actually smooths it)
     // bool double_smooth = false;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
-    mg.vcycle_solve(0, pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega, double_smooth);
-    // 0 input means starts on outer level (fine grid W-cycle)
-    // mg.wcycle_solve(0, pre_smooth, post_smooth, n_vcycles, print, atol, rtol, omega); // try stronger W-cycle solve here on cylinder
-    printf("done with v-cycle solve\n");
+
+    int n_cycles = 500; // max # cycles
+    int print_freq = 3;
+
+    if (is_kcycle) {
+        int n_krylov = 500;
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);    
+    }
+
+    // fastest is K-cycle usually
+    if (cycle_type == "V") {
+        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq); //(good option)
+    } else if (cycle_type == "W") {
+        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
+    } else if (cycle_type == "F") {
+        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq); // also decent
+    } else if (cycle_type == "K") {
+        kmg->solve(); // best
+    }
 
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
-    int ndof = mg.grids[0].N;
+    int ndof = cycle_type == "K" ? kmg->grids[0].N : mg->grids[0].N;
     double total = startup_time.count() + solve_time.count();
-    double mem_MB = mg.get_memory_usage_mb();
+    double mem_MB = is_kcycle ? kmg->get_memory_usage_mb() : mg->get_memory_usage_mb();
     printf("cylinder GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
 
-    // print some of the data of host residual
-    int *d_perm = mg.grids[0].d_perm;
-    auto h_soln = mg.grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln, "out/cylinder_mg.vtk");
+    if (is_kcycle) {
+        // print some of the data of host residual
+        int *d_perm = kmg->grids[0].d_perm;
+        auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+        printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/cylinder_mg.vtk");
+    } else {
+        // print some of the data of host residual
+        int *d_perm = mg->grids[0].d_perm;
+        auto h_soln = mg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+        printToVTK<Assembler,HostVec<T>>(mg->grids[0].assembler, h_soln, "out/cylinder_mg.vtk");
+    }
 }
 
 int main(int argc, char **argv) {
@@ -255,7 +300,10 @@ int main(int argc, char **argv) {
     bool is_multigrid = false;
     int nxe = 256; // default value
     double SR = 50.0; // default
-    int n_vcycles = 50;
+
+    int nsmooth = 2; // typically faster right now
+    int ninnercyc = 2; // inner V-cycles to precond K-cycle
+    std::string cycle_type = "K"; // "V", "F", "W", "K"
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -280,23 +328,37 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --SR\n";
                 return 1;
             }
-        } else if (strcmp(arg, "--nvcyc") == 0) {
+        } else if (strcmp(arg, "--cycle") == 0) {
             if (i + 1 < argc) {
-                n_vcycles = std::atoi(argv[++i]);
+                cycle_type = argv[++i];
             } else {
-                std::cerr << "Missing value for --nvcyc\n";
+                std::cerr << "Missing value for --level\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--nsmooth") == 0) {
+            if (i + 1 < argc) {
+                nsmooth = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nsmooth\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--ninnercyc") == 0) {
+            if (i + 1 < argc) {
+                ninnercyc = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nsmooth\n";
                 return 1;
             }
         } else {
             std::cerr << "Unknown argument: " << argv[i] << std::endl;
-            std::cerr << "Usage: " << argv[0] << " [direct/mg] [--nxe value] [--SR value]" << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [direct/mg] [--nxe value] [--SR value] [--cycle char] [--nsmooth int] [--ninnercyc int]" << std::endl;
             return 1;
         }
     }
 
     // done reading arts, now run stuff
     if (is_multigrid) {
-        multigrid_solve(nxe, SR, n_vcycles);
+        multigrid_solve(nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else {
         direct_solve(nxe, SR);
     }

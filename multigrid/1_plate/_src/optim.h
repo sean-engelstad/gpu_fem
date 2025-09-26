@@ -14,8 +14,17 @@
 // multigrid imports
 #include "multigrid/fea.h"
 #include "multigrid/grid.h"
+// #include "multigrid/solvers/gmg.h"
+
+// new multigrid imports for K-cycles, etc.
+#include "multigrid/solvers/solve_utils.h"
+#include "multigrid/solvers/direct/cusp_directLU.h"
+#include "multigrid/solvers/krylov/bsr_pcg.h"
+#include "multigrid/solvers/multilevel/kcycle.h"
+#include "multigrid/solvers/multilevel/twolevel.h"
+
 #include "multigrid/interface.h"
-#include "multigrid/solvers/gmg.h"
+
 
 // copied and modified from ../uCRM/_src/optim.h (uCRM optimization example)
 
@@ -34,8 +43,14 @@ class TacsGpuMultigridSolver {
     // multigrid objects
     using Prolongation = StructuredProlongation<PLATE>;
     using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2, LINE_SEARCH>;
-    using MG = GeometricMultigridSolver<GRID>;
-    using StructSolver = TacsMGInterface<T, Assembler, MG>;
+    // using MG = GeometricMultigridSolver<GRID>; // old V-cycle solver
+
+    // for K-cycles
+    using DirectSolve = CusparseMGDirectLU<GRID>;
+    using KrylovSolve = PCGSolver<T, GRID>;
+    using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
+    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using StructSolver = TacsMGInterface<T, Assembler, KMG>;
 
     // functions
     using DMass = Mass<T, DeviceVec>;
@@ -50,7 +65,7 @@ class TacsGpuMultigridSolver {
         assert(nye % ny_comp == 0);
 
         // start building multigrid object
-        auto mg = MG();
+        mg = new KMG();
 
         // get nxe_min for not exactly power of 2 case
         int pre_pre_nxe_min = max(32, nx_comp);
@@ -76,25 +91,33 @@ class TacsGpuMultigridSolver {
             bool full_LU = c_nxe == nxe_min;  // smallest grid is direct solve
             bool reorder = true;              // color reorder
             auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
-            mg.grids.push_back(grid);  // add new grid
+            mg->grids.push_back(grid);  // add new grid
         }
 
-        // now make the solver interface
+        // int n_cycles = 200, pre_smooth = 1, post_smooth = 1, print_freq = 3;
         bool print = true;
-        solver = std::make_unique<StructSolver>(mg, print);
+        // bool double_smooth = true;
+        int nsmooth = 1, ninnercyc = 2, print_freq = 3;
+        int n_krylov = 100;
         T atol = 1e-6, rtol = 1e-6;
-        int n_cycles = 200, pre_smooth = 1, post_smooth = 1, print_freq = 3;
-        bool double_smooth = true;
-        solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq,
-                                       double_smooth, omega);
+
+        mg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);
+        // mg.solve(); // try solve here..
+
+        // now make the solver interface
+        // solver = std::make_unique<StructSolver>(mg, print);
+        solver = new StructSolver(*mg, print);
+        
+        // solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq,
+                                    //    double_smooth, omega);
 
         // get struct loads on finest grid
-        auto fine_grid = mg.grids[0];
+        auto fine_grid = mg->grids[0];
         d_loads = DeviceVec<T>(fine_grid.N);
-        mg.grids[0].getDefect(d_loads);
+        mg->grids[0].getDefect(d_loads);
 
         // initialize any vecs needed at this level
-        auto &assembler = mg.grids[0].assembler;
+        auto &assembler = mg->grids[0].assembler;
         nvars = assembler.get_num_vars();
         int nn = assembler.get_num_nodes();
         soln = DeviceVec<T>(nvars);
@@ -195,9 +218,12 @@ class TacsGpuMultigridSolver {
 
    private:
     // std::unique_ptr<Assembler> assembler;
-    std::unique_ptr<StructSolver> solver;
+    // std::unique_ptr<StructSolver> solver;
+    StructSolver *solver;
     std::unique_ptr<DMass> mass;
     std::unique_ptr<DKSFail> ksfail;
+
+    KMG *mg; // multigrid object
 
     int ndvs = 0, nvars = 0;
     DeviceVec<T> d_loads, d_dvs;

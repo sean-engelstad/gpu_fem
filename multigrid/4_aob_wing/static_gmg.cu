@@ -16,6 +16,13 @@
 #include <string>
 #include <chrono>
 
+// new multigrid imports for K-cycles, etc.
+#include "multigrid/solvers/solve_utils.h"
+#include "multigrid/solvers/direct/cusp_directLU.h"
+#include "multigrid/solvers/krylov/bsr_pcg.h"
+#include "multigrid/solvers/multilevel/kcycle.h"
+#include "multigrid/solvers/multilevel/twolevel.h"
+
 /* argparse options:
 [mg/direct/debug] [--level int]
 */
@@ -37,7 +44,7 @@ std::string time_string(int itime) {
     }
 }
 
-void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
+void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
     // geometric multigrid method here..
     // need to make a number of grids..
     // level gives the finest level here..
@@ -71,8 +78,24 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = GeometricMultigridSolver<GRID>;
 
+    // for K-cycles
+    using DirectSolve = CusparseMGDirectLU<GRID>;
+    using KrylovSolve = PCGSolver<T, GRID>;
+    using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
+    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+
     auto start0 = std::chrono::high_resolution_clock::now();
-    auto mg = MG();
+
+    // hopefully this doesn't construct the object?
+    MG *mg;
+    KMG *kmg;
+
+    bool is_kcycle = cycle_type == "K";
+    if (is_kcycle) {
+        kmg = new KMG();
+    } else {
+        mg = new MG();
+    }
 
     // make each wing multigrid object.. (highest mesh level is finest, this is flipped from MG object's convention)
     for (int i = level; i >= 0; i--) {
@@ -116,14 +139,23 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
         }
         // printf("reorder %d\n", reorder);
         auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
-        mg.grids.push_back(grid); // add new grid
+        if (is_kcycle) {
+            kmg->grids.push_back(grid);
+        } else {
+            mg->grids.push_back(grid);
+        }
     }
 
     if (!Prolongation::structured) {
         printf("begin unstructured map\n");
         // int ELEM_MAX = 4; // for plate, cylinder
         int ELEM_MAX = 10; // for wingbox esp near rib, spar, OML junctions
-        mg.template init_unstructured<Basis>(ELEM_MAX);
+        if (is_kcycle) {
+            kmg->template init_unstructured<Basis>(ELEM_MAX);
+        } else {
+            mg->template init_unstructured<Basis>(ELEM_MAX);
+        }
+        
         printf("done with init unstructured\n");
         // return; // TEMP DEBUG
     }
@@ -131,7 +163,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
-    T init_resid_nrm = mg.grids[0].getResidNorm();
+    T init_resid_nrm = is_kcycle ? kmg->grids[0].getResidNorm() : mg->grids[0].getResidNorm();
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
@@ -159,26 +191,52 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth) {
     int print_freq = 5;
 
     // bool double_smooth = false;
-    bool double_smooth = true; // false
-    mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq, symmetric, time);
-    // mg.wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
+    bool double_smooth = true; // true tends to be slightly faster sometimes
+
+    if (is_kcycle) {
+        int n_krylov = 500;
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);    
+    }
+
+    // fastest is K-cycle usually
+    if (cycle_type == "V") {
+        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq, symmetric, time); //(good option)
+    } else if (cycle_type == "W") {
+        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
+    } else if (cycle_type == "F") {
+        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq, symmetric, time); // also decent
+    } else if (cycle_type == "K") {
+        kmg->solve();
+    }
     
+
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
-    int ndof = mg.grids[0].N;
+    int ndof = cycle_type == "K" ? kmg->grids[0].N : mg->grids[0].N;
     double total = startup_time.count() + solve_time.count();
-    double mem_MB = mg.get_memory_usage_mb();
+    double mem_MB = is_kcycle ? kmg->get_memory_usage_mb() : mg->get_memory_usage_mb();
     printf("wingbox GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
 
-    // double check with true resid nrm
-    T resid_nrm = mg.grids[0].getResidNorm();
-    printf("init resid_nrm = %.2e => final resid_nrm = %.2e\n", init_resid_nrm, resid_nrm);
+    if (is_kcycle) {
+        // double check with true resid nrm
+        T resid_nrm = kmg->grids[0].getResidNorm();
+        printf("init resid_nrm = %.2e => final resid_nrm = %.2e\n", init_resid_nrm, resid_nrm);
 
-    // print some of the data of host residual
-    int *d_perm = mg.grids[0].d_perm;
-    auto h_soln = mg.grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln, "out/aob_wing_mg.vtk");
+        // print some of the data of host residual
+        int *d_perm = kmg->grids[0].d_perm;
+        auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+        printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/aob_wing_mg.vtk");
+    } else {
+        // double check with true resid nrm
+        T resid_nrm = mg->grids[0].getResidNorm();
+        printf("init resid_nrm = %.2e => final resid_nrm = %.2e\n", init_resid_nrm, resid_nrm);
+
+        // print some of the data of host residual
+        int *d_perm = mg->grids[0].d_perm;
+        auto h_soln = mg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+        printToVTK<Assembler,HostVec<T>>(mg->grids[0].assembler, h_soln, "out/aob_wing_mg.vtk");
+    }
 }
 
 void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
@@ -285,12 +343,14 @@ int main(int argc, char **argv) {
     MPI_Comm comm = MPI_COMM_WORLD;
 
     // DEFAULTS
-    int level = 0; // level mesh to solve..
+    int level = 3; // level mesh to solve..
     bool is_multigrid = true;
     // bool is_debug = false;
     double SR = 50.0;
     // int nsmooth = 4;
-    int nsmooth = 6; // typically faster right now
+    int nsmooth = 4; // typically faster right now
+    int ninnercyc = 2; // inner V-cycles to precond K-cycle
+    std::string cycle_type = "K"; // "V", "F", "W", "K"
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -315,6 +375,13 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --level\n";
                 return 1;
             }
+        } else if (strcmp(arg, "--cycle") == 0) {
+            if (i + 1 < argc) {
+                cycle_type = argv[++i];
+            } else {
+                std::cerr << "Missing value for --level\n";
+                return 1;
+            }
         } else if (strcmp(arg, "--nsmooth") == 0) {
             if (i + 1 < argc) {
                 nsmooth = std::atoi(argv[++i]);
@@ -322,18 +389,23 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --nsmooth\n";
                 return 1;
             }
+        } else if (strcmp(arg, "--ninnercyc") == 0) {
+            if (i + 1 < argc) {
+                ninnercyc = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nsmooth\n";
+                return 1;
+            }
         } else {
             std::cerr << "Unknown argument: " << argv[i] << std::endl;
-            std::cerr << "Usage: " << argv[0] << " [direct/mg] [--level int] [--SR double] [--nsmooth int]" << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [direct/mg] [--level int] [--SR double] [--cycle char] [--nsmooth int] [--ninnercyc int]" << std::endl;
             return 1;
         }
     }
 
     // solve linear with directLU solve
     if (is_multigrid) { // && !is_debug) {
-        solve_linear_multigrid(comm, level, SR, nsmooth);
-    // } else if (is_multigrid && is_debug) {
-    //     solve_linear_multigrid_debug(comm, level, SR);
+        solve_linear_multigrid(comm, level, SR, nsmooth, ninnercyc, cycle_type);
     } else {
         solve_linear_direct(comm, level, SR);
     }

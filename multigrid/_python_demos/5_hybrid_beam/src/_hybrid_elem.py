@@ -1,129 +1,171 @@
-# we choose the hermite cubic polynomials as the basis functions of the element
-import matplotlib.pyplot as plt
 import numpy as np
 
+# hermite cubic coefficients in xi (a0 + a1*xi + a2*xi^2 + a3*xi^3)
 def hermite_cubic_polynomials_1d(ibasis):
-    # node 1 is xi = -1, node 2 is xi = 1
-    if ibasis == 0: # w for node 1
+    # using standard Hermite basis on [-1,1]:
+    if ibasis == 0: # phi1 (w at node 1)
         return [0.5, -0.75, 0.0, 0.25]
-    elif ibasis == 1: # dw/dx for node 1
+    elif ibasis == 1: # dphi1/dxscale (slope DOF at node 1)
         return [0.25, -0.25, -0.25, 0.25]
-    elif ibasis == 2: # w for node 2
+    elif ibasis == 2: # phi2 (w at node 2)
         return [0.5, 0.75, 0.0, -0.25]
-    elif ibasis == 3: # dw/dx for node 2
+    elif ibasis == 3: # slope DOF at node 2
         return [-0.25, -0.25, 0.25, 0.25]
-    
+
+# linear Lagrange on [-1,1]
 def lagrange_polynomials_1d(ibasis):
     if ibasis == 0:
-        return [0.5, -0.5]
+        return [0.5, -0.5]   # 0.5 - 0.5*xi
     elif ibasis == 1:
-        return [0.5, 0.5]
-    
-def eval_polynomial(poly_list, value):
-    poly_list_arr = np.array(poly_list)
-    var_list_arr = np.array([value**(ind) for ind in range(len(poly_list))])
-    return np.dot(poly_list_arr, var_list_arr)
+        return [0.5, 0.5]    # 0.5 + 0.5*xi
 
-def hermite_cubic_1d(ibasis, xi):
-    poly_list = hermite_cubic_polynomials_1d(ibasis)
-    return eval_polynomial(poly_list, xi)
+def eval_poly(coeffs, xi):
+    # coeffs[0] + coeffs[1]*xi + coeffs[2]*xi^2 + ...
+    xi_pows = np.array([xi**i for i in range(len(coeffs))])
+    return float(np.dot(coeffs, xi_pows))
 
-def lagrange_1d(ibasis, xi):
-    poly_list = lagrange_polynomials_1d(ibasis)
-    return eval_polynomial(poly_list, xi)
+def poly_derivative(coeffs):
+    # returns coefficients of derivative polynomial
+    n = len(coeffs)
+    if n == 1:
+        return [0.0]
+    return [coeffs[i+1]*(i+1) for i in range(n-1)]
 
-def plot_hermite_cubic():
-    xi_vec = np.linspace(-1, 1, 100)
-    for ibasis in range(4):
-        poly = hermite_cubic_polynomials_1d(ibasis)
-        h_vec = np.array([eval_polynomial(poly, xi) for xi in xi_vec])
-        plt.plot(xi_vec, h_vec, label=f"phi_{ibasis}")
-    plt.legend()
-    plt.show()
+def poly_second_derivative(coeffs):
+    # second derivative coefficients
+    return poly_derivative(poly_derivative(coeffs))
 
-# and the following quadrature rule for 1D elements
-def get_quadrature_rule(iquad):
-    # 3rd order
+def hermite_value(ibasis, xi):
+    return eval_poly(hermite_cubic_polynomials_1d(ibasis), xi)
+
+def hermite_d2dx2(ibasis, xi, J):
+    # d2/dx2 = (1/J^2) * d2/dxi2
+    coeffs = hermite_cubic_polynomials_1d(ibasis)
+    d2coeffs = poly_second_derivative(coeffs)
+    # print(f"{coeffs=} {d2coeffs=}")
+    return (1.0 / (J**2)) * eval_poly(d2coeffs, xi)
+
+def lagrange_value(ibasis, xi):
+    return eval_poly(lagrange_polynomials_1d(ibasis), xi)
+
+def lagrange_d1dx(ibasis, xi, J):
+    # d/dx = (1/J) * d/dxi
+    coeffs = lagrange_polynomials_1d(ibasis)
+    dcoeffs = poly_derivative(coeffs)
+    return (1.0 / J) * eval_poly(dcoeffs, xi)
+
+# 3-pt Gauss rule on [-1,1]
+def get_quadrature_rule():
     rt35 = np.sqrt(3.0/5.0)
-    if iquad == 0:
-        return -rt35, 5.0/9.0
-    elif iquad == 1:
-        return 0.0, 8.0/9.0
-    elif iquad == 2:
-        return rt35, 5.0/9.0
-    
-# this is how to compute the element stiffness matrix:
-def get_hess(ibasis, xi, xscale):
-    xi_poly = hermite_cubic_polynomials_1d(ibasis)
+    return [(-rt35, 5.0/9.0), (0.0, 8.0/9.0), (rt35, 5.0/9.0)]
 
-    dphi_xi2_poly = [2.0 * xi_poly[-2], 6.0 * xi_poly[-1]]
-    dphi_xi2 = eval_polynomial(dphi_xi2_poly, xi)
-    dphi_dx2 = 1.0/xscale**2 * dphi_xi2
-    return dphi_dx2
-
-def get_lagrange_grad(ibasis, xi, xscale):
-    xi_poly = lagrange_polynomials_1d(ibasis)
-    return xi_poly[-1] / xscale
-
-def get_basis_fcn(ibasis, xi, xscale):
-    xi_poly = hermite_cubic_polynomials_1d(ibasis)
-    return eval_polynomial(xi_poly, xi)
-
-def get_kelem(xscale, EI, kGA):
-    """get element stiffness matrix"""
+def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True, schur_complement=False):
+    """
+    J : Jacobian = L/2 (so L = 2*J)
+    EI : bending stiffness
+    GA : shear rigidity (A*G)  (we will multiply by k_shear)
+    k_shear : shear correction factor (default 5/6)
+    """
     nquad = 3
-    nbasis = 6
+    nbasis = 6   # [w1, th1, w2, th2, gs1, gs2] order before reordering
     Kelem = np.zeros((nbasis, nbasis))
-    for iquad in range(nquad):
-        xi, weight = get_quadrature_rule(iquad)
-        for i in range(nbasis):
-            for j in range(nbasis):
+    quads = get_quadrature_rule()
 
-                if i < 4 and j < 4: #Kww
-                    factor = weight * xscale
-                    if i % 2 == 1: factor *= xscale
-                    if j % 2 == 1: factor *= xscale
-                    Kelem[i,j] += EI * factor * get_hess(i, xi, xscale) * get_hess(j, xi, xscale)
-                elif i < 4 and j >= 4: #Kw-th
-                    factor = weight * xscale
-                    if i % 2 == 1: factor *= xscale
-                    Kelem[i,j] += EI * factor * get_hess(i, xi, xscale) * get_lagrange_grad(j-4, xi, xscale)
-                elif i >= 4 and j < 4: #Kth-w
-                    factor = weight * xscale
-                    if j % 2 == 1: factor *= xscale
-                    dphij_dxx = get_hess(j, xi, xscale)
-                    dpsii_dx = get_lagrange_grad(i-4, xi, xscale)
-                    # print(f"{iquad=} {i=} {j=} {dphij_dxx=:.2e} {dpsii_dx=:.2e}")
-                    Kelem[i,j] += EI * factor * get_lagrange_grad(i-4, xi, xscale) * get_hess(j, xi, xscale)
-                elif i >= 4 and j >= 4: #Kth-th
-                    factor = weight * xscale
-                    Kelem[i,j] += kGA * factor * lagrange_1d(i-4, xi) * lagrange_1d(j-4, xi)
-                    Kelem[i,j] += EI * factor * get_lagrange_grad(i-4, xi, xscale) * get_lagrange_grad(j-4, xi, xscale)
+    # If doing reduced integration for shear, we evaluate shear at single point (xi=0)
+    if use_reduced_integration_for_shear:
+        shear_quads = [(0.0, 2.0)]  # one-point Gauss on [-1,1] has weight 2
+    else:
+        shear_quads = quads
 
-    # plt.imshow(Kelem[:4,:][:,:4])
+    # bending (EI * int (w_xx - th_s_x)^2 dx) expands into EI*(w_xx*w_xx - 2 w_xx th_s_x + th_s_x th_s_x)
+    for xi, weight in quads:
+        # quadrature factor dx = J * dxi
+        qfactor = weight * J
+        # build required derivatives/values at xi
+        d2phi = [hermite_d2dx2(i, xi, J) for i in range(4)]
+
+        # th_s uses Lagrange; its x-derivative:
+        dpsi = [lagrange_d1dx(i, xi, J) for i in range(2)]
+        # shear shape values too if needed (for kGA * th_s^2)
+        psi_val = [lagrange_value(i, xi) for i in range(2)]
+
+        # assemble bending-related terms (w-w, w-ths, ths-ths)
+        # index mapping prior to reorder (0..5): w1, th1, w2, th2, gs1, gs2
+        for i in range(4):
+            for j in range(4):
+                Kelem[i,j] += EI * qfactor * d2phi[i] * d2phi[j]
+            # coupling w_i with shear DOFs (th_s)
+            for j_s in range(2):
+                idx_s = 4 + j_s
+                Kelem[i, idx_s] += - EI * qfactor * d2phi[i] * dpsi[j_s]   # -2 folded later (off-diagonal)
+                Kelem[idx_s, i] += - EI * qfactor * dpsi[j_s] * d2phi[i]
+        # th_s-th_s part from EI*(th_s_x)^2
+        for i_s in range(2):
+            for j_s in range(2):
+                Kelem[4+i_s, 4+j_s] += EI * qfactor * dpsi[i_s] * dpsi[j_s]
+
+    # shear penalty kGA * ∫ th_s^2 dx
+    for xi, weight in shear_quads:
+        qfactor = weight * J
+        psi_val = [lagrange_value(i, xi) for i in range(2)]
+        for i_s in range(2):
+            for j_s in range(2):
+                Kelem[4+i_s, 4+j_s] += k_shear * GA * qfactor * psi_val[i_s] * psi_val[j_s] * 8.0
+                #* 10.0 # NOTE not sure where the 8x is missing here..
+    # probably 8x comes from something wrong with dx/2 (in hermite cubic EB case with 1/h**3 and the dx/2 and that is propagating over to Timoshenko)
+
+    # import matplotlib.pyplot as plt
+    # h = J * 2.0
+    # Kelem_exact = 2.0 / h**3 * np.array([
+    #     [6, -3 * h, -6, -3 * h],
+    #     [-3 * h, 2 * h**2, 3 * h, h**2],
+    #     [-6, 3 * h, 6, 3 * h],
+    #     [-3 * h, h**2, 3 * h, 2*h**2],
+    # ])
+
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 7))
+    # ax[0].imshow(Kelem[:4,:][:,:4] / EI)
+    # ax[1].imshow(Kelem_exact)
     # plt.show()
-    # plt.imshow(np.sign(Kelem) * np.log(1 + Kelem**2))
-    # plt.show()
 
-    # then reorder the Kelem so it goes from [w,th,w2,th2,gam1,gam2] order to [w,th1,gam1,w2,th2,gam2] order
-    new_order = np.array([0, 1, 4, 2, 3, 5])
-    Kelem = Kelem[new_order, :][:, new_order]
     # plt.imshow(Kelem)
+    # plt.imshow(Kelem / k_shear / GA / (J * 2.0))
     # plt.show()
 
-    return Kelem
+    if schur_complement:
+        # remove the gamma DOF from the system
+        Kaa = Kelem[:4, :][:,:4]
+        Kab = Kelem[:4,:][:,4:]
+        Kba = Kelem[4:,:][:,:4]
+        Kbb = Kelem[4:,:][:,4:]
 
-def get_felem(xscale):
+        Kelem = Kaa - Kab @ np.linalg.inv(Kbb) @ Kba
+        return Kelem
+
+    else:
+        # reorder to your desired ordering: [w1, th1, gam1, w2, th2, gam2]
+        new_order = np.array([0, 1, 4, 2, 3, 5])
+        Kelem = Kelem[new_order, :][:, new_order]
+        return Kelem
+
+
+def get_felem(J, schur_complement=False):
     """get element load vector"""
     nquad = 3
     nbasis = 6
+    quads = get_quadrature_rule()
     felem = np.zeros((nbasis,))
     for iquad in range(nquad):
-        xi, weight = get_quadrature_rule(iquad)
+        xi, weight = quads[iquad]
         for ibasis in range(nbasis):
             if ibasis < 4:
-                felem[ibasis] += weight * xscale * get_basis_fcn(ibasis, xi, xscale)
+                felem[ibasis] += weight * J * hermite_value(ibasis, xi)
     
-    new_order = np.array([0, 1, 4, 2, 3, 5])
-    felem = felem[new_order]
-    return felem
+    if schur_complement:
+        return felem[:4]
+
+    else:
+
+        new_order = np.array([0, 1, 4, 2, 3, 5])
+        felem = felem[new_order]
+        return felem
