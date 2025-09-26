@@ -7,7 +7,7 @@ from ._ts_elem import *
 
 class TSAssembler:
     def __init__(self, nxe:int, nxh:int, E:float, b:float, L:float, rho:float, 
-                 qmag:float, ys:float, rho_KS:float, dense:bool=False):
+                 qmag:float, ys:float, rho_KS:float, dense:bool=False, load_fcn=None):
         self.nxe = nxe
         self.nnxh = nxe // nxh
         self.nxh = nxh
@@ -18,6 +18,9 @@ class TSAssembler:
         self.rho_KS = rho_KS
         self.qmag = qmag
         self.ys = ys
+        self.load_fcn = load_fcn
+        if load_fcn is None:
+            self.load_fcn = lambda x : np.sin(4.0 * np.pi * x / L)
 
         self.Kmat = None
         self.force = None
@@ -60,7 +63,8 @@ class TSAssembler:
 
         # define the element loads here
         xvec = [(ielem+0.5) * self.dx for ielem in range(self.num_elements)]
-        qvec = [self.qmag * np.sin(4.0 * np.pi * xval / L) for xval in xvec]
+        # qvec = [self.qmag * np.sin(4.0 * np.pi * xval / L) for xval in xvec]
+        qvec = [self.qmag * self.load_fcn(xval) for xval in xvec]
 
         # compute Kelem without EI scaling
         elem_xpts = np.array([0.0]*3 + [self.dx, 0.0, 0.0])

@@ -1,6 +1,6 @@
 # now let's test this out and visualize it
 import numpy as np
-from src import EBAssembler
+from src import EBAssembler, plot_hermite_cubic
 from src import TSAssembler
 from src import HybridAssembler
 

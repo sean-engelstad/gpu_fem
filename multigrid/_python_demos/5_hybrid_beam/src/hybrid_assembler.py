@@ -70,8 +70,9 @@ class HybridAssembler:
         G = E / 2.0 / (1 + nu)
         A = b * helem_vec[0]
         kGA = 5.0 / 6.0 * G * A
-        Kelem_nom = get_kelem(self.xscale, EI=EI, kGA=kGA)
-        felem_nom = get_felem(self.xscale)
+        # print(f"{EI=:.2e} {helem_vec[0]=:.2e} {kGA=:.2e}")
+        Kelem_nom = get_kelem(self.xscale / 2.0, EI=EI, kGA=kGA)
+        felem_nom = get_felem(self.xscale / 2.0)
 
         num_dof = 3 * self.num_nodes
         if self._dense:
@@ -109,7 +110,7 @@ class HybridAssembler:
                             self.data[p,:,:] += Kelem_loc                            
             
             q = qvec[ielem]
-            q *= 0.5 # since each node has two contributions adding to it (normalizing from local to global basis functions basically)
+            # q *= 0.5 # since each node has two contributions adding to it (normalizing from local to global basis functions basically)
             np.add.at(force, local_conn, q * felem_nom)
 
         # now apply simply supported BCs

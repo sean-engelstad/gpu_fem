@@ -7,11 +7,11 @@ def hermite_cubic_polynomials_1d(ibasis):
     if ibasis == 0: # w for node 1
         return [0.5, -0.75, 0.0, 0.25]
     elif ibasis == 1: # dw/dx for node 1
-        return [0.25, -0.25, -0.25, 0.25]
+        return [-0.25, 0.25, 0.25, -0.25]
     elif ibasis == 2: # w for node 2
         return [0.5, 0.75, 0.0, -0.25]
     elif ibasis == 3: # dw/dx for node 2
-        return [-0.25, -0.25, 0.25, 0.25]
+        return [0.25, 0.25, -0.25, -0.25]
     
 def eval_polynomial(poly_list, value):
     poly_list_arr = np.array(poly_list)
@@ -64,7 +64,24 @@ def get_kelem(xscale):
         xi, weight = get_quadrature_rule(iquad)
         for i in range(nbasis):
             for j in range(nbasis):
-                Kelem[i,j] += weight * xscale * get_hess(i, xi, xscale) * get_hess(j, xi, xscale)
+                factor = weight * xscale
+                if i % 2 == 1: factor *= xscale
+                if j % 2 == 1: factor *= xscale
+                Kelem[i,j] += factor * get_hess(i, xi, xscale) * get_hess(j, xi, xscale)
+    
+    # compare Kelem to exact from Reddy FEA book (with EI = 1 at this step)
+    # h = xscale
+    # Kelem_exact = 2.0 / h**3 * np.array([
+    #     [6, -3 * h, -6, -3 * h],
+    #     [-3 * h, 2 * h**2, 3 * h, h**2],
+    #     [-6, 3 * h, 6, 3 * h],
+    #     [-3 * h, h**2, 3 * h, 2*h**2],
+    # ])
+
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 7))
+    # ax[0].imshow(Kelem)
+    # ax[1].imshow(Kelem_exact)
+    # plt.show()
     return Kelem
 
 def get_felem(xscale):

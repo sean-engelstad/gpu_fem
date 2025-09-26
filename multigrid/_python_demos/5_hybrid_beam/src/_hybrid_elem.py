@@ -80,16 +80,29 @@ def get_kelem(xscale, EI, kGA):
             for j in range(nbasis):
 
                 if i < 4 and j < 4: #Kww
-                    Kelem[i,j] += EI * weight * xscale * get_hess(i, xi, xscale) * get_hess(j, xi, xscale)
+                    factor = weight * xscale
+                    if i % 2 == 1: factor *= xscale
+                    if j % 2 == 1: factor *= xscale
+                    Kelem[i,j] += EI * factor * get_hess(i, xi, xscale) * get_hess(j, xi, xscale)
                 elif i < 4 and j >= 4: #Kw-th
-                    Kelem[i,j] -= EI * weight * xscale * get_hess(i, xi, xscale) * get_lagrange_grad(j-4, xi, xscale)
+                    factor = weight * xscale
+                    if i % 2 == 1: factor *= xscale
+                    Kelem[i,j] += EI * factor * get_hess(i, xi, xscale) * get_lagrange_grad(j-4, xi, xscale)
                 elif i >= 4 and j < 4: #Kth-w
-                    Kelem[i,j] -= EI * weight * xscale * get_lagrange_grad(i-4, xi, xscale) * get_hess(j, xi, xscale)
+                    factor = weight * xscale
+                    if j % 2 == 1: factor *= xscale
+                    dphij_dxx = get_hess(j, xi, xscale)
+                    dpsii_dx = get_lagrange_grad(i-4, xi, xscale)
+                    # print(f"{iquad=} {i=} {j=} {dphij_dxx=:.2e} {dpsii_dx=:.2e}")
+                    Kelem[i,j] += EI * factor * get_lagrange_grad(i-4, xi, xscale) * get_hess(j, xi, xscale)
                 elif i >= 4 and j >= 4: #Kth-th
-                    Kelem[i,j] += EI * weight * xscale * get_lagrange_grad(i-4, xi, xscale) * get_lagrange_grad(j-4, xi, xscale)
-                    Kelem[i,j] += kGA * weight * xscale * lagrange_1d(i-4, xi) * lagrange_1d(j-4, xi)
+                    factor = weight * xscale
+                    Kelem[i,j] += kGA * factor * lagrange_1d(i-4, xi) * lagrange_1d(j-4, xi)
+                    Kelem[i,j] += EI * factor * get_lagrange_grad(i-4, xi, xscale) * get_lagrange_grad(j-4, xi, xscale)
 
     # plt.imshow(Kelem[:4,:][:,:4])
+    # plt.show()
+    # plt.imshow(np.sign(Kelem) * np.log(1 + Kelem**2))
     # plt.show()
 
     # then reorder the Kelem so it goes from [w,th,w2,th2,gam1,gam2] order to [w,th1,gam1,w2,th2,gam2] order

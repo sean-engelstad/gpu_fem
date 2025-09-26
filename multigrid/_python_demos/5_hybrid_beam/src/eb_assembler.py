@@ -65,8 +65,8 @@ class EBAssembler:
         qvec = [self.qmag * self.load_fcn(xval) for xval in xvec]
 
         # compute Kelem without EI scaling
-        Kelem_nom = get_kelem(self.xscale)
-        felem_nom = get_felem(self.xscale)
+        Kelem_nom = get_kelem(self.xscale / 2.0)
+        felem_nom = get_felem(self.xscale / 2.0)
 
         num_dof = 2 * self.num_nodes
         if self._dense:
@@ -87,9 +87,9 @@ class EBAssembler:
                 # add into sparse data 
                 Kelem = EI * Kelem_nom
 
-                if ielem == 0:
-                    plt.imshow(Kelem)
-                    plt.show()
+                # if ielem == 0:
+                #     plt.imshow(Kelem)
+                #     plt.show()
                 # print(f'{Kelem=}')
                 # plt.imshow(Kelem)
                 # plt.show()
@@ -109,7 +109,7 @@ class EBAssembler:
                             self.data[p,:,:] += Kelem_loc                            
             
             q = qvec[ielem]
-            q *= 0.5 # to normalize from local to global basis functions
+            # q *= 0.5 # to normalize from local to global basis functions
             # felem_nom[1] = 0.0
             # felem_nom[3] = 0.0
             np.add.at(force, local_conn, q * felem_nom)
