@@ -51,9 +51,38 @@ def get_hess(ibasis, xi, xscale):
     dphi_dx2 = 1.0/xscale**2 * dphi_xi2
     return dphi_dx2
 
-def get_basis_fcn(ibasis, xi, xscale):
+def get_basis_fcn(ibasis, xi):
     xi_poly = hermite_cubic_polynomials_1d(ibasis)
     return eval_polynomial(xi_poly, xi)
+
+def get_hermite_grad(ibasis, xi, xscale):
+    xi_poly = hermite_cubic_polynomials_1d(ibasis)
+
+    dphi_dxi_poly = [xi_poly[-3], 2.0 * xi_poly[-2], 3.0 * xi_poly[-1]]
+    dphi_dxi = eval_polynomial(dphi_dxi_poly, xi)
+    dphi_dx = 1.0/xscale * dphi_dxi
+    return dphi_dx
+
+def interp_disp(xi, elem_disp, xscale):
+    """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
+
+    w, th = 0.0, 0.0
+    for ibasis in range(4):
+        w += get_basis_fcn(ibasis, xi) * elem_disp[ibasis]
+        th += get_hermite_grad(ibasis, xi, xscale) * elem_disp[ibasis]
+
+    return w, th
+
+def interp_disp_transpose(xi, nodal_in, xscale):
+    """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
+
+    w_in, th_in = nodal_in[0], nodal_in[1]
+    coarse_out = np.zeros(4)
+
+    for ibasis in range(4):
+        coarse_out[ibasis] += get_basis_fcn(ibasis, xi) * w_in
+        coarse_out[ibasis] += get_hermite_grad(ibasis, xi, xscale) * th_in
+    return coarse_out
 
 def get_kelem(xscale):
     """get element stiffness matrix"""
@@ -92,5 +121,7 @@ def get_felem(xscale):
     for iquad in range(nquad):
         xi, weight = get_quadrature_rule(iquad)
         for ibasis in range(nbasis):
-            felem[ibasis] += weight * xscale * get_basis_fcn(ibasis, xi, xscale)
+            scaling = 1.0
+            if ibasis % 2 == 1: scaling *= xscale
+            felem[ibasis] += scaling * weight * xscale * get_basis_fcn(ibasis, xi)
     return felem

@@ -6,11 +6,11 @@ def hermite_cubic_polynomials_1d(ibasis):
     if ibasis == 0: # phi1 (w at node 1)
         return [0.5, -0.75, 0.0, 0.25]
     elif ibasis == 1: # dphi1/dxscale (slope DOF at node 1)
-        return [0.25, -0.25, -0.25, 0.25]
+        return [-0.25, 0.25, 0.25, -0.25]
     elif ibasis == 2: # phi2 (w at node 2)
         return [0.5, 0.75, 0.0, -0.25]
     elif ibasis == 3: # slope DOF at node 2
-        return [-0.25, -0.25, 0.25, 0.25]
+        return [0.25, 0.25, -0.25, -0.25]
 
 # linear Lagrange on [-1,1]
 def lagrange_polynomials_1d(ibasis):
@@ -59,6 +59,13 @@ def get_quadrature_rule():
     rt35 = np.sqrt(3.0/5.0)
     return [(-rt35, 5.0/9.0), (0.0, 8.0/9.0), (rt35, 5.0/9.0)]
 
+# whether the kirchoff part of the rotation is stored as dw/dxi or dw/dx
+# in particular if True, it's stored as dw/dx
+# initially putting this to True breaks mesh convergence of this element (but does give right displacements)
+# needs to be True if want to use on plate and multigrid
+physical_rots = True
+# physical_rots = False
+
 def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True, schur_complement=False):
     """
     J : Jacobian = L/2 (so L = 2*J)
@@ -91,14 +98,25 @@ def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True
 
         # assemble bending-related terms (w-w, w-ths, ths-ths)
         # index mapping prior to reorder (0..5): w1, th1, w2, th2, gs1, gs2
-        for i in range(4):
+        for i in range(4):            
             for j in range(4):
-                Kelem[i,j] += EI * qfactor * d2phi[i] * d2phi[j]
+                
+                # make rot DOF of hermite cubic proper units dw/dx not dw/dxi (for multigrid)
+                scaling = 1.0
+                if physical_rots and i % 2 == 1: scaling *= J
+                if physical_rots and j % 2 == 1: scaling *= J
+
+                Kelem[i,j] += scaling * EI * qfactor * d2phi[i] * d2phi[j]
+            
             # coupling w_i with shear DOFs (th_s)
             for j_s in range(2):
+                # make rot DOF of hermite cubic proper units dw/dx not dw/dxi (for multigrid)
+                scaling = 1.0
+                if physical_rots and i % 2 == 1: scaling *= J
+
                 idx_s = 4 + j_s
-                Kelem[i, idx_s] += - EI * qfactor * d2phi[i] * dpsi[j_s]   # -2 folded later (off-diagonal)
-                Kelem[idx_s, i] += - EI * qfactor * dpsi[j_s] * d2phi[i]
+                Kelem[i, idx_s] -= scaling * EI * qfactor * d2phi[i] * dpsi[j_s]   # -2 folded later (off-diagonal)
+                Kelem[idx_s, i] -= scaling * EI * qfactor * dpsi[j_s] * d2phi[i]
         # th_s-th_s part from EI*(th_s_x)^2
         for i_s in range(2):
             for j_s in range(2):
@@ -115,21 +133,21 @@ def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True
     # probably 8x comes from something wrong with dx/2 (in hermite cubic EB case with 1/h**3 and the dx/2 and that is propagating over to Timoshenko)
 
     # import matplotlib.pyplot as plt
-    # h = J * 2.0
-    # Kelem_exact = 2.0 / h**3 * np.array([
-    #     [6, -3 * h, -6, -3 * h],
-    #     [-3 * h, 2 * h**2, 3 * h, h**2],
-    #     [-6, 3 * h, 6, 3 * h],
-    #     [-3 * h, h**2, 3 * h, 2*h**2],
-    # ])
+    # # h = J * 2.0
+    # # Kelem_exact = 2.0 / h**3 * np.array([
+    # #     [6, -3 * h, -6, -3 * h],
+    # #     [-3 * h, 2 * h**2, 3 * h, h**2],
+    # #     [-6, 3 * h, 6, 3 * h],
+    # #     [-3 * h, h**2, 3 * h, 2*h**2],
+    # # ])
 
-    # fig, ax = plt.subplots(1, 2, figsize=(10, 7))
-    # ax[0].imshow(Kelem[:4,:][:,:4] / EI)
-    # ax[1].imshow(Kelem_exact)
-    # plt.show()
+    # # fig, ax = plt.subplots(1, 2, figsize=(10, 7))
+    # # ax[0].imshow(Kelem[:4,:][:,:4] / EI)
+    # # ax[1].imshow(Kelem_exact)
+    # # plt.show()
 
     # plt.imshow(Kelem)
-    # plt.imshow(Kelem / k_shear / GA / (J * 2.0))
+    # # plt.imshow(Kelem / k_shear / GA / (J * 2.0))
     # plt.show()
 
     if schur_complement:
@@ -159,7 +177,10 @@ def get_felem(J, schur_complement=False):
         xi, weight = quads[iquad]
         for ibasis in range(nbasis):
             if ibasis < 4:
-                felem[ibasis] += weight * J * hermite_value(ibasis, xi)
+                scaling = 1.0
+                if physical_rots and ibasis % 2 == 1: scaling *= J
+
+                felem[ibasis] += scaling * weight * J * hermite_value(ibasis, xi)
     
     if schur_complement:
         return felem[:4]

@@ -31,8 +31,9 @@ def exact_TS_disp(E, b, thick, L, qmag, nu=0.3, Ks=5.0 / 6.0):
     return qmag * L**4 / 24.0 / E / I * (x / L - 2.0 * x**3 / L**3 + x**4 / L**4) + qmag * L**2 / 24.0 / G / A / Ks * (x / L - x**2 / L**2)
 
 # SR_vec = np.array([0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0])
-SR_vec = np.array([1.0, 10.0, 100.0, 1000.0, 10000.0])
+# SR_vec = np.array([1.0, 10.0, 100.0, 1000.0, 10000.0])
 # SR_vec = SR_vec[::-1]
+SR_vec = np.array([1.0, 10.0, 100.0, 1000.0])
 
 rates = []
 
@@ -51,7 +52,7 @@ for SR in SR_vec:
     disps = []
     exact_disps = []
 
-    for nxe in [8, 16, 32, 64, 128, 256, 512, 1024]:
+    for nxe in [8, 16, 32, 64, 128, 256, 512, 1024]: #, 2048, 4096]:
         
 
         nxh = nxe
@@ -63,10 +64,10 @@ for SR in SR_vec:
             hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L))
             hyb_beam.solve_forward(hvec)
             
-            if nxe == 512 and SR == 1.0:
-                hyb_beam.plot_disp()
-                # 7.67e-7 disp at SR = 1000.0
-                # 2.93e-6 disp at SR = 1.0
+            # if nxe == 512 and SR == 1.0:
+            #     hyb_beam.plot_disp()
+            #     # 7.67e-7 disp at SR = 1000.0
+            #     # 2.93e-6 disp at SR = 1.0
 
             # numerical solution for center deflection
             w_vec = hyb_beam.u[0::3]
@@ -75,6 +76,7 @@ for SR in SR_vec:
             pred_disp = w_vec[center]
 
             disps += [pred_disp]
+            dof_vec += [nxe * 3]
 
         elif "ts" in args.beam or "tim" in args.beam:
 
@@ -86,10 +88,10 @@ for SR in SR_vec:
             
             ts_beam.solve_forward(hvec)
             
-            if nxe == 512 and SR == 1.0:
-                ts_beam.plot_disp()
-                # 7.62e-7 at SR = 1000.0
-                # 2.96e-6 at SR = 10.0
+            # if nxe == 512 and SR == 1.0:
+            #     ts_beam.plot_disp()
+            #     # 7.62e-7 at SR = 1000.0
+            #     # 2.96e-6 at SR = 10.0
 
             # numerical solution for center deflection
             w_vec = ts_beam.u[0::2]
@@ -98,8 +100,8 @@ for SR in SR_vec:
             pred_disp = w_vec[center]
 
             disps += [pred_disp]
+            dof_vec += [nxe * 2]
 
-        dof_vec += [nxe * 2]
 
         # exact_disp = exact_TS_disp(E, b, thick, L, qmag)
         # exact_disps += [exact_disp]

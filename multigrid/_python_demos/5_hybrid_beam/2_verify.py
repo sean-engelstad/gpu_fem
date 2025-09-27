@@ -22,10 +22,12 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
     qmag = 1e4
     ys = 4e5
 
+    # L *= 100.0 # see if this helps numerics?
+
     b *= 0.5
 
     # scale by slenderness
-    thick = 1.0 / SR
+    thick = L / SR
     qmag *= thick**3
 
     # scaling inputs
@@ -38,9 +40,9 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
     # nxe = 5
 
     # nxe = 2
-    nxe = 4
+    # nxe = 4
     # nxe = 10
-    # nxe = 100
+    nxe = 100
 
     # nxe = num_elements = 100
     # nxe = num_elements = int(1e3)
@@ -59,6 +61,10 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
     hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
     hyb_beam.solve_forward(hvec)
     # hyb_beam.plot_disp()
+
+    max_kirchoff_rot = np.max(np.abs(hyb_beam.u[1::3]))
+    print(f"{max_kirchoff_rot=:.2e}")
+
 
     # numerical solution for center deflection
     w_vec = hyb_beam.u[0::3]
