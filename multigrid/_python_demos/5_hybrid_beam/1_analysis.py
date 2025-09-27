@@ -1,14 +1,14 @@
 # now let's test this out and visualize it
 import numpy as np
-from src import EBAssembler, plot_hermite_cubic
-from src import TSAssembler
+from src import EBAssembler #, plot_hermite_cubic
+from src import TimoshenkoAssembler
 from src import HybridAssembler
 
 # SR = 0.1
-SR = 1.0
+# SR = 1.0
 # SR = 10.0
 # SR = 100.0
-# SR = 1000.0
+SR = 1000.0
 # SR = 1e4
 
 # 1) Euler-Bernoulli Beam
@@ -40,7 +40,7 @@ eb_beam.solve_forward(hvec)
 # 2) TACS timoshenko beam
 # ------------------------
 
-ts_beam = TSAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False)
+ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False)
 ts_beam.solve_forward(hvec)
 # ts_beam.plot_disp()
 
@@ -57,7 +57,7 @@ import matplotlib.pyplot as plt
 fig, ax = plt.subplots(1, 3, figsize=(10, 6))
 xvec = eb_beam.xvec
 
-names = ["EB-beam", "TS-beam", "HYB-beam"]
+names = ["EB-beam", "TS-Beam", "HYB-beam"]
 for i,beam in enumerate([eb_beam, ts_beam, hyb_beam]):
     stride = 2 if i < 2 else 3
     disp = beam.u[0::stride]

@@ -1,10 +1,11 @@
-__all__ = ["HybridAssembler"]
+__all__ = ["TSAssembler"]
 
 import numpy as np
 import scipy as sp
-from ._hybrid_elem import *
+from ._eb_elem import *
+from ._ts_elem import *
 
-class HybridAssembler:
+class TSAssembler:
     def __init__(self, nxe:int, nxh:int, E:float, b:float, L:float, rho:float, 
                  qmag:float, ys:float, rho_KS:float, dense:bool=False, load_fcn=None):
         self.nxe = nxe
@@ -30,10 +31,10 @@ class HybridAssembler:
         # simply supported BCss
         self.num_elements = nxe
         self.num_nodes = nxe + 1
-        self.num_dof = 3 * self.num_nodes
+        self.num_dof = 2 * self.num_nodes
         self.xscale = L / nxe
         self.dx = self.xscale
-        self.bcs = [0, 3 * (self.num_nodes-1)]
+        self.bcs = [0, 2 * (self.num_nodes-1)]
         self.conn = [[ielem, ielem+1] for ielem in range(self.num_elements)]
 
         self._dense = dense
@@ -58,33 +59,34 @@ class HybridAssembler:
         # copy states out
         E = self.E; b = self.b; rho = self.rho; nxe = self.nxe; L = self.L; rho_KS = self.rho_KS
 
-        self.data = np.zeros((self.nnzb, 3, 3), dtype=helem_vec.dtype)
+        self.data = np.zeros((self.nnzb, 2, 2), dtype=helem_vec.dtype)
 
         # define the element loads here
         xvec = [(ielem+0.5) * self.dx for ielem in range(self.num_elements)]
+        # qvec = [self.qmag * np.sin(4.0 * np.pi * xval / L) for xval in xvec]
         qvec = [self.qmag * self.load_fcn(xval) for xval in xvec]
 
         # compute Kelem without EI scaling
-        EI = E * b * helem_vec[0]**3 / 12.0
+        elem_xpts = np.array([0.0]*3 + [self.dx, 0.0, 0.0])
+        qvars = np.array([0.0] * 12)
+        ref_axis = np.array([0.0, 1.0, 0.0])
         nu=0.3
         G = E / 2.0 / (1 + nu)
-        A = b * helem_vec[0]
-        GA = G * A
-        # kGA = 5.0 / 6.0 * G * A
-        # print(f"{EI=:.2e} {helem_vec[0]=:.2e} {kGA=:.2e}")
-        # red_int = True
-        red_int = False
+        material = Material(E=E, rho=rho, nu=nu, G=G, k_s=5.0 / 6.0, ys=self.ys)
+        CK = get_constitutive_data(material, b, helem_vec[0]) # assuming constant thick right now (just simple demos here to compare multigrid soo.. not need full solver)
+        Kelem_nom = get_stiffness_matrix(elem_xpts, qvars, ref_axis, CK)
 
-        # temp debug
-        # EI = 0.0
+        Kelem_nom *= 0.1 # ? why does this fix rescaling?
+        # print(f"{Kelem_nom=}")
+        # exit()
 
-        Kelem_nom = get_kelem(J=self.dx / 2.0, EI=EI, GA=GA, use_reduced_integration_for_shear=red_int)
-        felem_nom = get_felem(self.dx / 2.0)
+        twod_beam_dof = np.array([2, 4, 8, 10]) # w and thetay
+        Kelem_nom = Kelem_nom[twod_beam_dof,:][:,twod_beam_dof]
+        felem_nom = np.array([1.0, 0.0, 1.0, 0.0]) * self.dx #* self.dx**2
+        # plt.imshow(Kelem_nom)
+        # plt.show()
 
-        # Kelem_nom = get_kelem(J=self.dx, EI=EI, GA=GA, use_reduced_integration_for_shear=red_int)
-        # felem_nom = get_felem(self.dx)
-
-        num_dof = 3 * self.num_nodes
+        num_dof = 2 * self.num_nodes
         if self._dense:
             Kmat = np.zeros((num_dof, num_dof), dtype=helem_vec.dtype)
         # want to start as sparse matrix now
@@ -116,15 +118,14 @@ class HybridAssembler:
                             # print(f"{ielem=} conn={[ielem, ielem+1]} {p=}")
                             jnode = col_node - ielem
                             # print(f"{p=} {inode=} {jnode=}")
-                            Kelem_loc = Kelem[3*inode:(3*inode+3)][:,3*jnode:(3*jnode+3)]
+                            Kelem_loc = Kelem[2*inode:(2*inode+2)][:,2*jnode:(2*jnode+2)]
                             self.data[p,:,:] += Kelem_loc                            
             
             q = qvec[ielem]
-            # q *= 0.5 # since each node has two contributions adding to it (normalizing from local to global basis functions basically)
             np.add.at(force, local_conn, q * felem_nom)
 
         # now apply simply supported BCs
-        bcs = [0, 3 * (self.num_nodes-1)]
+        bcs = [0, 2 * (self.num_nodes-1)]
 
         # apply dirichlet w=0 BCs
         if self._dense:
@@ -138,7 +139,7 @@ class HybridAssembler:
             self.data[[0,2],:,0] = 0.0
             self.data[0,0,0] = 1.0
 
-            bc = 3 * (self.num_nodes-1)
+            bc = 2 * (self.num_nodes-1)
             self.data[self.nnzb-2:,0,:] = 0.0
             self.data[self.nnzb-3,:,0] = 0.0
             self.data[self.nnzb-1,:,0] = 0.0
@@ -153,7 +154,7 @@ class HybridAssembler:
         if not self._dense:
             Kmat = sp.sparse.bsr_matrix(
                 (self.data, self.colPtr, self.rowPtr), 
-                shape=(3*self.num_nodes, 3*self.num_nodes))
+                shape=(2*self.num_nodes, 2*self.num_nodes))
             
             # convert to csr since doesn't support bsr in scipy spsolve
             Kmat = Kmat.tocsr()
@@ -263,7 +264,7 @@ class HybridAssembler:
 
     @property
     def dof_conn(self):
-        return [[3 * ix+_ for _ in range(6)] for ix in range(self.nxe)]
+        return [[2 * ix+_ for _ in range(4)] for ix in range(self.nxe)]
 
     def _compute_stresses_sq(self, helem_vec):
         # copy states out
@@ -633,8 +634,7 @@ class HybridAssembler:
     def plot_disp(self):
         xvec = self.xvec
         # print(f"{self.u=}")
-        w = self.u[0::3]
-        import matplotlib.pyplot as plt
+        w = self.u[0::2]
         plt.figure()
         plt.plot(xvec, w)
         plt.plot(xvec, np.zeros((self.num_nodes,)), "k--")

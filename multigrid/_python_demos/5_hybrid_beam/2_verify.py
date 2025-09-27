@@ -1,7 +1,7 @@
 # now let's test this out and visualize it
 import numpy as np
 from src import EBAssembler, plot_hermite_cubic
-from src import TSAssembler
+from src import TimoshenkoAssembler
 from src import HybridAssembler
 
 # verify the hybrid assembler solution against exact Timoshenko beam theory solution for constant distributed load
@@ -85,7 +85,8 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
 
 
     # timoshenko beam (TACS)
-    ts_beam = TSAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
+    ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
+    ts_beam.red_int = False
     ts_beam.solve_forward(hvec)
     w_vec2 = ts_beam.u[0::2]
     pred_disp_ts = w_vec2[center]

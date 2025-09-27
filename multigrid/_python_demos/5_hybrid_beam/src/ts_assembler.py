@@ -1,11 +1,10 @@
-__all__ = ["TSAssembler"]
+__all__ = ["TimoshenkoAssembler"]
 
 import numpy as np
 import scipy as sp
-from ._eb_elem import *
 from ._ts_elem import *
 
-class TSAssembler:
+class TimoshenkoAssembler:
     def __init__(self, nxe:int, nxh:int, E:float, b:float, L:float, rho:float, 
                  qmag:float, ys:float, rho_KS:float, dense:bool=False, load_fcn=None):
         self.nxe = nxe
@@ -27,6 +26,8 @@ class TSAssembler:
         self.u = None
         # adjoint only required for stress function
         self.psis = None
+
+        self.red_int = False # can change this in python if you really need to
 
         # simply supported BCss
         self.num_elements = nxe
@@ -63,28 +64,27 @@ class TSAssembler:
 
         # define the element loads here
         xvec = [(ielem+0.5) * self.dx for ielem in range(self.num_elements)]
-        # qvec = [self.qmag * np.sin(4.0 * np.pi * xval / L) for xval in xvec]
         qvec = [self.qmag * self.load_fcn(xval) for xval in xvec]
 
         # compute Kelem without EI scaling
-        elem_xpts = np.array([0.0]*3 + [self.dx, 0.0, 0.0])
-        qvars = np.array([0.0] * 12)
-        ref_axis = np.array([0.0, 1.0, 0.0])
+        EI = E * b * helem_vec[0]**3 / 12.0
         nu=0.3
         G = E / 2.0 / (1 + nu)
-        material = Material(E=E, rho=rho, nu=nu, G=G, k_s=5.0 / 6.0, ys=self.ys)
-        CK = get_constitutive_data(material, b, helem_vec[0]) # assuming constant thick right now (just simple demos here to compare multigrid soo.. not need full solver)
-        Kelem_nom = get_stiffness_matrix(elem_xpts, qvars, ref_axis, CK)
+        A = b * helem_vec[0]
+        GA = G * A
+        # kGA = 5.0 / 6.0 * G * A
+        # print(f"{EI=:.2e} {helem_vec[0]=:.2e} {kGA=:.2e}")
+        # red_int = True
+        # red_int = False
 
-        Kelem_nom *= 0.1 # ? why does this fix rescaling?
-        # print(f"{Kelem_nom=}")
-        # exit()
+        # temp debug
+        # EI = 0.0
 
-        twod_beam_dof = np.array([2, 4, 8, 10]) # w and thetay
-        Kelem_nom = Kelem_nom[twod_beam_dof,:][:,twod_beam_dof]
-        felem_nom = np.array([1.0, 0.0, 1.0, 0.0]) * self.dx #* self.dx**2
-        # plt.imshow(Kelem_nom)
-        # plt.show()
+        Kelem_nom = get_kelem(J=self.dx / 2.0, EI=EI, GA=GA, use_reduced_integration_for_shear=self.red_int)
+        felem_nom = get_felem(self.dx / 2.0)
+
+        # Kelem_nom = get_kelem(J=self.dx, EI=EI, GA=GA, use_reduced_integration_for_shear=red_int)
+        # felem_nom = get_felem(self.dx)
 
         num_dof = 2 * self.num_nodes
         if self._dense:
@@ -122,6 +122,7 @@ class TSAssembler:
                             self.data[p,:,:] += Kelem_loc                            
             
             q = qvec[ielem]
+            # q *= 0.5 # since each node has two contributions adding to it (normalizing from local to global basis functions basically)
             np.add.at(force, local_conn, q * felem_nom)
 
         # now apply simply supported BCs
@@ -635,6 +636,7 @@ class TSAssembler:
         xvec = self.xvec
         # print(f"{self.u=}")
         w = self.u[0::2]
+        import matplotlib.pyplot as plt
         plt.figure()
         plt.plot(xvec, w)
         plt.plot(xvec, np.zeros((self.num_nodes,)), "k--")

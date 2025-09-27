@@ -6,6 +6,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from src import HybridAssembler
+from src import TimoshenkoAssembler
+
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--beam", type=str, default='hyb', help="--beam, options: hyb, ts")
+parser.add_argument("--rint", type=int, default=0, help="reduced integrated 0 or 1 for False,True (default False), only applies to regular TS element")
+args = parser.parse_args()
 
 # verify the hybrid assembler solution against exact Timoshenko beam theory solution for constant distributed load
 
@@ -25,6 +33,8 @@ def exact_TS_disp(E, b, thick, L, qmag, nu=0.3, Ks=5.0 / 6.0):
 # SR_vec = np.array([0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0])
 SR_vec = np.array([1.0, 10.0, 100.0, 1000.0, 10000.0])
 # SR_vec = SR_vec[::-1]
+
+rates = []
 
 for SR in SR_vec:
 # for SR in [10000.0]:
@@ -47,18 +57,48 @@ for SR in SR_vec:
         nxh = nxe
         hvec = np.array([thick] * nxh)
 
-        # get hybrid beam disp
-        hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L))
-        hyb_beam.solve_forward(hvec)
-        # hyb_beam.plot_disp()
+        if "hyb" in args.beam:
 
-        # numerical solution for center deflection
-        w_vec = hyb_beam.u[0::3]
-        nnodes = w_vec.shape[0]
-        center = (0 + nnodes - 1) // 2
-        pred_disp = w_vec[center]
+            # get hybrid beam disp
+            hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L))
+            hyb_beam.solve_forward(hvec)
+            
+            if nxe == 512 and SR == 1.0:
+                hyb_beam.plot_disp()
+                # 7.67e-7 disp at SR = 1000.0
+                # 2.93e-6 disp at SR = 1.0
 
-        disps += [pred_disp]
+            # numerical solution for center deflection
+            w_vec = hyb_beam.u[0::3]
+            nnodes = w_vec.shape[0]
+            center = (0 + nnodes - 1) // 2
+            pred_disp = w_vec[center]
+
+            disps += [pred_disp]
+
+        elif "ts" in args.beam or "tim" in args.beam:
+
+            # get standard timoshenko beam disp
+            ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L))
+            
+            if args.rint:
+                ts_beam.red_int = True
+            
+            ts_beam.solve_forward(hvec)
+            
+            if nxe == 512 and SR == 1.0:
+                ts_beam.plot_disp()
+                # 7.62e-7 at SR = 1000.0
+                # 2.96e-6 at SR = 10.0
+
+            # numerical solution for center deflection
+            w_vec = ts_beam.u[0::2]
+            nnodes = w_vec.shape[0]
+            center = (0 + nnodes - 1) // 2
+            pred_disp = w_vec[center]
+
+            disps += [pred_disp]
+
         dof_vec += [nxe * 2]
 
         # exact_disp = exact_TS_disp(E, b, thick, L, qmag)
@@ -78,12 +118,28 @@ for SR in SR_vec:
     rate = np.log(disp_errs[-2] / disp_errs[0]) / np.log(dof_vec[-2] / dof_vec[0])
     print(f"{SR=} {rate=}")
 
+    rates += [rate]
+
 rate = float(rate)
-plt.text(100, 2e-3, f"{rate=:.2f}")
+if args.beam == 'hyb':
+    plt.text(100, 2e-3, f"{SR=} {rate=:.2f}")
+else:
+    # plot least slender rate
+    SR, rate = SR_vec[0], float(rates[0])
+    plt.text(100, 2e-3, f"{SR=} {rate=:.2f}")
+
+    # plot most slender rate
+    SR, rate = SR_vec[-1], float(rates[-1])
+    plt.text(200, 1e-1, f"{SR=} {rate=:.2f}")
+
 
 plt.xscale('log'); plt.yscale('log')
 plt.xlabel("NDOF")
 plt.ylabel("Disp Err")
 plt.legend()
 # plt.show()
-plt.savefig("hybrid-beam-locking-check.png", dpi=400)
+prefix = "hybrid" if args.beam == 'hyb' else 'timoshenko'
+if args.rint:
+    prefix += '-rint'
+
+plt.savefig(f"{prefix}-beam-locking-check.png", dpi=400)
