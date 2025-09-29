@@ -54,7 +54,7 @@ def block_gauss_seidel_smoother(A, x, defect:np.ndarray, num_iter:int=1, dof_per
     new_defect = defect - A.dot(dx)
     return new_x, new_defect
 
-def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int=1):
+def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int=1, debug_print:bool=False):
     # grids are just assembler objects usually (no unified GRID object)
     nlevels = len(grids)
     dof_per_node = grids[0].dof_per_node # get from finest grid assembler
@@ -73,7 +73,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
         # smooth and restrict downwards
         for i in range(0, nlevels - 1):
             # pre-smooth
-            print(f"\tpre-smooth grid[{i}]")
+            if debug_print: print(f"\tpre-smooth grid[{i}]")
             solns[i], defects[i] = block_gauss_seidel_smoother(mats[i], solns[i], defects[i], num_iter=pre_smooth, dof_per_node=dof_per_node)
 
             # # plot the defect after smoothing
@@ -81,7 +81,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             # grids[i].plot_disp()
 
             # restrict
-            print(f"\trestrict grids [{i}]=>[{i+1}]")
+            if debug_print: print(f"\trestrict grids [{i}]=>[{i+1}]")
             defects[i+1] = grids[i+1].restrict_defect(defects[i])
             solns[i+1] *= 0.0 # resets coarse soln when you restrict defect
 
@@ -97,7 +97,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             # print(F"{i=} {solns[i].shape=}")
 
         # coarse grid solve
-        print(f"\tcoarse solve on grid[{nlevels-1}]")
+        if debug_print: print(f"\tcoarse solve on grid[{nlevels-1}]")
         solns[nlevels-1] = sp.sparse.linalg.spsolve(mats[nlevels-1].copy(), defects[nlevels-1])
 
         # plot the coarse defect and solve
@@ -113,7 +113,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
         for i in range(nlevels-2, -1, -1):
 
             # proposed prolongate
-            print(f"\tprolongate [{i+1}]=>[{i}]")
+            if debug_print: print(f"\tprolongate [{i+1}]=>[{i}]")
             dx = grids[i].prolongate(solns[i+1])
             df = mats[i].dot(dx)
 
@@ -123,6 +123,15 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             # ax[0,0].plot(grids[0].xvec, dx[0::2])
             # ax[0,1].plot(grids[0].xvec, defects[i][0::2])
             # ax[1,0].plot(grids[0].xvec, dx[1::2])
+            # ax[1,1].plot(grids[0].xvec, defects[i][1::2])
+            # plt.show()
+
+            # prev fine defect to prolong defect
+            # import matplotlib.pyplot as plt
+            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
+            # ax[0,0].plot(grids[0].xvec, -df[0::2])
+            # ax[0,1].plot(grids[0].xvec, defects[i][0::2])
+            # ax[1,0].plot(grids[0].xvec, -df[1::2])
             # ax[1,1].plot(grids[0].xvec, defects[i][1::2])
             # plt.show()
 
@@ -141,19 +150,21 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             # line search scaling of prolongation (since coarse grid less nodes, one DOF scaling not appropriate on default, 
             # can be off by 2x, 4x or some other constant usually)
             omega = np.dot(dx, defects[i]) / np.dot(dx, df)
+            omega *= 2.0 # how to fix this?
+            # omega *= 1.5
             solns[i] += omega * dx
             defects[i] -= omega * df
-            print(f"\tprolong line search with {omega=:.2e}")
+            if debug_print: print(f"\tprolong line search with {omega=:.2e}")
 
             # # plot change in defect
-            import matplotlib.pyplot as plt
-            ddf = -omega * df
-            fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            ax[0,0].plot(grids[0].xvec, ddf[0::2])
-            ax[0,1].plot(grids[0].xvec, defect_init[0::2])
-            ax[1,0].plot(grids[0].xvec, ddf[1::2])
-            ax[1,1].plot(grids[0].xvec, defect_init[1::2])
-            plt.show()
+            # import matplotlib.pyplot as plt
+            # ddf = -omega * df
+            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
+            # ax[0,0].plot(grids[0].xvec, ddf[0::2])
+            # ax[0,1].plot(grids[0].xvec, defect_init[0::2])
+            # ax[1,0].plot(grids[0].xvec, ddf[1::2])
+            # ax[1,1].plot(grids[0].xvec, defect_init[1::2])
+            # plt.show()
 
             # # plot final in defect
             # import matplotlib.pyplot as plt
@@ -166,7 +177,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
 
 
             # post-smooth
-            print(f"\tpost-smooth grid[{i}]")
+            if debug_print: print(f"\tpost-smooth grid[{i}]")
             solns[i], defects[i] = block_gauss_seidel_smoother(mats[i], solns[i], defects[i], num_iter=post_smooth, dof_per_node=dof_per_node)
 
         # check conv
@@ -177,7 +188,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             break
 
     converged_str = "converged" if converged else "didn't converge"
-    print(f"V-cycle multigrid {converged_str} in {nvcycles} steps")
+    print(f"V-cycle multigrid {converged_str} in {i_cycle} steps")
 
     # check the residual on fine grid after this solve
     fine_resid = np.linalg.norm(grids[0].force.copy() - mats[0].dot(solns[0]))

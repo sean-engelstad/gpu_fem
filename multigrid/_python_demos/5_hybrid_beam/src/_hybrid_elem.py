@@ -54,6 +54,73 @@ def lagrange_d1dx(ibasis, xi, J):
     dcoeffs = poly_derivative(coeffs)
     return (1.0 / J) * eval_poly(dcoeffs, xi)
 
+def interp_hermite_disp(xi, elem_disp, coarse_xscale):
+    """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
+
+    # convert rotations back to dw/dxi for interpolation
+    elem_disp2 = elem_disp.copy()
+    elem_disp2[np.array([1, 4])] *= coarse_xscale # dw/dx => dw/dxi
+
+    w = 0.0
+    for ibasis in range(4):
+        w += get_basis_fcn(ibasis, xi) * elem_disp2[ibasis]
+        # w_xi_coarse += get_hermite_grad(ibasis, xi) * elem_disp2[ibasis]
+    return w
+
+def interp_hermite_rotation(xi, elem_disp, coarse_xscale):
+    """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
+
+    # convert rotations back to dw/dxi for interpolation
+    elem_disp2 = elem_disp.copy()
+    elem_disp2[np.array([1, 4])] *= coarse_xscale # dw/dx => dw/dxi
+    w_xi_coarse = 0.0
+    for ibasis in range(4):
+        w_xi_coarse += get_hermite_grad(ibasis, xi) * elem_disp2[ibasis]
+    th = w_xi_coarse / coarse_xscale
+    return th
+
+def interp_lagrange_rotation(xi, elem_disp):
+    # for some reason the th are much lower when hermite interp (mins energy?) like this (missing high freq error)
+    # so trying lagrange basis instead
+
+    thetas = elem_disp[np.array([1,4])]
+    theta_shears = elem_disp[np.array([2,5])]
+    th, th_s = 0.0, 0.0
+    for ibasis in range(2):
+        N_i = lagrange_value(ibasis, xi)
+        th += N_i * thetas[ibasis]
+        th_s += N_i * theta_shears[ibasis]
+    return th, th_s
+
+def interp_hermite_disp_transpose(xi, w_in, coarse_xscale):
+    """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
+    coarse_out = np.zeros(4)
+    for ibasis in range(4):
+        coarse_out[ibasis] += get_basis_fcn(ibasis, xi) * w_in    
+    coarse_out[np.array([1,4])] *= coarse_xscale #* 2.0
+    coarse_out2 = np.array([coarse_out[0], coarse_out[1], 0.0, coarse_out[2], coarse_out[3], 0.0])
+    return coarse_out2
+
+# def interp_hermite_rotation_transpose(xi, th_in, coarse_xscale):
+#     """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
+#     w_xi_coarse_in = th_in / coarse_xscale
+#     coarse_out = np.zeros(4)
+#     for ibasis in range(4):
+#         coarse_out[ibasis] += get_hermite_grad(ibasis, xi) * w_xi_coarse_in
+#     coarse_out[np.array([1,3])] *= coarse_xscale #* 2.0
+#     return coarse_out
+
+def interp_lagrange_rotation_transpose(xi, th_in, th_shear_in):
+    theta_out = np.zeros(2)
+    theta_shear_out = np.zeros(2)
+    
+    for ibasis in range(2):
+        N_i = lagrange_value(ibasis, xi)
+        theta_out[ibasis] += N_i * th_in
+        theta_shear_out[ibasis] += N_i * th_shear_in
+    coarse_out = np.array([0.0, theta_out[0], theta_shear_out[0], 0.0, theta_out[1], theta_shear_out[1]])
+    return coarse_out
+
 # 3-pt Gauss rule on [-1,1]
 def get_quadrature_rule():
     rt35 = np.sqrt(3.0/5.0)

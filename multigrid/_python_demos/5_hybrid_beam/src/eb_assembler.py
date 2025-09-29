@@ -229,17 +229,10 @@ class EBAssembler:
             # start_inode_f = 2 * ielem_c
             for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
                 xi = -1.0 + 1.0 * i
-                w, th = interp_disp(xi, coarse_elem_disps, coarse_xscale=coarse_xscale)
-
-                # plt.plot([-1.0, 1.0], [coarse_elem_disps[0], coarse_elem_disps[2]], 'o-', color='red')
-                # plt.plot([xi], [w], 'o', color='blue')
-                # plt.show()
-
-                # if xi == 0.0:
-                #     th *= 0.0 # fix this later?
-
-                th *= -1.0 # ? fix this later?
-
+                w = interp_hermite_disp(xi, coarse_elem_disps, coarse_xscale=coarse_xscale)
+                
+                th = interp_lagrange_rotation(xi, coarse_elem_disps)
+                # th = interp_hermite_rotation(xi, coarse_elem_disps, coarse_xscale=coarse_xscale)
 
                 fine_disp[2 * inode_f] += w
                 fine_disp[2 * inode_f + 1] += th
@@ -247,11 +240,8 @@ class EBAssembler:
                 fine_weights[2 * inode_f] += 1.0
                 fine_weights[2 * inode_f + 1] += 1.0
 
-        # print(F"{fine_disp=}")
-
         # normalize by fine weights now
         fine_disp /= fine_weights
-        # print(f"{fine_weights=}")
 
         # apply bcs..
         fine_disp[0] = 0.0
@@ -295,19 +285,14 @@ class EBAssembler:
             for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
                 xi = -1.0 + 1.0 * i
                 nodal_in = fine_defect[2 * inode_f : (2 * inode_f + 2)] / fine_weights[2 * inode_f : (2 * inode_f + 2)]
-                coarse_contr = interp_disp_transpose(xi, nodal_in, coarse_xscale=self.xscale)
+                coarse_out = interp_hermite_disp_transpose(xi, nodal_in[0], coarse_xscale=self.xscale)
 
-                # try removing the rotation backprop part of the restriction?
-                # don't necessarily need R = P^T for GMG (since stiffness matrix isn't P^T K P right?)
-                # coarse_contr[np.array([1,3])] = 0.0
+                # lagrange interp of rotations actually works better interestingly (element allows small rotation in each element to min energy, so weird theta interp with hermite grad)
+                coarse_out += interp_lagrange_rotation_transpose(xi, nodal_in[1])
+                # coarse_out += interp_hermite_rotation_transpose(xi, nodal_in[1], coarse_xscale=self.xscale)
+                # coarse_out[np.array([1,3])] = 0.0 # temp debug
 
-                # temp check, only include nodal contrigutions back to rotations..
-                # otherwise it's kinda weird and coarse solve is gonna be weird
-                if xi == 0.0: 
-                    coarse_contr[np.array([1,3])] *= 0.0
-                coarse_contr[np.array([1,3])] *= -1.0 # ?
-
-                coarse_defect[coarse_elem_dof] += coarse_contr
+                coarse_defect[coarse_elem_dof] += coarse_out
 
             
         # apply bcs.. to coarse defect also
