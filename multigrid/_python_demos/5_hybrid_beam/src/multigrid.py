@@ -78,36 +78,18 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
 
             # # plot the defect after smoothing
             # grids[i].u = defects[i].copy()
-            # grids[i].plot_disp()
+            # grids[i].plot_disp(idof=1)
 
             # restrict
             if debug_print: print(f"\trestrict grids [{i}]=>[{i+1}]")
             defects[i+1] = grids[i+1].restrict_defect(defects[i])
             solns[i+1] *= 0.0 # resets coarse soln when you restrict defect
 
-            # # compare the solution the fine solution to prolongate solution (I think something is wrong with the theta DOFs)
-            # import matplotlib.pyplot as plt
-            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            # ax[0,0].plot(grids[0].xvec, defects[i][0::2])
-            # ax[0,1].plot(grids[1].xvec, defects[i+1][0::2])
-            # ax[1,0].plot(grids[0].xvec, defects[i][1::2])
-            # ax[1,1].plot(grids[1].xvec, defects[i+1][1::2])
-            # plt.show()
-
             # print(F"{i=} {solns[i].shape=}")
 
         # coarse grid solve
         if debug_print: print(f"\tcoarse solve on grid[{nlevels-1}]")
         solns[nlevels-1] = sp.sparse.linalg.spsolve(mats[nlevels-1].copy(), defects[nlevels-1])
-
-        # plot the coarse defect and solve
-        # i = nlevels-1
-        # # idof = 0
-        # idof = 1
-        # grids[i].u = defects[i].copy()
-        # grids[i].plot_disp(idof)
-        # grids[i].u = solns[i].copy()
-        # grids[i].plot_disp(idof)
 
         # prolong and post-smooth
         for i in range(nlevels-2, -1, -1):
@@ -117,64 +99,62 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             dx = grids[i].prolongate(solns[i+1])
             df = mats[i].dot(dx)
 
-            # temp debug, plot part of the prolong correction process..
-            # import matplotlib.pyplot as plt
-            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            # ax[0,0].plot(grids[0].xvec, dx[0::2])
-            # ax[0,1].plot(grids[0].xvec, defects[i][0::2])
-            # ax[1,0].plot(grids[0].xvec, dx[1::2])
-            # ax[1,1].plot(grids[0].xvec, defects[i][1::2])
-            # plt.show()
+            # if debug_print: 
+            #     # # try single element interpolations first..
+            #     import matplotlib.pyplot as plt
+            #     # ielem_c = 0
+            #     # ielem_c = 1
+            #     ielem_c = 2
+            #     elem_u_c = solns[i+1][2*ielem_c : (2 * ielem_c + 4)]
+            #     from src._eb_elem import interp_hermite_disp, interp_lagrange_rotation
+            #     xi = np.linspace(-1.0, 1.0, 5)
+            #     he = grids[1].xscale
+            #     print(f"{elem_u_c=}")
 
-            # prev fine defect to prolong defect
-            # import matplotlib.pyplot as plt
-            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            # ax[0,0].plot(grids[0].xvec, -df[0::2])
-            # ax[0,1].plot(grids[0].xvec, defects[i][0::2])
-            # ax[1,0].plot(grids[0].xvec, -df[1::2])
-            # ax[1,1].plot(grids[0].xvec, defects[i][1::2])
-            # plt.show()
+            #     w = np.array([interp_hermite_disp(_xi, elem_u_c, he) for _xi in xi])
+            #     th = np.array([interp_lagrange_rotation(_xi, elem_u_c) for _xi in xi])
 
-            # # compare the solution the fine solution to prolongate solution (I think something is wrong with the theta DOFs)
-            # import matplotlib.pyplot as plt
-            # fine_soln = sp.sparse.linalg.spsolve(mats[i].copy(), defects[i])
-            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            # ax[0,0].plot(grids[0].xvec, dx[0::3])
-            # ax[0,1].plot(grids[0].xvec, fine_soln[0::3])
-            # ax[1,0].plot(grids[0].xvec, dx[1::3])
-            # ax[1,1].plot(grids[0].xvec, fine_soln[1::3])
-            # plt.show()
+            #     fig, ax = plt.subplots(1, 2, figsize=(12, 9))
+            #     ax[0].plot(xi, w, 'o-')
+            #     ax[1].plot(xi, th, 'o-')
+            #     plt.show()
 
-            defect_init = defects[i].copy()
+            # # temp debug, compare prolong to exact fine solution here
+            # if debug_print:
+            #     import matplotlib.pyplot as plt
+            #     fine_soln = sp.sparse.linalg.spsolve(mats[i].copy(), defects[i])
+            #     fig, ax = plt.subplots(2, 2, figsize=(12, 9))
+            #     vpn = dof_per_node
+            #     ax[0,0].plot(grids[0].xvec, dx[0::vpn], 'o-')
+            #     ax[0,1].plot(grids[0].xvec, fine_soln[0::vpn], 'o-')
+            #     idof = 1
+            #     # idof = 2
+            #     ax[1,0].plot(grids[0].xvec, dx[idof::vpn])
+            #     ax[1,1].plot(grids[0].xvec, fine_soln[idof::vpn])
+            #     plt.show()
+
+            # defect_init = defects[i].copy()
+
+            # temp debug, comparedf to current defect
+            if debug_print:
+                import matplotlib.pyplot as plt
+                fig, ax = plt.subplots(2, 2, figsize=(12, 9))
+                vpn = dof_per_node
+                ax[0,0].plot(grids[0].xvec, df[0::vpn])
+                ax[0,1].plot(grids[0].xvec, defects[i][0::vpn])
+                idof = 1
+                # idof = 2
+                ax[1,0].plot(grids[0].xvec, df[idof::vpn])
+                ax[1,1].plot(grids[0].xvec, defects[i][idof::vpn])
+                plt.show()
 
             # line search scaling of prolongation (since coarse grid less nodes, one DOF scaling not appropriate on default, 
             # can be off by 2x, 4x or some other constant usually)
             omega = np.dot(dx, defects[i]) / np.dot(dx, df)
-            omega *= 2.0 # how to fix this?
-            # omega *= 1.5
+            
             solns[i] += omega * dx
             defects[i] -= omega * df
             if debug_print: print(f"\tprolong line search with {omega=:.2e}")
-
-            # # plot change in defect
-            # import matplotlib.pyplot as plt
-            # ddf = -omega * df
-            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            # ax[0,0].plot(grids[0].xvec, ddf[0::2])
-            # ax[0,1].plot(grids[0].xvec, defect_init[0::2])
-            # ax[1,0].plot(grids[0].xvec, ddf[1::2])
-            # ax[1,1].plot(grids[0].xvec, defect_init[1::2])
-            # plt.show()
-
-            # # plot final in defect
-            # import matplotlib.pyplot as plt
-            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            # ax[0,0].plot(grids[0].xvec, defect_init[0::2])
-            # ax[0,1].plot(grids[0].xvec, defects[i][0::2])
-            # ax[1,0].plot(grids[0].xvec, defect_init[1::2])
-            # ax[1,1].plot(grids[0].xvec, defects[i][1::2])
-            # plt.show()
-
 
             # post-smooth
             if debug_print: print(f"\tpost-smooth grid[{i}]")
@@ -194,4 +174,4 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
     fine_resid = np.linalg.norm(grids[0].force.copy() - mats[0].dot(solns[0]))
     print(f"\tcheck : {fine_resid=:.2e}")
 
-    return solns[0] # return fine grid solution
+    return solns[0], i_cycle+1 # return fine grid solution

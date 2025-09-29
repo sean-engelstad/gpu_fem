@@ -10,7 +10,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--beam", type=str, default='eb', help="--beam, options: eb, hyb, ts")
 parser.add_argument("--nxe", type=int, default=128, help="num max elements in the beam assembler")
 parser.add_argument("--nxe_min", type=int, default=16, help="num min elements in the beam assembler")
-parser.add_argument("--SR", type=float, default=10.0, help="beam slenderness")
+parser.add_argument("--SR", type=float, default=100.0, help="beam slenderness")
+parser.add_argument("--nsmooth", type=int, default=1, help="num smoothing steps")
 args = parser.parse_args()
 
 grids = []
@@ -44,6 +45,7 @@ elif args.beam == 'ts':
     print(f"{args.SR=:.2e}")
     while (nxe >= args.nxe_min):
         ts_grid = TimoshenkoAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
+        ts_grid.red_int = True
         ts_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
         grids += [ts_grid]
         nxe = nxe // 2
@@ -62,4 +64,7 @@ elif args.beam == 'hyb':
 # solve the multigrid using V-cycle
 # ----------------------------------
 
-fine_soln = vcycle_solve(grids, nvcycles=100, pre_smooth=2, post_smooth=2)
+fine_soln, n_iters = vcycle_solve(grids, nvcycles=100, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
+    # debug_print=True,
+    debug_print=False,
+)

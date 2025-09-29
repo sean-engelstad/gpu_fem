@@ -85,6 +85,8 @@ for SR in SR_vec:
             
             if args.rint:
                 ts_beam.red_int = True
+            else:
+                ts_beam.red_int = False
             
             ts_beam.solve_forward(hvec)
             

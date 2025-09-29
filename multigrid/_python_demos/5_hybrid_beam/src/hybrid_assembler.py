@@ -193,16 +193,17 @@ class HybridAssembler:
     def xvec(self) -> list:
         return [i*self.dx for i in range(self.num_nodes)]
 
-    def plot_disp(self):
+    def plot_disp(self, idof:int=0):
         xvec = self.xvec
         # print(f"{self.u=}")
-        w = self.u[0::3]
+        w = self.u[idof::3]
         import matplotlib.pyplot as plt
         plt.figure()
         plt.plot(xvec, w)
         plt.plot(xvec, np.zeros((self.num_nodes,)), "k--")
         plt.xlabel("x")
-        plt.ylabel("w(x)")
+        ylabels = ['w(x)', 'dw/dx(x)', 'th_s(x)']
+        plt.ylabel(ylabels[idof])
         plt.show()      
 
     # multgrid code
@@ -222,6 +223,7 @@ class HybridAssembler:
         assert(nelems_fine == self.num_elements)
         nnodes_fine = nelems_fine + 1
         ndof_fine = 3 * nnodes_fine
+        fine_xscale = coarse_xscale * 0.5
 
         # allocate final array
         fine_disp = np.zeros(ndof_fine)
@@ -237,8 +239,10 @@ class HybridAssembler:
             # interpolate the w DOF first using FEA basis
             for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
                 xi = -1.0 + 1.0 * i
-                w = interp_hermite_disp(xi, coarse_elem_disps, coarse_xscale=coarse_xscale)
+                w = interp_hermite_disp(xi, coarse_elem_disps, fine_xscale=fine_xscale)
                 th, th_s = interp_lagrange_rotation(xi, coarse_elem_disps)
+                # even though we're interpolating from fine to coarse elements with hermite cubic
+                # the in-element dw/dxi interp better if scaled down to fine dw/dxi size (hard to explain but works for hermtie cubic and hugely improves conv back to omega = 1 from omega = 0.25 on two grid case)
 
                 fine_disp[3 * inode_f] += w
                 fine_disp[3 * inode_f + 1] += th
@@ -269,6 +273,7 @@ class HybridAssembler:
         assert(nelems_coarse == self.num_elements)
         nnodes_coarse = nelems_coarse + 1
         ndof_coarse = 3 * nnodes_coarse
+        fine_xscale = self.xscale * 0.5
 
         # allocate final array
         coarse_defect = np.zeros(ndof_coarse)
@@ -293,7 +298,7 @@ class HybridAssembler:
             for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
                 xi = -1.0 + 1.0 * i
                 nodal_in = fine_defect[3 * inode_f : (3 * inode_f + 3)] / fine_weights[3 * inode_f : (3 * inode_f + 3)]
-                coarse_out = interp_hermite_disp_transpose(xi, nodal_in[0], coarse_xscale=self.xscale)
+                coarse_out = interp_hermite_disp_transpose(xi, nodal_in[0], fine_xscale=fine_xscale)
                 coarse_out += interp_lagrange_rotation_transpose(xi, nodal_in[1], nodal_in[2])
                 coarse_defect[coarse_elem_dof] += coarse_out
 

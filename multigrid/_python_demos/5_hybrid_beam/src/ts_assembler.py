@@ -29,7 +29,7 @@ class TimoshenkoAssembler:
         # adjoint only required for stress function
         self.psis = None
 
-        self.red_int = False # can change this in python if you really need to
+        self.red_int = True # can change this in python if you really need to
 
         # simply supported BCss
         self.num_elements = nxe
