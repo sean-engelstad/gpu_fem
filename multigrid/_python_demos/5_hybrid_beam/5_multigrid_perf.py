@@ -24,6 +24,7 @@ for SR in SR_vec:
     # -----------------------------
     E = 2e7; b = 1.0; L = 1.0; rho = 1; qmag = 1e4; ys = 4e5; rho_KS = 50.0
     # scale by slenderness
+    
     thick = L / SR
     qmag *= 1e5
     qmag *= thick**3
