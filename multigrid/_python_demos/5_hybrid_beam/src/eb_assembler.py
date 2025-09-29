@@ -205,6 +205,7 @@ class EBAssembler:
         ndof_coarse = coarse_disp.shape[0]
         nnodes_coarse = ndof_coarse // 2
         nelems_coarse = nnodes_coarse - 1
+        coarse_xscale = self.L / nelems_coarse
 
         # fine size
         nelems_fine = 2 * nelems_coarse 
@@ -227,8 +228,18 @@ class EBAssembler:
             # start_inode_c = ielem_c
             # start_inode_f = 2 * ielem_c
             for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
-                xi = 0.5 * i
-                w, th = interp_disp(xi, coarse_elem_disps, self.xscale)
+                xi = -1.0 + 1.0 * i
+                w, th = interp_disp(xi, coarse_elem_disps, coarse_xscale=coarse_xscale)
+
+                # plt.plot([-1.0, 1.0], [coarse_elem_disps[0], coarse_elem_disps[2]], 'o-', color='red')
+                # plt.plot([xi], [w], 'o', color='blue')
+                # plt.show()
+
+                # if xi == 0.0:
+                #     th *= 0.0 # fix this later?
+
+                th *= -1.0 # ? fix this later?
+
 
                 fine_disp[2 * inode_f] += w
                 fine_disp[2 * inode_f + 1] += th
@@ -236,9 +247,11 @@ class EBAssembler:
                 fine_weights[2 * inode_f] += 1.0
                 fine_weights[2 * inode_f + 1] += 1.0
 
-            
+        # print(F"{fine_disp=}")
+
         # normalize by fine weights now
         fine_disp /= fine_weights
+        # print(f"{fine_weights=}")
 
         # apply bcs..
         fine_disp[0] = 0.0
@@ -280,9 +293,20 @@ class EBAssembler:
             
             # interpolate the w DOF first using FEA basis
             for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
-                xi = 0.5 * i
+                xi = -1.0 + 1.0 * i
                 nodal_in = fine_defect[2 * inode_f : (2 * inode_f + 2)] / fine_weights[2 * inode_f : (2 * inode_f + 2)]
-                coarse_contr = interp_disp_transpose(xi, nodal_in, self.xscale)
+                coarse_contr = interp_disp_transpose(xi, nodal_in, coarse_xscale=self.xscale)
+
+                # try removing the rotation backprop part of the restriction?
+                # don't necessarily need R = P^T for GMG (since stiffness matrix isn't P^T K P right?)
+                # coarse_contr[np.array([1,3])] = 0.0
+
+                # temp check, only include nodal contrigutions back to rotations..
+                # otherwise it's kinda weird and coarse solve is gonna be weird
+                if xi == 0.0: 
+                    coarse_contr[np.array([1,3])] *= 0.0
+                coarse_contr[np.array([1,3])] *= -1.0 # ?
+
                 coarse_defect[coarse_elem_dof] += coarse_contr
 
             

@@ -12,7 +12,7 @@ parser.add_argument("--SR", type=int, default=100.0, help="beam slenderness")
 args = parser.parse_args()
 
 grids = []
-nxe_min = 8
+nxe_min = 16
 
 # same problem settings for all
 # -----------------------------

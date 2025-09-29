@@ -55,33 +55,41 @@ def get_basis_fcn(ibasis, xi):
     xi_poly = hermite_cubic_polynomials_1d(ibasis)
     return eval_polynomial(xi_poly, xi)
 
-def get_hermite_grad(ibasis, xi, xscale):
+def get_hermite_grad(ibasis, xi):
     xi_poly = hermite_cubic_polynomials_1d(ibasis)
 
     dphi_dxi_poly = [xi_poly[-3], 2.0 * xi_poly[-2], 3.0 * xi_poly[-1]]
     dphi_dxi = eval_polynomial(dphi_dxi_poly, xi)
-    dphi_dx = 1.0/xscale * dphi_dxi
-    return dphi_dx
+    return dphi_dxi
 
-def interp_disp(xi, elem_disp, xscale):
+def interp_disp(xi, elem_disp, coarse_xscale):
     """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
 
-    w, th = 0.0, 0.0
-    for ibasis in range(4):
-        w += get_basis_fcn(ibasis, xi) * elem_disp[ibasis]
-        th += get_hermite_grad(ibasis, xi, xscale) * elem_disp[ibasis]
+    # convert rotations back to dw/dxi for interpolation
+    elem_disp2 = elem_disp.copy()
+    elem_disp2[np.array([1, 3])] *= coarse_xscale # dw/dx => dw/dxi
 
+    w, w_xi_coarse = 0.0, 0.0
+    for ibasis in range(4):
+        w += get_basis_fcn(ibasis, xi) * elem_disp2[ibasis]
+        w_xi_coarse += get_hermite_grad(ibasis, xi) * elem_disp2[ibasis]
+    
+    th = w_xi_coarse / coarse_xscale
     return w, th
 
-def interp_disp_transpose(xi, nodal_in, xscale):
+def interp_disp_transpose(xi, nodal_in, coarse_xscale):
     """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
 
     w_in, th_in = nodal_in[0], nodal_in[1]
     coarse_out = np.zeros(4)
+    w_xi_in = th_in * coarse_xscale
 
     for ibasis in range(4):
         coarse_out[ibasis] += get_basis_fcn(ibasis, xi) * w_in
-        coarse_out[ibasis] += get_hermite_grad(ibasis, xi, xscale) * th_in
+        coarse_out[ibasis] += get_hermite_grad(ibasis, xi) * w_xi_in
+    
+    # converts from dw/dxi => dw/dx (reverse unit conv)
+    coarse_out[np.array([1,3])] /= coarse_xscale
     return coarse_out
 
 def get_kelem(xscale):

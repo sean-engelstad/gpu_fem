@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from __src import get_tacs_matrix, delete_rows_and_columns, reduced_indices, plot_vec_compare, plot_vec_compare_all, plot_plate_vec
 from __src import gauss_seidel_csr, block_gauss_seidel_6dof, mg_coarse_fine_operators_v1, mg_coarse_fine_operators_v2, sort_vis_maps, zero_non_nodal_dof
 from __src import mg_coarse_fine_operators_v3, mg_coarse_fine_operators_v4, mg_coarse_fine_transv_shear_smooth
-from __src import block_gauss_seidel_6dof_v2
+# from __src import block_gauss_seidel_6dof_v2
 import scipy as sp
 from scipy.sparse.linalg import spsolve
 from mpl_toolkits.mplot3d import Axes3D  # This import registers the 3D projection, even if not used directly.
@@ -27,7 +27,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--cf_smooth", type=int, default=0, help="smooth coarse-fine step")
 parser.add_argument("--trv_shear", type=int, default=0, help="turn on strain-disp transv shear smooth step (cheap)")
-parser.add_argument("--LDblock", type=int, default=0, help="only use L+D part of each nodal block in BGS smoother")
+# parser.add_argument("--LDblock", type=int, default=0, help="only use L+D part of each nodal block in BGS smoother")
 parser.add_argument("--n_gs", type=int, default=1, help="num gs smoothing steps")
 parser.add_argument("--SR", type=float, default=100.0, help="slenderness ratio of plate L/h")
 parser.add_argument("--n_vcyc", type=int, default=100, help="max num v-cycles")
@@ -205,12 +205,12 @@ for v_cycle in range(300):
 
     # level 0 - smooth
     lhs_0 = tacs_csr_mat_list[0]
-    if args.LDblock:
-        print("running v2 BGS")
-        dx_1 = block_gauss_seidel_6dof_v2(lhs_0, defect_0_0, np.zeros(lhs_0.shape[0]), num_iter=gw_pre)
-    else:
-        print("running v1 BGS")
-        dx_1 = block_gauss_seidel_6dof(lhs_0, defect_0_0, np.zeros(lhs_0.shape[0]), num_iter=gw_pre)
+    # if args.LDblock:
+    #     print("running v2 BGS")
+    #     dx_1 = block_gauss_seidel_6dof_v2(lhs_0, defect_0_0, np.zeros(lhs_0.shape[0]), num_iter=gw_pre)
+    # else:
+    #     print("running v1 BGS")
+    dx_1 = block_gauss_seidel_6dof(lhs_0, defect_0_0, np.zeros(lhs_0.shape[0]), num_iter=gw_pre)
     x_1 = x + dx_1
     defect_0_1 = defect_0_0 - lhs_0.dot(dx_1)
     if args.plot: # plot and print we assume are same (like debug here)
@@ -253,10 +253,10 @@ for v_cycle in range(300):
     # TODO : need smoothing of coarse-fine? (neg loads because we add neg loads to next defect)
     # NOTE : this is prolong smoothing here..
     if args.cf_smooth: # NOTE : this is a good settin I think..
-        if args.LDblock:
-            _dx_cf_update = block_gauss_seidel_6dof_v2(lhs_0, -1.0 * _df_cf_0, np.zeros(lhs_0.shape[0]), num_iter=gs_cf)
-        else:
-            _dx_cf_update = block_gauss_seidel_6dof(lhs_0, -1.0 * _df_cf_0, np.zeros(lhs_0.shape[0]), num_iter=gs_cf)
+        # if args.LDblock:
+        #     _dx_cf_update = block_gauss_seidel_6dof_v2(lhs_0, -1.0 * _df_cf_0, np.zeros(lhs_0.shape[0]), num_iter=gs_cf)
+        # else:
+        _dx_cf_update = block_gauss_seidel_6dof(lhs_0, -1.0 * _df_cf_0, np.zeros(lhs_0.shape[0]), num_iter=gs_cf)
         _dx_cf_1 = _dx_cf_0 + _dx_cf_update
         _df_cf_1 = lhs_0.dot(_dx_cf_1)
 
@@ -304,10 +304,10 @@ for v_cycle in range(300):
     if args.debug: check_defect_err(x_2, defect_0_2)
 
     # post-smoothing
-    if args.LDblock:
-        dx_2 = block_gauss_seidel_6dof_v2(lhs_0, defect_0_2, np.zeros(lhs_0.shape[0]), num_iter=gs_post)
-    else:
-        dx_2 = block_gauss_seidel_6dof(lhs_0, defect_0_2, np.zeros(lhs_0.shape[0]), num_iter=gs_post)
+    # if args.LDblock:
+    #     dx_2 = block_gauss_seidel_6dof_v2(lhs_0, defect_0_2, np.zeros(lhs_0.shape[0]), num_iter=gs_post)
+    # else:
+    dx_2 = block_gauss_seidel_6dof(lhs_0, defect_0_2, np.zeros(lhs_0.shape[0]), num_iter=gs_post)
     defect_0_3 = defect_0_2 - lhs_0.dot(dx_2)
     x_3 = x_2 + dx_2
     if args.plot:
