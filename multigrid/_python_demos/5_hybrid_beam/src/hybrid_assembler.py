@@ -287,7 +287,7 @@ class HybridAssembler:
 
         # loop through coarse elements to compute restricted defect
         for ielem_c in range(nelems_coarse):
-            coarse_elem_dof = np.array([2 * _node + _dof for _node in [ielem_c, ielem_c + 1] for _dof in range(2)])
+            coarse_elem_dof = np.array([3 * _node + _dof for _node in [ielem_c, ielem_c + 1] for _dof in range(3)])
             
             # interpolate the w DOF first using FEA basis
             for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):

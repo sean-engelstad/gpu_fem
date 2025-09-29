@@ -3,14 +3,14 @@ import numpy as np
 # hermite cubic coefficients in xi (a0 + a1*xi + a2*xi^2 + a3*xi^3)
 def hermite_cubic_polynomials_1d(ibasis):
     # using standard Hermite basis on [-1,1]:
-    if ibasis == 0: # phi1 (w at node 1)
+    if ibasis == 0: # w for node 1
         return [0.5, -0.75, 0.0, 0.25]
-    elif ibasis == 1: # dphi1/dxscale (slope DOF at node 1)
-        return [-0.25, 0.25, 0.25, -0.25]
-    elif ibasis == 2: # phi2 (w at node 2)
+    elif ibasis == 1: # dw/dxi for node 1
+        return [0.25, -0.25, -0.25, 0.25]
+    elif ibasis == 2: # w for node 2
         return [0.5, 0.75, 0.0, -0.25]
-    elif ibasis == 3: # slope DOF at node 2
-        return [0.25, 0.25, -0.25, -0.25]
+    elif ibasis == 3: # dw/dxi for node 2
+        return [-0.25, -0.25, 0.25, 0.25]
 
 # linear Lagrange on [-1,1]
 def lagrange_polynomials_1d(ibasis):
@@ -58,12 +58,12 @@ def interp_hermite_disp(xi, elem_disp, coarse_xscale):
     """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
 
     # convert rotations back to dw/dxi for interpolation
-    elem_disp2 = elem_disp.copy()
-    elem_disp2[np.array([1, 4])] *= coarse_xscale # dw/dx => dw/dxi
+    hermite_disp = elem_disp[np.array([0, 1, 3, 4])]
+    hermite_disp[np.array([1, 3])] *= coarse_xscale # dw/dx => dw/dxi
 
     w = 0.0
     for ibasis in range(4):
-        w += get_basis_fcn(ibasis, xi) * elem_disp2[ibasis]
+        w += hermite_value(ibasis, xi) * hermite_disp[ibasis]
         # w_xi_coarse += get_hermite_grad(ibasis, xi) * elem_disp2[ibasis]
     return w
 
@@ -71,11 +71,11 @@ def interp_hermite_rotation(xi, elem_disp, coarse_xscale):
     """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
 
     # convert rotations back to dw/dxi for interpolation
-    elem_disp2 = elem_disp.copy()
-    elem_disp2[np.array([1, 4])] *= coarse_xscale # dw/dx => dw/dxi
+    hermite_disp = elem_disp[np.array([0, 1, 3, 4])]
+    hermite_disp[np.array([1, 3])] *= coarse_xscale # dw/dx => dw/dxi
     w_xi_coarse = 0.0
     for ibasis in range(4):
-        w_xi_coarse += get_hermite_grad(ibasis, xi) * elem_disp2[ibasis]
+        w_xi_coarse += get_hermite_grad(ibasis, xi) * hermite_disp[ibasis]
     th = w_xi_coarse / coarse_xscale
     return th
 
@@ -96,8 +96,8 @@ def interp_hermite_disp_transpose(xi, w_in, coarse_xscale):
     """interp the w and th disp here, with elem_disp the hermite cubic DOF [w1, th1, w2, th2]"""
     coarse_out = np.zeros(4)
     for ibasis in range(4):
-        coarse_out[ibasis] += get_basis_fcn(ibasis, xi) * w_in    
-    coarse_out[np.array([1,4])] *= coarse_xscale #* 2.0
+        coarse_out[ibasis] += hermite_value(ibasis, xi) * w_in    
+    coarse_out[np.array([1,3])] *= coarse_xscale #* 2.0
     coarse_out2 = np.array([coarse_out[0], coarse_out[1], 0.0, coarse_out[2], coarse_out[3], 0.0])
     return coarse_out2
 

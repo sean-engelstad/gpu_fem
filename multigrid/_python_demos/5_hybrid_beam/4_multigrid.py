@@ -48,6 +48,16 @@ elif args.beam == 'ts':
         grids += [ts_grid]
         nxe = nxe // 2
 
+elif args.beam == 'hyb':
+    # make hybrid beam assemblers
+    nxe = args.nxe
+    print(f"{args.SR=:.2e}")
+    while (nxe >= args.nxe_min):
+        hyb_grid = HybridAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
+        hyb_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
+        grids += [hyb_grid]
+        nxe = nxe // 2
+
 # ----------------------------------
 # solve the multigrid using V-cycle
 # ----------------------------------
