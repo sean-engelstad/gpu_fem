@@ -47,6 +47,7 @@ class ChebyshevTSAssembler:
         # compute rowPtr, colPtr
         self.rowPtr = [0]
         self.colPtr = []
+        self.rows = []
         self.nnzb = 0
         for inode in range(self.num_nodes):
             temp = [ind for elem_conn in self.conn if inode in elem_conn for ind in elem_conn]
@@ -56,10 +57,10 @@ class ChebyshevTSAssembler:
             self.nnzb += temp.shape[0]
             self.rowPtr += [self.nnzb]
             self.colPtr += list(temp)
+            self.rows += [inode]*temp.shape[0]
         self.rowPtr = np.array(self.rowPtr)
         self.colPtr = np.array(self.colPtr)
-        # print(f"{self.rowPtr=}")
-        # print(f"{self.colPtr=}")
+        self.rows = np.array(self.rows)
 
     def _compute_mat_vec(self, helem_vec):
         # copy states out
@@ -119,6 +120,7 @@ class ChebyshevTSAssembler:
 
                 # loop through rowPtr, colPtr data structure
                 elem_nodes = [self.order * ielem + _lnode for _lnode in range(self.order + 1)]
+                # print(f"{ielem=} {elem_nodes=}")
                 for row_node in elem_nodes:
                     # print(F"{row_node=} {self.num_nodes=}")
                     start = self.rowPtr[row_node]
@@ -138,6 +140,10 @@ class ChebyshevTSAssembler:
             # q *= 0.5 # since each node has two contributions adding to it (normalizing from local to global basis functions basically)
             np.add.at(force, local_conn, q * felem_nom)
 
+        # import matplotlib.pyplot as plt
+        # plt.spy(Kmat)
+        # plt.show()
+
         # now apply simply supported BCs
         bcs = [0, 2 * (self.num_nodes-1)]
 
@@ -149,14 +155,22 @@ class ChebyshevTSAssembler:
                 Kmat[bc, bc] = 1.0
         else: # sparse
             # just explicitly do it for now
-            self.data[0:2,0,:] = 0.0
-            self.data[[0,2],:,0] = 0.0
+            self.data[0:self.order+1,0,:] = 0.0
+            for inode in range(self.num_nodes):
+                for jp in range(self.rowPtr[inode], self.rowPtr[inode + 1]):
+                    if self.colPtr[jp] == 0:
+                        self.data[jp, :, 0] = 0.0
             self.data[0,0,0] = 1.0
 
             bc = 2 * (self.num_nodes-1)
-            self.data[self.nnzb-2:,0,:] = 0.0
-            self.data[self.nnzb-3,:,0] = 0.0
-            self.data[self.nnzb-1,:,0] = 0.0
+            inode = self.num_nodes - 1
+            for jp in range(self.rowPtr[inode], self.rowPtr[inode + 1]):
+                self.data[jp, 0, :] = 0.0 # zero rows
+
+            for inode in range(self.num_nodes):
+                for jp in range(self.rowPtr[inode], self.rowPtr[inode + 1]):
+                    if self.colPtr[jp] == self.num_nodes-1:
+                        self.data[jp, :, 0] = 0.0 # zero cols
             self.data[self.nnzb-1,0,0] = 1.0
 
         for bc in bcs:
@@ -166,9 +180,19 @@ class ChebyshevTSAssembler:
         # Kmat = sp.sparse.csr_matrix(Kmat)
 
         if not self._dense:
+            # print(f"{self.rowPtr=} {self.colPtr=}")
+
             Kmat = sp.sparse.bsr_matrix(
                 (self.data, self.colPtr, self.rowPtr), 
                 shape=(2*self.num_nodes, 2*self.num_nodes))
+
+            # Kmat = Kmat.tocsr()
+            # print(f"{Kmat.indptr=}")
+            # print(f"{Kmat.indices=}")
+            
+            # import matplotlib.pyplot as plt
+            # plt.spy(Kmat)
+            # plt.show()
             
             # convert to csr since doesn't support bsr in scipy spsolve
             Kmat = Kmat.tocsr()
@@ -323,6 +347,7 @@ class ChebyshevTSAssembler:
                 coarse_out = np.zeros(2*(self.order + 1))
                 coarse_out[0::2] += interp_chebyshev_transpose(xi, nodal_in[0], self.order)
                 coarse_out[1::2] += interp_chebyshev_transpose(xi, nodal_in[1], self.order)
+                # print(f"{coarse_out=}")
                 coarse_defect[coarse_elem_dof] += coarse_out
 
             

@@ -7,6 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from src import HybridAssembler
 from src import TimoshenkoAssembler
+from src import ChebyshevTSAssembler
+from scipy.sparse.linalg import spsolve
 
 import argparse
 
@@ -104,6 +106,27 @@ for SR in SR_vec:
             disps += [pred_disp]
             dof_vec += [nxe * 2]
 
+        elif 'cfe' in args.beam:
+
+            # order = 1
+            order = 2
+            # order = 3
+
+            cfe_beam = ChebyshevTSAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L), order=order)
+            # cfe_beam.red_int = False
+            cfe_beam._compute_mat_vec(np.array([thick]*nxe))
+            cfe_beam.u = spsolve(cfe_beam.Kmat, cfe_beam.force)
+            # cfe_beam.plot_disp()
+
+            w_vec = cfe_beam.u[0::2]
+            nnodes = w_vec.shape[0]
+            center = (0 + nnodes - 1) // 2
+            pred_disp = w_vec[center]
+            # print(f"{pred_disp=}")
+
+            disps += [pred_disp]
+            dof_vec += [nnodes * 2]
+
 
         # exact_disp = exact_TS_disp(E, b, thick, L, qmag)
         # exact_disps += [exact_disp]
@@ -142,7 +165,15 @@ plt.xlabel("NDOF")
 plt.ylabel("Disp Err")
 plt.legend()
 # plt.show()
-prefix = "hybrid" if args.beam == 'hyb' else 'timoshenko'
+if args.beam == 'hyb':
+    prefix = 'hybrid'
+
+elif args.beam == 'ts':
+    prefix = 'timoshenko'
+
+elif args.beam == 'cfe':
+    prefix = 'chebyshev'
+
 if args.rint:
     prefix += '-rint'
 

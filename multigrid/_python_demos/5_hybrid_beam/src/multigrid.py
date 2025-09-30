@@ -94,10 +94,14 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             # grids[i].u = defects[i].copy()
             # grids[i].plot_disp(idof=1)
 
+            pre_defect_p1 = defects[i+1].copy()
+
             # restrict
             if debug_print: print(f"\trestrict grids [{i}]=>[{i+1}]")
             defects[i+1] = grids[i+1].restrict_defect(defects[i])
             solns[i+1] *= 0.0 # resets coarse soln when you restrict defect
+
+            # debug_plot(dof_per_node, grids[1], vec1=pre_defect_p1, vec2=defects[i+1])
 
             # print(F"{i=} {solns[i].shape=}")
 

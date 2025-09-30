@@ -59,18 +59,18 @@ hyb_beam.solve_forward(hvec)
 # ------------------
 # order = 1
 order = 2
-cfe_beam = ChebyshevTSAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=True, order=order)
+cfe_beam = ChebyshevTSAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, order=order)
 cfe_beam.solve_forward(hvec)
-cfe_beam.plot_disp()
+# cfe_beam.plot_disp()
 
 # plot all of them..
 import matplotlib.pyplot as plt
-fig, ax = plt.subplots(1, 3, figsize=(10, 6))
-xvec = eb_beam.xvec
+fig, ax = plt.subplots(1, 4, figsize=(10, 6))
 
-names = ["EB-beam", "TS-Beam", "HYB-beam"]
-for i,beam in enumerate([eb_beam, ts_beam, hyb_beam]):
-    stride = 2 if i < 2 else 3
+names = ["EB-beam", "TS-Beam", "HYB-beam", "CFE-beam"]
+for i,beam in enumerate([eb_beam, ts_beam, hyb_beam, cfe_beam]):
+    stride = 2 if i != 2 else 3
+    xvec = beam.xvec
     disp = beam.u[0::stride]
     ax[i].plot(xvec, disp, label=names[i])
     ax[i].legend()

@@ -86,7 +86,7 @@ def interp_chebyshev_transpose(xi, out_bar, order:int=2):
     # interp a single variable of interest using chebyshev basis
     n = order + 1
     vals = out_bar * np.array([
-        chebyshev_value(ibasis, xi, order) * out_bar for ibasis in range(n)
+        chebyshev_value(ibasis, xi, order) for ibasis in range(n)
     ])
     return vals
 

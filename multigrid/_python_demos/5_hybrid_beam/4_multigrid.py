@@ -69,13 +69,14 @@ elif args.beam == 'cfe':
     while (nxe >= args.nxe_min):
         # order = 1
         order = 2
+        # order = 3
         cfe_grid = ChebyshevTSAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=True, load_fcn=load_fcn, order=order)
         cfe_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
         grids += [cfe_grid]
         nxe = nxe // 2
 
-        mat = cfe_grid.Kmat
-        print(f"{type(mat)=}")
+        # mat = cfe_grid.Kmat
+        # print(f"{type(mat)=}")
 
 # ----------------------------------
 # solve the multigrid using V-cycle
