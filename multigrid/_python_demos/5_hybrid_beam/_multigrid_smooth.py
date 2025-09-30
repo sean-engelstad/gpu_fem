@@ -2,16 +2,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy as sp
-from src import EBAssembler, HybridAssembler, TimoshenkoAssembler, ChebyshevTSAssembler
-from src import vcycle_solve, block_gauss_seidel_smoother
+from src import EBAssembler, HybridAssembler, TimoshenkoAssembler
+from src import block_gauss_seidel_smoother
 
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--beam", type=str, default='eb', help="--beam, options: eb, hyb, ts")
 parser.add_argument("--nxe", type=int, default=128, help="num max elements in the beam assembler")
-parser.add_argument("--nxe_min", type=int, default=16, help="num min elements in the beam assembler")
 parser.add_argument("--SR", type=float, default=100.0, help="beam slenderness")
-parser.add_argument("--nsmooth", type=int, default=1, help="num smoothing steps")
 args = parser.parse_args()
 
 grids = []
@@ -34,7 +32,7 @@ load_fcn = lambda x : np.sin(3.0 * np.pi * x / L)
 if args.beam == 'eb':
     # make euler-bernoulli beam assemblers for multigrid
     nxe = args.nxe
-    while (nxe >= args.nxe_min):
+    while (nxe >= args.nxe):
         eb_grid = EBAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
         eb_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
         grids += [eb_grid]
@@ -43,11 +41,10 @@ if args.beam == 'eb':
 elif args.beam == 'ts':
     # make timoshenko beam assemblers
     nxe = args.nxe
-    # print(f"{args.SR=:.2e}")
-    while (nxe >= args.nxe_min):
+    print(f"{args.SR=:.2e}")
+    while (nxe >= args.nxe):
         ts_grid = TimoshenkoAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
         ts_grid.red_int = True
-        # ts_grid.red_int = False
         ts_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
         grids += [ts_grid]
         nxe = nxe // 2
@@ -55,33 +52,24 @@ elif args.beam == 'ts':
 elif args.beam == 'hyb':
     # make hybrid beam assemblers
     nxe = args.nxe
-    # print(f"{args.SR=:.2e}")
-    while (nxe >= args.nxe_min):
+    print(f"{args.SR=:.2e}")
+    while (nxe >= args.nxe):
         hyb_grid = HybridAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
         hyb_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
         grids += [hyb_grid]
         nxe = nxe // 2
 
-elif args.beam == 'cfe':
-    # make hybrid beam assemblers
-    nxe = args.nxe
-    # print(f"{args.SR=:.2e}")
-    while (nxe >= args.nxe_min):
-        # order = 1
-        order = 2
-        cfe_grid = ChebyshevTSAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=True, load_fcn=load_fcn, order=order)
-        cfe_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
-        grids += [cfe_grid]
-        nxe = nxe // 2
-
-        mat = cfe_grid.Kmat
-        print(f"{type(mat)=}")
-
 # ----------------------------------
-# solve the multigrid using V-cycle
+# run multigrid smoother on the defect
 # ----------------------------------
 
-fine_soln, n_iters = vcycle_solve(grids, nvcycles=100, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
-    # debug_print=True,
-    debug_print=False,
-)
+defect = grids[0].force.copy()
+mat = grids[0].Kmat.copy()
+soln = np.zeros_like(defect)
+
+for i in range(100):
+    if i % 5 == 0:
+        nrm = np.linalg.norm(defect)
+        print(f"{i=} => {nrm=:.2e}")
+
+    soln, defect = block_gauss_seidel_smoother(mat, soln, defect, num_iter=1, dof_per_node=grids[0].dof_per_node)
