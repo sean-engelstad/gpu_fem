@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy as sp
-from src import EBAssembler, HybridAssembler, TimoshenkoAssembler
+from src import EBAssembler, HybridAssembler, TimoshenkoAssembler, ChebyshevTSAssembler
 from src import vcycle_solve, block_gauss_seidel_smoother
 
 import argparse
@@ -43,7 +43,7 @@ if args.beam == 'eb':
 elif args.beam == 'ts':
     # make timoshenko beam assemblers
     nxe = args.nxe
-    print(f"{args.SR=:.2e}")
+    # print(f"{args.SR=:.2e}")
     while (nxe >= args.nxe_min):
         ts_grid = TimoshenkoAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
         ts_grid.red_int = True
@@ -54,12 +54,27 @@ elif args.beam == 'ts':
 elif args.beam == 'hyb':
     # make hybrid beam assemblers
     nxe = args.nxe
-    print(f"{args.SR=:.2e}")
+    # print(f"{args.SR=:.2e}")
     while (nxe >= args.nxe_min):
         hyb_grid = HybridAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
         hyb_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
         grids += [hyb_grid]
         nxe = nxe // 2
+
+elif args.beam == 'cfe':
+    # make hybrid beam assemblers
+    nxe = args.nxe
+    # print(f"{args.SR=:.2e}")
+    while (nxe >= args.nxe_min):
+        # order = 1
+        order = 2
+        cfe_grid = ChebyshevTSAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=True, load_fcn=load_fcn, order=order)
+        cfe_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
+        grids += [cfe_grid]
+        nxe = nxe // 2
+
+        mat = cfe_grid.Kmat
+        print(f"{type(mat)=}")
 
 # ----------------------------------
 # solve the multigrid using V-cycle

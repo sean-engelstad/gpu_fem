@@ -3,6 +3,7 @@ import numpy as np
 from src import EBAssembler #, plot_hermite_cubic
 from src import TimoshenkoAssembler
 from src import HybridAssembler
+from src import ChebyshevTSAssembler
 
 # SR = 0.1
 # SR = 1.0
@@ -26,10 +27,12 @@ qmag *= thick**3
 # if rho_KS was too high like 500, then the constraint was too nonlinear or close to max and optimization failed
 rho_KS = 50.0 # rho = 50 for 100 elements, used 500 later
 # nxe = num_elements = int(3e2) #100, 300, 1e3
-nxe = num_elements = int(1e3)
+# nxe = num_elements = int(1e3)
+nxe = num_elements = int(1e2)
 
 # num DVs
-nxh = 100 
+# nxh = 100 
+nxh = nxe
 hvec = np.array([thick] * nxh)
 
 eb_beam = EBAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False)
@@ -51,6 +54,14 @@ ts_beam.solve_forward(hvec)
 hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False)
 hyb_beam.solve_forward(hvec)
 # hyb_beam.plot_disp()
+
+# 4) chebyshev beam
+# ------------------
+# order = 1
+order = 2
+cfe_beam = ChebyshevTSAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=True, order=order)
+cfe_beam.solve_forward(hvec)
+cfe_beam.plot_disp()
 
 # plot all of them..
 import matplotlib.pyplot as plt
