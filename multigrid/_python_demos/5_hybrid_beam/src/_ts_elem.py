@@ -37,6 +37,23 @@ def get_quadrature_rule():
     rt35 = np.sqrt(3.0/5.0)
     return [(-rt35, 5.0/9.0), (0.0, 8.0/9.0), (rt35, 5.0/9.0)]
 
+def interp_lagrange(xi, elem_disp):
+    w, th = 0.0, 0.0
+    for ibasis in range(2):
+        N_i = lagrange_value(ibasis, xi)
+        w += N_i * elem_disp[2 * ibasis]
+        th += N_i * elem_disp[2 * ibasis + 1]
+    return w, th
+
+def interp_lagrange_transpose(xi, nodal_in):
+    w_in, th_in = nodal_in[0], nodal_in[1]
+    coarse_out = np.zeros(4)
+    for ibasis in range(2):
+        N_i = lagrange_value(ibasis, xi)
+        coarse_out[2 * ibasis] += N_i * w_in
+        coarse_out[2 * ibasis + 1] += N_i * th_in
+    return coarse_out
+
 def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True):
     """
     J : Jacobian = L/2 (so L = 2*J)

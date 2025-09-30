@@ -6,29 +6,40 @@ import numpy as np
 from pyoptsparse import SNOPT, Optimization
 import os
 import argparse
+from mpi4py import MPI
 
 # ndvs_per_side = 4
 # ndvs_per_side = 16
-ndvs_per_side = 32
+# ndvs_per_side = 32
 # ndvs_per_side = 64
-# ndvs_per_side = 128
+ndvs_per_side = 128
+
+# only adding MPI right now to help pyoptsparse.. it runs better with more PROCS?
+comm = MPI.COMM_WORLD
 
 # setup GPU solver
-solver = gpusolver.TacsGpuMultigridSolver(
-    rhoKS=100.0,
-    safety_factor=1.5,
-    load_mag=3000.0,
-    omega=0.85,
-    # nxe=512,
-    nxe=256,
-    # nxe=128,
-    nx_comp=ndvs_per_side, # num dvs in x-direction
-    ny_comp=ndvs_per_side, # num dvs/comps in y-direction
-    SR=50.0, # slenderness
-)
+solver = None
+
+root = 0
+if comm.rank == root:
+    solver = gpusolver.TacsGpuMultigridSolver(
+        rhoKS=100.0,
+        safety_factor=1.5,
+        load_mag=3000.0,
+        omega=0.85,
+        # nxe=512,
+        nxe=256,
+        # nxe=128,
+        nx_comp=ndvs_per_side, # num dvs in x-direction
+        ny_comp=ndvs_per_side, # num dvs/comps in y-direction
+        SR=50.0, # slenderness
+    )
 
 # init dvs
-ndvs = solver.get_num_dvs()
+ndvs = None
+if comm.rank == root:
+    ndvs = solver.get_num_dvs()
+ndvs = comm.bcast(ndvs, root=root)
 x0 = np.array([3e-2]*ndvs)
 
 # debug writing DVs to not same values..
@@ -44,12 +55,19 @@ def get_functions(xdict):
     # update design
     xlist = xdict["vars"]
     xarr = np.array([float(_) for _ in xlist])
-    solver.set_design_variables(xarr)
 
-    # solve and get functions
-    solver.solve()
-    mass = solver.evalFunction("mass")
-    ksfail = solver.evalFunction("ksfailure")
+    mass, ksfail = None, None
+    if comm.rank == root:
+        solver.set_design_variables(xarr)
+
+        # solve and get functions
+        solver.solve()
+        mass = solver.evalFunction("mass")
+        ksfail = solver.evalFunction("ksfailure")
+
+    mass = comm.bcast(mass, root=root)
+    ksfail = comm.bcast(ksfail, root=root)
+
     funcs = {
         'mass' : mass,
         'ksfailure' : ksfail,
@@ -70,14 +88,22 @@ def get_function_grad(xdict, funcs):
     # but if optimizer calls grads twice in a row or something, this won't work right (needs companion get_functions call every time)
     xlist = xdict["vars"]
     xarr = np.array([float(_) for _ in xlist])
-    solver.set_design_variables(xarr)
 
-    # before not including this would result in wrong state vars
-    # now it only does the solve again if design changed with this call
-    solver.solve() # temp debug just solve again here
+    mass_grad, ksfail_grad = None, None
 
-    mass_grad = solver.evalFunctionSens("mass")
-    ksfail_grad = solver.evalFunctionSens("ksfailure")
+    if comm.rank == root:
+        solver.set_design_variables(xarr)
+
+        # before not including this would result in wrong state vars
+        # now it only does the solve again if design changed with this call
+        solver.solve() # temp debug just solve again here
+
+        mass_grad = solver.evalFunctionSens("mass")
+        ksfail_grad = solver.evalFunctionSens("ksfailure")
+
+    mass_grad = comm.bcast(mass_grad, root=root)
+    ksfail_grad = comm.bcast(ksfail_grad, root=root)
+
     sens = {
         'mass' : {'vars' : mass_grad},
         'ksfailure' : {'vars' : ksfail_grad},
@@ -155,6 +181,7 @@ sol = snoptimizer(
 
 print(f"{sol.xStar=}")
 
-solver.solve()
-solver.writeSolution("out/plate_opt.vtk")
-solver.free()
+if comm.rank == root:
+    solver.solve()
+    solver.writeSolution("out/plate_opt.vtk")
+    solver.free()

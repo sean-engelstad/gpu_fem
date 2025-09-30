@@ -193,14 +193,118 @@ class HybridAssembler:
     def xvec(self) -> list:
         return [i*self.dx for i in range(self.num_nodes)]
 
-    def plot_disp(self):
+    def plot_disp(self, idof:int=0):
         xvec = self.xvec
         # print(f"{self.u=}")
-        w = self.u[0::3]
+        w = self.u[idof::3]
         import matplotlib.pyplot as plt
         plt.figure()
         plt.plot(xvec, w)
         plt.plot(xvec, np.zeros((self.num_nodes,)), "k--")
         plt.xlabel("x")
-        plt.ylabel("w(x)")
+        ylabels = ['w(x)', 'dw/dx(x)', 'th_s(x)']
+        plt.ylabel(ylabels[idof])
         plt.show()      
+
+    # multgrid code
+    # ---------------
+
+    def prolongate(self, coarse_disp):
+        # assume coarse disp is for half as many elements
+
+        # coarse size
+        ndof_coarse = coarse_disp.shape[0]
+        nnodes_coarse = ndof_coarse // 3
+        nelems_coarse = nnodes_coarse - 1
+        coarse_xscale = self.L / nelems_coarse
+
+        # fine size
+        nelems_fine = 2 * nelems_coarse 
+        assert(nelems_fine == self.num_elements)
+        nnodes_fine = nelems_fine + 1
+        ndof_fine = 3 * nnodes_fine
+        fine_xscale = coarse_xscale * 0.5
+
+        # allocate final array
+        fine_disp = np.zeros(ndof_fine)
+        fine_weights = np.zeros(ndof_fine) # for global partition of unity normalization
+
+        # loop through coarse elements
+        for ielem_c in range(nelems_coarse):
+
+            # get the coarse element DOF
+            coarse_elem_dof = np.array([3 * _node + _dof for _node in [ielem_c, ielem_c + 1] for _dof in range(3)])
+            coarse_elem_disps = coarse_disp[coarse_elem_dof]
+            
+            # interpolate the w DOF first using FEA basis
+            for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
+                xi = -1.0 + 1.0 * i
+                w = interp_hermite_disp(xi, coarse_elem_disps, fine_xscale=fine_xscale)
+                th, th_s = interp_lagrange_rotation(xi, coarse_elem_disps)
+                # even though we're interpolating from fine to coarse elements with hermite cubic
+                # the in-element dw/dxi interp better if scaled down to fine dw/dxi size (hard to explain but works for hermtie cubic and hugely improves conv back to omega = 1 from omega = 0.25 on two grid case)
+
+                fine_disp[3 * inode_f] += w
+                fine_disp[3 * inode_f + 1] += th
+                fine_disp[3 * inode_f + 2] += th_s
+
+                for _i in range(3):
+                    fine_weights[3 * inode_f + _i] += 1.0
+
+        # normalize by fine weights now
+        fine_disp /= fine_weights
+
+        # apply bcs..
+        fine_disp[0] = 0.0
+        fine_disp[-3] = 0.0
+
+        return fine_disp
+
+    def restrict_defect(self, fine_defect):
+        # from fine defect to this assembler as coarse defect
+
+        # fine size
+        ndof_fine = fine_defect.shape[0]
+        nnodes_fine = ndof_fine // 3
+        nelems_fine = nnodes_fine - 1
+
+        # coarse size
+        nelems_coarse = nelems_fine // 2
+        assert(nelems_coarse == self.num_elements)
+        nnodes_coarse = nelems_coarse + 1
+        ndof_coarse = 3 * nnodes_coarse
+        fine_xscale = self.xscale * 0.5
+
+        # allocate final array
+        coarse_defect = np.zeros(ndof_coarse)
+        fine_weights = np.zeros(ndof_fine) # for global partition of unity normalization
+
+        # compute first the fine weights (I do this better way on GPU).. and other codes, this is lightweight implementation, don't care here
+        for ielem_c in range(nelems_coarse):
+            for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
+                fine_weights[3 * inode_f] += 1.0
+                fine_weights[3 * inode_f + 1] += 1.0
+                fine_weights[3 * inode_f + 2] += 1.0
+
+        # begin by apply bcs to fine defect in (usually not necessary)
+        fine_defect[0] = 0.0
+        fine_defect[-3] = 0.0
+
+        # loop through coarse elements to compute restricted defect
+        for ielem_c in range(nelems_coarse):
+            coarse_elem_dof = np.array([3 * _node + _dof for _node in [ielem_c, ielem_c + 1] for _dof in range(3)])
+            
+            # interpolate the w DOF first using FEA basis
+            for i, inode_f in enumerate(range(2 * ielem_c, 2 * ielem_c + 3)):
+                xi = -1.0 + 1.0 * i
+                nodal_in = fine_defect[3 * inode_f : (3 * inode_f + 3)] / fine_weights[3 * inode_f : (3 * inode_f + 3)]
+                coarse_out = interp_hermite_disp_transpose(xi, nodal_in[0], fine_xscale=fine_xscale)
+                coarse_out += interp_lagrange_rotation_transpose(xi, nodal_in[1], nodal_in[2])
+                coarse_defect[coarse_elem_dof] += coarse_out
+
+            
+        # apply bcs.. to coarse defect also
+        coarse_defect[0] = 0.0
+        coarse_defect[-3] = 0.0
+
+        return coarse_defect
