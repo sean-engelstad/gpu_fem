@@ -127,14 +127,14 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             # plt.show()
 
             # # compare the solution the fine solution to prolongate solution (I think something is wrong with the theta DOFs)
-            # import matplotlib.pyplot as plt
-            # fine_soln = sp.sparse.linalg.spsolve(mats[i].copy(), defects[i])
-            # fig, ax = plt.subplots(2, 2, figsize=(12, 9))
-            # ax[0,0].plot(grids[0].xvec, dx[0::2])
-            # ax[0,1].plot(grids[0].xvec, fine_soln[0::2])
-            # ax[1,0].plot(grids[0].xvec, dx[1::2])
-            # ax[1,1].plot(grids[0].xvec, fine_soln[1::2])
-            # plt.show()
+            import matplotlib.pyplot as plt
+            vpn = dof_per_node
+            fine_soln = sp.sparse.linalg.spsolve(mats[i].copy(), defects[i])
+            fig, ax = plt.subplots(vpn, 2, figsize=(12, 9))
+            for iv in range(vpn):
+                ax[iv,0].plot(grids[0].xvec, dx[iv::vpn])
+                ax[iv,1].plot(grids[0].xvec, fine_soln[iv::vpn])
+            plt.show()
 
             defect_init = defects[i].copy()
 
