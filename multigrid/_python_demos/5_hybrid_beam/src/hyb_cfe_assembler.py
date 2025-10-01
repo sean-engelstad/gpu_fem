@@ -1,10 +1,10 @@
-__all__ = ["ChebyshevTSAssembler"]
+__all__ = ["HybridChebyshevAssembler"]
 
 import numpy as np
 import scipy as sp
-from ._cfe_elem import *
+from ._hyb_cfe_elem import *
 
-class ChebyshevTSAssembler:
+class HybridChebyshevAssembler:
     def __init__(self, nxe:int, nxh:int, E:float, b:float, L:float, rho:float, 
                  qmag:float, ys:float, rho_KS:float, dense:bool=False, order:int=2, load_fcn=None):
         self.nxe = nxe
@@ -29,8 +29,6 @@ class ChebyshevTSAssembler:
         self.u = None
         # adjoint only required for stress function
         self.psis = None
-
-        self.red_int = False # can change this in python if you really need to
 
         # simply supported BCss
         self.num_elements = nxe
@@ -86,7 +84,7 @@ class ChebyshevTSAssembler:
         # temp debug
         # EI = 0.0
 
-        Kelem_nom = get_kelem(J=self.dx / 2.0, EI=EI, GA=GA, use_reduced_integration_for_shear=self.red_int, order=self.order)
+        Kelem_nom = get_kelem(J=self.dx / 2.0, EI=EI, GA=GA, order=self.order)
         felem_nom = get_felem(self.dx / 2.0, order=self.order)
 
         # print(F"{felem_nom=}")
@@ -231,7 +229,8 @@ class ChebyshevTSAssembler:
 
     @property
     def xvec(self) -> list:
-        return [i*self.dx for i in range(self.num_nodes)]
+        dx_order = self.L / (self.num_nodes - 1)
+        return [i*dx_order for i in range(self.num_nodes)]
 
     def plot_disp(self):
         xvec = self.xvec

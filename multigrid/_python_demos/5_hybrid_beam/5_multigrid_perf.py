@@ -8,15 +8,16 @@ import time
 
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument("--nxe", type=int, default=128, help="num max elements in the beam assembler")
-parser.add_argument("--nxe_min", type=int, default=32, help="num min elements in the beam assembler")
-parser.add_argument("--nsmooth", type=int, default=1, help="num smoothing steps")
+parser.add_argument("--nxe", type=int, default=192, help="num max elements in the beam assembler")
+parser.add_argument("--nxe_min", type=int, default=48, help="num min elements in the beam assembler")
+parser.add_argument("--nsmooth", type=int, default=4, help="num smoothing steps")
 args = parser.parse_args()
 
 
 
 SR_vec = [1.0, 10.0, 30.0, 50.0, 1e2, 300.0, 500.0, 1e3, 1e4]
-runtimes = {key:[] for key in ['eb', 'ts', 'hyb', 'cfe']}
+beam_types = ['eb', 'ts', 'hyb', 'cfe2', 'cfe3', 'cfe4']
+runtimes = {key:[] for key in beam_types}
 
 for SR in SR_vec:
 
@@ -35,7 +36,9 @@ for SR in SR_vec:
     # create all the grids / assemblers
     # ----------------------------------
 
-    for beam in ['eb', 'ts', 'hyb', 'cfe']:
+    for beam in beam_types:
+
+        print(f"\n--------------\n{SR=:.2e} {beam=}\n--------------\n")
 
         grids = []
 
@@ -67,15 +70,21 @@ for SR in SR_vec:
                 grids += [hyb_grid]
                 nxe = nxe // 2
 
-        elif beam == 'cfe':
-            # make hybrid beam assemblers
-            nxe = args.nxe
-            # print(f"{args.SR=:.2e}")
-            while (nxe >= args.nxe_min):
-                # order = 1
+        elif 'cfe' in beam:
+
+            if beam == 'cfe2':
                 order = 2
-                # order = 3
-                cfe_grid = ChebyshevTSAssembler(nxe // 2, nxe // 2, E, b, L, rho, qmag, ys, rho_KS, dense=True, load_fcn=load_fcn, order=order)
+            elif beam == 'cfe3':
+                order = 3
+            elif beam == 'cfe4':
+                order = 4
+
+            nxe = args.nxe // order
+            nxe_min = args.nxe_min // order
+
+            while (nxe >= nxe_min):
+
+                cfe_grid = ChebyshevTSAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn, order=order)
                 cfe_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
                 grids += [cfe_grid]
                 nxe = nxe // 2
@@ -85,9 +94,10 @@ for SR in SR_vec:
         # ----------------------------------
 
         start_time = time.time()
-        fine_soln, n_iters = vcycle_solve(grids, nvcycles=200, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
+        fine_soln, n_iters = vcycle_solve(grids, nvcycles=100, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
             # debug_print=True,
             debug_print=False,
+            print_freq=5
         )
         dt = time.time() - start_time
 
@@ -98,12 +108,12 @@ for SR in SR_vec:
 # now plot each runtimes
 import niceplots
 plt.style.use(niceplots.get_style())
-for beam in ['eb', 'ts', 'hyb', 'cfe']:
+for beam in beam_types:
     plt.plot(SR_vec, runtimes[beam], 'o-', label=beam)
     
 plt.xlabel("Slenderness")
 plt.xscale('log')
-plt.ylabel("# V-cycles")
+plt.ylabel(f"# V({args.nsmooth},{args.nsmooth})-cycles")
 # plt.ylabel("Runtime (sec)")
 plt.yscale('log')
 plt.legend()
@@ -111,4 +121,4 @@ plt.legend()
 plt.margins(x=0.05, y=0.05)
 
 # plt.savefig("hybrid-beam-multigrid-times.png", dpi=400)
-plt.savefig("hybrid-beam-multigrid-cycles.png", dpi=400)
+plt.savefig("beam-multigrid-cycles.png", dpi=400)

@@ -1,12 +1,13 @@
-from src._cfe_elem import *
+from src._hyb_cfe_elem import *
 import matplotlib.pyplot as plt
 import numpy as np
 import niceplots
 from src import ChebyshevTSAssembler
 
 # order = 1
-order = 2
-# order = 3
+# order = 2
+order = 3
+# order = 4
 
 gps = get_chebyshev_gps(order)
 xi = np.linspace(-1.0, 1.0, 100)
@@ -14,17 +15,20 @@ xi = np.linspace(-1.0, 1.0, 100)
 plt.style.use(niceplots.get_style())
 
 
-# Nks = []
-# for ibasis in range(order + 1):
-#     Nks += [
-#         np.array([chebyshev_value(ibasis, _xi, order) for _xi in xi])
-#     ]
-#     plt.plot(xi, Nks[-1], label=f"N{ibasis}")
+Nks = []
+for ibasis in range(order + 1):
+    Nks += [
+        np.array([chebyshev_value(ibasis, _xi, order) for _xi in xi])
+    ]
+    # Nks += [
+    #     np.array([chebyshev_d2dx(ibasis, _xi, 1.0, order) for _xi in xi])
+    # ]
+    plt.plot(xi, Nks[-1], label=f"N{ibasis}")
 
-# plt.legend()
-# plt.xlabel("Xi")
-# plt.ylabel("CFE Basis")
-# plt.show()
+plt.legend()
+plt.xlabel("Xi")
+plt.ylabel("CFE Basis")
+plt.show()
 
 
 # SR = 0.1

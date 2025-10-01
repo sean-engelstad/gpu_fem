@@ -4,6 +4,7 @@ from src import EBAssembler #, plot_hermite_cubic
 from src import TimoshenkoAssembler
 from src import HybridAssembler
 from src import ChebyshevTSAssembler
+from src import HybridChebyshevAssembler
 
 # SR = 0.1
 # SR = 1.0
@@ -28,7 +29,8 @@ qmag *= thick**3
 rho_KS = 50.0 # rho = 50 for 100 elements, used 500 later
 # nxe = num_elements = int(3e2) #100, 300, 1e3
 # nxe = num_elements = int(1e3)
-nxe = num_elements = int(1e2)
+nxe = num_elements = int(3e2)
+# nxe = num_elements = int(30)
 
 # num DVs
 # nxh = 100 
@@ -62,6 +64,21 @@ order = 2
 cfe_beam = ChebyshevTSAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, order=order)
 cfe_beam.solve_forward(hvec)
 # cfe_beam.plot_disp()
+
+# 4) hybrid chebyshev beam (not hermite formulation, only 2 dof per node not 3)
+# ------------------
+# order = 1
+order = 2
+# order = 3
+# order = 4
+
+# this element doesn't seem to work as well, LOL
+# may need to also include dual hermite-chevyshev basis..
+
+_nxe = nxe // order
+hyb_cfe_beam = HybridChebyshevAssembler(_nxe, _nxe, E, b, L, rho, qmag, ys, rho_KS, dense=True, order=order)
+hyb_cfe_beam.solve_forward(hvec[:_nxe])
+# hyb_cfe_beam.plot_disp()
 
 # plot all of them..
 import matplotlib.pyplot as plt

@@ -1,5 +1,8 @@
 import numpy as np
 
+# TODO : could also do some type of mixed hermite-chebyshev element (but that seems really high order..)
+
+
 def chebyshev_polynomials(order:int=2):
     # update rule is Tn+1(x) = 2x * Tn(x) - T_{n-1}(x)
     funcs = [
@@ -7,7 +10,7 @@ def chebyshev_polynomials(order:int=2):
         lambda x : x,
         lambda x : 2.0 * x**2 - 1.0,
         lambda x : 4.0 * x**3 - 3.0 * x,
-        lambda x : 8.0 * x**4 - 8.0 * x**2 + 1.0,
+        lambda x : 8.0 * x**4 - 8.0 * x**2 + 1.0
     ]
 
     n = order + 1
@@ -20,7 +23,20 @@ def chebyshev_polynomials_deriv(order:int=2):
         lambda x : 1.0,
         lambda x : 4.0 * x,
         lambda x : 12.0 * x**2 - 3.0,
-        lambda x : 32.0 * x**3 - 16.0 * x,
+        lambda x : 32.0 * x**3 - 16.0 * x
+    ]
+
+    n = order + 1
+    return funcs[:n]
+
+def chebyshev_polynomials_deriv2(order:int=2):
+    # update rule is Tn+1(x) = 2x * Tn(x) - T_{n-1}(x)
+    funcs = [
+        lambda x : 0.0,
+        lambda x : 0.0,
+        lambda x : 4.0,
+        lambda x : 24.0 * x,
+        lambda x : 96.0 * x**2 - 16.0
     ]
 
     n = order + 1
@@ -76,6 +92,27 @@ def chebyshev_d1dx(ibasis, xi, J:float, order:int=2):
         Nk_val += Tik * Ti_in_deriv / denom
     return Nk_val / J
 
+def chebyshev_d2dx(ibasis, xi, J:float, order:int=2):
+    # compute the value of ibasis==k => Nk(xi)
+
+    n = order + 1
+    T_func = chebyshev_polynomials(order)
+    T_func_derivs2 = chebyshev_polynomials_deriv2(order)
+    xis = get_chebyshev_gps(order)
+    xi_k = xis[ibasis]
+    # print(f"{ibasis=} {xi=} {order=} : {xi_k=}")
+
+
+    Nk_val = 0.0
+    a = np.cos(np.pi / 2.0 / n)
+    for i in range(n):
+        Tik = T_func[i](a * xi_k)
+        Ti_in_deriv2 = T_func_derivs2[i](a * xi) * a**2
+        # T_denom_vec = T_func[i](a * xis)
+        # denom = np.sum(T_denom_vec**2)
+        denom = n if i == 0 else n / 2.0
+        Nk_val += Tik * Ti_in_deriv2 / denom
+    return Nk_val / J**2
 
 def interp_chebyshev(xi, vals, order:int=2):
     # interp a single variable of interest using chebyshev basis
@@ -113,7 +150,14 @@ def get_quadrature_rule(order:int=3):
             (pts[1], wts[1]),
         ]
 
-def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=False, order:int=2):
+# whether the kirchoff part of the rotation is stored as dw/dxi or dw/dx
+# in particular if True, it's stored as dw/dx
+# initially putting this to True breaks mesh convergence of this element (but does give right displacements)
+# needs to be True if want to use on plate and multigrid
+physical_rots = True
+# physical_rots = False
+
+def get_kelem(J, EI, GA, k_shear=5.0/6.0, order:int=2):
     """
     J : Jacobian = L/2 (so L = 2*J)
     EI : bending stiffness
@@ -124,53 +168,42 @@ def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=Fals
     Kelem = np.zeros((2 * n, 2 * n))
     quads = get_quadrature_rule(order)
 
-    # If doing reduced integration for shear, we evaluate shear at single point (xi=0)
-    if use_reduced_integration_for_shear:
-        shear_quads = [(0.0, 2.0)]  # one-point Gauss on [-1,1] has weight 2
-    else:
-        shear_quads = quads
-
-    # GA *= 8.0 # correction?
-
     # bending (EI * int (w_xx - th_s_x)^2 dx) expands into EI*(w_xx*w_xx - 2 w_xx th_s_x + th_s_x th_s_x)
-    for xi, weight in shear_quads:
-        # quadrature factor dx = J * dxi
-        qfactor = weight * J
-
-        # th_s uses Lagrange; its x-derivative:
-        dpsi = [chebyshev_d1dx(i, xi, J, order) for i in range(n)]
-        # shear shape values too if needed (for kGA * th_s^2)
-        psi_val = [chebyshev_value(i, xi, order) for i in range(n)]
-
-        # first nxn block Kww before reordering
-        for i in range(n):
-            for j in range(n):
-                
-                # kww block
-                Kelem[i,j] += k_shear * GA * qfactor * dpsi[i] * dpsi[j]
-
-                # k_[w,th] block
-                Kelem[i,n + j] += -k_shear * GA * qfactor * dpsi[i] * psi_val[j]
-
-                # and transpose
-                Kelem[n + i,j] += -k_shear * GA * qfactor * psi_val[i] * dpsi[j]
-
-                # K_[th,th] block
-                Kelem[n + i, n + j] += k_shear * GA * qfactor * psi_val[i] * psi_val[j]
-
     for xi, weight in quads:
         # quadrature factor dx = J * dxi
         qfactor = weight * J
+        # build required derivatives/values at xi
+        d2phi = [chebyshev_d2dx(i, xi, J, order) for i in range(n)]
+        dphi = [chebyshev_d1dx(i, xi, J, order) for i in range(n)]
+        phi = [chebyshev_value(i, xi, order) for i in range(n)]
 
-        # th_s uses Lagrange; its x-derivative:
-        dpsi = [chebyshev_d1dx(i, xi, J, order) for i in range(n)]
-        # shear shape values too if needed (for kGA * th_s^2)
-        psi_val = [chebyshev_value(i, xi, order) for i in range(n)]
-
+        
         for i in range(n):
             for j in range(n):
-                Kelem[n + i, n + j] += EI * qfactor * dpsi[i] * dpsi[j]
 
+                # bending strain energy part.. 
+                # -----------------------------
+
+                # kww block
+                Kelem[i,j] += EI * qfactor * d2phi[i] * d2phi[j]
+
+                # k_[w,th] block
+                Kelem[i, n + j] -= EI * qfactor * d2phi[i] * dphi[j]
+
+                # k_[th,w] block
+                Kelem[n+i, j] -= EI * qfactor * dphi[i] * d2phi[j]
+
+                # k_[th, th] block
+                Kelem[n + i, n + j] += EI * qfactor * dphi[i] * dphi[j]
+                
+                # shear strain energy part 
+                # -------------------------
+                Kelem[n + i, n + j] += k_shear * GA * qfactor * phi[i] * phi[j]
+
+    # import matplotlib.pyplot as plt
+    # plt.imshow(np.log(1.0 + Kelem**2))
+    # plt.show()
+                
     # reorder the Kelem instead of [w1,...,wn, th1, ..., thn] to [w1,th1,...,wn,thn]
     reorder_ind = []
     for i in range(n):
@@ -178,11 +211,6 @@ def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=Fals
     # print(f"{reorder_ind=}")
     reorder_ind = np.array(reorder_ind)
     Kelem = Kelem[reorder_ind, :][:, reorder_ind]
-
-    # import matplotlib.pyplot as plt
-    # plt.imshow(Kelem)
-    # plt.show()
-
     return Kelem
 
 
@@ -191,7 +219,7 @@ def get_felem(J, order:int=2):
     quads = get_quadrature_rule(order)
     nquad = len(quads)
     n = order + 1
-    felem = np.zeros((2 * n,))
+    felem = np.zeros(2 * n)
     for iquad in range(nquad):
         xi, weight = quads[iquad]
         psi_val = [chebyshev_value(i, xi, order) for i in range(n)]

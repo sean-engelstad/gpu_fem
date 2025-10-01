@@ -63,7 +63,7 @@ def debug_plot(dof_per_node, grid, vec1, vec2):
         ax[iv,1].plot(grid.xvec, vec2[iv::vpn])
     plt.show()
 
-def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int=1, debug_print:bool=False):
+def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int=1, debug_print:bool=False, print_freq:int=1):
     # grids are just assembler objects usually (no unified GRID object)
     nlevels = len(grids)
     dof_per_node = grids[0].dof_per_node # get from finest grid assembler
@@ -71,6 +71,9 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
     solns = [np.zeros_like(grids[i].force) for i in range(nlevels)]
     defects = [grids[i].force.copy() for i in range(nlevels)]
     mats = [grids[i].Kmat.copy() for i in range(nlevels)]
+
+    # print(f"{defects=}")
+    # print(f"{}")
 
     init_defect_norm = np.linalg.norm(defects[0])
     print(f"V-cycle multigrid solve with {nlevels} grids:")
@@ -82,6 +85,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
         # smooth and restrict downwards
         for i in range(0, nlevels - 1):
             
+            # print(f"{i=}")
             pre_defect = defects[i].copy()
 
             # pre-smooth
@@ -155,7 +159,7 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
 
         # check conv
         defect_norm = np.linalg.norm(defects[0])
-        print(f"V[{i_cycle}] : {defect_norm=:.2e}")
+        if i_cycle % print_freq == 0: print(f"V[{i_cycle}] : {defect_norm=:.2e}")
         if defect_norm <= 1e-6 * init_defect_norm:
             converged = True
             break
