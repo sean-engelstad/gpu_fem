@@ -10,7 +10,7 @@
 template <class Assembler>
 Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E, double nu,
                                double thick, double rho = 2500, double ys = 350e6,
-                               int nxe_per_comp = 1, int nye_per_comp = 1) {
+                               int nxe_per_comp = 1, int nye_per_comp = 1) { // , int order = -1
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -108,8 +108,10 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
             int ielem = nxe * iye + ixe;
             // TODO : issue with defining conn out of order like this, needs to
             // be sorted now?""
+            // no specified order like MITC here
             int nodes[] = {nnx * iye + ixe, nnx * iye + ixe + 1, nnx * (iye + 1) + ixe,
-                           nnx * (iye + 1) + ixe + 1};
+                        nnx * (iye + 1) + ixe + 1};
+            
             for (int inode = 0; inode < Basis::num_nodes; inode++) {
                 elem_conn[Basis::num_nodes * ielem + inode] = nodes[inode];
             }

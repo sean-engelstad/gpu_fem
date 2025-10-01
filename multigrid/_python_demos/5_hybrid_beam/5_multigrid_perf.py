@@ -16,7 +16,7 @@ args = parser.parse_args()
 
 
 SR_vec = [1.0, 10.0, 30.0, 50.0, 1e2, 300.0, 500.0, 1e3, 1e4]
-beam_types = ['eb', 'ts', 'hyb', 'cfe2', 'cfe3', 'cfe4']
+beam_types = ['eb', 'ts', 'hyb', 'cfe1', 'cfe2', 'cfe3', 'cfe4']
 runtimes = {key:[] for key in beam_types}
 
 for SR in SR_vec:
@@ -72,7 +72,9 @@ for SR in SR_vec:
 
         elif 'cfe' in beam:
 
-            if beam == 'cfe2':
+            if beam == 'cfe1':
+                order = 1
+            elif beam == 'cfe2':
                 order = 2
             elif beam == 'cfe3':
                 order = 3

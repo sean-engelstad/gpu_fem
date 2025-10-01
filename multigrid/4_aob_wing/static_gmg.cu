@@ -6,8 +6,10 @@
 
 // shell imports
 #include "assembler.h"
+#include "element/shell/basis/lagrange_basis.h"
+#include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
-#include "element/shell/shell_elem_group.h"
+#include "element/shell/mitc_shell.h"
 
 // local multigrid imports
 #include "multigrid/grid.h"
@@ -52,13 +54,13 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     using T = double;   
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
-    using Basis = ShellQuadBasis<T, Quad, 2>;
+    using Basis = LagrangeQuadBasis<T, Quad, 2>;
     using Geo = Basis::Geo;
     constexpr bool has_ref_axis = false;
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // old smoothers
@@ -250,7 +252,7 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
-  using Basis = ShellQuadBasis<T, Quad, 2>;
+  using Basis = LagrangeQuadBasis<T, Quad, 2>;
   using Geo = Basis::Geo;
 
   constexpr bool has_ref_axis = false;
@@ -258,7 +260,7 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
-  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+  using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
   using GRID = ShellGrid<Assembler, UnstructuredProlongation<Basis,true>, MULTICOLOR_GS_FAST2_JUNCTION, NONE>;
 

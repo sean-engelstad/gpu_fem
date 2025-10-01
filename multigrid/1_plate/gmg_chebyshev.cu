@@ -6,10 +6,10 @@
 
 // shell imports
 #include "assembler.h"
-#include "element/shell/basis/lagrange_basis.h"
+#include "element/shell/basis/chebyshev_basis.h"
 #include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
-#include "element/shell/mitc_shell.h"
+#include "element/shell/fint_shell.h"
 
 // local multigrid imports
 #include "multigrid/grid.h"
@@ -41,25 +41,34 @@ void to_lowercase(char *str) {
 }
 
 void direct_plate_solve(int nxe, double SR) {
+
+    // order of the chebyshev element
+    const int order = 1; 
+    // const int order = 2; // need at least order 2 to improve multigrid..
+    // const int order = 3;
+
     using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
+    // using Quad = QuadConstQuadrature<T>;
+    // using Quad = QuadLinearQuadrature<T>;
+    using Quad = QuadQuadraticQuadrature<T>;
+    
     using Director = LinearizedRotation<T>;
-    using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    using Basis = ChebyshevQuadBasis<T, Quad, order>;
     using Geo = Basis::Geo;
 
     constexpr bool has_ref_axis = false;
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
+    using ElemGroup = FullyIntegratedShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
 
     int nye = nxe;
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-    int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
+    // int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
+    int nxe_per_comp = nxe, nye_per_comp = nye;
     auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
     // BSR symbolic factorization
@@ -67,27 +76,8 @@ void direct_plate_solve(int nxe, double SR) {
     auto& bsr_data = assembler.getBsrData();
     double fillin = 10.0;  // 10.0
     bool print = true;
-    bool full_LU = true;
-
-    if (full_LU) {
-        bsr_data.AMD_reordering();
-        bsr_data.compute_full_LU_pattern(fillin, print);
-    } else {
-        /*
-        RCM and reorderings actually hurt GMRES performance on the plate case
-        because the matrix already has a nice banded structure => RCM increases bandwidth (which means it just doesn't work well for this problem
-        as it's whole point is to decrease matrix bandwidth)
-        */
-
-        bsr_data.AMD_reordering();
-        // bsr_data.RCM_reordering();
-        // bsr_data.qorder_reordering(1.0);
-        
-        bsr_data.compute_ILUk_pattern(5, fillin);
-        // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
-    }
-    // printf("perm:");
-    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
     assembler.moveBsrDataToDevice();
 
     // get the loads
@@ -109,22 +99,23 @@ void direct_plate_solve(int nxe, double SR) {
     assembler.apply_bcs(res);
     assembler.apply_bcs(kmat);
 
+    // writeout the stiffness matrix
+    // auto h_bsr_data = bsr_data.createHostBsrData();
+    // write_to_csv<int>(h_bsr_data.nnodes + 1, h_bsr_data.rowp, "out/csv/rowp.csv");
+    // write_to_csv<int>(h_bsr_data.nnzb, h_bsr_data.cols, "out/csv/cols.csv");
+    // int nvals = kmat.getVec().getSize();
+    // T *h_kmat_vals = kmat.getVec().createHostVec().getPtr();
+    // write_to_csv<T>(nvals, h_kmat_vals, "out/csv/kmat.csv");
+
+    // return;
+
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
 
     // solve the linear system
-    if (full_LU) {
-        CUSPARSE::direct_LU_solve(kmat, loads, soln);
-    } else {
-        int n_iter = 200, max_iter = 400;
-        T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = true;
-        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
-
-        // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
-    }
+    CUSPARSE::direct_LU_solve(kmat, loads, soln);
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
@@ -146,16 +137,21 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     // geometric multigrid method here..
     // need to make a number of grids..
 
+    // order of the chebyshev element
+    const int order = 1;
+    // const int order = 2;
+    // const int order = 3;
+
     using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
+    using Quad = QuadQuadraticQuadrature<T>;
     using Director = LinearizedRotation<T>;
-    using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    using Basis = ChebyshevQuadBasis<T, Quad, order>;
     using Geo = Basis::Geo;
     constexpr bool has_ref_axis = false;
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
+    using ElemGroup = FullyIntegratedShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects

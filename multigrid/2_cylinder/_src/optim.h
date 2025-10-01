@@ -25,7 +25,7 @@ class TacsGpuMultigridSolver {
     // FEM typedefs
     using Quad = QuadLinearQuadrature<T>;
     using Director = LinearizedRotation<T>;
-    using Basis = ShellQuadBasis<T, Quad, 2>;
+    using Basis = LagrangeQuadBasis<T, Quad, 2>;
     using Data = ShellIsotropicData<T, false>;
     using Physics = IsotropicShell<T, Data, false>;
     using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
