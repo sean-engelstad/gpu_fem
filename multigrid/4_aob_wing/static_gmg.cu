@@ -262,7 +262,7 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
 
   using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
   using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-  using GRID = ShellGrid<Assembler, UnstructuredProlongation<Basis,true>, MULTICOLOR_GS_FAST2_JUNCTION, NONE>;
+//   using GRID = ShellGrid<Assembler, UnstructuredProlongation<Basis,true>, MULTICOLOR_GS_FAST2_JUNCTION, NONE>;
 
   //   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
   double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties
@@ -322,7 +322,7 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
 
   size_t bytes_per_double = sizeof(double);
   double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-  printf("direct LU solve uses memory(MB) %.2e in %.2e sec\n", mem_mb, solve_time.count());
+  printf("direct LU solve on #dof %d, uses memory(MB) %.2e in %.2e sec\n", nvars, mem_mb, solve_time.count());
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();

@@ -73,8 +73,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
     const SCALER scaler = LINE_SEARCH;
 
-    const bool is_bsr = true; // need this one if want to smooth prolongation
-    // const bool is_bsr = false; // no difference in intra-nodal (default old working prolong)
+    // const bool is_bsr = true; // need this one if want to smooth prolongation
+    const bool is_bsr = false; // no difference in intra-nodal (default old working prolong)
     using Prolongation = UnstructuredProlongation<Basis, is_bsr>; 
 
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
@@ -197,7 +197,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, symmetric, double_smooth);    
     }
 
     // fastest is K-cycle usually

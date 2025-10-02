@@ -143,7 +143,8 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     // const int order = 3;
 
     using T = double;   
-    using Quad = QuadQuadraticQuadrature<T>;
+    using Quad = QuadLinearQuadrature<T>;
+    // using Quad = QuadQuadraticQuadrature<T>;
     using Director = LinearizedRotation<T>;
     using Basis = ChebyshevQuadBasis<T, Quad, order>;
     using Geo = Basis::Geo;
@@ -252,7 +253,7 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, false, double_smooth);    
     }
 
     // fastest is K-cycle usually
