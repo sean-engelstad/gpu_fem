@@ -6,8 +6,10 @@
 
 // shell imports
 #include "assembler.h"
-#include "element/shell/shell_elem_group.h"
+#include "element/shell/basis/lagrange_basis.h"
+#include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
+#include "element/shell/mitc_shell.h"
 
 // local multigrid imports
 #include "multigrid/grid.h"
@@ -50,7 +52,7 @@ void direct_solve(int nxe, double SR) {
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     int nhe = nxe;
@@ -142,7 +144,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects

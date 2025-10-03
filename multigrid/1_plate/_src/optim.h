@@ -8,8 +8,10 @@
 
 // shell imports
 #include "assembler.h"
+#include "element/shell/basis/lagrange_basis.h"
+#include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
-#include "element/shell/shell_elem_group.h"
+#include "element/shell/mitc_shell.h"
 
 // multigrid imports
 #include "multigrid/fea.h"
@@ -37,7 +39,7 @@ class TacsGpuMultigridSolver {
     using Basis = LagrangeQuadBasis<T, Quad, 2>;
     using Data = ShellIsotropicData<T, false>;
     using Physics = IsotropicShell<T, Data, false>;
-    using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
+    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
 
     // multigrid objects

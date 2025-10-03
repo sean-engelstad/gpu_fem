@@ -246,9 +246,7 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::moveBsrDataToDevice() {
 template <typename T, typename ElemGroup, template <typename> class Vec,
           template <typename> class Mat>
 T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass() {
-
-    T mass = ElemGroup::_compute_mass<Data>(num_elements, geo_conn, xpts, physData);
-
+    
     using Quadrature = typename ElemGroup::Quadrature;
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
 

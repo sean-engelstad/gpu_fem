@@ -10,7 +10,7 @@
 template <class Assembler>
 Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E, double nu,
                                double thick, double rho = 2500, double ys = 350e6,
-                               int nxe_per_comp = 1, int nye_per_comp = 1) { // , int order = -1
+                               int nxe_per_comp = 1, int nye_per_comp = 1, int order = 1) { 
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -42,8 +42,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     assert(nye % nye_per_comp == 0);
 
     // number of nodes per direction
-    int nnx = nxe + 1;
-    int nny = nye + 1;
+    int nnx = order * nxe + 1;
+    int nny = order * nye + 1;
     int num_nodes = nnx * nny;
     int num_elements = nxe * nye;
 
@@ -72,7 +72,6 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         int inode = nnx * iy + ix;
         my_bcs.push_back(6 * inode);
         my_bcs.push_back(6 * inode + 2);
-
         my_bcs.push_back(6 * inode + 3);  // dof 4 for thx
 
         // pos x1 edge
@@ -99,6 +98,7 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
 
     // printf("bcs: ");
     // printVec<int>(my_bcs.size(), bcs.getPtr());
+    int n = order + 1; // num local nodes
 
     // now initialize the element connectivity
     int N = Basis::num_nodes * num_elements;
@@ -106,17 +106,21 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     for (int iye = 0; iye < nye; iye++) {
         for (int ixe = 0; ixe < nxe; ixe++) {
             int ielem = nxe * iye + ixe;
-            // TODO : issue with defining conn out of order like this, needs to
-            // be sorted now?""
-            // no specified order like MITC here
-            int nodes[] = {nnx * iye + ixe, nnx * iye + ixe + 1, nnx * (iye + 1) + ixe,
-                        nnx * (iye + 1) + ixe + 1};
-            
-            for (int inode = 0; inode < Basis::num_nodes; inode++) {
-                elem_conn[Basis::num_nodes * ielem + inode] = nodes[inode];
+
+            // no sorted order like in MITC?
+            for (int iloc = 0; iloc < n * n ; iloc++) {
+                int ilx = iloc % n, ily = iloc / n;
+                int ix = order * ixe + ilx;
+                int iy = order * iye + ily;
+                int inode = nnx * iy + ix;
+
+                elem_conn[Basis::num_nodes * ielem + iloc] = inode;
             }
         }
     }
+
+    // printf("elem_conn with nnodes_per_elem %d: ", Basis::num_nodes);
+    // printVec<int>(N, elem_conn);
 
     // printf("checkpoint 3 - post elem_conn\n");
 
@@ -126,8 +130,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     // now set the x-coordinates of the panel
     int32_t num_xpts = Geo::spatial_dim * num_nodes;
     HostVec<T> xpts(num_xpts);
-    T dx = Lx / nxe;
-    T dy = Ly / nye;
+    T dx = Lx / (nnx - 1);
+    T dy = Ly / (nny - 1);
     for (int iy = 0; iy < nny; iy++) {
         for (int ix = 0; ix < nnx; ix++) {
             int inode = nnx * iy + ix;

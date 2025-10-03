@@ -49,8 +49,8 @@ void direct_plate_solve(int nxe, double SR) {
 
     using T = double;   
     // using Quad = QuadConstQuadrature<T>;
-    // using Quad = QuadLinearQuadrature<T>;
-    using Quad = QuadQuadraticQuadrature<T>;
+    using Quad = QuadLinearQuadrature<T>;
+    // using Quad = QuadQuadraticQuadrature<T>;
     
     using Director = LinearizedRotation<T>;
     using Basis = ChebyshevQuadBasis<T, Quad, order>;
@@ -69,7 +69,7 @@ void direct_plate_solve(int nxe, double SR) {
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
     // int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
     int nxe_per_comp = nxe, nye_per_comp = nye;
-    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp, order);
 
     // BSR symbolic factorization
     // must pass by ref to not corrupt pointers
@@ -97,7 +97,7 @@ void direct_plate_solve(int nxe, double SR) {
     // assemble the kmat
     assembler.add_jacobian(res, kmat);
     assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
+    // assembler.apply_bcs(kmat);
 
     // writeout the stiffness matrix
     // auto h_bsr_data = bsr_data.createHostBsrData();
@@ -120,7 +120,7 @@ void direct_plate_solve(int nxe, double SR) {
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
-    int nx = nxe + 1;
+    int nx = nxe * order + 1;
     int ndof = nx * nx * 6;
     double total = startup_time.count() + solve_time.count();
     size_t bytes_per_double = sizeof(double);
