@@ -1,0 +1,4 @@
+- [ ] make EB beam elements
+- [ ] make Timoshenko beam elements
+- [ ] make hybrid beam elements
+- [ ] add geometrically exact formulations like Dr. Kennedy did.

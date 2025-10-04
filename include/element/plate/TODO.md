@@ -1,0 +1,5 @@
+- [ ] make DKT triangular plate elements
+- [ ] make hermite cubic quad kirchoff elements
+- [ ] make mindlin bending elements (ANS-CI)
+- [ ] make my hybrid plate element
+- [ ] put on GPU, multigrid for this..
