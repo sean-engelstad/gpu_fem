@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
-  using Basis = ShellQuadBasis<T, Quad, 2>;
+  using Basis = LagrangeQuadBasis<T, Quad, 2>;
   using Geo = Basis::Geo;
 
   constexpr bool has_ref_axis = false;

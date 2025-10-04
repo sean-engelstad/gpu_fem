@@ -1,0 +1,2 @@
+* don't use hermite cubic elements for geometric multigrid
+* the computational coordinate derivs cause a whole host of issues in geometric multigrid operators (I have a bunch of ppt slides on why not to do this now lol)

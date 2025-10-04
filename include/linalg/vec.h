@@ -231,6 +231,13 @@ class DeviceVec : public BaseVec<T> {
 #endif
     }
 
+    void setFullVecToConstValue(const T value) {
+        dim3 block(32);
+        dim3 grid((this->N + 31) / 32);
+
+        k_set_full_vec_const_value<T><<<grid, block>>>(this->N, value, this->data);
+    }
+
     __HOST_DEVICE__ void getData(T *&myData) { myData = this->data; }
     __HOST__ HostVec<T> createHostVec() {
         HostVec<T> vec(this->N);

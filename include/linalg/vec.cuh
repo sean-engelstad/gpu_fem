@@ -80,3 +80,11 @@ __GLOBAL__ void addRotationalDOF_kernel(int N1, int N2, T *v1, T *v2) {
         v2[i2] = v1[i1];
     }
 }
+
+template <typename T>
+__global__ void k_set_full_vec_const_value(const int N, const T val, T *vec) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        vec[i] = val;
+    }
+}

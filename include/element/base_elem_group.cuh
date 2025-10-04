@@ -1,15 +1,15 @@
 
 #include "cuda_utils.h"
 
+/* old default kernels (not as well optimized), nomenclature is k_ for kernel function */
+
 // base class methods to launch kernel depending on how many elements per block
 // may override these in some base classes
 
-// add_residual kernel
-// -----------------------
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void add_energy_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn, 
+__GLOBAL__ void k_add_energy(const int32_t num_elements, const Vec<int32_t> geo_conn, 
                                const Vec<int32_t> vars_conn, const Vec<T> xpts, const Vec<T> vars,
                                Vec<Data> physData, T *glob_U) {
 
@@ -78,7 +78,7 @@ __GLOBAL__ void add_energy_gpu(const int32_t num_elements, const Vec<int32_t> ge
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_add_residual(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                  const Vec<int32_t> vars_conn, const Vec<T> xpts, const Vec<T> vars,
                                  Vec<Data> physData, Vec<T> res) {
     // note in the above : CPU code passes Vec<> objects by reference
@@ -157,7 +157,7 @@ __GLOBAL__ void add_residual_gpu(const int32_t num_elements, const Vec<int32_t> 
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void add_mass_residual_gpu(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_add_mass_residual(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                  const Vec<int32_t> vars_conn, const Vec<T> xpts, const Vec<T> accel,
                                  Vec<Data> physData, Vec<T> res) {
     // note in the above : CPU code passes Vec<> objects by reference
@@ -234,7 +234,7 @@ __GLOBAL__ void add_mass_residual_gpu(const int32_t num_elements, const Vec<int3
 // -------------------
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block,
           template <typename> class Vec, class Mat>
-__GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
+__GLOBAL__ static void k_add_jacobian(int32_t vars_num_nodes, int32_t num_elements,
                                         Vec<int32_t> geo_conn, Vec<int32_t> vars_conn, Vec<T> xpts,
                                         Vec<T> vars, Vec<Data> physData, Vec<T> res, Mat mat) {
     using Geo = typename ElemGroup::Geo;
@@ -340,7 +340,7 @@ __GLOBAL__ static void add_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elem
 // -------------------
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block,
           template <typename> class Vec, class Mat>
-__GLOBAL__ static void add_mass_jacobian_gpu(int32_t vars_num_nodes, int32_t num_elements,
+__GLOBAL__ static void k_add_mass_jacobian(int32_t vars_num_nodes, int32_t num_elements,
                                         Vec<int32_t> geo_conn, Vec<int32_t> vars_conn, Vec<T> xpts,
                                         Vec<T> accel, Vec<Data> physData, Vec<T> res, Mat mat) {
     using Geo = typename ElemGroup::Geo;
@@ -446,7 +446,7 @@ __GLOBAL__ static void add_mass_jacobian_gpu(int32_t vars_num_nodes, int32_t num
 // -------------------
 template <typename T, int32_t elems_per_block, class Data, 
           template <typename> class Vec>
-__GLOBAL__ static void set_design_variables_gpu(const int32_t num_elements, const Vec<T> design_vars, 
+__GLOBAL__ static void k_set_design_variables(const int32_t num_elements, const Vec<T> design_vars, 
         const Vec<int32_t> elem_components, Vec<Data> physData) {
 
     int local_elem = threadIdx.x;
@@ -483,7 +483,7 @@ __GLOBAL__ static void set_design_variables_gpu(const int32_t num_elements, cons
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_sectional_loads_kernel(const int32_t num_elements,
+__GLOBAL__ void k_compute_sectional_loads(const int32_t num_elements,
                                                const Vec<int32_t> geo_conn,
                                                const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                                const Vec<T> vars, Vec<Data> physData, const int32_t *iperm, 
@@ -578,7 +578,7 @@ __GLOBAL__ void compute_sectional_loads_kernel(const int32_t num_elements,
 }  // end of compute_sectional_loads_kernel
 
 template <typename T, class ElemGroup, template <typename> class Vec>
-__GLOBAL__ void normalize_states(Vec<T> states, Vec<int> state_cts) {
+__GLOBAL__ void k_normalize_states(Vec<T> states, Vec<int> state_cts) {
     // normalize states : stresses or strains averaged to nodal level
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
@@ -599,7 +599,7 @@ __GLOBAL__ void normalize_states(Vec<T> states, Vec<int> state_cts) {
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_mass_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_compute_mass(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                     const Vec<T> xpts, Vec<Data> physData, T *total_mass) {
     // computes total mass of the structure
     using Geo = typename ElemGroup::Geo;
@@ -666,7 +666,7 @@ __GLOBAL__ void compute_mass_kernel(const int32_t num_elements, const Vec<int32_
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_mass_DVsens_kernel(const int32_t num_elements,
+__GLOBAL__ void k_compute_mass_DVsens(const int32_t num_elements,
                                            const Vec<int32_t> elem_components,
                                            const Vec<int32_t> geo_conn, const Vec<T> xpts,
                                            Vec<Data> physData, Vec<T> dfdx) {
@@ -735,7 +735,7 @@ __GLOBAL__ void compute_mass_DVsens_kernel(const int32_t num_elements,
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_max_failure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_compute_max_failure(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                          const Vec<T> vars, Vec<Data> physData,
                                          const T rhoKS, const T safetyFactor, T *max_failure_index) {
@@ -810,7 +810,7 @@ __GLOBAL__ void compute_max_failure_kernel(const int32_t num_elements, const Vec
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void vis_failure_index_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_vis_failure_index(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                          const Vec<T> vars, Vec<Data> physData,
                                          Vec<T> fail_index) {
@@ -882,7 +882,7 @@ __GLOBAL__ void vis_failure_index_kernel(const int32_t num_elements, const Vec<i
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void vis_strains_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_vis_strains(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                          const Vec<T> vars, Vec<Data> physData,
                                          Vec<T> strains) {
@@ -960,7 +960,7 @@ __GLOBAL__ void vis_strains_kernel(const int32_t num_elements, const Vec<int32_t
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void vis_stresses_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_vis_stresses(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                          const Vec<T> vars, Vec<Data> physData,
                                          Vec<T> stresses) {
@@ -1037,7 +1037,7 @@ __GLOBAL__ void vis_stresses_kernel(const int32_t num_elements, const Vec<int32_
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_compute_ksfailure(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                          const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                          const Vec<T> vars, Vec<Data> physData,
                                          const T rhoKS, const T safetyFactor, const T max_failure_index, T *ksmax_failure_index) {
@@ -1112,7 +1112,7 @@ __GLOBAL__ void compute_ksfailure_kernel(const int32_t num_elements, const Vec<i
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
+__GLOBAL__ void k_compute_ksfailure_DVsens(const int32_t num_elements,
                                                 const Vec<int32_t> elem_components,
                                                 const Vec<int32_t> geo_conn,
                                                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
@@ -1206,7 +1206,7 @@ __GLOBAL__ void compute_ksfailure_DVsens_kernel(const int32_t num_elements,
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, const Vec<int32_t> geo_conn,
+__GLOBAL__ void k_compute_ksfailure_SVsens(const int32_t num_elements, const Vec<int32_t> geo_conn,
                                                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
                                                 const Vec<T> vars, Vec<Data> physData, T rhoKS, const T safetyFactor, 
                                                 T max_fail, T sumexp_kfail, Vec<T> dfdu) {
@@ -1292,7 +1292,7 @@ __GLOBAL__ void compute_ksfailure_SVsens_kernel(const int32_t num_elements, cons
 
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
-__GLOBAL__ void compute_adjResProduct_kernel(const int32_t num_elements,
+__GLOBAL__ void k_compute_adjResProduct(const int32_t num_elements,
                                                 const Vec<int32_t> elem_components,
                                                 const Vec<int32_t> geo_conn,
                                                 const Vec<int32_t> vars_conn, const Vec<T> xpts,
