@@ -28,7 +28,8 @@ void perform_ilu0_factorization(cusparseHandle_t handle, cusparseMatDescr_t &des
     bsrilu02Info_t info_M = 0;
     int pBufferSize_M, pBufferSize_L, pBufferSize_U, pBufferSize;
     int structural_zero, numerical_zero;
-    const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
+    const cusparseSolvePolicy_t policy_M =
+        CUSPARSE_SOLVE_POLICY_USE_LEVEL;  // CUSPARSE_SOLVE_POLICY_NO_LEVEL;
     cusparseStatus_t status;
 
     // create M matrix object (for full numeric factorization)

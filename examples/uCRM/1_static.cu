@@ -6,8 +6,9 @@
 
 // shell imports
 #include "assembler.h"
+#include "element/basis/lagrange_basis.h"
 #include "element/shell/physics/isotropic_shell.h"
-#include "element/shell/shell_elem_group.h"
+#include "element/shell/mitc_shell.h"
 #include "_src/crm_utils.h"
 
 
@@ -37,7 +38,7 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true) {
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
-  using Basis = ShellQuadBasis<T, Quad, 2>;
+  using Basis = LagrangeQuadBasis<T, Quad, 2>;
   using Geo = Basis::Geo;
 
   constexpr bool has_ref_axis = false;
@@ -145,7 +146,7 @@ void solve_nonlinear(MPI_Comm &comm) {
 
   using Quad = QuadLinearQuadrature<T>;
   using Director = LinearizedRotation<T>;
-  using Basis = ShellQuadBasis<T, Quad, 2>;
+  using Basis = LagrangeQuadBasis<T, Quad, 2>;
   using Geo = Basis::Geo;
 
   constexpr bool has_ref_axis = false;

@@ -1,4 +1,4 @@
-template <typename T, template <typename> class Vec>
+template <typename T, template <typename> class Vec, bool ones_on_diag = true>
 __GLOBAL__ void apply_mat_bcs_rows_kernel(Vec<int> bcs, const int *rowp, const int *cols, const int *iperm,
                                           int32_t nnodes, T *values,
                                           int32_t blocks_per_elem, int32_t nnz_per_block,
@@ -37,7 +37,8 @@ __GLOBAL__ void apply_mat_bcs_rows_kernel(Vec<int> bcs, const int *rowp, const i
                 // zeros out all entries in this BC row except for
                 // the diagonal entry which we set to 1
                 // ternary operation here should prevent warp divergence
-                val[inz] = (global_col == global_row) ? 1.0 : 0.0;
+                T diag_val = ones_on_diag ? 1.0 : 0.0;
+                val[inz] = (global_col == global_row) ? diag_val : 0.0;
             }
             val += nnz_per_block; // go to the next nonzero block (on this row)
         }

@@ -9,7 +9,7 @@
 #include "solvers/linear_static/_utils.h"
 
 template <class Mat, class Vec>
-using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool);
+using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool, bool);
 
 #ifdef USE_GPU  // TODO : go back and make host compatible too with cublas
 
@@ -44,12 +44,13 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
 
             // solve for the change in variables (soln = u - u0) and update variables
             soln.zeroValues();
-            bool linear_print = false;
-            linear_solve(kmat, rhs, soln, linear_print);
+            bool linear_print = false, permute_inout = true;
+            linear_solve(kmat, rhs, soln, linear_print, permute_inout);
             double soln_norm = CUBLAS::get_vec_norm(soln);
             CUBLAS::axpy(1.0, soln, vars);
 
             // compute the residual (much cheaper computation on GPU)
+            // TODO : why do I assemble twice per newton step? Don't do that..
             assembler.set_variables(vars);
             // assembler.add_residual(res); // TODO : for some reason using this add_residual
             // doesn't match add_jacobian res..

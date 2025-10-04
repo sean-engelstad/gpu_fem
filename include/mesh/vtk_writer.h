@@ -72,6 +72,14 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
         myfile << soln[6 * inode + 2] << "\n";
     }
 
+    scalarName = "rot";
+    myfile << "VECTORS " << scalarName << " double64\n";
+    for (int inode = 0; inode < num_nodes; inode++) {
+        myfile << soln[6 * inode + 3] << sp;
+        myfile << soln[6 * inode + 4] << sp;
+        myfile << soln[6 * inode + 5] << "\n";
+    }
+
     // init visualization states
     int ndvs = assembler.get_num_dvs();
     DeviceVec<double> d_dvs(ndvs);

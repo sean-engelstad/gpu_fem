@@ -9,7 +9,7 @@
 // required methods: solve(fs) => us
 
 template <class Mat, class Vec>
-using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool);
+using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool, bool);
 
 template <typename T, class Assembler>
 class BaseTacsStatic {
@@ -82,9 +82,10 @@ class BaseTacsStatic {
                 CHECK_CUBLAS(
                     cublasDaxpy(cublasHandle, nvars, &a, adj_rhs->getPtr(), 1, dfdu.getPtr(), 1));
             }
-            assembler.apply_bcs(dfdu);             // zero RHS part too?
-            linear_solve(kmat, dfdu, psi, print);  // TODO : will need transpose kmat assembly later
-            assembler.apply_bcs(psi);              // dirichlet boundary conditions
+            assembler.apply_bcs(dfdu);  // zero RHS part too?
+            linear_solve(kmat, dfdu, psi, print,
+                         true);        // TODO : will need transpose kmat assembly later
+            assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }
 
         func.dv_sens.zeroValues();
@@ -144,7 +145,7 @@ class TacsLinearStatic : public BaseTacsStatic<T, Assembler> {
 
         // solve the linear system
         this->soln.zeroValues();
-        this->linear_solve(this->kmat, this->loads, this->soln, this->print);
+        this->linear_solve(this->kmat, this->loads, this->soln, this->print, true);
         this->soln.copyValuesTo(this->vars);
 
         // set new variables into assembler (for output function evals)
