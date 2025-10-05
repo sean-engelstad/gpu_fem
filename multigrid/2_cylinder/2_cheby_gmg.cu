@@ -32,8 +32,8 @@
     * nxe must be power of 2
 
     examples:
-    ./2_cheby_gmg.out direct --nxe 2048 --SR 100.0    to run direct plate solve on 2048 x 2048 elem grid with slenderness ratio 100
-    ./2_cheby_gmg.out mg --nxe 2048 --SR 100.0    to run geometric plate plate solve on 2048 x 2048 elem grid with slenderness ratio 100
+    ./1_plate.out direct --nxe 2048 --SR 100.0    to run direct cylinder solve on 2048 x 2048 elem grid with slenderness ratio 100
+    ./1_plate.out mg --nxe 2048 --SR 100.0    to run geometric multigrid cylinder solve on 2048 x 2048 elem grid with slenderness ratio 100
 */
 
 void to_lowercase(char *str) {
@@ -42,7 +42,7 @@ void to_lowercase(char *str) {
     }
 }
 
-void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
+void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -53,7 +53,6 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
 
     using T = double;   
     using Quad = QuadLinearQuadrature<T>;
-    // using Quad = QuadQuadraticQuadrature<T>;
     using Director = LinearizedRotation<T>;
     using Basis = ChebyshevQuadBasis<T, Quad, order>;
     using Geo = Basis::Geo;
@@ -62,22 +61,21 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
     using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
+
     const SCALER scaler  = LINE_SEARCH;
     using Smoother = MulticolorGSSmoother_V1<Assembler>;
-    using Prolongation = StructuredProlongation<Assembler, PLATE>;
+    using Prolongation = StructuredProlongation<Assembler, CYLINDER>;
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, scaler>;
     using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
     using MG = GeometricMultigridSolver<GRID, CoarseSolver>;
-
+    
     // for K-cycles
-    using DirectSolve = CusparseMGDirectLU<T, Assembler>;
     using KrylovSolve = PCGSolver<T, GRID>;
     using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
-    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using KMG = MultilevelKcycleSolver<GRID, CoarseSolver, TwoLevelSolve, KrylovSolve>;
 
-    CHECK_CUDA(cudaDeviceSynchronize());
     auto start0 = std::chrono::high_resolution_clock::now();
-    
+
     MG *mg;
     KMG *kmg;
 
@@ -88,24 +86,26 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         mg = new MG();
     }
 
-    // get nxe_min for not exactly power of 2 case
     int pre_nxe_min = nxe > 32 ? 32 : 4;
     int nxe_min = pre_nxe_min;
     for (int c_nxe = nxe; c_nxe >= pre_nxe_min; c_nxe /= 2) {
         nxe_min = c_nxe;
     }
 
-    // int nxe_min = nxe / 2; // two level
-
     // make each grid
     for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
         // make the assembler
-        int c_nye = c_nxe;
-        double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-        int nxe_per_comp = c_nxe / 4, nye_per_comp = c_nye/4; // for now (should have 25 grids)
-        auto assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+        int c_nhe = c_nxe;
+        double L = 1.0, R = 0.5, thick = L / SR;
+        double E = 70e9, nu = 0.3;
+        // double rho = 2500, ys = 350e6;
+        bool imperfection = false; // option for geom imperfection
+        int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
+        auto assembler = createCylinderAssembler<Assembler>(c_nxe, c_nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
+        constexpr bool compressive = false;
+        const int load_case = 3; // petal and chirp load
         double Q = 1.0; // load magnitude
-        T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+        T *my_loads = getCylinderLoads<T, Physics, load_case>(c_nxe, c_nhe, L, R, Q);
         printf("making grid with nxe %d\n", c_nxe);
 
         auto &bsr_data = assembler.getBsrData();
@@ -145,7 +145,7 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         auto smoother = new Smoother(assembler, kmat, h_color_rowp, omega);
         auto prolongation = new Prolongation(assembler);
         auto grid = GRID(assembler, prolongation, smoother, kmat, loads);
-        
+
         if (is_kcycle) {
             kmg->grids.push_back(grid);
         } else {
@@ -161,20 +161,21 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         mg->template init_prolongations<Basis>();
     }
 
-    CHECK_CUDA(cudaDeviceSynchronize());
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
 
-    T init_resid_nrm = is_kcycle ? kmg->grids[0].getResidNorm() : mg->grids[0].getResidNorm();
-
-    CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
-
     int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     bool print = true;
     // bool print = false;
     T atol = 1e-6, rtol = 1e-6;
+
     T omega2 = 1.5;
+    // T omega = 1.3;
+    // T omega = 1.2; // worse than <1 for cylinder
+    // T omega = 1.0;
+    // T omega = 0.85; // a bit faster than 1.0 (and actually smooths it)
+    // bool double_smooth = false;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
 
     int n_cycles = 500; // max # cycles
@@ -182,7 +183,7 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print, false, double_smooth);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print);    
     }
 
     // fastest is K-cycle usually
@@ -201,50 +202,47 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     int ndof = cycle_type == "K" ? kmg->grids[0].N : mg->grids[0].N;
     double total = startup_time.count() + solve_time.count();
     double mem_MB = is_kcycle ? kmg->get_memory_usage_mb() : mg->get_memory_usage_mb();
-    printf("plate GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
+    printf("cylinder GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
 
     if (is_kcycle) {
         // print some of the data of host residual
         int *d_perm = kmg->grids[0].d_perm;
         auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-        printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/plate_mg.vtk");
+        printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/cylinder_mg.vtk");
     } else {
         // print some of the data of host residual
         int *d_perm = mg->grids[0].d_perm;
         auto h_soln = mg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-        printToVTK<Assembler,HostVec<T>>(mg->grids[0].assembler, h_soln, "out/plate_mg.vtk");
+        printToVTK<Assembler,HostVec<T>>(mg->grids[0].assembler, h_soln, "out/cylinder_mg.vtk");
     }
 }
 
-void direct_plate_solve(int nxe, double SR) {
+
+void direct_solve(int nxe, double SR) {
 
     // order of the chebyshev element
-    const int order = 1; 
-    // const int order = 2; // need at least order 2 to improve multigrid..
+    const int order = 1;
+    // const int order = 2;
     // const int order = 3;
 
     using T = double;   
-    // using Quad = QuadConstQuadrature<T>;
     using Quad = QuadLinearQuadrature<T>;
-    // using Quad = QuadQuadraticQuadrature<T>;
-    
     using Director = LinearizedRotation<T>;
     using Basis = ChebyshevQuadBasis<T, Quad, order>;
     using Geo = Basis::Geo;
-
     constexpr bool has_ref_axis = false;
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
     using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
-    auto start0 = std::chrono::high_resolution_clock::now();
-
-    int nye = nxe;
-    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-    // int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
-    int nxe_per_comp = nxe, nye_per_comp = nye;
-    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp, order);
+    int nhe = nxe;
+    double L = 1.0, R = 0.5, thick = L / SR;
+    double E = 70e9, nu = 0.3;
+    // double rho = 2500, ys = 350e6;
+    bool imperfection = false; // option for geom imperfection
+    int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
+    auto assembler = createCylinderAssembler<Assembler>(nxe, nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
 
     // BSR symbolic factorization
     // must pass by ref to not corrupt pointers
@@ -256,9 +254,9 @@ void direct_plate_solve(int nxe, double SR) {
     assembler.moveBsrDataToDevice();
 
     // get the loads
+    constexpr bool compressive = false;
     double Q = 1.0; // load magnitude
-    // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
-    T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
+    T *my_loads = getCylinderLoads<T, Physics, compressive>(nxe, nhe, L, R, Q);
 
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
@@ -272,48 +270,33 @@ void direct_plate_solve(int nxe, double SR) {
     // assemble the kmat
     assembler.add_jacobian(res, kmat);
     assembler.apply_bcs(res);
-    // assembler.apply_bcs(kmat);
+    assembler.apply_bcs(kmat);
 
-    // writeout the stiffness matrix
-    // auto h_bsr_data = bsr_data.createHostBsrData();
-    // write_to_csv<int>(h_bsr_data.nnodes + 1, h_bsr_data.rowp, "out/csv/rowp.csv");
-    // write_to_csv<int>(h_bsr_data.nnzb, h_bsr_data.cols, "out/csv/cols.csv");
-    // int nvals = kmat.getVec().getSize();
-    // T *h_kmat_vals = kmat.getVec().createHostVec().getPtr();
-    // write_to_csv<T>(nvals, h_kmat_vals, "out/csv/kmat.csv");
-
-    // return;
-
-    auto end0 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> startup_time = end0 - start0;
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
 
     // solve the linear system
     CUSPARSE::direct_LU_solve(kmat, loads, soln);
 
-    CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
-    int nx = nxe * order + 1;
-    int ndof = nx * nx * 6;
-    double total = startup_time.count() + solve_time.count();
+
     size_t bytes_per_double = sizeof(double);
     double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-    printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem (MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_mb);
-
+    int ndof = assembler.get_num_vars();
+    printf("cylinder direct solve, ndof %d : solve time %.2e, with mem (MB) %.2e\n", ndof, solve_time.count(), mem_mb);
 
     // print some of the data of host residual
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate.vtk");
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/cylinder.vtk");
 }
+
 
 int main(int argc, char **argv) {
     // input ----------
     bool is_multigrid = false;
     int nxe = 256; // default value
-    double SR = 100.0; // default
-    int n_vcycles = 50;
+    double SR = 50.0; // default
 
     int nsmooth = 2; // typically faster right now
     int ninnercyc = 2; // inner V-cycles to precond K-cycle
@@ -372,9 +355,9 @@ int main(int argc, char **argv) {
 
     // done reading arts, now run stuff
     if (is_multigrid) {
-        multigrid_plate_solve(nxe, SR, nsmooth, ninnercyc, cycle_type);
+        multigrid_solve(nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else {
-        direct_plate_solve(nxe, SR);
+        direct_solve(nxe, SR);
     }
 
     return 0;

@@ -107,8 +107,10 @@ class TacsMGInterface {
             auto &i_assembler = mg.grids[ilevel].assembler;
             i_assembler.add_jacobian(res, kmat);
             i_assembler.apply_bcs(kmat);
-            mg.grids[ilevel].update_after_assembly();
         }
+
+        // additional assembly steps like update factor, smoother, etc.
+        mg.update_after_assembly();
     }
 
     void solve_adjoint(MyFunction &func, const Vec *adj_rhs = nullptr) {
@@ -136,8 +138,6 @@ class TacsMGInterface {
             mg.grids[0].setDefect(this->dfdu);
             // bool inner_print = false, inner_time = false;
             mg.solve();
-            // mg.vcycle_solve(0, pre_smooth, post_smooth, n_cycles, inner_print, atol, rtol, omega,
-            //                 double_smooth,  print_freq, inner_time);
             mg.grids[0].getSolution(this->psi);
             assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }

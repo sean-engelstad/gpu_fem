@@ -12,6 +12,9 @@ class UnstructuredProlongation {
     static constexpr bool assembly = true;
     static constexpr int is_bsr = is_bsr_;
 
+    // nothing
+    void update_after_assembly() {}
+
     static void assemble_matrices(int *d_coarse_conn, int *d_n2e_ptr, int *d_n2e_elems,
                                   T *d_n2e_xis, BsrMat<DeviceVec<T>> &P_mat,
                                   BsrMat<DeviceVec<T>> &PT_mat) {

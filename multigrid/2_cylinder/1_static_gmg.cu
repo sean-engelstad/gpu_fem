@@ -13,7 +13,9 @@
 
 // local multigrid imports
 #include "multigrid/grid.h"
-#include "multigrid/fea.h"
+#include "multigrid/utils/fea.h"
+#include "multigrid/smoothers/mc_smooth1.h"
+#include "multigrid/prolongation/structured.h"
 #include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
@@ -30,105 +32,14 @@
     * nxe must be power of 2
 
     examples:
-    ./1_plate.out direct --nxe 2048 --SR 100.0    to run direct plate solve on 2048 x 2048 elem grid with slenderness ratio 100
-    ./1_plate.out mg --nxe 2048 --SR 100.0    to run geometric multigrid plate solve on 2048 x 2048 elem grid with slenderness ratio 100
+    ./1_plate.out direct --nxe 2048 --SR 100.0    to run direct cylinder solve on 2048 x 2048 elem grid with slenderness ratio 100
+    ./1_plate.out mg --nxe 2048 --SR 100.0    to run geometric multigrid cylinder solve on 2048 x 2048 elem grid with slenderness ratio 100
 */
 
 void to_lowercase(char *str) {
     for (; *str; ++str) {
         *str = std::tolower(*str);
     }
-}
-
-void direct_solve(int nxe, double SR) {
-    using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
-    using Director = LinearizedRotation<T>;
-    using Basis = LagrangeQuadBasis<T, Quad, 2>;
-    using Geo = Basis::Geo;
-
-    constexpr bool has_ref_axis = false;
-    constexpr bool is_nonlinear = false;
-    using Data = ShellIsotropicData<T, has_ref_axis>;
-    using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-
-    int nhe = nxe;
-    double L = 1.0, R = 0.5, thick = L / SR;
-    double E = 70e9, nu = 0.3;
-    // double rho = 2500, ys = 350e6;
-    bool imperfection = false; // option for geom imperfection
-    int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
-    auto assembler = createCylinderAssembler<Assembler>(nxe, nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
-
-    // BSR symbolic factorization
-    // must pass by ref to not corrupt pointers
-    auto& bsr_data = assembler.getBsrData();
-    double fillin = 10.0;  // 10.0
-    bool print = true;
-    bool full_LU = true;
-
-    if (full_LU) {
-        bsr_data.AMD_reordering();
-        bsr_data.compute_full_LU_pattern(fillin, print);
-    } else {
-
-        bsr_data.AMD_reordering();
-        // bsr_data.RCM_reordering();
-        // bsr_data.qorder_reordering(1.0);
-        
-        bsr_data.compute_ILUk_pattern(5, fillin);
-        // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
-    }
-    // printf("perm:");
-    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
-    assembler.moveBsrDataToDevice();
-
-    // get the loads
-    constexpr bool compressive = false;
-    double Q = 1.0; // load magnitude
-    T *my_loads = getCylinderLoads<T, Physics, compressive>(nxe, nhe, L, R, Q);
-
-    auto loads = assembler.createVarsVec(my_loads);
-    assembler.apply_bcs(loads);
-
-    // setup kmat and initial vecs
-    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-    auto soln = assembler.createVarsVec();
-    auto res = assembler.createVarsVec();
-    auto vars = assembler.createVarsVec();
-
-    // assemble the kmat
-    assembler.add_jacobian(res, kmat);
-    assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
-
-    CHECK_CUDA(cudaDeviceSynchronize());
-    auto start1 = std::chrono::high_resolution_clock::now();
-
-    // solve the linear system
-    if (full_LU) {
-        CUSPARSE::direct_LU_solve(kmat, loads, soln);
-    } else {
-        int n_iter = 200, max_iter = 400;
-        T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = true;
-        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
-    }
-
-    auto end1 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> solve_time = end1 - start1;
-
-    size_t bytes_per_double = sizeof(double);
-    double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-    int ndof = assembler.get_num_vars();
-    printf("cylinder direct solve, ndof %d : solve time %.2e, with mem (MB) %.2e\n", ndof, solve_time.count(), mem_mb);
-
-    // print some of the data of host residual
-    auto h_soln = soln.createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/cylinder.vtk");
 }
 
 void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
@@ -144,26 +55,19 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
-    // multigrid objects
-    // const SMOOTHER smoother = MULTICOLOR_GS;
-    // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST2;
-    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-
-    const SCALER scaler = LINE_SEARCH;
+    const SCALER scaler  = LINE_SEARCH;
+    using Smoother = MulticolorGSSmoother_V1<Assembler>;
+    using Prolongation = StructuredProlongation<Assembler, CYLINDER>;
+    using GRID = SingleGrid<Assembler, Prolongation, Smoother, scaler>;
+    using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
+    using MG = GeometricMultigridSolver<GRID, CoarseSolver>;
     
-    using Prolongation = StructuredProlongation<CYLINDER>;
-    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = GeometricMultigridSolver<GRID>;
-
     // for K-cycles
-    using DirectSolve = CusparseMGDirectLU<GRID>;
     using KrylovSolve = PCGSolver<T, GRID>;
     using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
-    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using KMG = MultilevelKcycleSolver<GRID, CoarseSolver, TwoLevelSolve, KrylovSolve>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
 
@@ -199,47 +103,58 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
         T *my_loads = getCylinderLoads<T, Physics, load_case>(c_nxe, c_nhe, L, R, Q);
         printf("making grid with nxe %d\n", c_nxe);
 
+        auto &bsr_data = assembler.getBsrData();
+        int num_colors, *_color_rowp;
+
         // make the grid
-        bool full_LU = c_nxe == nxe_min; // smallest grid is direct solve
-        bool reorder;
-        if (smoother == LEXIGRAPHIC_GS) {
-            reorder = false;
-        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
-            reorder = true;
+        bool full_LU = c_nxe == nxe_min;
+        if (full_LU) {
+            bsr_data.AMD_reordering();
+            bsr_data.compute_full_LU_pattern(10.0, false);
+        } else {
+            bsr_data.multicolor_reordering(num_colors, _color_rowp);
+            bsr_data.compute_nofill_pattern();
         }
-        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
+        // auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
+        auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
+
+        assembler.moveBsrDataToDevice();
+        auto loads = assembler.createVarsVec(my_loads);
+        assembler.apply_bcs(loads);
+        auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+        auto res = assembler.createVarsVec();
+        int N = res.getSize();
+
+        // assemble the kmat
+        auto start0 = std::chrono::high_resolution_clock::now();
+        assembler.add_jacobian(res, kmat);
+        // assembler.apply_bcs(res);
+        assembler.apply_bcs(kmat);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end0 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> assembly_time = end0 - start0;
+        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
+        // build smoother and prolongations..
+        T omega = 1.5; // for GS-SOR
+        auto smoother = new Smoother(assembler, kmat, h_color_rowp, omega);
+        auto prolongation = new Prolongation(assembler);
+        auto grid = GRID(assembler, prolongation, smoother, kmat, loads);
 
         if (is_kcycle) {
             kmg->grids.push_back(grid);
         } else {
             mg->grids.push_back(grid);
+            if (full_LU) mg->coarse_solver = new CoarseSolver(assembler, kmat);
         }
     }
 
-    // // bool debug = false;
-    // bool debug = true;
-    // if (debug) {
-    //     int *d_perm1 = mg.grids[0].d_perm;
-    //     int *d_perm2 = mg.grids[1].d_perm;
-    //     mg.grids[1].direct_solve(false);
-    //     auto h_solnc1 = mg.grids[1].d_soln.createPermuteVec(6, d_perm2).createHostVec();
-    //     printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_solnc1, "out/cylinder_coarse_soln.vtk");
-
-    //     mg.grids[0].prolongate(mg.grids[1].d_iperm, mg.grids[1].d_soln);
-    //     auto h_soln1 = mg.grids[0].d_temp_vec.createPermuteVec(6, d_perm1).createHostVec();
-    //     printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_soln1, "out/cylinder_mg_cf.vtk");
-
-    //     // plot orig fine defect
-    //     auto h_fdef = mg.grids[0].d_defect.createPermuteVec(6, d_perm1).createHostVec();
-    //     printToVTK<Assembler,HostVec<T>>(mg.grids[0].assembler, h_fdef, "out/cylinder_mg_fine_defect.vtk");
-
-    //     // now try restrict defect
-    //     mg.grids[1].restrict_defect(
-    //                         mg.grids[0].nelems, mg.grids[0].d_iperm, mg.grids[0].d_defect);
-    //     auto h_def2 = mg.grids[1].d_defect.createPermuteVec(6, d_perm2).createHostVec();
-    //     printToVTK<Assembler,HostVec<T>>(mg.grids[1].assembler, h_def2, "out/cylinder_mg_restrict.vtk");
-    //     return;
-    // }  
+    // register the coarse assemblers to the prolongations..
+    if (is_kcycle) {
+        kmg->template init_prolongations<Basis>();
+    } else {
+        mg->template init_prolongations<Basis>();
+    }
 
     auto end0 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> startup_time = end0 - start0;
@@ -250,7 +165,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
     // bool print = false;
     T atol = 1e-6, rtol = 1e-6;
 
-    T omega = 1.5;
+    T omega2 = 1.5;
     // T omega = 1.3;
     // T omega = 1.2; // worse than <1 for cylinder
     // T omega = 1.0;
@@ -263,16 +178,16 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print);    
     }
 
     // fastest is K-cycle usually
     if (cycle_type == "V") {
-        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq); //(good option)
+        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq); //(good option)
     } else if (cycle_type == "W") {
-        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
+        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol);
     } else if (cycle_type == "F") {
-        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq); // also decent
+        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq); // also decent
     } else if (cycle_type == "K") {
         kmg->solve(); // best
     }
@@ -296,6 +211,75 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
         printToVTK<Assembler,HostVec<T>>(mg->grids[0].assembler, h_soln, "out/cylinder_mg.vtk");
     }
 }
+
+
+void direct_solve(int nxe, double SR) {
+    using T = double;   
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    using Geo = Basis::Geo;
+    constexpr bool has_ref_axis = false;
+    constexpr bool is_nonlinear = false;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
+
+    int nhe = nxe;
+    double L = 1.0, R = 0.5, thick = L / SR;
+    double E = 70e9, nu = 0.3;
+    // double rho = 2500, ys = 350e6;
+    bool imperfection = false; // option for geom imperfection
+    int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
+    auto assembler = createCylinderAssembler<Assembler>(nxe, nhe, L, R, E, nu, thick, imperfection, imp_x, imp_hoop);
+
+    // BSR symbolic factorization
+    // must pass by ref to not corrupt pointers
+    auto& bsr_data = assembler.getBsrData();
+    double fillin = 10.0;  // 10.0
+    bool print = true;
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
+    assembler.moveBsrDataToDevice();
+
+    // get the loads
+    constexpr bool compressive = false;
+    double Q = 1.0; // load magnitude
+    T *my_loads = getCylinderLoads<T, Physics, compressive>(nxe, nhe, L, R, Q);
+
+    auto loads = assembler.createVarsVec(my_loads);
+    assembler.apply_bcs(loads);
+
+    // setup kmat and initial vecs
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto soln = assembler.createVarsVec();
+    auto res = assembler.createVarsVec();
+    auto vars = assembler.createVarsVec();
+
+    // assemble the kmat
+    assembler.add_jacobian(res, kmat);
+    assembler.apply_bcs(res);
+    assembler.apply_bcs(kmat);
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start1 = std::chrono::high_resolution_clock::now();
+
+    // solve the linear system
+    CUSPARSE::direct_LU_solve(kmat, loads, soln);
+
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end1 - start1;
+
+    size_t bytes_per_double = sizeof(double);
+    double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
+    int ndof = assembler.get_num_vars();
+    printf("cylinder direct solve, ndof %d : solve time %.2e, with mem (MB) %.2e\n", ndof, solve_time.count(), mem_mb);
+
+    // print some of the data of host residual
+    auto h_soln = soln.createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/cylinder.vtk");
+}
+
 
 int main(int argc, char **argv) {
     // input ----------

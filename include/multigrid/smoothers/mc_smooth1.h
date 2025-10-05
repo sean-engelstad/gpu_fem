@@ -35,7 +35,7 @@ public:
         buildTransposeColorMatrices<startup>();
     }
 
-    void update_assembly() {
+    void update_after_assembly() {
         const bool startup = false;
         buildDiagInvMat<startup>();
         buildTransposeColorMatrices<startup>();

@@ -11,6 +11,9 @@ public:
     MultigridTwoLevelSolver(GRID *fine_grid, GRID *coarse_grid, BaseSolver *coarse_solver_, SolverOptions options) : 
         fine_grid(fine_grid), coarse_grid(coarse_grid), coarse_solver(coarse_solver_), options(options) { }
 
+    // nothing
+    void update_after_assembly() {}
+
     void solve(DeviceVec<T> rhs, DeviceVec<T> soln, bool check_conv = false) {
         // printf("in subpsace solve\n");
 

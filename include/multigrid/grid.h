@@ -45,7 +45,9 @@ class SingleGrid {
 
     void update_after_assembly() {
         // update dependent ILU and other matrices from new assembly
-        // call assembly steps in smoother + prolong..
+        if (prolongation) prolongation->update_after_assembly();
+        if (restriction) restriction->update_after_assembly();
+        if (smoother) smoother->update_after_assembly();
     }    
 
     double get_memory_usage_mb() {

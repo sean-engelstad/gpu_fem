@@ -19,6 +19,9 @@ class StructuredProlongation {
         d_weights = DeviceVec<T>(N_fine).getPtr();
         nxe_fine = sqrt((float)nelems_fine);
     }
+
+    // no update required for structured prolongs
+    void update_after_assembly() {}
     
     void init_coarse_data(Assembler &coarse_assembler) {
         // has to be called separately (since coarse grid isn't made at same time as fine grid)

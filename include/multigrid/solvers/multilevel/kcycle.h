@@ -38,6 +38,15 @@ public:
         }
     }
 
+    void update_after_assembly() {
+        /* update matrices after new assembly */
+        int num_levels = getNumLevels();
+        for (int ilevel = 0; ilevel < num_levels; ilevel++) {
+            grids[ilevel].update_after_assembly();
+        }
+        if (coarse_solver) coarse_solver->update_after_assembly();
+    }
+
     void init_outer_solver(int n_smooth, int n_cycles, int n_krylov, T omega = 1.0, T atol = 1e-6, T rtol = 1e-6, int print_freq = 1, bool print = true, bool symmetric = false, bool double_smooth = false) {
         // initialize objects, so we just do K-cycle on outer level
 
@@ -68,7 +77,7 @@ public:
         for (int ilevel = nlevels - 1; ilevel >= 0; ilevel--) {
             if (ilevel == nlevels-1) {
                 // create coarse grid direct solver
-                BaseSolver *coarse_solver = new CoarseSolver(grids[ilevel].assembler, grids[ilevel].Kmat);
+                coarse_solver = new CoarseSolver(grids[ilevel].assembler, grids[ilevel].Kmat);
                 solvers.push_back(coarse_solver);
             } else {
                 if (just_outer_krylov) {
@@ -126,6 +135,7 @@ public:
 
 // private:
     BaseSolver *outer_solver;
+    BaseSolver *coarse_solver;
     std::vector<BaseSolver*> solvers; // stored coarse to fine 
     std::vector<GRID> grids; // stored fine to coarse
 };

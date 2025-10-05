@@ -39,6 +39,15 @@ class GeometricMultigridSolver {
         }
     }
 
+    void update_after_assembly() {
+        /* update matrices after new assembly */
+        int num_levels = getNumLevels();
+        for (int ilevel = 0; ilevel < num_levels; ilevel++) {
+            grids[ilevel].update_after_assembly();
+        }
+        if (coarse_solver) coarse_solver->update_after_assembly();
+    }
+
     void vcycle_solve(int starting_level, int pre_smooth, int post_smooth, int n_vcycles = 100, bool print = false,
                       T atol = 1e-6, T rtol = 1e-6, bool double_smooth = false,
                       int print_freq = 1, bool time = false, bool debug = false) {

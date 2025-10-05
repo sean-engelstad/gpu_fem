@@ -31,6 +31,10 @@ public:
         factor_matrix();
     }
 
+    void update_after_assembly() {
+        factor_matrix();
+    }
+
     void factor_matrix() {
         // copy the data from the original matrix to new place for factor
         CHECK_CUDA(

@@ -13,7 +13,9 @@
 
 // local multigrid imports
 #include "multigrid/grid.h"
-#include "multigrid/fea.h"
+#include "multigrid/utils/fea.h"
+#include "multigrid/smoothers/mc_smooth1.h"
+#include "multigrid/prolongation/structured.h"
 #include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
@@ -60,31 +62,22 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-
-    // old smoothers
-    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    // const SMOOTHER smoother = MULTICOLOR_GS;
-    // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
-    // const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
-    // const SMOOTHER smoother = DAMPED_JACOBI;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST2_JUNCTION;
-
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
     const SCALER scaler = LINE_SEARCH;
+    using Smoother = MulticolorGSSmoother_V1<Assembler>;
 
     const bool is_bsr = true; // need this one if want to smooth prolongation
     // const bool is_bsr = false; // no difference in intra-nodal (default old working prolong)
     using Prolongation = UnstructuredProlongation<Basis, is_bsr>; 
 
-    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = GeometricMultigridSolver<GRID>;
+    using GRID = SingleGrid<Assembler, Prolongation, smoother, scaler>;
+    using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
+    using MG = GeometricMultigridSolver<GRID, CoarseSolver>;
 
     // for K-cycles
-    using DirectSolve = CusparseMGDirectLU<GRID>;
     using KrylovSolve = PCGSolver<T, GRID>;
     using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
-    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using KMG = MultilevelKcycleSolver<GRID, CoarseSolver, TwoLevelSolve, KrylovSolve>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
 
@@ -128,19 +121,21 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
         // TODO : run optimized design from AOB case
 
-        // make the grid
-        bool full_LU = i == 0; // smallest grid is direct solve
-        bool reorder;
-        if (smoother == LEXIGRAPHIC_GS) {
-            reorder = false;
-        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 
-            || smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
-            reorder = true;
-        } else if (smoother == DAMPED_JACOBI) {
-            reorder = false;
-        }
-        // printf("reorder %d\n", reorder);
-        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
+        // TODO : put the multicolor junction reordering here..
+
+        // // make the grid
+        // bool full_LU = i == 0; // smallest grid is direct solve
+        // bool reorder;
+        // if (smoother == LEXIGRAPHIC_GS) {
+        //     reorder = false;
+        // } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 
+        //     || smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
+        //     reorder = true;
+        // } else if (smoother == DAMPED_JACOBI) {
+        //     reorder = false;
+        // }
+        // // printf("reorder %d\n", reorder);
+        // auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
         if (is_kcycle) {
             kmg->grids.push_back(grid);
         } else {
