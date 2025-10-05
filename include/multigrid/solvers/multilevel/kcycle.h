@@ -10,14 +10,15 @@ public:
 
     MultilevelKcycleSolver() = default;
 
-    // TODO : put some of these methods for multilevel in a base multilevel solver class
     template <class Basis>
-    void init_unstructured(int ELEM_MAX = 4) {
-        /* initialize unstructured grid maps */
+    void init_prolongations() {
+        /* pass in coarse assembler data for each prolongation operator */
         for (int ilevel = 0; ilevel < getNumLevels() - 1; ilevel++) {
-            grids[ilevel].template init_unstructured_grid_maps<Basis>(grids[ilevel + 1], ELEM_MAX);
+            if (ilevel != 0) {
+                grids[ilevel].prolongation->init_coarse_data(grids[ilevel+1].assembler);
+            }
+            // grids[ilevel].template init_unstructured_grid_maps<Basis>(grids[ilevel + 1], ELEM_MAX);
         }
-        // setup = true;
     }
 
     int getNumLevels() { return grids.size(); }

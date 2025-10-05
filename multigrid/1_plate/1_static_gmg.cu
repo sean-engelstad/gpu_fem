@@ -40,79 +40,6 @@ void to_lowercase(char *str) {
     }
 }
 
-void direct_plate_solve(int nxe, double SR) {
-    using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
-    using Director = LinearizedRotation<T>;
-    using Basis = LagrangeQuadBasis<T, Quad, 2>;
-    using Geo = Basis::Geo;
-
-    constexpr bool has_ref_axis = false;
-    constexpr bool is_nonlinear = false;
-    using Data = ShellIsotropicData<T, has_ref_axis>;
-    using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-
-    auto start0 = std::chrono::high_resolution_clock::now();
-
-    int nye = nxe;
-    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
-    int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
-    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
-
-    // BSR symbolic factorization
-    // must pass by ref to not corrupt pointers
-    auto& bsr_data = assembler.getBsrData();
-    double fillin = 10.0;  // 10.0
-    bool print = true;
-    bsr_data.AMD_reordering();
-    bsr_data.compute_full_LU_pattern(fillin, print);
-    assembler.moveBsrDataToDevice();
-
-    // get the loads
-    double Q = 1.0; // load magnitude
-    T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
-
-    auto loads = assembler.createVarsVec(my_loads);
-    assembler.apply_bcs(loads);
-
-    // setup kmat and initial vecs
-    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-    auto soln = assembler.createVarsVec();
-    auto res = assembler.createVarsVec();
-    auto vars = assembler.createVarsVec();
-
-    // assemble the kmat
-    assembler.add_jacobian(res, kmat);
-    assembler.apply_bcs(res);
-    assembler.apply_bcs(kmat);
-
-    auto end0 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> startup_time = end0 - start0;
-    CHECK_CUDA(cudaDeviceSynchronize());
-    auto start1 = std::chrono::high_resolution_clock::now();
-
-    // solve the linear system
-    CUSPARSE::direct_LU_solve(kmat, loads, soln);
-
-    CHECK_CUDA(cudaDeviceSynchronize());
-    auto end1 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> solve_time = end1 - start1;
-    int nx = nxe + 1;
-    int ndof = nx * nx * 6;
-    double total = startup_time.count() + solve_time.count();
-    size_t bytes_per_double = sizeof(double);
-    double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-    printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem (MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_mb);
-
-
-    // print some of the data of host residual
-    auto h_soln = soln.createHostVec();
-    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate.vtk");
-}
-
 void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
     // geometric multigrid method here..
     // need to make a number of grids..
@@ -218,7 +145,11 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     }
 
     // register the coarse assemblers to the prolongations..
-    
+    if (is_kcycle) {
+        kmg->init_prolongations();
+    } else {
+        mg->init_prolongations();
+    }
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end0 = std::chrono::high_resolution_clock::now();
@@ -279,6 +210,79 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         auto h_soln = mg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
         printToVTK<Assembler,HostVec<T>>(mg->grids[0].assembler, h_soln, "out/plate_mg.vtk");
     }
+}
+
+void direct_plate_solve(int nxe, double SR) {
+    using T = double;   
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    using Geo = Basis::Geo;
+
+    constexpr bool has_ref_axis = false;
+    constexpr bool is_nonlinear = false;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+
+    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
+    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+
+    auto start0 = std::chrono::high_resolution_clock::now();
+
+    int nye = nxe;
+    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
+    int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
+    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+
+    // BSR symbolic factorization
+    // must pass by ref to not corrupt pointers
+    auto& bsr_data = assembler.getBsrData();
+    double fillin = 10.0;  // 10.0
+    bool print = true;
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
+    assembler.moveBsrDataToDevice();
+
+    // get the loads
+    double Q = 1.0; // load magnitude
+    T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
+
+    auto loads = assembler.createVarsVec(my_loads);
+    assembler.apply_bcs(loads);
+
+    // setup kmat and initial vecs
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto soln = assembler.createVarsVec();
+    auto res = assembler.createVarsVec();
+    auto vars = assembler.createVarsVec();
+
+    // assemble the kmat
+    assembler.add_jacobian(res, kmat);
+    assembler.apply_bcs(res);
+    assembler.apply_bcs(kmat);
+
+    auto end0 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> startup_time = end0 - start0;
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start1 = std::chrono::high_resolution_clock::now();
+
+    // solve the linear system
+    CUSPARSE::direct_LU_solve(kmat, loads, soln);
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end1 - start1;
+    int nx = nxe + 1;
+    int ndof = nx * nx * 6;
+    double total = startup_time.count() + solve_time.count();
+    size_t bytes_per_double = sizeof(double);
+    double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
+    printf("plate direct solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem (MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_mb);
+
+
+    // print some of the data of host residual
+    auto h_soln = soln.createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate.vtk");
 }
 
 int main(int argc, char **argv) {

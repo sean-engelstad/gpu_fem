@@ -34,7 +34,7 @@ class SingleGrid {
 
     ShellGrid() = default;
 
-    ShellGrid(Assembler &assembler, Prolongation &prolongation_, Smoother &smoother_, 
+    ShellGrid(Assembler &assembler, Prolongation *prolongation_, Smoother *smoother_, 
         BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_) : assembler(assembler_), prolongation(prolongation_), smoother(smoother_),
         Kmat(Kmat_), d_rhs(d_rhs_) {
         
@@ -171,7 +171,7 @@ class SingleGrid {
     }
 
     void smoothDefect(int n_iters, bool print = false, int print_freq = 10) {
-        smoother.smoothDefect(n_iters, print, print_freq);
+        smoother->smoothDefect(n_iters, print, print_freq);
     }
 
     
@@ -180,7 +180,7 @@ class SingleGrid {
         // prolongate from coarser grid to this fine grid
         cudaMemset(d_temp, 0.0, N * sizeof(T));
 
-        prolongation.prolongate(coarse_soln_in, d_temp_vec);
+        prolongation->prolongate(coarse_soln_in, d_temp_vec);
 
         // zero bcs of coarse-fine prolong
         d_temp_vec.permuteData(block_dim, d_perm);  // better way to do this later?
@@ -223,7 +223,7 @@ class SingleGrid {
     void restrict_defect(int nelems_fine, int *d_iperm_fine, DeviceVec<T> fine_defect_in) {
         // transfer from finer mesh to this coarse mesh
         cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T));  // reset defect
-        Prolongation::restrict_defect(fine_defect_in, d_defect);
+        prolongation->restrict_defect(fine_defect_in, d_defect);
 
         // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
         // apply bcs is on un-permuted data
@@ -240,8 +240,8 @@ class SingleGrid {
     }
 
     // public data
-    Smoother smoother;
-    Prolongation prolongation;
+    Smoother *smoother;
+    Prolongation *prolongation;
     Assembler assembler;
     int N, nelems, block_dim, nnodes;
     
