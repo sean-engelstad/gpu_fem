@@ -5,17 +5,10 @@
 #include "cublas_v2.h"
 #include "cuda_utils.h"
 #include "linalg/bsr_mat.h"
-#include "solvers/linear_static/bsr_direct_LU.h"
 
 // local includes for shell multigrid
 #include <chrono>
 #include <set>
-
-#include "grid.cuh"
-#include "prolongation/_prolong.h"  // for prolongations
-#include "prolongation/unstruct_utils.h"
-#include "vtk.h"
-
 
 enum SCALER : short {
     ZERO, // doesn't add directly into defect
@@ -30,11 +23,10 @@ class SingleGrid {
 
    public:
     using T = double;
-    using I = long long int;
 
-    ShellGrid() = default;
+    SingleGrid() = default;
 
-    ShellGrid(Assembler &assembler, Prolongation *prolongation_, Smoother *smoother_, 
+    SingleGrid(Assembler &assembler_, Prolongation *prolongation_, Smoother *smoother_, 
         BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_) : assembler(assembler_), prolongation(prolongation_), smoother(smoother_),
         Kmat(Kmat_), d_rhs(d_rhs_) {
         
@@ -48,15 +40,11 @@ class SingleGrid {
         d_kmat_rowp = d_kmat_bsr_data.rowp;
         d_kmat_cols = d_kmat_bsr_data.cols;
         kmat_nnzb = d_kmat_bsr_data.nnzb;
-
-        const bool startup = true;
-        initCuda<startup>();
+        initCuda();
     }
 
     void update_after_assembly() {
         // update dependent ILU and other matrices from new assembly
-        const bool startup = false;  // false here, just assembly no new startup pieces
-        initCuda<startup>();
         // call assembly steps in smoother + prolong..
     }    
 
@@ -73,55 +61,32 @@ class SingleGrid {
     template <bool startup = true>
     void initCuda() {
         // init handles
-        if constexpr (startup) {
-            CHECK_CUBLAS(cublasCreate(&cublasHandle));
-            CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+        CHECK_CUBLAS(cublasCreate(&cublasHandle));
+        CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-            // init some util vecs
-            d_defect = DeviceVec<T>(N);
-            d_soln = DeviceVec<T>(N);
-            d_temp_vec = DeviceVec<T>(N);
-            d_temp = d_temp_vec.getPtr();
-            d_temp2 = DeviceVec<T>(N).getPtr();
-            d_resid = DeviceVec<T>(N).getPtr();
+        // init some util vecs
+        d_defect = DeviceVec<T>(N);
+        d_soln = DeviceVec<T>(N);
+        d_temp_vec = DeviceVec<T>(N);
+        d_temp = d_temp_vec.getPtr();
+        d_temp2 = DeviceVec<T>(N).getPtr();
+        d_resid = DeviceVec<T>(N).getPtr();
 
-            // get perm pointers
-            d_perm = Kmat.getPerm();
-            d_iperm = Kmat.getIPerm();
-            auto d_bsr_data = Kmat.getBsrData();
-            d_elem_conn = d_bsr_data.elem_conn;
-            nelems = d_bsr_data.nelems;
+        // get perm pointers
+        d_perm = Kmat.getPerm();
+        d_iperm = Kmat.getIPerm();
+        auto d_bsr_data = Kmat.getBsrData();
+        nelems = d_bsr_data.nelems;
 
-            // copy rhs into defect
-            d_rhs.permuteData(block_dim, d_iperm);  // permute rhs to permuted form
-            cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
-            // d_defect.permuteData(block_dim, d_iperm);
+        // copy rhs into defect
+        d_rhs.permuteData(block_dim, d_iperm);  // permute rhs to permuted form
+        cudaMemcpy(d_defect.getPtr(), d_rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+        // d_defect.permuteData(block_dim, d_iperm);
 
-            // make mat handles for SpMV
-            CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
-            CHECK_CUSPARSE(cusparseSetMatType(descrKmat, CUSPARSE_MATRIX_TYPE_GENERAL));
-            CHECK_CUSPARSE(cusparseSetMatIndexBase(descrKmat, CUSPARSE_INDEX_BASE_ZERO));
-
-            CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
-            CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
-            CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
-
-            if (full_LU) {
-                d_kmat_lu_vals = DeviceVec<T>(Kmat.get_nnz()).getPtr();
-            }
-        }
-
-        // also init kmat for direct LU solves.. this is for re-assembly here
-        if (full_LU) {
-            CHECK_CUDA(cudaMemcpy(d_kmat_lu_vals, d_kmat_vals, Kmat.get_nnz() * sizeof(T),
-                                  cudaMemcpyDeviceToDevice));
-
-            // ILU(0) factor on full LU pattern
-            CUSPARSE::perform_ilu0_factorization(
-                cusparseHandle, descr_kmat_L, descr_kmat_U, info_kmat_L, info_kmat_U, &kmat_pBuffer,
-                nnodes, kmat_nnzb, block_dim, d_kmat_lu_vals, d_kmat_rowp, d_kmat_cols, trans_L,
-                trans_U, policy_L, policy_U, dir);
-        }
+        // make mat handles for SpMV
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
+        CHECK_CUSPARSE(cusparseSetMatType(descrKmat, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrKmat, CUSPARSE_INDEX_BASE_ZERO));
     }
 
     T getDefectNorm() {
@@ -171,19 +136,19 @@ class SingleGrid {
     }
 
     void smoothDefect(int n_iters, bool print = false, int print_freq = 10) {
-        smoother->smoothDefect(n_iters, print, print_freq);
+        /* call the smoother */
+        smoother->smoothDefect(d_defect, d_soln, n_iters, print, print_freq);
     }
 
-    
+    void prolongate(DeviceVec<T> coarse_soln_in) {
+        /* prolongate from a coarser grid to this fine grid */
 
-    void prolongate(int *d_coarse_iperm, DeviceVec<T> coarse_soln_in) {
-        // prolongate from coarser grid to this fine grid
+        // call prolong and store dx_fine => d_temp
         cudaMemset(d_temp, 0.0, N * sizeof(T));
-
         prolongation->prolongate(coarse_soln_in, d_temp_vec);
 
         // zero bcs of coarse-fine prolong
-        d_temp_vec.permuteData(block_dim, d_perm);  // better way to do this later?
+        d_temp_vec.permuteData(block_dim, d_perm);
         assembler.apply_bcs(d_temp_vec);
         d_temp_vec.permuteData(block_dim, d_iperm);
 
@@ -194,7 +159,6 @@ class SingleGrid {
                                       &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
                                       block_dim, d_temp, &b, d_temp2));
 
-        
         if constexpr (scaler == ZERO) {
             return; // no update to solution, just keep soln update in temp and use that in outer K-cycle
         }
@@ -220,10 +184,12 @@ class SingleGrid {
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp2, 1, d_defect.getPtr(), 1));
     }
 
-    void restrict_defect(int nelems_fine, int *d_iperm_fine, DeviceVec<T> fine_defect_in) {
-        // transfer from finer mesh to this coarse mesh
+    void restrict_defect(DeviceVec<T> fine_defect_in) {
+        /* transfer defect from a finer mesh to THIS coarse mesh */
+
+        // zero this coarse defect + restrict the finer defect to this coarse grid
         cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T));  // reset defect
-        prolongation->restrict_defect(fine_defect_in, d_defect);
+        restriction->restrict_defect(fine_defect_in, d_defect);
 
         // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
         // apply bcs is on un-permuted data
@@ -242,29 +208,27 @@ class SingleGrid {
     // public data
     Smoother *smoother;
     Prolongation *prolongation;
+    Prolongation *restriction;
+
     Assembler assembler;
     int N, nelems, block_dim, nnodes;
-    
-  private:
-    BsrMat<DeviceVec<T>> Kmat, D_LU_mat;  // can't get Dinv_mat directly at moment
-    DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec;
-    T *d_temp, *d_temp2, *d_resid, *d_weights;
     int *d_perm, *d_iperm;
-
-    // turn off private during debugging
-    //    private:  // private data for cusparse and cublas
-    // ----------------------------------------------------
-
-    // private data
+    DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec;
+    BsrMat<DeviceVec<T>> Kmat;
     cublasHandle_t cublasHandle = NULL;
     cusparseHandle_t cusparseHandle = NULL;
+
+  private:
+    T *d_temp, *d_temp2, *d_resid;
+
+    // private data
     cusparseMatDescr_t descrKmat = 0, descrDinvMat = 0;
     size_t bufferSizeMV;
     void *buffer_MV = nullptr;
 
     // for kmat
     int kmat_nnzb, *d_kmat_rowp, *d_kmat_cols;
-    T *d_kmat_vals, *d_kmat_lu_vals;
+    T *d_kmat_vals;
 
     // CUSPARSE triang solve for Dinv as diag LU
     cusparseMatDescr_t descr_L = 0, descr_U = 0;
@@ -275,10 +239,4 @@ class SingleGrid {
     const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE,
                               trans_U = CUSPARSE_OPERATION_NON_TRANSPOSE;
     const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
-
-    // and simiarly for Kmat a few differences
-    bool full_LU;  // full LU only for coarsest mesh
-    cusparseMatDescr_t descr_kmat_L = 0, descr_kmat_U = 0;
-    bsrsv2Info_t info_kmat_L = 0, info_kmat_U = 0;
-    void *kmat_pBuffer = 0;
 };

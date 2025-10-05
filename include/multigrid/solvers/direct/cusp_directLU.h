@@ -36,13 +36,10 @@ public:
         CHECK_CUDA(
         cudaMemcpy(d_vals_ILU0, d_vals, nnz * sizeof(T), cudaMemcpyDeviceToDevice));
 
-        printf("perform ilu factor\n");
-
         CUSPARSE::perform_ilu0_factorization(handle, descr_L, descr_U, info_L, info_U, &pBuffer, mb,
                                          nnzb, block_dim, d_vals_ILU0, d_rowp, d_cols, trans_L,
                                          trans_U, policy_L, policy_U, dir);
         CHECK_CUDA(cudaDeviceSynchronize());
-        printf("done with ilu factor\n");
     }
 
     void solve(DeviceVec<T> rhs, DeviceVec<T> soln, bool check_conv = false) {

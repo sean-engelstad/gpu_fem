@@ -13,7 +13,9 @@
 
 // local multigrid imports
 #include "multigrid/grid.h"
-#include "multigrid/fea.h"
+#include "multigrid/utils/fea.h"
+#include "multigrid/smoothers/mc_smooth1.h"
+#include "multigrid/prolongation/structured.h"
 #include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
@@ -53,19 +55,18 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
     const SCALER scaler  = LINE_SEARCH;
     using Smoother = MulticolorGSSmoother_V1<Assembler>;
     using Prolongation = StructuredProlongation<Assembler, PLATE>;
-    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = GeometricMultigridSolver<GRID>;
+    using GRID = SingleGrid<Assembler, Prolongation, Smoother, scaler>;
+    using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
+    using MG = GeometricMultigridSolver<GRID, CoarseSolver>;
 
     // for K-cycles
-    using DirectSolve = CusparseMGDirectLU<GRID>;
     using KrylovSolve = PCGSolver<T, GRID>;
     using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
-    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using KMG = MultilevelKcycleSolver<GRID, CoarseSolver, TwoLevelSolve, KrylovSolve>;
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start0 = std::chrono::high_resolution_clock::now();
@@ -114,12 +115,10 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
 
         assembler.moveBsrDataToDevice();
-        auto loads = assembler.createVarsVec(h_loads);
+        auto loads = assembler.createVarsVec(my_loads);
         assembler.apply_bcs(loads);
         auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-        // auto soln = assembler.createVarsVec();
         auto res = assembler.createVarsVec();
-        // auto vars = assembler.createVarsVec();
         int N = res.getSize();
 
         // assemble the kmat
@@ -133,22 +132,24 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         printf("\tassemble kmat time %.2e\n", assembly_time.count());
 
         // build smoother and prolongations..
-        auto smoother = Smoother(assembler);
-        auto prolongation = Prolongation(assembler);
+        T omega = 1.5; // for GS-SOR
+        auto smoother = new Smoother(assembler, kmat, h_color_rowp, omega);
+        auto prolongation = new Prolongation(assembler);
         auto grid = GRID(assembler, prolongation, smoother, kmat, loads);
         
         if (is_kcycle) {
             kmg->grids.push_back(grid);
         } else {
             mg->grids.push_back(grid);
+            if (full_LU) mg->coarse_solver = new CoarseSolver(assembler, kmat);
         }
     }
 
     // register the coarse assemblers to the prolongations..
     if (is_kcycle) {
-        kmg->init_prolongations();
+        kmg->template init_prolongations<Basis>();
     } else {
-        mg->init_prolongations();
+        mg->template init_prolongations<Basis>();
     }
 
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -163,14 +164,8 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     bool print = true;
     // bool print = false;
+    T omega2 = 1.5;
     T atol = 1e-6, rtol = 1e-6;
-
-    T omega = 1.5;
-    // T omega = 1.3;
-    // T omega = 1.2; // worse than <1 for cylinder
-    // T omega = 1.0;
-    // T omega = 0.85; // a bit faster than 1.0 (and actually smooths it)
-    // bool double_smooth = false;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
 
     int n_cycles = 500; // max # cycles
@@ -178,16 +173,16 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print);    
     }
 
     // fastest is K-cycle usually
     if (cycle_type == "V") {
-        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq); //(good option)
+        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq); //(good option)
     } else if (cycle_type == "W") {
-        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
+        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol);
     } else if (cycle_type == "F") {
-        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq); // also decent
+        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq); // also decent
     } else if (cycle_type == "K") {
         kmg->solve(); // best
     }
@@ -223,12 +218,9 @@ void direct_plate_solve(int nxe, double SR) {
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
-
     int nye = nxe;
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
     int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)

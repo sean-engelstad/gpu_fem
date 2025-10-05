@@ -47,10 +47,7 @@ __GLOBAL__ static void k_add_jacobian_fast(int32_t vars_num_nodes, int32_t num_e
     if (active_thread) {
         // memset may not work well on GPU
         memset(&block_res[0], 0.0, vars_per_elem * sizeof(T));
-
-        if (local_thread < elems_per_block) {
-            block_data[0] = _phys_data[global_elem_thread];
-        }
+        block_data[0] = _phys_data[global_elem_thread];
     }
     __syncthreads();
 
@@ -84,10 +81,8 @@ __GLOBAL__ static void k_add_jacobian_fast(int32_t vars_num_nodes, int32_t num_e
     /* warp shuffle here.. */
 
     // TODO : fast add element matrix from row method (from new)
-    mat.addElementMatrixValuesFromShared(active_thread, thread_yz, nthread_yz, 1.0, global_elem,
-                                         Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
-                                         &block_mat[local_elem][0]);
-
-    // printf("block_mat[512] = %.4e\n", block_mat[0][512]);
+    // mat.addElementMatrixValuesFromShared(active_thread, thread_yz, nthread_yz, 1.0, global_elem,
+    //                                      Phys::vars_per_node, Basis::num_nodes, vars_elem_conn,
+    //                                      &block_mat[local_elem][0]);
 
 }  // end of add_jacobian_gpu

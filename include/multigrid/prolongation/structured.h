@@ -2,7 +2,7 @@
 // the restriction is often the transpose or row-normalized transpose for geom multigrid
 #pragma once
 #include "linalg/vec.h"
-#include "structured.cuh"
+#include "_structured.cuh"
 
 template <class Assembler, ProlongationGeom geom>
 class StructuredProlongation {

@@ -178,15 +178,11 @@ ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::ElementAssembler(
     this->vars = Vec<T>(num_vars);
     this->accel = Vec<T>(num_vars);
 
-    printf("num vars nodes %d in base constructor\n", num_vars_nodes);
-
     // on host (TODO : if need to deep copy entries to device?)
     // TODO : should probably do factorization explicitly instead of
     // implicitly upon construction
     bsr_data = BsrData(num_elements, num_vars_nodes, Basis::num_nodes, Phys::vars_per_node,
                        vars_conn.getPtr());
-
-    printf("bsr data nnodes in base constructor %d\n", bsr_data.nnodes);
 
     int ndvs = get_num_dvs();
 

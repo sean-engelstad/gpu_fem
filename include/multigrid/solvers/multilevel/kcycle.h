@@ -13,11 +13,11 @@ public:
     template <class Basis>
     void init_prolongations() {
         /* pass in coarse assembler data for each prolongation operator */
-        for (int ilevel = 0; ilevel < getNumLevels() - 1; ilevel++) {
-            if (ilevel != 0) {
-                grids[ilevel].prolongation->init_coarse_data(grids[ilevel+1].assembler);
-            }
+        // 0 is the finest grid, nlevels-1 is the coarsest grid here
+        for (int ilevel = 0; ilevel < getNumLevels()-1; ilevel++) {
+            grids[ilevel].prolongation->init_coarse_data(grids[ilevel+1].assembler);
             // grids[ilevel].template init_unstructured_grid_maps<Basis>(grids[ilevel + 1], ELEM_MAX);
+            grids[ilevel+1].restriction = grids[ilevel].prolongation; // copy prolong to restriction on coarser grid
         }
     }
 
@@ -68,7 +68,7 @@ public:
         for (int ilevel = nlevels - 1; ilevel >= 0; ilevel--) {
             if (ilevel == nlevels-1) {
                 // create coarse grid direct solver
-                BaseSolver *coarse_solver = new CoarseSolver(&grids[ilevel]);
+                BaseSolver *coarse_solver = new CoarseSolver(grids[ilevel].assembler, grids[ilevel].Kmat);
                 solvers.push_back(coarse_solver);
             } else {
                 if (just_outer_krylov) {
