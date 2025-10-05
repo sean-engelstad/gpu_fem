@@ -1,0 +1,128 @@
+// general gpu_fem imports
+#include "linalg/_linalg.h"
+#include "solvers/_solvers.h"
+#include "mesh/TACSMeshLoader.h"
+#include "mesh/vtk_writer.h"
+#include <chrono>
+
+// shell imports
+#include "assembler.h"
+#include "element/shell/basis/lagrange_basis.h"
+#include "element/shell/director/linear_rotation.h"
+#include "element/shell/physics/isotropic_shell.h"
+#include "element/shell/mitc_shell.h"
+
+// local multigrid imports
+// #include "multigrid/grid.h"
+#include "multigrid/fea.h"
+#include "multigrid/smoothers/mc_smooth1.h"
+#include <string>
+#include <chrono>
+
+void to_lowercase(char *str) {
+    for (; *str; ++str) {
+        *str = std::tolower(*str);
+    }
+}
+
+void test_smoother(int nxe, double SR = 100.0) {
+    // geometric multigrid method here..
+    // need to make a number of grids..
+
+    using T = double;   
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    using Geo = Basis::Geo;
+    constexpr bool has_ref_axis = false;
+    constexpr bool is_nonlinear = false;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
+
+    // smoother class
+    using Smoother = MulticolorGSSmoother_V1<Assembler>;
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start0 = std::chrono::high_resolution_clock::now();
+
+    // make a single grid
+    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
+    int nxe_per_comp = nxe / 4, nye_per_comp = nxe/4; // for now (should have 25 grids)
+    auto assembler = createPlateAssembler<Assembler>(nxe, nxe, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+    double Q = 1.0; // load magnitude
+    T *my_loads = getPlateLoads<T, Physics>(nxe, nxe, Lx, Ly, Q);
+    printf("making grid with nxe %d\n", nxe);
+
+    auto &bsr_data = assembler.getBsrData();
+    int num_colors, *_color_rowp;
+
+    // make the grid with multicolor ordering
+    bsr_data.multicolor_reordering(num_colors, _color_rowp);
+    bsr_data.compute_nofill_pattern();
+    auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
+    assembler.moveBsrDataToDevice();
+    
+    auto loads = assembler.createVarsVec(my_loads);
+    assembler.apply_bcs(loads);
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    
+    auto res = assembler.createVarsVec();
+    int N = res.getSize();
+
+    // assemble the kmat
+    auto start1 = std::chrono::high_resolution_clock::now();
+    assembler.add_jacobian(res, kmat);
+    assembler.apply_bcs(kmat);
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> assembly_time = end1 - start1;
+    printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
+    // make the smoother
+    T omega = 1.5;
+    auto smoother = Smoother(assembler, kmat, h_color_rowp, omega);
+    auto soln = assembler.createVarsVec();
+    auto defect = assembler.createVarsVec();
+
+    // copy loads to defect and permute it
+    loads.copyValuesTo(defect);
+    int block_dim = bsr_data.block_dim, *d_iperm = kmat.getIPerm();
+    defect.permuteData(block_dim, d_iperm);
+
+    // now try and do smoothing solve
+    int n_iters = 10, print_freq = 1;
+    bool print = true;
+    smoother.smoothDefect(defect, soln, n_iters, print, print_freq);
+}
+
+int main(int argc, char **argv) {
+    // input ----------
+    int nxe = 256; // default value
+
+    // Parse arguments
+    for (int i = 1; i < argc; ++i) {
+        char* arg = argv[i];
+        to_lowercase(arg);
+
+        if (strcmp(arg, "--nxe") == 0) {
+            if (i + 1 < argc) {
+                nxe = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nxe\n";
+                return 1;
+            }
+        } else {
+            std::cerr << "Unknown argument: " << argv[i] << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [direct/mg] [--nxe value] [--SR value] [--cycle char] [--nsmooth int] [--ninnercyc int]" << std::endl;
+            return 1;
+        }
+    }
+
+    // done reading arts, now run stuff
+    test_smoother(nxe);
+
+    return 0;
+
+    
+}

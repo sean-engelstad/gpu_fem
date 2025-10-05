@@ -67,32 +67,12 @@ void direct_plate_solve(int nxe, double SR) {
     auto& bsr_data = assembler.getBsrData();
     double fillin = 10.0;  // 10.0
     bool print = true;
-    bool full_LU = true;
-
-    if (full_LU) {
-        bsr_data.AMD_reordering();
-        bsr_data.compute_full_LU_pattern(fillin, print);
-    } else {
-        /*
-        RCM and reorderings actually hurt GMRES performance on the plate case
-        because the matrix already has a nice banded structure => RCM increases bandwidth (which means it just doesn't work well for this problem
-        as it's whole point is to decrease matrix bandwidth)
-        */
-
-        bsr_data.AMD_reordering();
-        // bsr_data.RCM_reordering();
-        // bsr_data.qorder_reordering(1.0);
-        
-        bsr_data.compute_ILUk_pattern(5, fillin);
-        // bsr_data.compute_full_LU_pattern(fillin, print); // reordered full LU here for debug
-    }
-    // printf("perm:");
-    // printVec<int>(bsr_data.nnodes, bsr_data.perm);
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
     assembler.moveBsrDataToDevice();
 
     // get the loads
     double Q = 1.0; // load magnitude
-    // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
     T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
 
     auto loads = assembler.createVarsVec(my_loads);
@@ -115,16 +95,7 @@ void direct_plate_solve(int nxe, double SR) {
     auto start1 = std::chrono::high_resolution_clock::now();
 
     // solve the linear system
-    if (full_LU) {
-        CUSPARSE::direct_LU_solve(kmat, loads, soln);
-    } else {
-        int n_iter = 200, max_iter = 400;
-        T abs_tol = 1e-11, rel_tol = 1e-14;
-        bool print = true;
-        CUSPARSE::GMRES_solve<T>(kmat, loads, soln, n_iter, max_iter, abs_tol, rel_tol, print);
-
-        // CUSPARSE::GMRES_DR_solve<T, false>(kmat, loads, soln, 50, 10, 65, abs_tol, rel_tol, true, false, 5);
-    }
+    CUSPARSE::direct_LU_solve(kmat, loads, soln);
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
@@ -197,8 +168,6 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         nxe_min = c_nxe;
     }
 
-    // int nxe_min = nxe / 2; // two level
-
     // make each grid
     for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
         // make the assembler
@@ -210,17 +179,42 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
         printf("making grid with nxe %d\n", c_nxe);
 
+        auto &bsr_data = assembler.getBsrData();
+        int num_colors, *_color_rowp;
+
         // make the grid
-        bool full_LU = c_nxe == nxe_min; // smallest grid is direct solve
-        bool reorder;
-        if (smoother == LEXIGRAPHIC_GS) {
-            reorder = false;
-        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2) {
-            reorder = true;
-        } else if (smoother == DAMPED_JACOBI) {
-            reorder = false;
+        bool full_LU = c_nxe == nxe_min;
+        if (full_LU) {
+            bsr_data.AMD_reordering();
+            bsr_data.compute_full_LU_pattern(10.0, false);
+        } else {
+            bsr_data.multicolor_reordering(num_colors, _color_rowp);
+            bsr_data.compute_nofill_pattern();
         }
-        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
+        // auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
+        auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
+
+        assembler.moveBsrDataToDevice();
+        auto loads = assembler.createVarsVec(h_loads);
+        assembler.apply_bcs(loads);
+        auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+        // auto soln = assembler.createVarsVec();
+        auto res = assembler.createVarsVec();
+        // auto vars = assembler.createVarsVec();
+        int N = res.getSize();
+
+        // assemble the kmat
+        auto start0 = std::chrono::high_resolution_clock::now();
+        assembler.add_jacobian(res, kmat);
+        // assembler.apply_bcs(res);
+        assembler.apply_bcs(kmat);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end0 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> assembly_time = end0 - start0;
+        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
+        // build smoother and prolongations..
+
         
         if (is_kcycle) {
             kmg->grids.push_back(grid);

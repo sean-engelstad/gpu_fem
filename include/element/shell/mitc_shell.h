@@ -1,28 +1,30 @@
 #pragma once
 
-#include "../base_elem_group.h"
+#include "../../assembler.h"
 #include "a2dcore.h"
 #include "a2d/a2dshell.h"
 #include "strains/_all.h"
 
-template <typename T, class Director_, class Basis_, class Phys_>
-class MITCShellElementGroup : public BaseElementGroup<MITCShellElementGroup<T, Director_, Basis_, Phys_>, T,
-                                                  typename Basis_::Geo, Basis_, Phys_> {
+template <typename T, class Director_, class Basis_, class Phys_, template <typename> class Vec_,
+          template <typename> class Mat_>
+class MITCShellAssembler : public ElementAssembler<MITCShellAssembler<T, Director_, Basis_, Phys_, Vec_, Mat_>, T, Basis_, Phys_, Vec_, Mat_> {
    public:
     using Director = Director_;
     using Basis = Basis_;
     using Geo = typename Basis::Geo;
     using Phys = Phys_;
-    using ElemGroup = MITCShellElementGroup<T, Director_, Basis_, Phys_>;
-    using Base = BaseElementGroup<ElemGroup, T, Geo, Basis_, Phys_>;
+    using Data = typename Phys_::Data;
+    using Assembler = MITCShellAssembler<T, Director_, Basis_, Phys_, Vec_, Mat_>;
+    using Base = ElementAssembler<Assembler, T, Basis_, Phys_, Vec_, Mat_>;
     using Quadrature = typename Basis::Quadrature;
     using FADType = typename A2D::ADScalar<T, 1>;
 
-    static constexpr int32_t xpts_per_elem = Base::xpts_per_elem;
-    static constexpr int32_t dof_per_elem = Base::dof_per_elem;
-    static constexpr int32_t num_quad_pts = Base::num_quad_pts;
     static constexpr int32_t num_nodes = Basis::num_nodes;
     static constexpr int32_t vars_per_node = Phys::vars_per_node;
+    static constexpr int32_t xpts_per_elem = Geo::spatial_dim * num_nodes;
+    static constexpr int32_t dof_per_elem = vars_per_node * num_nodes;
+    static constexpr int32_t num_quad_pts = Quadrature::num_quad_pts;
+    
 
 // TODO : way to make this more general if num_quad_pts is not a multiple of 3?
 // some if constexpr stuff on type of Basis?
@@ -33,6 +35,20 @@ class MITCShellElementGroup : public BaseElementGroup<MITCShellElementGroup<T, D
     static constexpr dim3 jac_block = dim3(1, dof_per_elem, num_quad_pts);
     // static constexpr dim3 jac_block = dim3(dof_per_elem, num_quad_pts);
 #endif  // USE_GPU
+
+    // default constructor
+    MITCShellAssembler() = default;
+
+    // constructor
+    MITCShellAssembler(int32_t num_geo_nodes, int32_t num_vars_nodes, int32_t num_elements,
+                     HostVec<int32_t> &geo_conn, HostVec<int32_t> &vars_conn, HostVec<T> &xpts,
+                     HostVec<int> &bcs, HostVec<Data> &physData, int32_t num_components = 0,
+                     HostVec<int> elem_component = HostVec<int>(0)) {
+        
+        // call subclass (CFRP) constructor
+        Base(num_geo_nodes, num_vars_nodes, num_elements, geo_conn, vars_conn,
+            xpts, bcs, physData, num_components, elem_component);
+    }
 
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_energy(const bool active_thread, const int iquad,

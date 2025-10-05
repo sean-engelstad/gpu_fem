@@ -11,13 +11,13 @@
 
 template <typename T, class Director_, class Basis_, class Phys_, template <typename> class Vec,
           template <typename> class Mat_>
-class FullyIntegratedShellElementGroup : public ElementAssembler<T, FullyIntegratedShellElementGroup<T, Director_, Basis_, Phys_, Vec, Mat>, Vec_, Mat_> {
+class FullyIntegratedShellAssembler : public ElementAssembler<T, FullyIntegratedShellAssembler<T, Director_, Basis_, Phys_, Vec, Mat>, Vec_, Mat_> {
    public:
     using Director = Director_;
     using Basis = Basis_;
     using Geo = typename Basis::Geo;
     using Phys = Phys_;
-    using ElemGroup = FullyIntegratedShellElementGroup<T, Director_, Basis_, Phys_>;
+    using ElemGroup = FullyIntegratedShellAssembler<T, Director_, Basis_, Phys_>;
     using Base = ElementAssembler<T, ElemGroup, Vec_, Mat_>;
     using Quadrature = typename Basis::Quadrature;
     using FADType = typename A2D::ADScalar<T, 1>;

@@ -1,10 +1,175 @@
+#pragma once
+#include "linalg/vec.h"
 
+template <class Assembler>
 class DampedJacobiSmoother {
+    /* a lexigraphic gauss seidel smoother */
+    using T = Assembler::T;
 
-    void dampedJacobi(int n_iters, bool print = false, int print_freq = 10, T omega = 0.8,
-                      bool rev_colors = false) {
-        // bool time_debug = false;
-        // bool time_debug = true;
+    DampedJacobiSmoother(Assembler &assembler_, BsrMat<DeviceVec<T>> Kmat_) {
+        Kmat = Kmat_;
+        d_rhs = d_rhs_;
+        h_color_rowp = h_color_rowp_;
+        block_dim = 6;
+        nnodes = N / 6;
+        assembler = assembler_;
+
+        // get data out of kmat
+        auto d_kmat_bsr_data = Kmat.getBsrData();
+        d_kmat_vals = Kmat.getVec().getPtr();
+        d_kmat_rowp = d_kmat_bsr_data.rowp;
+        d_kmat_cols = d_kmat_bsr_data.cols;
+        kmat_nnzb = d_kmat_bsr_data.nnzb;
+
+        initCuda();
+        const bool startup = true;
+        buildDiagInvMat<startup>();
+    }
+
+    void update_assembly() {
+        const bool startup = false;
+        buildDiagInvMat<startup>();
+    }
+
+    void initCuda() {
+        // init handles
+        CHECK_CUBLAS(cublasCreate(&cublasHandle));
+        CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+
+        // init some util vecs
+        d_temp_vec = DeviceVec<T>(N);
+        d_temp = d_temp_vec.getPtr();
+
+        // make mat handles for SpMV
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
+        CHECK_CUSPARSE(cusparseSetMatType(descrKmat, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrKmat, CUSPARSE_INDEX_BASE_ZERO));
+
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrDinvMat));
+        CHECK_CUSPARSE(cusparseSetMatType(descrDinvMat, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrDinvMat, CUSPARSE_INDEX_BASE_ZERO));
+    }
+
+    template <bool startup = true>
+    void buildDiagInvMat() {
+        // first need to construct rowp and cols for diagonal (fairly easy)
+
+        // startup section
+        if constexpr (startup) {
+            int *h_diag_rowp = new int[nnodes + 1];
+            diag_inv_nnzb = nnodes;
+            int *h_diag_cols = new int[nnodes];
+            h_diag_rowp[0] = 0;
+
+            for (int i = 0; i < nnodes; i++) {
+                h_diag_rowp[i + 1] = i + 1;
+                h_diag_cols[i] = i;
+            }
+
+            // on host, get the pointer locations in Kmat of the block diag entries..
+            int *h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
+            int *h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
+
+            // now copy to device
+            d_diag_rowp = HostVec<int>(nnodes + 1, h_diag_rowp).createDeviceVec().getPtr();
+            d_diag_cols = HostVec<int>(nnodes, h_diag_cols).createDeviceVec().getPtr();
+
+            // create the bsr data object on device
+            d_diag_bsr_data = BsrData(nnodes, 6, diag_inv_nnzb, d_diag_rowp, d_diag_cols, nullptr,
+                                      nullptr, false);
+            delete[] h_diag_rowp;
+            delete[] h_diag_cols;
+
+            // now allocate DeviceVec for the values
+            int ndiag_vals = block_dim * block_dim * nnodes;
+            d_diag_vals = DeviceVec<T>(ndiag_vals);
+            d_diag_LU_vals = d_diag_vals.getPtr();  // just copy these pointers..
+
+            int *h_kmat_diagp = new int[nnodes];
+            for (int block_row = 0; block_row < nnodes; block_row++) {
+                for (int jp = h_kmat_rowp[block_row]; jp < h_kmat_rowp[block_row + 1]; jp++) {
+                    int block_col = h_kmat_cols[jp];
+                    // printf("row %d, col %d\n", block_row, block_col);
+                    if (block_row == block_col) {
+                        h_kmat_diagp[block_row] = jp;
+                    }
+                }
+            }
+
+            d_kmat_diagp = HostVec<int>(nnodes, h_kmat_diagp).createDeviceVec().getPtr();
+
+            delete[] h_kmat_rowp;
+            delete[] h_kmat_cols;
+        }
+
+        // call the kernel to copy out diag vals first
+        int ndiag_vals = block_dim * block_dim * nnodes;
+        dim3 block(32);
+        int nblocks = (ndiag_vals + 31) / 32;
+        dim3 grid(nblocks);
+        k_copyBlockDiagFromBsrMat<T>
+            <<<grid, block>>>(nnodes, block_dim, d_kmat_diagp, d_kmat_vals, d_diag_LU_vals);
+
+        // then on each nodal block of D matrix, cusparse computes LU factorization
+        CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
+                                             &pBuffer, nnodes, diag_inv_nnzb, block_dim,
+                                             d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
+                                             trans_U, policy_L, policy_U, dir);
+
+        // now compute Dinv linear operator from LU triang solves (so don't need triang solves in
+        // main solve), costs 6 triang solves of D^-1 = U^-1 L^-1
+        build_lu_inv_operator =
+            (smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION ||
+             smoother == DAMPED_JACOBI) &&
+            !full_LU;  // dense matrix should not modify LU vals on coarsest grid..
+        if (build_lu_inv_operator) {
+            // startup part of Dinv linear operator
+            if constexpr (startup) {
+                d_dinv_vals = DeviceVec<T>(ndiag_vals);
+            }
+
+            // apply e1 through e6 (each dof per node for shell if 6 dof per node case)
+            // to get effective matrix.. need six temp vectors..
+            for (int i = 0; i < block_dim; i++) {
+                // set d_temp to ei (one of e1 through e6 per block)
+                cudaMemset(d_temp, 0.0, N * sizeof(T));
+                dim3 block(32);
+                dim3 grid((nnodes + 31) / 32);
+                k_setBlockUnitVec<T><<<grid, block>>>(nnodes, block_dim, i, d_temp);
+
+                // now compute D^-1 through U^-1 L^-1 triang solves and copy result into d_temp2
+                const double alpha = 1.0;
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, nnodes, nnodes, &alpha, descr_L, d_diag_LU_vals,
+                    d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp, d_resid, policy_L,
+                    pBuffer));  // prob only need U^-1 part for block diag.. TBD
+
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes, nnodes,
+                                                     &alpha, descr_U, d_diag_LU_vals, d_diag_rowp,
+                                                     d_diag_cols, block_dim, info_U, d_resid,
+                                                     d_temp2, policy_U, pBuffer));
+
+                // now copy temp2 into columns of new operator
+                dim3 grid2((N + 31) / 32);
+                k_setLUinv_operator<T>
+                    <<<grid2, block>>>(nnodes, block_dim, i, d_temp2, d_dinv_vals.getPtr());
+            }  // this works!
+
+            if constexpr (startup) {
+                D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_dinv_vals);
+            }
+
+        } else {
+            if constexpr (startup) {
+                D_LU_mat = BsrMat<DeviceVec<T>>(d_diag_bsr_data, d_diag_vals);
+            }
+        }  // end of Dinv linear operator if block
+    }
+
+    void smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln,
+        int n_iters, bool print = false, int print_freq = 10, T omega = 0.8) {
+
+        /* damped jacobi smoothing */
 
         for (int iter = 0; iter < n_iters; iter++) {
             // compute Dinv * defect => soln update (aka temp)
@@ -33,10 +198,44 @@ class DampedJacobiSmoother {
             T defect_nrm;
             CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_defect.getPtr(), 1, &defect_nrm));
             if (print && iter % print_freq == 0)
-                printf("\tMC-BGS %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
+                printf("\tDJacobi %d/%d : ||defect|| = %.4e\n", iter + 1, n_iters, defect_nrm);
 
             // --------------------------------------------------------------------------------
         }  // next block-GS iteration
     }
 
+    // standard matrix data
+    Assembler assembler;
+    int N, nelems, block_dim, nnodes;
+    BsrMat<DeviceVec<T>> Kmat, D_LU_mat;  // can't get Dinv_mat directly at moment
+    DeviceVec<T> d_temp_vec;
+    T *d_temp;
+
+    // CUSPARSE and cublas data
+    cusparseHandle_t cusparseHandle = NULL;
+    cublasHandle_t cublasHandle = NULL;
+    cusparseMatDescr_t descr_L = 0;
+    bsrsv2Info_t info_L = 0;
+    void *pBuffer = 0;
+    const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
+    const cusparseOperation_t trans_L = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    const cusparseDirection_t dir = CUSPARSE_DIRECTION_ROW;
+
+    // for kmat
+    int kmat_nnzb, *d_kmat_rowp, *d_kmat_cols;
+    T *d_kmat_vals, *d_kmat_lu_vals;
+    cusparseMatDescr_t descrKmat = 0;
+    size_t bufferSizeMV;
+    void *buffer_MV = nullptr;
+
+    // for diag inv mat
+    int diag_inv_nnzb, *d_diag_rowp, *d_diag_cols;
+    int *d_piv, *d_info;
+    DeviceVec<T> d_diag_vals;
+    T *d_diag_LU_vals;
+    T **d_diag_LU_batch_ptr, **d_temp_batch_ptr;
+    bool build_lu_inv_operator;
+    int *d_kmat_diagp;
+    BsrData d_diag_bsr_data;
+    DeviceVec<T> d_dinv_vals;
 };
