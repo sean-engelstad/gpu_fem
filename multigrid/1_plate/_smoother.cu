@@ -62,27 +62,39 @@ void test_smoother(int nxe, double SR = 100.0) {
     bsr_data.compute_nofill_pattern();
     auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
     assembler.moveBsrDataToDevice();
+
+    // bsr_data.AMD_reordering();
+    // bsr_data.compute_full_LU_pattern(10.0, false);
+    // assembler.moveBsrDataToDevice();
     
+    // make loads and assemble kmat
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-    
     auto res = assembler.createVarsVec();
+    auto soln = assembler.createVarsVec();
     int N = res.getSize();
 
     // assemble the kmat
     auto start1 = std::chrono::high_resolution_clock::now();
     assembler.add_jacobian(res, kmat);
+    CHECK_CUDA(cudaDeviceSynchronize());
     assembler.apply_bcs(kmat);
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> assembly_time = end1 - start1;
     printf("\tassemble kmat time %.2e\n", assembly_time.count());
 
+    // try and do direct solve
+    // CUSPARSE::direct_LU_solve(kmat, loads, soln);
+    // auto h_soln = soln.createHostVec();
+    // printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate.vtk");
+    // return; // temp debug
+
     // make the smoother
-    T omega = 1.5;
+    // T omega = 1.5;
+    T omega = 0.7;
     auto smoother = Smoother(assembler, kmat, h_color_rowp, omega);
-    auto soln = assembler.createVarsVec();
     auto defect = assembler.createVarsVec();
 
     // copy loads to defect and permute it
@@ -91,9 +103,14 @@ void test_smoother(int nxe, double SR = 100.0) {
     defect.permuteData(block_dim, d_iperm);
 
     // now try and do smoothing solve
-    int n_iters = 10, print_freq = 1;
+    int n_iters = 30, print_freq = 1;
     bool print = true;
     smoother.smoothDefect(defect, soln, n_iters, print, print_freq);
+
+    int *d_perm = kmat.getPerm();
+    defect.permuteData(block_dim, d_perm);
+    auto h_defect = defect.createHostVec();
+    printToVTK<Assembler,HostVec<T>>(assembler, h_defect, "out/plate_smooth.vtk");
 }
 
 int main(int argc, char **argv) {

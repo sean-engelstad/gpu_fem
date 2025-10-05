@@ -4,15 +4,27 @@
 #include "linalg/vec.h"
 #include "structured.cuh"
 
-template <ProlongationGeom geom>
+template <class Assembler, ProlongationGeom geom>
 class StructuredProlongation {
   public:
     using T = double;
     static constexpr bool structured = true;
     static constexpr bool assembly = false;
 
-    static void prolongate(int nelems_fine, int *d_coarse_iperm, int *d_fine_iperm,
-                           DeviceVec<T> coarse_soln_in, DeviceVec<T> dx_fine, T *d_weights) {
+    StructuredProlongation(Assembler &fine_assembler) {
+        // extract some relevant data from the coarse and fine assemblers
+        nelems_fine = fine_assembler.get_num_elements();
+        d_fine_iperm = fine_assembler.getBsrData().iperm;
+        ndof_fine = fine_assembler.get_num_vars();
+        d_weights = DeviceVec<T>(ndof_fine);
+    }
+    
+    void init_coarse_data(Assembler &coarse_assembler) {
+        // has to be called separately (since coarse grid isn't made at same time as fine grid)
+        d_coarse_iperm = coarse_assembler.getBsrData().iperm;
+    }
+
+    void prolongate(DeviceVec<T> coarse_soln_in, DeviceVec<T> dx_fine) {
         // zero temp so we can store dx in it
         int N_coarse = coarse_soln_in.getSize();  // this includes dof per node (not num nodes here)
         int N_fine = dx_fine.getSize();
@@ -32,18 +44,13 @@ class StructuredProlongation {
                                                d_fine_iperm, coarse_soln_in.getPtr(),
                                                dx_fine.getPtr(), d_weights);
 
-        // CHECK_CUDA(cudaDeviceSynchronize());
-        // printf("end of prolongate\n");
-
         // now normalize by the weights so partition of unity remains
         int nblock2 = (N_fine + 31) / 32;
         dim3 grid2(nblock2);
         k_vec_normalize<T><<<grid2, block>>>(N_fine, dx_fine.getPtr(), d_weights);
     }
 
-    static void restrict_defect(int nelems_fine, int *d_coarse_iperm, int *d_fine_iperm,
-                                DeviceVec<T> fine_defect_in, DeviceVec<T> coarse_defect_out,
-                                T *d_weights) {
+    void restrict_defect(DeviceVec<T> fine_defect_in, DeviceVec<T> coarse_defect_out) {
         // zero temp so we can store dx in it
         int N_coarse =
             coarse_defect_out.getSize();  // this includes dof per node (not num nodes here)
@@ -71,4 +78,9 @@ class StructuredProlongation {
         // I actually use the fine vec d_int_temp here for convenience (it's fine cause it's larger
         // than coarse)
     }
+
+  private:
+    int nelems_fine, int *d_coarse_iperm, int *d_fine_iperm;
+    int ndof_fine;
+    T *d_weights;
 };

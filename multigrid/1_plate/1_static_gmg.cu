@@ -128,17 +128,9 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
     using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
     using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-
-    // multigrid objects
-    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    // const SMOOTHER smoother = MULTICOLOR_GS;
-    // const SMOOTHER smoother = MULTICOLOR_GS_FAST; 
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // this is much faster than other two methods (MULTICOLOR_GS_FAST is about 2.6x slower at high DOF)
-    // const SMOOTHER smoother = DAMPED_JACOBI;
-
     const SCALER scaler  = LINE_SEARCH;
-
-    using Prolongation = StructuredProlongation<PLATE>;
+    using Smoother = MulticolorGSSmoother_V1<Assembler>;
+    using Prolongation = StructuredProlongation<Assembler, PLATE>;
     using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
     using MG = GeometricMultigridSolver<GRID>;
 
@@ -214,7 +206,9 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
         printf("\tassemble kmat time %.2e\n", assembly_time.count());
 
         // build smoother and prolongations..
-
+        auto smoother = Smoother(assembler);
+        auto prolongation = Prolongation(assembler);
+        auto grid = GRID(assembler, prolongation, smoother, kmat, loads);
         
         if (is_kcycle) {
             kmg->grids.push_back(grid);
@@ -222,6 +216,9 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
             mg->grids.push_back(grid);
         }
     }
+
+    // register the coarse assemblers to the prolongations..
+    
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end0 = std::chrono::high_resolution_clock::now();

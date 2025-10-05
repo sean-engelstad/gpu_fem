@@ -11,6 +11,7 @@ class DampedJacobiSmoother {
         d_rhs = d_rhs_;
         h_color_rowp = h_color_rowp_;
         block_dim = 6;
+        N = assembler_.get_num_vars();
         nnodes = N / 6;
         assembler = assembler_;
 

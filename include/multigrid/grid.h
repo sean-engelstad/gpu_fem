@@ -16,16 +16,6 @@
 #include "prolongation/unstruct_utils.h"
 #include "vtk.h"
 
-// for unstructured multigrid
-
-enum SMOOTHER : short {
-    MULTICOLOR_GS,
-    MULTICOLOR_GS_FAST,
-    MULTICOLOR_GS_FAST2,
-    MULTICOLOR_GS_FAST2_JUNCTION,
-    DAMPED_JACOBI,
-    LEXIGRAPHIC_GS,
-};
 
 enum SCALER : short {
     ZERO, // doesn't add directly into defect
@@ -34,61 +24,41 @@ enum SCALER : short {
     PCG,
 };
 
-template <class Assembler, class Prolongation, SMOOTHER smoother, SCALER scaler>
-class ShellGrid {
+template <class Assembler, class Prolongation, class Smoother, SCALER scaler>
+class SingleGrid {
+    /* single grid class for multigrid, that manages smoothing, prolong and soln + defect of a given level */
+
    public:
     using T = double;
     using I = long long int;
 
     ShellGrid() = default;
 
-    ShellGrid(Assembler &assembler_, int N_, BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_,
-              HostVec<int> h_color_rowp_, bool full_LU_ = false)
-        : N(N_), full_LU(full_LU_) {
-        Kmat = Kmat_;
-        d_rhs = d_rhs_;
-        h_color_rowp = h_color_rowp_;
+    ShellGrid(Assembler &assembler, Prolongation &prolongation_, Smoother &smoother_, 
+        BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_) : assembler(assembler_), prolongation(prolongation_), smoother(smoother_),
+        Kmat(Kmat_), d_rhs(d_rhs_) {
+        
+        N = assembler.get_num_vars();
         block_dim = 6;
         nnodes = N / 6;
-
-        assembler = assembler_;
-
+        
         // get data out of kmat
         auto d_kmat_bsr_data = Kmat.getBsrData();
         d_kmat_vals = Kmat.getVec().getPtr();
         d_kmat_rowp = d_kmat_bsr_data.rowp;
         d_kmat_cols = d_kmat_bsr_data.cols;
         kmat_nnzb = d_kmat_bsr_data.nnzb;
+
         const bool startup = true;
         initCuda<startup>();
-        if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST ||
-            smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION ||
-            smoother == DAMPED_JACOBI) {
-            buildDiagInvMat<startup>();
-            if ((smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION) &&
-                !full_LU)
-                buildTransposeColorMatrices<startup>();
-        }
-        if (smoother == LEXIGRAPHIC_GS && !full_LU) {
-            initLowerMatForGaussSeidel();
-        }
     }
 
     void update_after_assembly() {
         // update dependent ILU and other matrices from new assembly
         const bool startup = false;  // false here, just assembly no new startup pieces
         initCuda<startup>();
-        if constexpr (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST ||
-                      smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION ||
-                      smoother == DAMPED_JACOBI) {
-            buildDiagInvMat<startup>();
-            if ((smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION) &&
-                !full_LU)
-                buildTransposeColorMatrices<startup>();
-        }
-    }
-
-    
+        // call assembly steps in smoother + prolong..
+    }    
 
     double get_memory_usage_mb() {
         // get memory usage for kmat in megabytes
@@ -113,9 +83,7 @@ class ShellGrid {
             d_temp_vec = DeviceVec<T>(N);
             d_temp = d_temp_vec.getPtr();
             d_temp2 = DeviceVec<T>(N).getPtr();
-            d_weights = DeviceVec<T>(N).getPtr();
             d_resid = DeviceVec<T>(N).getPtr();
-            d_int_temp = DeviceVec<int>(N).getPtr();
 
             // get perm pointers
             d_perm = Kmat.getPerm();
@@ -202,20 +170,8 @@ class ShellGrid {
         return resid_nrm;
     }
 
-    void smoothDefect(int n_iters, bool print = false, int print_freq = 10, T omega = 1.0,
-                      bool symmetric = false) {
-        /* calls either multicolor smoother or lexigraphic GS depending on tempalte smoother type */
-        if (smoother == MULTICOLOR_GS) {
-            multicolorBlockGaussSeidel_slow(n_iters, print, print_freq, omega, symmetric);
-        } else if (smoother == MULTICOLOR_GS_FAST) {
-            multicolorBlockGaussSeidel_fast(n_iters, print, print_freq, omega, symmetric);
-        } else if (smoother == MULTICOLOR_GS_FAST2 || smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
-            multicolorBlockGaussSeidel_fast2(n_iters, print, print_freq, omega, symmetric);
-        } else if (smoother == DAMPED_JACOBI) {
-            dampedJacobi(n_iters, print, print_freq, omega);
-        } else if (smoother == LEXIGRAPHIC_GS) {
-            lexigraphicBlockGS(n_iters, print, print_freq);
-        }
+    void smoothDefect(int n_iters, bool print = false, int print_freq = 10) {
+        smoother.smoothDefect(n_iters, print, print_freq);
     }
 
     
@@ -224,19 +180,7 @@ class ShellGrid {
         // prolongate from coarser grid to this fine grid
         cudaMemset(d_temp, 0.0, N * sizeof(T));
 
-        if constexpr (Prolongation::structured) {
-            Prolongation::prolongate(nelems, d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec,
-                                     d_weights);
-        } else {
-            if constexpr (Prolongation::assembly) {
-                Prolongation::prolongate(cusparseHandle, descrP, P_mat, coarse_soln_in, d_temp_vec);
-            } else {
-                // slower version
-                Prolongation::prolongate(nnodes, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis,
-                                         d_coarse_iperm, d_iperm, coarse_soln_in, d_temp_vec);
-            }
-        }
-        // CHECK_CUDA(cudaDeviceSynchronize());
+        prolongation.prolongate(coarse_soln_in, d_temp_vec);
 
         // zero bcs of coarse-fine prolong
         d_temp_vec.permuteData(block_dim, d_perm);  // better way to do this later?
@@ -279,30 +223,13 @@ class ShellGrid {
     void restrict_defect(int nelems_fine, int *d_iperm_fine, DeviceVec<T> fine_defect_in) {
         // transfer from finer mesh to this coarse mesh
         cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T));  // reset defect
-        // printf("start restrict defect\n");
-
-        if constexpr (Prolongation::structured) {
-            Prolongation::restrict_defect(nelems_fine, d_iperm, d_iperm_fine, fine_defect_in,
-                                          d_defect, d_weights);
-        } else {
-            if constexpr (Prolongation::assembly) {
-                Prolongation::restrict_defect(cusparseHandle, restrict_descrPT, restrict_PT_mat,
-                                              fine_defect_in, d_defect);
-            } else {
-                // slower restriction operator (not using sparse matrix-vec kernels)
-                Prolongation::restrict_defect(restrict_nnodes_fine, d_elem_conn, restrict_d_n2e_ptr,
-                                              restrict_d_n2e_elems, restrict_d_n2e_xis, d_iperm,
-                                              d_iperm_fine, fine_defect_in, d_defect, d_weights);
-            }
-        }
+        Prolongation::restrict_defect(fine_defect_in, d_defect);
 
         // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
         // apply bcs is on un-permuted data
         d_defect.permuteData(block_dim, d_perm);  // better way to do this later?
         assembler.apply_bcs(d_defect);
         d_defect.permuteData(block_dim, d_iperm);
-
-        // printf("end restrict defect\n");
 
         // reset soln (with bcs zero here, TBD others later)
         cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
@@ -312,33 +239,17 @@ class ShellGrid {
         // TBD::
     }
 
-    // data
+    // public data
+    Smoother smoother;
+    Prolongation prolongation;
     Assembler assembler;
     int N, nelems, block_dim, nnodes;
+    
+  private:
     BsrMat<DeviceVec<T>> Kmat, D_LU_mat;  // can't get Dinv_mat directly at moment
     DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec;
     T *d_temp, *d_temp2, *d_resid, *d_weights;
     int *d_perm, *d_iperm;
-    const int *d_elem_conn;
-    HostVec<int> h_color_rowp;
-    int *d_int_temp;
-
-    // DEBUG
-    int n_solns;
-    T **h_solns;
-
-    // unstruct prolong data at the finer mesh level (for prolong)
-    // this is in someways describing the P matrix operator.. (could reformulate as that)
-    int *d_n2e_ptr, *d_n2e_elems, *d_coarse_conn, n2e_nnz, ncoarse_elems;
-    T *d_n2e_xis;
-    cusparseMatDescr_t descrP = 0;
-    BsrMat<DeviceVec<T>> P_mat;
-
-    // unstruct prolong at the coarser mesh level (for restrict)
-    int *restrict_d_n2e_ptr, *restrict_d_n2e_elems, restrict_nnodes_fine, restrict_n2e_nnz;
-    T *restrict_d_n2e_xis;
-    cusparseMatDescr_t restrict_descrPT = 0;
-    BsrMat<DeviceVec<T>> restrict_PT_mat;
 
     // turn off private during debugging
     //    private:  // private data for cusparse and cublas
@@ -350,22 +261,6 @@ class ShellGrid {
     cusparseMatDescr_t descrKmat = 0, descrDinvMat = 0;
     size_t bufferSizeMV;
     void *buffer_MV = nullptr;
-
-    // color rowp and nnzb pointers data for row-slicing
-    int *h_color_submat_nnzb;
-    int **d_color_submat_rowp, **d_color_submat_rows, **d_color_submat_cols;
-    T **d_color_submat_vals;
-
-    // for diag inv mat
-    int diag_inv_nnzb, *d_diag_rowp, *d_diag_cols;
-    int *d_piv, *d_info;
-    DeviceVec<T> d_diag_vals;
-    T *d_diag_LU_vals;
-    T **d_diag_LU_batch_ptr, **d_temp_batch_ptr;
-    bool build_lu_inv_operator;
-    int *d_kmat_diagp;
-    BsrData d_diag_bsr_data;
-    DeviceVec<T> d_dinv_vals;
 
     // for kmat
     int kmat_nnzb, *d_kmat_rowp, *d_kmat_cols;

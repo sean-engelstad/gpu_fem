@@ -43,12 +43,9 @@ class MITCShellAssembler : public ElementAssembler<MITCShellAssembler<T, Directo
     MITCShellAssembler(int32_t num_geo_nodes, int32_t num_vars_nodes, int32_t num_elements,
                      HostVec<int32_t> &geo_conn, HostVec<int32_t> &vars_conn, HostVec<T> &xpts,
                      HostVec<int> &bcs, HostVec<Data> &physData, int32_t num_components = 0,
-                     HostVec<int> elem_component = HostVec<int>(0)) {
-        
-        // call subclass (CFRP) constructor
-        Base(num_geo_nodes, num_vars_nodes, num_elements, geo_conn, vars_conn,
-            xpts, bcs, physData, num_components, elem_component);
-    }
+                     HostVec<int> elem_component = HostVec<int>(0)) : 
+            Base(num_geo_nodes, num_vars_nodes, num_elements, geo_conn, vars_conn,
+            xpts, bcs, physData, num_components, elem_component) {}
 
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_energy(const bool active_thread, const int iquad,
