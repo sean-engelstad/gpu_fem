@@ -189,12 +189,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     if (SR > 100.0) n_cycles = 1000;
 
     bool time = false;
-    // bool time = true;
-
     bool symmetric = false;
-    // bool symmetric = true;
-
-    // int print_freq = 1;
     int print_freq = 5;
 
     // bool double_smooth = false;
@@ -202,16 +197,16 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print, double_smooth);    
     }
 
     // fastest is K-cycle usually
     if (cycle_type == "V") {
-        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, symmetric, time); //(good option)
+        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, time); //(good option)
     } else if (cycle_type == "W") {
         mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol);
     } else if (cycle_type == "F") {
-        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, symmetric, time); // also decent
+        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, time); // also decent
     } else if (cycle_type == "K") {
         kmg->solve();
     }

@@ -262,17 +262,9 @@ void time_wing_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, int 
     T omega2 = 1.5; // really is set up there
     int n_cycles = 200;
     if (SR > 100.0) n_cycles = 1000;
-
     bool time = false;
-    // bool time = true;
-
     bool symmetric = false;
-    // bool symmetric = true;
-
-    // int print_freq = 1;
     int print_freq = 5;
-
-    // bool double_smooth = false;
     bool double_smooth = true; // true tends to be slightly faster sometimes
 
 
@@ -280,7 +272,7 @@ void time_wing_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, int 
         CHECK_CUDA(cudaDeviceSynchronize());
         auto start_12 = std::chrono::high_resolution_clock::now();
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print, double_smooth);    
         CHECK_CUDA(cudaDeviceSynchronize());
         auto end_12 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> kmg_init = end_12 - start_12;

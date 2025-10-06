@@ -162,13 +162,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
     bool print = true;
     // bool print = false;
     T atol = 1e-6, rtol = 1e-6;
-
     T omega2 = 1.5;
-    // T omega = 1.3;
-    // T omega = 1.2; // worse than <1 for cylinder
-    // T omega = 1.0;
-    // T omega = 0.85; // a bit faster than 1.0 (and actually smooths it)
-    // bool double_smooth = false;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
 
     int n_cycles = 500; // max # cycles
@@ -176,7 +170,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print, double_smooth);    
     }
 
     // fastest is K-cycle usually
