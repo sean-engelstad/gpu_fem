@@ -117,7 +117,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
         // do multicolor junction reordering
         auto &bsr_data = assembler.getBsrData();
-        int num_colors = 0, *_color_rowp;
+        int num_colors, *_color_rowp;
 
         bool coarsest_grid = i == 0;
         if (!coarsest_grid) {
@@ -127,6 +127,9 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
             // full LU pattern for coarsest grid
             bsr_data.AMD_reordering();
             bsr_data.compute_full_LU_pattern(10.0, false);
+            num_colors = 0;
+            _color_rowp = new int[2];
+            _color_rowp[0] = 0, _color_rowp[1] = nnodes;
         }
         auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
         assembler.moveBsrDataToDevice();
