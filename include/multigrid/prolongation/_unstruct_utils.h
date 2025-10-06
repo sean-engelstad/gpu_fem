@@ -640,8 +640,8 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
         }
     }
 
-    // CHECK_CUDA(cudaDeviceSynchronize());
-    // auto time_04 = std::chrono::high_resolution_clock::now();
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto time_04 = std::chrono::high_resolution_clock::now();
     // std::chrono::duration<double> e2c_time = time_04 - time_03;
     // printf("\t\t\tcoarse + fine elem2comp time %.2e\n", e2c_time.count());
 
@@ -669,10 +669,10 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
         cnode_elems, h_coarse_elem_comps, f_ecomps_ptr, f_ecomps_comp, 
         fine_nodes_celem_cts, fine_nodes_celems, fine_node_xis);
 
-    // CHECK_CUDA(cudaDeviceSynchronize());
-    // auto time_05 = std::chrono::high_resolution_clock::now();
-    // std::chrono::duration<double> basis_xi_time = time_05 - time_04;
-    // printf("\t\t\tcontained elems + xi comp time %.2e\n", basis_xi_time.count());
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto time_05 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> basis_xi_time = time_05 - time_04;
+    printf("\t\t\tcontained elems + xi comp time %.2e\n", basis_xi_time.count());
 
     // now convert from cts to rowp, cols style as diff # elems per fine node
     int *fine_node2elem_ptr = new int[nnodes_fine + 1];

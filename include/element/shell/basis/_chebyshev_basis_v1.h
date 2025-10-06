@@ -2,80 +2,20 @@
 #include "a2dcore.h"
 #include "quadrature.h"
 
-/* this 2nd version of the chebyshev basis pre-computes all constants beforehand
-   and we just provide the overall basis functions, no re-compute each interp
-   so much more GPU friendly
+/* this version of the chebyshev basis explicitly computes the constant coefficients for the basis 
+   on each interpolation (very inefficient), in the second version (another file), I just pre-compute these myself
 */
-
-// supporting class that helps with compile-time specifications
-template <typename T, int order>
-class ChebyShev1D;  // forward declaration for specialization
-
-template <typename T>
-class ChebyShev1D<T, 1> {
-public:
-    static constexpr int num_nodes = 2;
-    // static constexpr T gps[num_nodes] = { -1.0, 1.0 }; // not easy with GPU
-
-    __HOST_DEVICE__ __forceinline__
-    static T getXi(int i) {
-        return (i == 0) ? -1.0 : 1.0;
-    }
-
-    // Example basis functions at a given ξ (linear)
-    __HOST_DEVICE__ __forceinline__ 
-    static void evalBasis(const T xi, T N[num_nodes]) {
-        N[0] = 0.5 * (1.0 - xi);
-        N[1] = 0.5 * (1.0 + xi);
-    }
-
-    __HOST_DEVICE__ __forceinline__
-    static void evalBasisGrad(const T xi, T dN[num_nodes]) {
-        dN[0] = -0.5;
-        dN[1] = 0.5;
-    }
-};
-
-template <typename T>
-class ChebyShev1D<T, 2> {
-public:
-    static constexpr int num_nodes = 3;
-    // static constexpr T gps[num_nodes] = { -1.0, 0.0, 1.0 }; // not easy with GPU
-
-    __HOST_DEVICE__ __forceinline__
-    static T getXi(int i) {
-        return (i == 0) ? -1.0 : (i == 1 ? 0.0 : 1.0);
-    }
-
-    // Quadratic Chebyshev basis
-    __HOST_DEVICE__ __forceinline__
-    static void evalBasis(const T xi, T N[num_nodes]) {
-        // can be determined from Chebyshev property that each basis func nz only at its GP
-        N[0] = 0.5 * xi * (xi - 1.0);
-        N[1] = 1.0 - xi * xi;
-        N[2] = 0.5 * xi * (xi + 1.0);
-    }
-
-    __HOST_DEVICE__ __forceinline__
-    static void evalBasisGrad(const T xi, T dN[num_nodes]) {
-        dN[0] = xi - 0.5;
-        dN[1] = -2.0 * xi;
-        dN[2] = xi + 0.5;
-    }
-};
-
 
 template <typename T, class Quadrature_, int order = 2>
 class ChebyshevQuadBasis {
    public:
     using Quadrature = Quadrature_;
-    using Basis1D = ChebyShev1D<T, order>;
 
     // Required for loading solution data
     static constexpr int32_t nx = order + 1; // num nodes in a single direction
     static constexpr int32_t num_nodes = nx * nx;
     static constexpr int32_t param_dim = 2;
-    static constexpr T pi = 3.14159265358979323846;
+    static constexpr double pi = 3.14159265358979323846;
     // no MITC for chebyshev, it's always fully integrated
 
     // isoperimetric has same #nodes geometry class inside it
@@ -95,48 +35,82 @@ class ChebyshevQuadBasis {
     };  // end of class LinearQuadGeo
     using Geo = LinearQuadGeo;
 
+    __HOST_DEVICE__ static T eval_chebyshev_1d_poly(T x, int ind) {
+        T val = 0.0;
+        // GPU friendly if statements here..
+        val += (ind == 0) * 1.0;
+        val += (ind == 1) * x;
+        val += (ind == 2) * (2.0 * x * x - 1.0);
+        val += (ind == 3) * (4.0 * x * x * x - 3.0 * x);
+        return val;
+    }
+
+    __HOST_DEVICE__ static T eval_chebyshev_1d_poly_deriv(T x, int ind) {
+        T val = 0.0;
+        // GPU friendly if statements here..
+        // val += (ind == 0) * 0.0;
+        val += (ind == 1) * 1.0;
+        val += (ind == 2) * 4.0 * x;
+        val += (ind == 3) * (12.0 * x * x - 3.0);
+        return val;
+    }
+
+    __HOST_DEVICE__ static T get_chebyshev_gauss_point(int ind) {
+        T theta = pi * 0.5 / nx;
+        T a = cos(theta);
+        return -1.0 / a * cos((2.0 * ind + 1) * theta);
+    }
+
     __HOST_DEVICE__ static void getNodePoint(const int n, T pt[]) {
-        // pt[0] = Basis1D::gps[n % nx];
-        // pt[1] = Basis1D::gps[n / nx];
-        pt[0] = Basis1D::getXi(n % nx);
-        pt[1] = Basis1D::getXi(n / nx);
+        pt[0] = get_chebyshev_gauss_point(n % nx);
+        pt[1] = get_chebyshev_gauss_point(n / nx);
+    }
+
+    __HOST_DEVICE__ static T eval_chebyshev_1d(T xi, int k) {
+        T xi_k = get_chebyshev_gauss_point(k);
+        T theta = pi * 0.5 / nx;
+        T a = cos(theta);
+
+        T out = 0.0;
+        for (int i = 0; i < nx; i++) {
+            T Tik = eval_chebyshev_1d_poly(a * xi_k, i);
+            T Ti_in = eval_chebyshev_1d_poly(a * xi, i);
+
+            T denom = i == 0 ? nx : nx / 2.0;
+            out += Tik * Ti_in / denom;
+        }
+        return out;
+    }
+
+    __HOST_DEVICE__ static T eval_chebyshev_1d_grad(T xi, int k) {
+        T xi_k = get_chebyshev_gauss_point(k);
+        T theta = pi * 0.5 / nx;
+        T a = cos(theta);
+
+        T out = 0.0;
+        for (int i = 0; i < nx; i++) {
+            T Tik = eval_chebyshev_1d_poly(a * xi_k, i);
+            // the *a converst from d/dx (of chebyshev function) to d/dxi, then later we go to true spatial d/dx
+            T Ti_in_deriv = eval_chebyshev_1d_poly_deriv(a * xi, i) * a; 
+            T denom = i == 0 ? nx : nx / 2.0;
+            out += Tik * Ti_in_deriv / denom;
+        }
+        return out;
     }
 
     __HOST_DEVICE__ static void eval_chebyshev_2d_basis(const T pt[], T N[]) {
-        T N1[num_nodes], N2[num_nodes];
-        Basis1D::evalBasis(pt[0], N1);
-        Basis1D::evalBasis(pt[1], N2);
-
-        #pragma unroll
         for (int i = 0; i < nx * nx; i++) {
             int ix = i % nx, iy = i / nx;
-            N[i] = N1[ix] * N2[iy];
+            N[i] = eval_chebyshev_1d(pt[0], ix) * eval_chebyshev_1d(pt[1], iy);
         }
     }
 
-    __HOST_DEVICE__ static void eval_chebyshev_2d_basis_grad(const T pt[], T N[]) {
-        T N1[num_nodes], N2[num_nodes];
-        Basis1D::evalBasis(pt[0], N1);
-        Basis1D::evalBasis(pt[1], N2);
-
-        #pragma unroll
+    __HOST_DEVICE__ static void eval_chebyshev_2d_basis_grad(const T pt[], T N[], T Nxi[], T Neta[]) {
         for (int i = 0; i < nx * nx; i++) {
-            int i1 = i % nx, i2 = i / nx;
-            N[i] = N1[i1] * N2[i2];
-        }
-    }
-
-    __HOST_DEVICE__ static void eval_chebyshev_2d_basis_grad(const T pt[], T Nxi[], T Neta[]) {
-        T N1[num_nodes], dN1[num_nodes];
-        T N2[num_nodes], dN2[num_nodes];
-        Basis1D::evalBasis(pt[0], N1), Basis1D::evalBasis(pt[1], N2);
-        Basis1D::evalBasisGrad(pt[0], dN1), Basis1D::evalBasisGrad(pt[1], dN2);
-
-        #pragma unroll
-        for (int i = 0; i < nx * nx; i++) {
-            int i1 = i % nx, i2 = i / nx;
-            Nxi[i] = dN1[i1] * N2[i2];
-            Neta[i] = N1[i1] * dN2[i2];
+            int ix = i % nx, iy = i / nx;
+            N[i] = eval_chebyshev_1d(pt[0], ix) * eval_chebyshev_1d(pt[1], iy);
+            Nxi[i] = eval_chebyshev_1d_grad(pt[0], ix) * eval_chebyshev_1d(pt[1], iy);
+            Neta[i] = eval_chebyshev_1d(pt[0], ix) * eval_chebyshev_1d_grad(pt[1], iy);
         }
     }
     
@@ -145,10 +119,8 @@ class ChebyshevQuadBasis {
         T N[num_nodes];
         eval_chebyshev_2d_basis(pt, N);
 
-        #pragma unroll
         for (int ifield = 0; ifield < num_fields; ifield++) {
             field[ifield] = 0.0;
-            #pragma unroll
             for (int inode = 0; inode < num_nodes; inode++) {
                 field[ifield] += N[inode] * values[inode * vars_per_node + ifield];
             }
@@ -158,14 +130,12 @@ class ChebyshevQuadBasis {
     template <int vars_per_node, int num_fields>
     __HOST_DEVICE__ static void interpFieldsGrad(const T pt[], const T values[], T dxi[],
                                                  T deta[]) {
-        T dNdxi[num_nodes], dNdeta[num_nodes];
-        eval_chebyshev_2d_basis_grad(pt, dNdxi, dNdeta);
+        T N[num_nodes], dNdxi[num_nodes], dNdeta[num_nodes];
+        eval_chebyshev_2d_basis_grad(pt, N, dNdxi, dNdeta);
 
-        #pragma unroll
         for (int ifield = 0; ifield < num_fields; ifield++) {
             dxi[ifield] = 0.0;
             deta[ifield] = 0.0;
-            #pragma unroll
             for (int inode = 0; inode < num_nodes; inode++) {
                 dxi[ifield] += dNdxi[inode] * values[inode * vars_per_node + ifield];
                 deta[ifield] += dNdeta[inode] * values[inode * vars_per_node + ifield];
@@ -179,9 +149,7 @@ class ChebyshevQuadBasis {
         T N[num_nodes]; 
         eval_chebyshev_2d_basis(pt, N);
 
-        #pragma unroll
         for (int ifield = 0; ifield < num_fields; ifield++) {
-            #pragma unroll
             for (int inode = 0; inode < num_nodes; inode++) {
                 values_bar[inode * vars_per_node + ifield] += field_bar[ifield] * N[inode];
             }
@@ -191,12 +159,10 @@ class ChebyshevQuadBasis {
     template <int vars_per_node, int num_fields>
     __HOST_DEVICE__ static void interpFieldsGradTranspose(const T pt[], const T dxi_bar[],
                                                           const T deta_bar[], T values_bar[]) {
-        T dNdxi[num_nodes], dNdeta[num_nodes];
-        eval_chebyshev_2d_basis_grad(pt, dNdxi, dNdeta);
+        T N[num_nodes], dNdxi[num_nodes], dNdeta[num_nodes];
+        eval_chebyshev_2d_basis_grad(pt, N, dNdxi, dNdeta);
 
-        #pragma unroll
         for (int ifield = 0; ifield < num_fields; ifield++) {
-            #pragma unroll
             for (int inode = 0; inode < num_nodes; inode++) {
                 values_bar[inode * vars_per_node + ifield] +=
                     dxi_bar[ifield] * dNdxi[inode] + deta_bar[ifield] * dNdeta[inode];
