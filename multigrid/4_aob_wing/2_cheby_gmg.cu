@@ -13,7 +13,10 @@
 
 // local multigrid imports
 #include "multigrid/grid.h"
-#include "multigrid/fea.h"
+#include "multigrid/utils/fea.h"
+#include "multigrid/smoothers/_wingbox_coloring.h"
+#include "multigrid/smoothers/mc_smooth1.h"
+#include "multigrid/prolongation/unstructured.h"
 #include "multigrid/solvers/gmg.h"
 #include <string>
 #include <chrono>
@@ -60,31 +63,19 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using ElemGroup = FullyIntegratedShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-
-    // old smoothers
-    // const SMOOTHER smoother = LEXIGRAPHIC_GS;
-    // const SMOOTHER smoother = MULTICOLOR_GS;
-    // const SMOOTHER smoother = MULTICOLOR_GS_FAST;
-    // const SMOOTHER smoother = MULTICOLOR_GS_FAST2; // fastest (faster than MULTICOLOR_GS_FAST by about 2.6x at high DOF)
-    // const SMOOTHER smoother = DAMPED_JACOBI;
-    const SMOOTHER smoother = MULTICOLOR_GS_FAST2_JUNCTION;
-
-    const SCALER scaler = LINE_SEARCH;
-
+    using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
+    using Smoother = MulticolorGSSmoother_V1<Assembler>;
     // const bool is_bsr = true; // need this one if want to smooth prolongation
     const bool is_bsr = false; // no difference in intra-nodal (default old working prolong)
-    using Prolongation = UnstructuredProlongation<Basis, is_bsr>; 
-
-    using GRID = ShellGrid<Assembler, Prolongation, smoother, scaler>;
-    using MG = GeometricMultigridSolver<GRID>;
+    using Prolongation = UnstructuredProlongation<Assembler, Basis, is_bsr>; 
+    using GRID = SingleGrid<Assembler, Prolongation, Smoother, LINE_SEARCH>;
+    using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
+    using MG = GeometricMultigridSolver<GRID, CoarseSolver>;
 
     // for K-cycles
-    using DirectSolve = CusparseMGDirectLU<GRID>;
     using KrylovSolve = PCGSolver<T, GRID>;
     using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
-    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using KMG = MultilevelKcycleSolver<GRID, CoarseSolver, TwoLevelSolve, KrylovSolve>;
 
     auto start0 = std::chrono::high_resolution_clock::now();
 
@@ -126,40 +117,57 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
             my_loads[6 * inode + 2] = load_mag;
         }
 
-        // TODO : run optimized design from AOB case
+        // do multicolor junction reordering
+        auto &bsr_data = assembler.getBsrData();
+        int num_colors, *_color_rowp;
 
-        // make the grid
-        bool full_LU = i == 0; // smallest grid is direct solve
-        bool reorder;
-        if (smoother == LEXIGRAPHIC_GS) {
-            reorder = false;
-        } else if (smoother == MULTICOLOR_GS || smoother == MULTICOLOR_GS_FAST || smoother == MULTICOLOR_GS_FAST2 
-            || smoother == MULTICOLOR_GS_FAST2_JUNCTION) {
-            reorder = true;
-        } else if (smoother == DAMPED_JACOBI) {
-            reorder = false;
+        bool coarsest_grid = i == 0;
+        if (!coarsest_grid) {
+            WingboxMultiColoring<Assembler>::apply_coloring(assembler, bsr_data, num_colors, _color_rowp);
+            bsr_data.compute_nofill_pattern();
+        } else {
+            // full LU pattern for coarsest grid
+            bsr_data.AMD_reordering();
+            bsr_data.compute_full_LU_pattern(10.0, false);
         }
-        // printf("reorder %d\n", reorder);
-        auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
+        auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
+        assembler.moveBsrDataToDevice();
+
+        // now compute loads, bcs and assemble kmat
+        auto loads = assembler.createVarsVec(my_loads);
+        assembler.apply_bcs(loads);
+        auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+        auto res = assembler.createVarsVec();
+        auto starta = std::chrono::high_resolution_clock::now();
+        assembler.add_jacobian(res, kmat);
+        // assembler.apply_bcs(res);
+        assembler.apply_bcs(kmat);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto enda = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> assembly_time = enda - starta;
+        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
+        // build smoother and prolongations
+        T omega = 1.5; // for GS-SOR
+        auto smoother = new Smoother(assembler, kmat, h_color_rowp, omega);
+        int ELEM_MAX = 10; // num nearby elements of each fine node for nz pattern construction
+        // int ELEM_MAX = 4;
+        auto prolongation = new Prolongation(assembler, ELEM_MAX);
+        auto grid = GRID(assembler, prolongation, smoother, kmat, loads);
+
         if (is_kcycle) {
             kmg->grids.push_back(grid);
         } else {
             mg->grids.push_back(grid);
+            if (coarsest_grid) mg->coarse_solver = new CoarseSolver(assembler, kmat);
         }
     }
 
-    if (!Prolongation::structured) {
-        printf("begin unstructured map\n");
-        // int ELEM_MAX = 4; // for plate, cylinder
-        int ELEM_MAX = 10; // for wingbox esp near rib, spar, OML junctions
-        if (is_kcycle) {
-            kmg->template init_unstructured<Basis>(ELEM_MAX);
-        } else {
-            mg->template init_unstructured<Basis>(ELEM_MAX);
-        }
-        
-        printf("done with init unstructured\n");
-        // return; // TEMP DEBUG
+    // register the coarse assemblers to the prolongations..
+    if (is_kcycle) {
+        kmg->template init_prolongations<Basis>();
+    } else {
+        mg->template init_prolongations<Basis>();
     }
 
     auto end0 = std::chrono::high_resolution_clock::now();
@@ -175,11 +183,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     // bool print = false;
     bool print = true;
     T atol = 1e-6, rtol = 1e-6;
-    T omega = 1.5; // good GS-SSOR parameter (speedups up convergence)
-    // T omega = 1.0;
-    // T omega = 0.85;
-    if (smoother == LEXIGRAPHIC_GS) omega = 1.4;
-    if (smoother == DAMPED_JACOBI) omega = 0.7; // damped jacobi diverges on wingbox
+    T omega2 = 1.5;
     int n_cycles = 200;
     if (SR > 100.0) n_cycles = 1000;
 
@@ -197,16 +201,16 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, symmetric, double_smooth);    
+        kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print, symmetric, double_smooth);    
     }
 
     // fastest is K-cycle usually
     if (cycle_type == "V") {
-        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq, symmetric, time); //(good option)
+        mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, symmetric, time); //(good option)
     } else if (cycle_type == "W") {
-        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega);
+        mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol);
     } else if (cycle_type == "F") {
-        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, omega, double_smooth, print_freq, symmetric, time); // also decent
+        mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, symmetric, time); // also decent
     } else if (cycle_type == "K") {
         kmg->solve();
     }
@@ -259,11 +263,7 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   constexpr bool is_nonlinear = false;
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-  using ElemGroup = FullyIntegratedShellElementGroup<T, Director, Basis, Physics>;
-  using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
-  using GRID = ShellGrid<Assembler, UnstructuredProlongation<Basis,true>, MULTICOLOR_GS_FAST2_JUNCTION, NONE>;
-
+  using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
   //   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
   double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties
 
@@ -277,12 +277,6 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   double fillin = 10.0;  // 10.0
   bool print = true;
   bsr_data.AMD_reordering();
-
-//   // TRY INSTEAD Mc REORDERING
-//   int num_colors, *_color_rowp, *nodal_num_comps, *node_geom_ind;
-//   GRID::get_nodal_geom_indices(assembler, nodal_num_comps, node_geom_ind);
-//   bsr_data.multicolor_junction_reordering_v2(node_geom_ind, num_colors, _color_rowp);
-
   bsr_data.compute_full_LU_pattern(fillin, print);
   assembler.moveBsrDataToDevice();
 

@@ -26,6 +26,7 @@ class ElementAssembler {
     using Data = typename Phys::Data;
     using Mat = Mat_<Vec<T>>;
     using MyFunction = AnalysisFunction<T, Vec>;
+    using DerivedAssembler = ElemGroup;
 
     template <typename U>
     using VecType = Vec<U>;
@@ -47,7 +48,7 @@ class ElementAssembler {
                      HostVec<int> &bcs, HostVec<Data> &physData, int32_t num_components_ = 0,
                      HostVec<int> elem_component = HostVec<int>(0));
     void moveBsrDataToDevice();
-    static ElementAssembler createFromBDF(TACSMeshLoader &mesh_loader, Data single_data);
+    static DerivedAssembler createFromBDF(TACSMeshLoader &mesh_loader, Data single_data);
     __HOST__ void apply_bcs(Vec<T> &vec, bool can_print = false);
     void apply_bcs(Mat &mat, bool can_print = false);
 #ifdef USE_GPU
@@ -213,7 +214,7 @@ ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::ElementAssembler(
 
 template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat> ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::createFromBDF(
+ElemGroup ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::createFromBDF(
     TACSMeshLoader &mesh_loader, Data single_data) {
     int vars_per_node = Phys::vars_per_node;  // input
 
@@ -234,7 +235,7 @@ ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat> ElementAssembler<ElemGroup
     // printf("num_components = %d\n", num_components);
 
     // call base constructor
-    return ElementAssembler(num_nodes, num_nodes, num_elements, elem_conn_vec, elem_conn_vec,
+    return ElemGroup(num_nodes, num_nodes, num_elements, elem_conn_vec, elem_conn_vec,
                             xpts_vec, bcs_vec, physData_vec, num_components, elem_components_vec);
 }
 

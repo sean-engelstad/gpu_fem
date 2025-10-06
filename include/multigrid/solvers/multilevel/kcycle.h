@@ -16,7 +16,6 @@ public:
         // 0 is the finest grid, nlevels-1 is the coarsest grid here
         for (int ilevel = 0; ilevel < getNumLevels()-1; ilevel++) {
             grids[ilevel].prolongation->init_coarse_data(grids[ilevel+1].assembler);
-            // grids[ilevel].template init_unstructured_grid_maps<Basis>(grids[ilevel + 1], ELEM_MAX);
             grids[ilevel+1].restriction = grids[ilevel].prolongation; // copy prolong to restriction on coarser grid
         }
     }

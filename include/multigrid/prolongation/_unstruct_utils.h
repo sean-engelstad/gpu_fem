@@ -1,4 +1,5 @@
 #pragma once
+#include "coupled/locate_point.h"
 
 // helper host functions for the structured prolongation
 // TBD some of these should be moved onto the GPU
@@ -188,8 +189,12 @@ bool xis_in_elem(const T xis[3], const bool match_comp) {
     return valid_xi && valid_eta && match_comp;
 }
 
-template <class Basis>
-void init_unstructured_grid_maps(ShellGrid &coarse_grid, int ELEM_MAX = 4) {
+template <typename T, class Assembler, class Basis, bool is_bsr>
+void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_assembler, 
+    BsrMat<DeviceVec<T>> *&prolong_mat, BsrMat<DeviceVec<T>> *&restrict_mat, 
+    int *&d_coarse_conn, int *&d_n2e_ptr, int *&d_n2e_elems, T *&d_n2e_xis,
+    const int ELEM_MAX = 10) {
+
     /* initialize the unstructured mesh prolongation map */
     // TBD, want to get the coarse nodes
 
@@ -197,10 +202,17 @@ void init_unstructured_grid_maps(ShellGrid &coarse_grid, int ELEM_MAX = 4) {
 
     // -------------------------------------------------------
     // 1) prelim prolongation maps and data here..
-    T *h_xpts_fine = assembler.getXpts().createHostVec().getPtr();
-    T *h_xpts_coarse = coarse_grid.assembler.getXpts().createHostVec().getPtr();
-    int nnodes_fine = assembler.get_num_nodes();
-    int nnodes_coarse = coarse_grid.assembler.get_num_nodes();
+    T *h_xpts_fine = fine_assembler.getXpts().createHostVec().getPtr();
+    T *h_xpts_coarse = coarse_assembler.getXpts().createHostVec().getPtr();
+    int nnodes_fine = fine_assembler.get_num_nodes();
+    int nnodes_coarse = coarse_assembler.get_num_nodes();
+
+    // printf("nnodes_fine %d, nnodes_coarse %d\n", nnodes_fine, nnodes_coarse);
+    // printf("h_xpts_fine: ");
+    // printVec<T>(20, h_xpts_fine);
+    // printf("h_xpts_coarse: ");
+    // printVec<T>(20, h_xpts_coarse);
+    // return;
 
     int min_bin_size = 10;
     auto *locator = new LocatePoint<T>(h_xpts_coarse, nnodes_coarse, min_bin_size);
@@ -245,18 +257,21 @@ void init_unstructured_grid_maps(ShellGrid &coarse_grid, int ELEM_MAX = 4) {
         }
     }
 
+    // printf("done with locate point\n");
+    // return;
+
     // printf("nn conn: ");
     // printVec<int>(30, nn_conn);
 
     // -------------------------------------------------------
     // 2) get coarse elements for each coarse node
-    auto d_coarse_conn_vec = coarse_grid.assembler.getConn();
+    auto d_coarse_conn_vec = coarse_assembler.getConn();
     int *h_coarse_conn = d_coarse_conn_vec.createHostVec().getPtr();
     int *cnode_elem_cts = new int[nnodes_coarse];
     memset(cnode_elem_cts, 0.0, nnodes_coarse * sizeof(int));
     int *cnode_elem_ptr = new int[nnodes_coarse + 1];
-    int num_coarse_elems = coarse_grid.assembler.get_num_elements();
-    ncoarse_elems = num_coarse_elems;
+    int num_coarse_elems = coarse_assembler.get_num_elements();
+    int ncoarse_elems = num_coarse_elems;
     for (int ielem = 0; ielem < num_coarse_elems; ielem++) {
         for (int iloc = 0; iloc < 4; iloc++) {
             int cnode = h_coarse_conn[4 * ielem + iloc];
@@ -293,11 +308,11 @@ void init_unstructured_grid_maps(ShellGrid &coarse_grid, int ELEM_MAX = 4) {
 
     // -----------------------------------------------------------
     // 2.5 ) get the components for each coarse and fine node
-    int num_fine_elems = assembler.get_num_elements();
-    int *h_fine_elem_comps = assembler.getElemComponents().createHostVec().getPtr();
+    int num_fine_elems = fine_assembler.get_num_elements();
+    int *h_fine_elem_comps = fine_assembler.getElemComponents().createHostVec().getPtr();
     int *h_coarse_elem_comps =
-        coarse_grid.assembler.getElemComponents().createHostVec().getPtr();
-    int *h_fine_conn = assembler.getConn().createHostVec().getPtr();
+        coarse_assembler.getElemComponents().createHostVec().getPtr();
+    int *h_fine_conn = fine_assembler.getConn().createHostVec().getPtr();
 
     // printf("h_fine_elem_comps: ");
     // printVec<int>(100, h_fine_elem_comps);
@@ -476,201 +491,162 @@ void init_unstructured_grid_maps(ShellGrid &coarse_grid, int ELEM_MAX = 4) {
     d_n2e_elems = HostVec<int>(ntot_elems, fine_node2elem_elems).createDeviceVec().getPtr();
     d_n2e_xis = HostVec<T>(2 * ntot_elems, fine_node2elem_xis).createDeviceVec().getPtr();
     d_coarse_conn = d_coarse_conn_vec.getPtr();
-    n2e_nnz = ntot_elems;
-    // and also store these maps on the coarser mesh also
-    coarse_grid.restrict_d_n2e_ptr = d_n2e_ptr;
-    coarse_grid.restrict_d_n2e_elems = d_n2e_elems;
-    coarse_grid.restrict_d_n2e_xis = d_n2e_xis;
-    coarse_grid.restrict_nnodes_fine = nnodes;
-    coarse_grid.restrict_n2e_nnz = ntot_elems;
 
     // assemble the prolongation matrix and its transpose on the device (in permuted form)
     // for fast UnstructuredProlongation using assembled matrix
     // --------------------------------------------------------
 
     // now call assembler of P and PT matrices
-    if constexpr (Prolongation::assembly) {
-        // int mb = nnodes_fine, nb = nnodes_coarse;
-        int *h_perm = DeviceVec<int>(nnodes_fine, d_perm).createHostVec().getPtr();
-        int *h_iperm = DeviceVec<int>(nnodes_fine, d_iperm).createHostVec().getPtr();
-        int *h_coarse_iperm =
-            DeviceVec<int>(nnodes_coarse, coarse_grid.d_iperm).createHostVec().getPtr();
+    // if constexpr (Prolongation::assembly) {
+    // int mb = nnodes_fine, nb = nnodes_coarse;
+    int *d_perm = fine_assembler.getBsrData().perm;
+    int *h_perm = DeviceVec<int>(nnodes_fine, d_perm).createHostVec().getPtr();
+    int *d_iperm = fine_assembler.getBsrData().iperm;
+    int *h_iperm = DeviceVec<int>(nnodes_fine, d_iperm).createHostVec().getPtr();
+    int *d_coarse_iperm = coarse_assembler.getBsrData().iperm;
+    int *h_coarse_iperm = DeviceVec<int>(nnodes_coarse, d_coarse_iperm).createHostVec().getPtr();
+    int *d_coarse_perm = coarse_assembler.getBsrData().perm;
 
-        // compute the pattern here first, TODO is to clean this up and use less mem if possible
-        // at least free extra stuff
-        int *h_prol_row_cts = new int[nnodes_fine];
-        int *h_prolT_row_cts = new int[nnodes_coarse];
-        memset(h_prol_row_cts, 0.0, nnodes_fine * sizeof(int));
-        memset(h_prolT_row_cts, 0.0, nnodes_coarse * sizeof(int));
-        // TODO : clean much of this up with sparse symbolic later.. though sparse symbolic uses
-        // connectivity, not generating non-square matrices usually uses elem_conn which is like
-        // all of [1,2,7,8] connected, not the same as here where I have pairs [1] x [4,5,7,8]
-        // elements fine to coarse maybe need to make some new methods in sparse symbolic.. (but
-        // let's get it running first)
+    // compute the pattern here first, TODO is to clean this up and use less mem if possible
+    // at least free extra stuff
+    int *h_prol_row_cts = new int[nnodes_fine];
+    int *h_prolT_row_cts = new int[nnodes_coarse];
+    memset(h_prol_row_cts, 0.0, nnodes_fine * sizeof(int));
+    memset(h_prolT_row_cts, 0.0, nnodes_coarse * sizeof(int));
+    // TODO : clean much of this up with sparse symbolic later.. though sparse symbolic uses
+    // connectivity, not generating non-square matrices usually uses elem_conn which is like
+    // all of [1,2,7,8] connected, not the same as here where I have pairs [1] x [4,5,7,8]
+    // elements fine to coarse maybe need to make some new methods in sparse symbolic.. (but
+    // let's get it running first)
 
-        for (int inf = 0; inf < nnodes_fine; inf++) {
-            int perm_inf = h_iperm[inf];
-            // int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
-            std::set<int> conn_c_nodes;
+    for (int inf = 0; inf < nnodes_fine; inf++) {
+        int perm_inf = h_iperm[inf];
+        // int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
+        std::set<int> conn_c_nodes;
 
-            for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
-                int ielem_c = fine_node2elem_elems[jp];
-                const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
+        for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
+            int ielem_c = fine_node2elem_elems[jp];
+            const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
 
-                // get xi to interp the fine node (so we can check if some local nodes in element aren't really used)
-                // like when the fine node is on the edge node. Can just compute transpose interp map, BUT ONLY DO THIS AFTER TRY SMOOTH PROLONG WITHOUT PRUNING MEM HERE FIRST
+            // get xi to interp the fine node (so we can check if some local nodes in element aren't really used)
+            // like when the fine node is on the edge node. Can just compute transpose interp map, BUT ONLY DO THIS AFTER TRY SMOOTH PROLONG WITHOUT PRUNING MEM HERE FIRST
 
-                for (int loc_node = 0; loc_node < 4; loc_node++) {
-                    int inc = c_elem_nodes[loc_node];
-                    int perm_inc = h_coarse_iperm[inc];
+            for (int loc_node = 0; loc_node < 4; loc_node++) {
+                int inc = c_elem_nodes[loc_node];
+                int perm_inc = h_coarse_iperm[inc];
 
-                    // unique col cts?
-                    conn_c_nodes.insert(perm_inc);
-                }
-            }
-
-            h_prol_row_cts[perm_inf] += conn_c_nodes.size();
-            for (int perm_inc : conn_c_nodes) {
-                h_prolT_row_cts[perm_inc]++;
+                // unique col cts?
+                conn_c_nodes.insert(perm_inc);
             }
         }
 
-        // printf("h_prol_row_cts:");
-        // printVec<int>(100, h_prol_row_cts);
-
-        // now construct rowp for P and PT
-        int *h_prol_rowp = new int[nnodes_fine + 1];
-        int *h_prolT_rowp = new int[nnodes_coarse + 1];
-        h_prol_rowp[0] = 0;
-        h_prolT_rowp[0] = 0;
-
-        for (int inf = 0; inf < nnodes_fine; inf++) {
-            h_prol_rowp[inf + 1] = h_prol_rowp[inf] + h_prol_row_cts[inf];
+        h_prol_row_cts[perm_inf] += conn_c_nodes.size();
+        for (int perm_inc : conn_c_nodes) {
+            h_prolT_row_cts[perm_inc]++;
         }
-        for (int inc = 0; inc < nnodes_coarse; inc++) {
-            h_prolT_rowp[inc + 1] = h_prolT_rowp[inc] + h_prolT_row_cts[inc];
-        }
+    }
 
-        // now construct cols
-        int P_nnzb = h_prol_rowp[nnodes_fine];
-        int PT_nnzb = h_prolT_rowp[nnodes_coarse];
-        int *h_prol_cols = new int[P_nnzb];
-        int *h_prolT_cols = new int[PT_nnzb];
-        int *P_next = new int[nnodes_fine];  // helper arrays to insert values into sparsity
-        memcpy(P_next, h_prol_rowp, nnodes_fine * sizeof(int));
-        int *PT_next = new int[nnodes_coarse];
-        memcpy(PT_next, h_prolT_rowp, nnodes_coarse * sizeof(int));
-        // loop back through previous maps to get the sparsity
-        // use perm_inf order here to help with PT sparsity
-        for (int perm_inf = 0; perm_inf < nnodes_fine; perm_inf++) {
-            int inf = h_perm[perm_inf];
-            // int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
-            std::set<int> conn_c_nodes;
-            for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
-                int ielem_c = fine_node2elem_elems[jp];
-                const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
-                for (int loc_node = 0; loc_node < 4; loc_node++) {
-                    int inc = c_elem_nodes[loc_node];
-                    int perm_inc = h_coarse_iperm[inc];
+    // printf("h_prol_row_cts:");
+    // printVec<int>(100, h_prol_row_cts);
 
-                    // unique col cts?
-                    conn_c_nodes.insert(perm_inc);
-                }
-            }
+    // now construct rowp for P and PT
+    int *h_prol_rowp = new int[nnodes_fine + 1];
+    int *h_prolT_rowp = new int[nnodes_coarse + 1];
+    h_prol_rowp[0] = 0;
+    h_prolT_rowp[0] = 0;
 
-            for (int perm_inc : conn_c_nodes) {
-                h_prol_cols[P_next[perm_inf]++] = perm_inc;    // P cols
-                h_prolT_cols[PT_next[perm_inc]++] = perm_inf;  // PT cols
-            }
-        }
+    for (int inf = 0; inf < nnodes_fine; inf++) {
+        h_prol_rowp[inf + 1] = h_prol_rowp[inf] + h_prol_row_cts[inf];
+    }
+    for (int inc = 0; inc < nnodes_coarse; inc++) {
+        h_prolT_rowp[inc + 1] = h_prolT_rowp[inc] + h_prolT_row_cts[inc];
+    }
 
-        // double check all values filled?
-        // for (int i = 0; i < nnodes_fine; i++) {
-        //     printf("P[i=%d,:] : ", i);
-        //     for (int jp = h_prol_rowp[i]; jp < h_prol_rowp[i+1]; jp++) {
-        //         int j = h_prol_cols[jp];
-        //         printf("%d, ", j);
-        //     }
-        //     printf("\n");
-        // }
+    // now construct cols
+    int P_nnzb = h_prol_rowp[nnodes_fine];
+    int PT_nnzb = h_prolT_rowp[nnodes_coarse];
+    int *h_prol_cols = new int[P_nnzb];
+    int *h_prolT_cols = new int[PT_nnzb];
+    int *P_next = new int[nnodes_fine];  // helper arrays to insert values into sparsity
+    memcpy(P_next, h_prol_rowp, nnodes_fine * sizeof(int));
+    int *PT_next = new int[nnodes_coarse];
+    memcpy(PT_next, h_prolT_rowp, nnodes_coarse * sizeof(int));
+    // loop back through previous maps to get the sparsity
+    // use perm_inf order here to help with PT sparsity
+    for (int perm_inf = 0; perm_inf < nnodes_fine; perm_inf++) {
+        int inf = h_perm[perm_inf];
+        // int n_celems = fine_node2elem_ptr[inf + 1] - fine_node2elem_ptr[inf];
+        std::set<int> conn_c_nodes;
+        for (int jp = fine_node2elem_ptr[inf]; jp < fine_node2elem_ptr[inf + 1]; jp++) {
+            int ielem_c = fine_node2elem_elems[jp];
+            const int *c_elem_nodes = &h_coarse_conn[4 * ielem_c];
+            for (int loc_node = 0; loc_node < 4; loc_node++) {
+                int inc = c_elem_nodes[loc_node];
+                int perm_inc = h_coarse_iperm[inc];
 
-        int *h_P_rows = new int[P_nnzb];
-        int *h_PT_rows = new int[PT_nnzb];
-        for (int inode = 0; inode < nnodes_fine; inode++) {
-            for (int jp = h_prol_rowp[inode]; jp < h_prol_rowp[inode + 1]; jp++) {
-                h_P_rows[jp] = inode;
+                // unique col cts?
+                conn_c_nodes.insert(perm_inc);
             }
         }
-        for (int inode = 0; inode < nnodes_coarse; inode++) {
-            for (int jp = h_prolT_rowp[inode]; jp < h_prolT_rowp[inode + 1]; jp++) {
-                h_PT_rows[jp] = inode;
-            }
+
+        for (int perm_inc : conn_c_nodes) {
+            h_prol_cols[P_next[perm_inf]++] = perm_inc;    // P cols
+            h_prolT_cols[PT_next[perm_inc]++] = perm_inf;  // PT cols
         }
-        int *d_P_rows = HostVec<int>(P_nnzb, h_P_rows).createDeviceVec().getPtr();
-        int *d_PT_rows = HostVec<int>(PT_nnzb, h_PT_rows).createDeviceVec().getPtr();
+    }
 
-        // now put these on the device with BsrData objects for P and PT
-        // TODO : later is to just assemble P and then write my own transpose Bsrmv method in
-        // CUDA
-        int P_block_dim = Prolongation::is_bsr ? block_dim : 1; // if !is_bsr then it does same prolong on each dof_per_node
-        int block_dim2 = P_block_dim * P_block_dim;  // should be 36
-        auto d_P_rowp = HostVec<int>(nnodes_fine + 1, h_prol_rowp).createDeviceVec().getPtr();
-        auto d_P_cols = HostVec<int>(P_nnzb, h_prol_cols).createDeviceVec().getPtr();
-        auto d_P_vals = DeviceVec<T>(block_dim2 * P_nnzb);
-        auto P_bsr_data = BsrData(nnodes_fine, P_block_dim, P_nnzb, d_P_rowp, d_P_cols, d_perm,
-                                    d_iperm, false);
-        P_bsr_data.mb = nnodes_fine, P_bsr_data.nb = nnodes_coarse;
-        P_bsr_data.rows = d_P_rows;
-        P_mat = BsrMat<DeviceVec<T>>(P_bsr_data, d_P_vals);
+    // double check all values filled?
+    // for (int i = 0; i < nnodes_fine; i++) {
+    //     printf("P[i=%d,:] : ", i);
+    //     for (int jp = h_prol_rowp[i]; jp < h_prol_rowp[i+1]; jp++) {
+    //         int j = h_prol_cols[jp];
+    //         printf("%d, ", j);
+    //     }
+    //     printf("\n");
+    // }
 
-        auto d_PT_rowp =
-            HostVec<int>(nnodes_coarse + 1, h_prolT_rowp).createDeviceVec().getPtr();
-        auto d_PT_cols = HostVec<int>(PT_nnzb, h_prolT_cols).createDeviceVec().getPtr();
-        auto d_PT_vals = DeviceVec<T>(block_dim2 * PT_nnzb);
-        auto PT_bsr_data = BsrData(nnodes_coarse, P_block_dim, PT_nnzb, d_PT_rowp, d_PT_cols,
-                                    coarse_grid.d_perm, coarse_grid.d_iperm, false);
-        PT_bsr_data.mb = nnodes_coarse, PT_bsr_data.nb = nnodes_fine;
-        PT_bsr_data.rows = d_PT_rows;  // for each nnz, which row is it (not same as rowp),
-                                        // helps for efficient mat-prods
-        auto PT_mat = BsrMat<DeviceVec<T>>(
-            PT_bsr_data, d_PT_vals);  // only store this matrix on the coarse grid
+    int *h_P_rows = new int[P_nnzb];
+    int *h_PT_rows = new int[PT_nnzb];
+    for (int inode = 0; inode < nnodes_fine; inode++) {
+        for (int jp = h_prol_rowp[inode]; jp < h_prol_rowp[inode + 1]; jp++) {
+            h_P_rows[jp] = inode;
+        }
+    }
+    for (int inode = 0; inode < nnodes_coarse; inode++) {
+        for (int jp = h_prolT_rowp[inode]; jp < h_prolT_rowp[inode + 1]; jp++) {
+            h_PT_rows[jp] = inode;
+        }
+    }
+    int *d_P_rows = HostVec<int>(P_nnzb, h_P_rows).createDeviceVec().getPtr();
+    int *d_PT_rows = HostVec<int>(PT_nnzb, h_PT_rows).createDeviceVec().getPtr();
 
-        // printf("assemble matrices pre\n");
-        // printf("assemble P and PT matrices with nnodes_fine %d and nnodes_coarse %d\n",
-        // nnodes_fine, nnodes_coarse);
-        Prolongation::assemble_matrices(d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis, P_mat,
-                                        PT_mat);
-        CHECK_CUDA(cudaDeviceSynchronize());
-        // printf("assemble matrices post\n");
-        coarse_grid.restrict_PT_mat = PT_mat;
+    // now put these on the device with BsrData objects for P and PT
+    // TODO : later is to just assemble P and then write my own transpose Bsrmv method in
+    // CUDA
+    int block_dim = fine_assembler.getBsrData().block_dim;
+    int P_block_dim = is_bsr ? block_dim : 1; // if !is_bsr then it does same prolong on each dof_per_node
+    int block_dim2 = P_block_dim * P_block_dim;  // should be 36
+    auto d_P_rowp = HostVec<int>(nnodes_fine + 1, h_prol_rowp).createDeviceVec().getPtr();
+    auto d_P_cols = HostVec<int>(P_nnzb, h_prol_cols).createDeviceVec().getPtr();
+    auto d_P_vals = DeviceVec<T>(block_dim2 * P_nnzb);
+    auto P_bsr_data = BsrData(nnodes_fine, P_block_dim, P_nnzb, d_P_rowp, d_P_cols, d_perm,
+                                d_iperm, false);
+    P_bsr_data.mb = nnodes_fine, P_bsr_data.nb = nnodes_coarse;
+    P_bsr_data.rows = d_P_rows;
+    prolong_mat = new BsrMat<DeviceVec<T>>(P_bsr_data, d_P_vals);
 
-        // TEMP DEBUG
-        // T *h_P_vals = d_P_vals.createHostVec().getPtr();
-        // printf("h_P_vals:\n");
-        // for (int i = 0; i < 5; i++) {
-        //     printf("P mat row %d: ", i);
-        //     for (int jp = h_prol_rowp[i]; jp < h_prol_rowp[i+1];  jp++) {
-        //         int j = h_prol_cols[jp];
-        //         T val = h_P_vals[jp];
-        //         printf("[%d] %.3e, ", j, val);
-        //     }
-        //     printf("\n");
-        // }
+    auto d_PT_rowp =
+        HostVec<int>(nnodes_coarse + 1, h_prolT_rowp).createDeviceVec().getPtr();
+    auto d_PT_cols = HostVec<int>(PT_nnzb, h_prolT_cols).createDeviceVec().getPtr();
+    auto d_PT_vals = DeviceVec<T>(block_dim2 * PT_nnzb);
+    auto PT_bsr_data = BsrData(nnodes_coarse, P_block_dim, PT_nnzb, d_PT_rowp, d_PT_cols,
+                                d_coarse_perm, d_coarse_iperm, false);
+    PT_bsr_data.mb = nnodes_coarse, PT_bsr_data.nb = nnodes_fine;
+    PT_bsr_data.rows = d_PT_rows;  // for each nnz, which row is it (not same as rowp),
+                                    // helps for efficient mat-prods
+    restrict_mat = new BsrMat<DeviceVec<T>>(PT_bsr_data, d_PT_vals);  // only store this matrix on the coarse grid
 
-        // matrix descriptions for Bsrmv..
-        descrP = 0;
-        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrP));
-        CHECK_CUSPARSE(cusparseSetMatType(descrP, CUSPARSE_MATRIX_TYPE_GENERAL));
-        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrP, CUSPARSE_INDEX_BASE_ZERO));
-
-        coarse_grid.restrict_descrPT = 0;
-        CHECK_CUSPARSE(cusparseCreateMatDescr(&coarse_grid.restrict_descrPT));
-        CHECK_CUSPARSE(
-            cusparseSetMatType(coarse_grid.restrict_descrPT, CUSPARSE_MATRIX_TYPE_GENERAL));
-        CHECK_CUSPARSE(
-            cusparseSetMatIndexBase(coarse_grid.restrict_descrPT, CUSPARSE_INDEX_BASE_ZERO));
-
-    }  // end of Prolongation::assembly case..
+    // }  // end of Prolongation::assembly case..
 
     // printf("done with init unstructured grid maps\n");
     auto end0 = std::chrono::high_resolution_clock::now();

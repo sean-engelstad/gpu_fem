@@ -1,11 +1,13 @@
+#pragma once
 
-
+template <class Assembler>
 class WingboxMultiColoring {
     /* some utils for wingbox multicoloring (stabilizes colors in interior, junction + corners)
     aka uses geom hierarchy better */
+  public:
 
-    static void get_coloring(Assembler &assembler, BsrData &bsr_data, 
-        int num_colors, int *&_color_rowp) {
+    static void apply_coloring(Assembler &assembler, BsrData &bsr_data, 
+        int &num_colors, int *&_color_rowp) {
 
         // V2 more stable one with one less color
         int *nodal_num_comps, *node_geom_ind;
@@ -13,6 +15,8 @@ class WingboxMultiColoring {
         bsr_data.multicolor_junction_reordering_v2(node_geom_ind, num_colors, _color_rowp);
 
         // free or delete this stuff..
+        delete[] nodal_num_comps;
+        delete[] node_geom_ind;
     }
 
     static void get_interior_node_flags(Assembler &assembler, bool *&is_interior_node) {
