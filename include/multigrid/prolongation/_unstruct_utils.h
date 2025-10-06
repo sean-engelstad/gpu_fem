@@ -22,7 +22,7 @@ __HOST_DEVICE__ void ShellComputeCenterNormal(const T Xpts[], T fn[]) {
 }
 
 template <typename T>
-void get_elem_xpts(int ielem, const int *h_elem_conn, const T *h_xpts, T xpts_elem[12]) {
+__HOST_DEVICE__ void get_elem_xpts(int ielem, const int *h_elem_conn, const T *h_xpts, T xpts_elem[12]) {
     // get coarse xpts_elem
     for (int iloc = 0; iloc < 4; iloc++) {
         int inode = h_elem_conn[4 * ielem + iloc];
@@ -34,7 +34,7 @@ void get_elem_xpts(int ielem, const int *h_elem_conn, const T *h_xpts, T xpts_el
 }
 
 template <typename T>
-void get_nodal_xpts(int n_local_nodes, int local_nodes[], const T *h_xpts, T local_xpts[]) {
+__HOST_DEVICE__ void get_nodal_xpts(int n_local_nodes, int local_nodes[], const T *h_xpts, T local_xpts[]) {
     // get nearest neighbor coarse node xpts
     for (int iloc = 0; iloc < n_local_nodes; iloc++) {
         int inode = local_nodes[iloc];
@@ -45,35 +45,35 @@ void get_nodal_xpts(int n_local_nodes, int local_nodes[], const T *h_xpts, T loc
     }
 }
 
+// template <typename T, class Basis>
+// __HOST_DEVICE__ T get_dzeta_estimate(int nn, const T coarse_elem_xpts[], const T coarse_nn_xpts[]) {
+//     // compute element centroid (for estimate here)
+//     T pt[2] = {0.0, 0.0};
+//     T centroid[3];
+//     Basis::template interpFields<3, 3>(pt, coarse_elem_xpts, centroid);
+
+//     // get the shell node normal at centroid
+//     T fn[3];
+//     ShellComputeCenterNormal<T, Basis>(coarse_elem_xpts, fn);
+
+//     // compute approx zeta or normal distance from element of each nn node
+//     T zetas[nn];
+//     for (int i = 0; i < nn; i++) {
+//         const T *nn_xpt = &coarse_nn_xpts[3 * i];
+
+//         T norm_comp = 0.0;
+//         for (int j = 0; j < 3; j++) norm_comp += fn[j] * (nn_xpt[j] - centroid[j]);
+//         zetas[i] = abs(norm_comp);
+//     }
+
+//     // now compute mean(absolute zeta) for estimate of dzeta among nearest neighbors
+//     T mean_zeta = 0.0;
+//     for (int i = 0; i < nn; i++) mean_zeta += zetas[i] / (1.0 * nn);
+//     return mean_zeta;
+// }
+
 template <typename T, class Basis>
-T get_dzeta_estimate(int nn, const T coarse_elem_xpts[], const T coarse_nn_xpts[]) {
-    // compute element centroid (for estimate here)
-    T pt[2] = {0.0, 0.0};
-    T centroid[3];
-    Basis::template interpFields<3, 3>(pt, coarse_elem_xpts, centroid);
-
-    // get the shell node normal at centroid
-    T fn[3];
-    ShellComputeCenterNormal<T, Basis>(coarse_elem_xpts, fn);
-
-    // compute approx zeta or normal distance from element of each nn node
-    T zetas[nn];
-    for (int i = 0; i < nn; i++) {
-        const T *nn_xpt = &coarse_nn_xpts[3 * i];
-
-        T norm_comp = 0.0;
-        for (int j = 0; j < 3; j++) norm_comp += fn[j] * (nn_xpt[j] - centroid[j]);
-        zetas[i] = abs(norm_comp);
-    }
-
-    // now compute mean(absolute zeta) for estimate of dzeta among nearest neighbors
-    T mean_zeta = 0.0;
-    for (int i = 0; i < nn; i++) mean_zeta += zetas[i] / (1.0 * nn);
-    return mean_zeta;
-}
-
-template <typename T, class Basis>
-void get_comp_coords(const T coarse_xpts[], const T fine_xpt[], T xis[3], bool print = false) {
+__HOST_DEVICE__ void get_comp_coords(const T coarse_xpts[], const T fine_xpt[], T xis[3], bool print = false, int n_iters = 8) {
     // from coarse element, compute (xi,eta,zeta) triple of the fine node
 
     memset(xis, 0.0, 3 * sizeof(T));
@@ -85,7 +85,8 @@ void get_comp_coords(const T coarse_xpts[], const T fine_xpt[], T xis[3], bool p
     // need to actually use the basis functions to get xi, eta..
     // can't just do planar calcs (cause still need to converge quadratic xyz(xi,eta) function even
     // if elim zeta)
-    for (int ct = 0; ct < 8; ct++) {
+    // NOTE : can change the num iterations here if need be..
+    for (int ct = 0; ct < n_iters; ct++) { // 4 iterations is usually enough
         T xyz[3], dxi[3], deta[3];
 
         Basis::template interpFields<3, 3>(xis, coarse_xpts, xyz);
@@ -158,7 +159,7 @@ void get_comp_coords(const T coarse_xpts[], const T fine_xpt[], T xis[3], bool p
 }
 
 template <typename T>
-bool xis_in_elem(const T xis[3], const bool match_comp) {
+__HOST_DEVICE__ bool xis_in_elem(const T xis[3], const bool match_comp) {
     // bool xis_in_elem(const T xis[3], const T dzeta) {
     // T tol = 1e-3;
     T tol = 1e-2;  // don't want to be too strict here (but not too relaxed either)
@@ -189,6 +190,238 @@ bool xis_in_elem(const T xis[3], const bool match_comp) {
     return valid_xi && valid_eta && match_comp;
 }
 
+template <typename T, class Basis>
+void _compute_prolong_xi_coords(const int nnodes_fine, const int nn, int *h_coarse_conn, 
+    const int ELEM_MAX, int &ntot_elems, T *h_xpts_fine, T *h_xpts_coarse, int *nn_conn, 
+    int *cnode_elem_ptr, int *cnode_elems, int *h_coarse_elem_comps, int *f_ecomps_ptr, 
+    int *f_ecomps_comp, int *fine_nodes_celem_cts, int *fine_nodes_celems, T *fine_node_xis) {
+    /* compute the computational xi coords of fine nodes and their nearby coarse elems */
+
+    // outputs are: ntot_elems, fine_nodes_celem_cts, fine_nodes_celems, fine_node_xis
+
+    for (int inode_f = 0; inode_f < nnodes_fine; inode_f++) {
+        T *fine_node_xpts = &h_xpts_fine[3 * inode_f];
+
+        // should be ~24 elems examined per coarse node (can parallelize this on GPU if needed)
+        for (int i_nn = 0; i_nn < nn; i_nn++) {
+            int inode_c = nn_conn[nn * inode_f + i_nn];
+
+            for (int jp = cnode_elem_ptr[inode_c]; jp < cnode_elem_ptr[inode_c + 1]; jp++) {
+                int ielem_c = cnode_elems[jp];
+                // get coarse element component
+                int c_comp = h_coarse_elem_comps[ielem_c];
+
+                // check among comp ptr to see if fine node also belongs to this component
+                bool match_comp = false;
+                for (int jjp = f_ecomps_ptr[inode_f]; jjp < f_ecomps_ptr[inode_f + 1]; jjp++) {
+                    int f_comp = f_ecomps_comp[jjp];
+                    match_comp += f_comp == c_comp;
+                    // if (print_node) printf("%d ", f_comp);
+                }
+                // if (print_node) printf(", match_comp %d\n", (int)match_comp);
+
+                T coarse_elem_xpts[12];
+                get_elem_xpts<T>(ielem_c, h_coarse_conn, h_xpts_coarse, coarse_elem_xpts);
+
+                // bool print_debug = inode_f == 1098;
+                bool print_debug = false;
+
+                T xi[3];
+                get_comp_coords<T, Basis>(coarse_elem_xpts, fine_node_xpts, xi, print_debug);
+
+                // determine whether xi[3] is in bounds or not; xi & eta in [-1,1] and zeta in
+                // [-2,2] for max thick (or can ignore zeta..)
+                // bool node_in_elem = xis_in_elem<T>(xi, dzeta);
+                bool node_in_elem = xis_in_elem<T>(xi, match_comp);
+
+                if (node_in_elem) {
+                    // check if element already in old elems of this node
+                    int nelems_prev = fine_nodes_celem_cts[inode_f];
+                    bool new_elem = true;
+                    for (int i = 0; i < nelems_prev; i++) {
+                        int prev_elem = fine_nodes_celems[ELEM_MAX * inode_f + i];
+                        new_elem = new_elem && (prev_elem != ielem_c);
+                    }
+
+                    if (new_elem) {
+                        fine_nodes_celem_cts[inode_f]++;
+                        ntot_elems++;
+                        fine_nodes_celems[ELEM_MAX * inode_f + nelems_prev] = ielem_c;
+                        fine_node_xis[2 * ELEM_MAX * inode_f + 2 * nelems_prev] = xi[0];
+                        fine_node_xis[2 * ELEM_MAX * inode_f + 2 * nelems_prev + 1] = xi[1];
+                    }
+                }
+            }
+        }
+    }
+}
+
+template <typename T, class Basis>
+__GLOBAL__ void k_compute_prolong_xis(const int n2e_nnz, const int *d_coarse_conn, const T *d_xpts_fine,
+    const T *d_xpts_coarse, const int *d_n2e_fnodes, const int *d_n2e_celems, 
+    bool *d_n2e_in_elem, T *d_n2e_xis) {
+
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= n2e_nnz) return;
+
+    // prelim : get node + elem indices and xpts
+    int inode_f = d_n2e_fnodes[tid];
+    int ielem_c = d_n2e_celems[tid];
+    T fine_xpt[3];
+    for (int i = 0; i < 3; i++) fine_xpt[i] = d_xpts_fine[3 * inode_f + i];
+    __syncthreads();
+
+    T coarse_elem_xpts[12];
+    for (int i = 0; i < 12; i++) {
+        int lnode_c = i / 3, idof_c = i % 3;
+        int inode_c = d_coarse_conn[4 * ielem_c + lnode_c];
+        coarse_elem_xpts[i] = d_xpts_coarse[3 * inode_c + idof_c];
+    }
+    __syncthreads();
+
+    // compute the comp coords (xi,eta,zeta) for each node 2 elem pair
+    T xi[3];
+    get_comp_coords<T, Basis>(coarse_elem_xpts, fine_xpt, xi, false);
+    bool node_in_elem = xis_in_elem<T>(xi, true);
+    __syncthreads();
+
+    // now write to output arrays
+    d_n2e_in_elem[tid] = node_in_elem;
+    d_n2e_xis[2 * tid] = xi[0];
+    d_n2e_xis[2 * tid + 1] = xi[1];
+}
+
+template <typename T, class Basis>
+void _compute_prolong_xi_coords_fast(const int nnodes_fine, const int nnodes_coarse, const int nelems_coarse,
+    const int nn, int *h_coarse_conn, 
+    const int ELEM_MAX, int &ntot_elems, T *h_xpts_fine, T *h_xpts_coarse, int *nn_conn, 
+    int *cnode_elem_ptr, int *cnode_elems, int *h_coarse_elem_comps, int *f_ecomps_ptr, 
+    int *f_ecomps_comp, int *fine_nodes_celem_cts, int *fine_nodes_celems, T *fine_node_xis) {
+    /* compute the computational xi coords of fine nodes and their nearby coarse elems */
+    // faster version than the one above thanks to GPU kernel
+
+    // 1) compute all candidate coarse elements with matching DV comp first,
+    // then, compute the nonzero patterns for efficient GPU implementation:
+    // len(nnz) : fine node, e.g. 0,0,0,0,1,1,1,1,1,1,2,2,2,2,2, etc. (like rows CSR array)
+    // len(nnz) : coarse elem, etc..
+    // --------------------------------------------------------------------------
+
+    // get a new nonzero pattern that ensures only candidate elements with matching DV components are kept
+    int n2e_nnz = 0;
+    for (int inode_f = 0; inode_f < nnodes_fine; inode_f++) {
+        T *fine_node_xpts = &h_xpts_fine[3 * inode_f];
+        for (int i_nn = 0; i_nn < nn; i_nn++) {
+            int inode_c = nn_conn[nn * inode_f + i_nn];
+            for (int jp = cnode_elem_ptr[inode_c]; jp < cnode_elem_ptr[inode_c + 1]; jp++) {
+                int ielem_c = cnode_elems[jp];
+                int c_comp = h_coarse_elem_comps[ielem_c];
+
+                // check among comp ptr to see if fine node also belongs to this component
+                bool match_comp = false;
+                for (int jjp = f_ecomps_ptr[inode_f]; jjp < f_ecomps_ptr[inode_f + 1]; jjp++) {
+                    int f_comp = f_ecomps_comp[jjp];
+                    match_comp += f_comp == c_comp;
+                    // if (print_node) printf("%d ", f_comp);
+                }
+                if (match_comp) n2e_nnz++;
+            }
+        }
+    }
+
+    // loop back through and store the fine node + coarse elems for each match DV comp
+    int *n2e_fnodes = new int[n2e_nnz];
+    int *n2e_celems = new int[n2e_nnz];
+    int n2e_inz = 0;
+
+    for (int inode_f = 0; inode_f < nnodes_fine; inode_f++) {
+        T *fine_node_xpts = &h_xpts_fine[3 * inode_f];
+        for (int i_nn = 0; i_nn < nn; i_nn++) {
+            int inode_c = nn_conn[nn * inode_f + i_nn];
+            for (int jp = cnode_elem_ptr[inode_c]; jp < cnode_elem_ptr[inode_c + 1]; jp++) {
+                int ielem_c = cnode_elems[jp];
+                int c_comp = h_coarse_elem_comps[ielem_c];
+
+                // check among comp ptr to see if fine node also belongs to this component
+                bool match_comp = false;
+                for (int jjp = f_ecomps_ptr[inode_f]; jjp < f_ecomps_ptr[inode_f + 1]; jjp++) {
+                    int f_comp = f_ecomps_comp[jjp];
+                    match_comp += f_comp == c_comp;
+                    // if (print_node) printf("%d ", f_comp);
+                }
+                if (match_comp) {
+                    n2e_fnodes[n2e_inz] = inode_f;
+                    n2e_celems[n2e_inz] = ielem_c;
+                    n2e_inz++;
+                }
+            }
+        }
+    }
+
+    // 2) move + allocate output arrays from GPU
+    // len(nnz) : is_in_elem bools (whether fine node is in elem)
+    // len(2 *  nnz) : (xi,eta) of each coarse elem => fine node pair
+    // --------------------------------------------------------------------
+
+    // put these nz arrays on the GPU now
+    int *d_n2e_fnodes = HostVec<int>(n2e_nnz, n2e_fnodes).createDeviceVec().getPtr();
+    int *d_n2e_celems = HostVec<int>(n2e_nnz, n2e_celems).createDeviceVec().getPtr();
+
+    // create new arrays for the GPU outputs
+    bool *d_n2e_in_elem = DeviceVec<bool>(n2e_nnz).getPtr();
+    T *d_n2e_xis = DeviceVec<T>(2 * n2e_nnz).getPtr();
+
+    // recreate some things on GPU (NOTE : this is redundant and should be removed)
+    T *d_xpts_fine = HostVec<T>(3 * nnodes_fine, h_xpts_fine).createDeviceVec().getPtr();
+    T *d_xpts_coarse = HostVec<T>(3 * nnodes_coarse, h_xpts_coarse).createDeviceVec().getPtr();
+    int *d_coarse_conn = HostVec<int>(Basis::num_nodes * nelems_coarse, h_coarse_conn).createDeviceVec().getPtr(); 
+
+    // 3) call GPU kernel to compute (xi,eta) and bool of match
+    // --------------------------------------------------------------
+
+    dim3 block(32);
+    dim3 grid((n2e_nnz + 31) / 32);
+    // printf("before compute prolong xis GPU kernel\n");
+
+    k_compute_prolong_xis<T, Basis><<<grid, block>>>(n2e_nnz, d_coarse_conn, d_xpts_fine, d_xpts_coarse, 
+        d_n2e_fnodes, d_n2e_celems, d_n2e_in_elem, d_n2e_xis);
+
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // printf("after compute prolong xis GPU kernel\n");
+    
+    // 4) get data out and reformat for host outputs
+    // --------------------------------------------------------------
+    // outputs are: ntot_elems, fine_nodes_celem_cts, fine_nodes_celems, fine_node_xis
+
+    bool *h_n2e_in_elem = DeviceVec<bool>(n2e_nnz, d_n2e_in_elem).createHostVec().getPtr();
+    T *h_n2e_xis = DeviceVec<T>(2 * n2e_nnz, d_n2e_xis).createHostVec().getPtr();
+
+    // now insert and construct the final map, removing repeat elements (on host)
+    for (int inz = 0; inz < n2e_nnz; inz++) {
+        int inode_f = n2e_fnodes[inz];
+        int ielem_c = n2e_celems[inz];
+        bool node_in_elem = h_n2e_in_elem[inz];
+        T *xi = &h_n2e_xis[2 * inz];
+        
+        if (node_in_elem) {
+            // check if element already in old elems of this node
+            int nelems_prev = fine_nodes_celem_cts[inode_f];
+            bool new_elem = true;
+            for (int i = 0; i < nelems_prev; i++) {
+                int prev_elem = fine_nodes_celems[ELEM_MAX * inode_f + i];
+                new_elem = new_elem && (prev_elem != ielem_c);
+            }
+
+            if (new_elem) {
+                fine_nodes_celem_cts[inode_f]++;
+                ntot_elems++;
+                fine_nodes_celems[ELEM_MAX * inode_f + nelems_prev] = ielem_c;
+                fine_node_xis[2 * ELEM_MAX * inode_f + 2 * nelems_prev] = xi[0];
+                fine_node_xis[2 * ELEM_MAX * inode_f + 2 * nelems_prev + 1] = xi[1];
+            }
+        }
+    }
+}
+
 template <typename T, class Assembler, class Basis, bool is_bsr>
 void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_assembler, 
     BsrMat<DeviceVec<T>> *&prolong_mat, BsrMat<DeviceVec<T>> *&restrict_mat, 
@@ -202,6 +435,10 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
 
     // -------------------------------------------------------
     // 1) prelim prolongation maps and data here..
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto time_01 = std::chrono::high_resolution_clock::now();
+
     T *h_xpts_fine = fine_assembler.getXpts().createHostVec().getPtr();
     T *h_xpts_coarse = coarse_assembler.getXpts().createHostVec().getPtr();
     int nnodes_fine = fine_assembler.get_num_nodes();
@@ -238,6 +475,7 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
     }
     delete[] indx;
     delete[] dist;
+    // delete[] locator;
 
     // fine to fine node nearest neighbors
     // need more nearest neighbors for fine node dzeta estimate
@@ -262,6 +500,11 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
 
     // printf("nn conn: ");
     // printVec<int>(30, nn_conn);
+
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // auto time_02 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> nn_time = time_02 - time_01;
+    // printf("\t\t\tnearest neighbor time %.2e\n", nn_time.count());
 
     // -------------------------------------------------------
     // 2) get coarse elements for each coarse node
@@ -305,6 +548,11 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
     // printVec<int>(nnodes_coarse + 1, cnode_elem_ptr);
     // printf("cnode elems (cols): ");
     // printVec<int>(n_coarse_node_elems, cnode_elems);
+
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // auto time_03 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> coarse_n2e_time = time_03 - time_02;
+    // printf("\t\t\tcoarse n2e time %.2e\n", coarse_n2e_time.count());
 
     // -----------------------------------------------------------
     // 2.5 ) get the components for each coarse and fine node
@@ -392,6 +640,11 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
         }
     }
 
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // auto time_04 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> e2c_time = time_04 - time_03;
+    // printf("\t\t\tcoarse + fine elem2comp time %.2e\n", e2c_time.count());
+
     // ----------------------------------------------------------------
     // 3) get the coarse element(s) for each fine node (that it's contained in)
 
@@ -403,62 +656,23 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
     memset(fine_node_xis, 0.0, 2 * ELEM_MAX * nnodes_fine * sizeof(T));
     int ntot_elems = 0;
 
-    for (int inode_f = 0; inode_f < nnodes_fine; inode_f++) {
-        T *fine_node_xpts = &h_xpts_fine[3 * inode_f];
-        // printf("inode_f %d\n", inode_f);
+    // V1 cpu version
+    // _compute_prolong_xi_coords<T, Basis>(nnodes_fine, nn, h_coarse_conn, ELEM_MAX, 
+    //     ntot_elems, h_xpts_fine, h_xpts_coarse, nn_conn, cnode_elem_ptr, 
+    //     cnode_elems, h_coarse_elem_comps, f_ecomps_ptr, f_ecomps_comp, 
+    //     fine_nodes_celem_cts, fine_nodes_celems, fine_node_xis);
 
-        // should be ~24 elems examined per coarse node (can parallelize this on GPU if needed)
-        for (int i_nn = 0; i_nn < nn; i_nn++) {
-            int inode_c = nn_conn[nn * inode_f + i_nn];
+    // V2 GPU version TODO
+    _compute_prolong_xi_coords_fast<T, Basis>(nnodes_fine, nnodes_coarse, num_coarse_elems,
+        nn, h_coarse_conn, ELEM_MAX, 
+        ntot_elems, h_xpts_fine, h_xpts_coarse, nn_conn, cnode_elem_ptr, 
+        cnode_elems, h_coarse_elem_comps, f_ecomps_ptr, f_ecomps_comp, 
+        fine_nodes_celem_cts, fine_nodes_celems, fine_node_xis);
 
-            for (int jp = cnode_elem_ptr[inode_c]; jp < cnode_elem_ptr[inode_c + 1]; jp++) {
-                int ielem_c = cnode_elems[jp];
-                // get coarse element component
-                int c_comp = h_coarse_elem_comps[ielem_c];
-
-                // check among comp ptr to see if fine node also belongs to this component
-                bool match_comp = false;
-                for (int jjp = f_ecomps_ptr[inode_f]; jjp < f_ecomps_ptr[inode_f + 1]; jjp++) {
-                    int f_comp = f_ecomps_comp[jjp];
-                    match_comp += f_comp == c_comp;
-                    // if (print_node) printf("%d ", f_comp);
-                }
-                // if (print_node) printf(", match_comp %d\n", (int)match_comp);
-
-                T coarse_elem_xpts[12];
-                get_elem_xpts<T>(ielem_c, h_coarse_conn, h_xpts_coarse, coarse_elem_xpts);
-
-                // bool print_debug = inode_f == 1098;
-                bool print_debug = false;
-
-                T xi[3];
-                get_comp_coords<T, Basis>(coarse_elem_xpts, fine_node_xpts, xi, print_debug);
-
-                // determine whether xi[3] is in bounds or not; xi & eta in [-1,1] and zeta in
-                // [-2,2] for max thick (or can ignore zeta..)
-                // bool node_in_elem = xis_in_elem<T>(xi, dzeta);
-                bool node_in_elem = xis_in_elem<T>(xi, match_comp);
-
-                if (node_in_elem) {
-                    // check if element already in old elems of this node
-                    int nelems_prev = fine_nodes_celem_cts[inode_f];
-                    bool new_elem = true;
-                    for (int i = 0; i < nelems_prev; i++) {
-                        int prev_elem = fine_nodes_celems[ELEM_MAX * inode_f + i];
-                        new_elem = new_elem && (prev_elem != ielem_c);
-                    }
-
-                    if (new_elem) {
-                        fine_nodes_celem_cts[inode_f]++;
-                        ntot_elems++;
-                        fine_nodes_celems[ELEM_MAX * inode_f + nelems_prev] = ielem_c;
-                        fine_node_xis[2 * ELEM_MAX * inode_f + 2 * nelems_prev] = xi[0];
-                        fine_node_xis[2 * ELEM_MAX * inode_f + 2 * nelems_prev + 1] = xi[1];
-                    }
-                }
-            }
-        }
-    }
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // auto time_05 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> basis_xi_time = time_05 - time_04;
+    // printf("\t\t\tcontained elems + xi comp time %.2e\n", basis_xi_time.count());
 
     // now convert from cts to rowp, cols style as diff # elems per fine node
     int *fine_node2elem_ptr = new int[nnodes_fine + 1];
@@ -492,12 +706,14 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
     d_n2e_xis = HostVec<T>(2 * ntot_elems, fine_node2elem_xis).createDeviceVec().getPtr();
     d_coarse_conn = d_coarse_conn_vec.getPtr();
 
-    // assemble the prolongation matrix and its transpose on the device (in permuted form)
-    // for fast UnstructuredProlongation using assembled matrix
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // auto time_06 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> misc_maps_time = time_06 - time_05;
+    // printf("\t\t\tmisc final n2e maps time %.2e\n", misc_maps_time.count());
+
+    // create P and PT matrices (for coming assembly)
     // --------------------------------------------------------
 
-    // now call assembler of P and PT matrices
-    // if constexpr (Prolongation::assembly) {
     // int mb = nnodes_fine, nb = nnodes_coarse;
     int *d_perm = fine_assembler.getBsrData().perm;
     int *h_perm = DeviceVec<int>(nnodes_fine, d_perm).createHostVec().getPtr();
@@ -620,6 +836,11 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
     int *d_P_rows = HostVec<int>(P_nnzb, h_P_rows).createDeviceVec().getPtr();
     int *d_PT_rows = HostVec<int>(PT_nnzb, h_PT_rows).createDeviceVec().getPtr();
 
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // auto time_07 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> mat_nz_patterm_time = time_07 - time_06;
+    // printf("\t\t\tmat nz pattern time %.2e\n", mat_nz_patterm_time.count());
+
     // now put these on the device with BsrData objects for P and PT
     // TODO : later is to just assemble P and then write my own transpose Bsrmv method in
     // CUDA
@@ -645,6 +866,11 @@ void init_unstructured_grid_maps(Assembler &fine_assembler, Assembler &coarse_as
     PT_bsr_data.rows = d_PT_rows;  // for each nnz, which row is it (not same as rowp),
                                     // helps for efficient mat-prods
     restrict_mat = new BsrMat<DeviceVec<T>>(PT_bsr_data, d_PT_vals);  // only store this matrix on the coarse grid
+
+    // CHECK_CUDA(cudaDeviceSynchronize());
+    // auto time_08 = std::chrono::high_resolution_clock::now();
+    // std::chrono::duration<double> create_mat_time = time_08 - time_07;
+    // printf("\t\t\tcreate mat time time %.2e\n", create_mat_time.count());
 
     // }  // end of Prolongation::assembly case..
 
