@@ -96,8 +96,6 @@ class ChebyshevQuadBasis {
     using Geo = LinearQuadGeo;
 
     __HOST_DEVICE__ static void getNodePoint(const int n, T pt[]) {
-        // pt[0] = Basis1D::gps[n % nx];
-        // pt[1] = Basis1D::gps[n / nx];
         pt[0] = Basis1D::getXi(n % nx);
         pt[1] = Basis1D::getXi(n / nx);
     }
@@ -111,18 +109,6 @@ class ChebyshevQuadBasis {
         for (int i = 0; i < nx * nx; i++) {
             int ix = i % nx, iy = i / nx;
             N[i] = N1[ix] * N2[iy];
-        }
-    }
-
-    __HOST_DEVICE__ static void eval_chebyshev_2d_basis_grad(const T pt[], T N[]) {
-        T N1[num_nodes], N2[num_nodes];
-        Basis1D::evalBasis(pt[0], N1);
-        Basis1D::evalBasis(pt[1], N2);
-
-        #pragma unroll
-        for (int i = 0; i < nx * nx; i++) {
-            int i1 = i % nx, i2 = i / nx;
-            N[i] = N1[i1] * N2[i2];
         }
     }
 

@@ -38,26 +38,8 @@ class UnstructuredProlongation {
 
     void init_coarse_data(Assembler &coarse_assembler_) {
         coarse_assembler = coarse_assembler_;
-
-        CHECK_CUDA(cudaDeviceSynchronize());
-        auto start_01 = std::chrono::high_resolution_clock::now();
         construct_nz_pattern();
-        CHECK_CUDA(cudaDeviceSynchronize());
-        auto end_01 = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> nz_pattern_time = end_01 - start_01;
-        printf("\t\tprolong - construct nz pattern %.2e\n", nz_pattern_time.count());
-
-        CHECK_CUDA(cudaDeviceSynchronize());
-        auto start_02 = std::chrono::high_resolution_clock::now();
         assemble_matrices();
-        CHECK_CUDA(cudaDeviceSynchronize());
-        auto end_02 = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> assemble_prolong_time = end_02 - start_02;
-        printf("\t\tprolong - assemble P and PT %.2e\n", assemble_prolong_time.count());
-
-        // cleaner code
-        // construct_nz_pattern();
-        // assemble_matrices();
     }
 
     void construct_nz_pattern() {

@@ -439,8 +439,6 @@ int main(int argc, char **argv) {
         printf("ERROR : didn't run anything, elem type not in available types (see main function)\n");
     }
 
-    // TBD multigrid solve..
-
     MPI_Finalize();
     return 0;
 };
