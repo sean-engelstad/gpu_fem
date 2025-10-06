@@ -14,6 +14,7 @@ public:
     void init_prolongations() {
         /* pass in coarse assembler data for each prolongation operator */
         // 0 is the finest grid, nlevels-1 is the coarsest grid here
+        printf("create prolongation nz pattern\n");
         for (int ilevel = 0; ilevel < getNumLevels()-1; ilevel++) {
             grids[ilevel].prolongation->init_coarse_data(grids[ilevel+1].assembler);
             grids[ilevel+1].restriction = grids[ilevel].prolongation; // copy prolong to restriction on coarser grid

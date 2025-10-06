@@ -6,10 +6,16 @@
 
 // shell imports
 #include "assembler.h"
-#include "element/shell/basis/lagrange_basis.h"
 #include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
+
+// lagrange MITC element
+#include "element/shell/basis/lagrange_basis.h"
 #include "element/shell/mitc_shell.h"
+
+// chebyshev element
+#include "element/shell/basis/chebyshev_basis.h"
+#include "element/shell/fint_shell.h"
 
 // local multigrid imports
 #include "multigrid/grid.h"
@@ -42,21 +48,13 @@ void to_lowercase(char *str) {
     }
 }
 
+template <typename T, class Assembler>
 void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
-    using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
-    using Director = LinearizedRotation<T>;
-    using Basis = LagrangeQuadBasis<T, Quad, 2>;
-    using Geo = Basis::Geo;
-    constexpr bool has_ref_axis = false;
-    constexpr bool is_nonlinear = false;
-    using Data = ShellIsotropicData<T, has_ref_axis>;
-    using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
-
+    using Basis = typename Assembler::Basis;
+    using Physics = typename Assembler::Phys;
     const SCALER scaler  = LINE_SEARCH;
     using Smoother = MulticolorGSSmoother_V1<Assembler>;
     using Prolongation = StructuredProlongation<Assembler, CYLINDER>;
@@ -212,18 +210,10 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
     }
 }
 
-
+template <typename T, class Assembler>
 void direct_solve(int nxe, double SR) {
-    using T = double;   
-    using Quad = QuadLinearQuadrature<T>;
-    using Director = LinearizedRotation<T>;
-    using Basis = LagrangeQuadBasis<T, Quad, 2>;
-    using Geo = Basis::Geo;
-    constexpr bool has_ref_axis = false;
-    constexpr bool is_nonlinear = false;
-    using Data = ShellIsotropicData<T, has_ref_axis>;
-    using Physics = IsotropicShell<T, Data, is_nonlinear>;
-    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
+    using Basis = typename Assembler::Basis;
+    using Physics = typename Assembler::Phys;
 
     int nhe = nxe;
     double L = 1.0, R = 0.5, thick = L / SR;
@@ -280,16 +270,28 @@ void direct_solve(int nxe, double SR) {
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/cylinder.vtk");
 }
 
+template <typename T, class Assembler>
+void gatekeeper_method(bool is_multigrid, int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
+    if (is_multigrid) {
+        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+    } else {
+        direct_solve<T, Assembler>(nxe, SR);
+    }
+}
 
 int main(int argc, char **argv) {
     // input ----------
-    bool is_multigrid = false;
+    bool is_multigrid = true;
     int nxe = 256; // default value
-    double SR = 50.0; // default
+    double SR = 100.0; // default
+    int n_vcycles = 50;
 
     int nsmooth = 2; // typically faster right now
     int ninnercyc = 2; // inner V-cycles to precond K-cycle
     std::string cycle_type = "K"; // "V", "F", "W", "K"
+
+    // for some reason CFI4 doesn't work great on cylinder rn (may need higher order elems + improve prolong for curvature)
+    std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -321,6 +323,13 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --level\n";
                 return 1;
             }
+        } else if (strcmp(arg, "--elem") == 0) {
+            if (i + 1 < argc) {
+                elem_type = argv[++i];
+            } else {
+                std::cerr << "Missing value for --elem\n";
+                return 1;
+            }
         } else if (strcmp(arg, "--nsmooth") == 0) {
             if (i + 1 < argc) {
                 nsmooth = std::atoi(argv[++i]);
@@ -342,11 +351,30 @@ int main(int argc, char **argv) {
         }
     }
 
-    // done reading arts, now run stuff
-    if (is_multigrid) {
-        multigrid_solve(nxe, SR, nsmooth, ninnercyc, cycle_type);
+    // type specifications here
+    using T = double;   
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    constexpr bool has_ref_axis = false;
+    constexpr bool is_nonlinear = false;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+
+    printf("cylinder mesh with %s elements, nxe %d and SR %.2e\n------------\n", elem_type.c_str(), nxe, SR);
+    if (elem_type == "MITC4") {
+        using Basis = LagrangeQuadBasis<T, Quad, 2>;
+        using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+        gatekeeper_method<T, Assembler>(is_multigrid, nxe, SR, nsmooth, ninnercyc, cycle_type);
+    } else if (elem_type == "CFI4") {
+        using Basis = ChebyshevQuadBasis<T, Quad, 1>;
+        using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+        gatekeeper_method<T, Assembler>(is_multigrid, nxe, SR, nsmooth, ninnercyc, cycle_type);
+    } else if (elem_type == "CFI9") {
+        using Basis = ChebyshevQuadBasis<T, Quad, 2>;
+        using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+        gatekeeper_method<T, Assembler>(is_multigrid, nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else {
-        direct_solve(nxe, SR);
+        printf("ERROR : didn't run anything, elem type not in available types (see main function)\n");
     }
 
     return 0;

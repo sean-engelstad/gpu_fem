@@ -1,3 +1,4 @@
+// general gpu_fem imports
 
 #include "linalg/_linalg.h"
 #include "mesh/TACSMeshLoader.h"
@@ -34,9 +35,6 @@
 #include "multigrid/solvers/multilevel/kcycle.h"
 #include "multigrid/solvers/multilevel/twolevel.h"
 
-/* argparse options:
-[mg/direct/debug] [--level int]
-*/
 
 void to_lowercase(char *str) {
     for (; *str; ++str) {
@@ -44,22 +42,9 @@ void to_lowercase(char *str) {
     }
 }
 
-std::string time_string(int itime) {
-    std::string _time = std::to_string(itime);
-    if (itime < 10) {
-        return "00" + _time;
-    } else if (itime < 100) {
-        return "0" + _time;
-    } else {
-        return _time;
-    }
-}
-
 template <typename T, class Assembler>
-void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
-    // geometric multigrid method here..
-    // need to make a number of grids..
-    // level gives the finest level here..
+void time_wing_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, int ninnercyc, std::string cycle_type, bool print_all_times = false) {
+    /* timing / profiling of the wing multigrid case*/
 
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
@@ -95,17 +80,83 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     for (int i = level; i >= 0; i--) {
 
         // read the ESP/CAPS => nastran mesh for TACS
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_00 = std::chrono::high_resolution_clock::now();
         TACSMeshLoader mesh_loader{comm};
         std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
+        printf("making assembler+GMG times for mesh '%s': \n", fname.c_str());
         mesh_loader.scanBDFFile(fname.c_str());
         double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties (start thicker first try)
-        // TODO : run optimized design from AOB case
-        printf("making assembler+GMG for mesh '%s'\n", fname.c_str());
-        
-        // create the TACS Assembler from the mesh loader
-        auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_00 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> read_mesh_time = end_00 - start_00;
+        if (print_all_times) printf("\tread mesh %.2e, ", read_mesh_time.count());
 
-        // create the loads (really only needed on finer mesh.. TBD how to setup nonlinear case..)
+        // create the wing assembler
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_01 = std::chrono::high_resolution_clock::now();
+        auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_01 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> create_assemb_time = end_01 - start_01;
+        if (print_all_times) printf("create assembler %.2e\n", create_assemb_time.count());
+
+        // do the reordering
+        
+        auto &bsr_data = assembler.getBsrData();
+        int num_colors = 0, *_color_rowp;
+        bool coarsest_grid = i == 0;
+        if (!coarsest_grid) {
+            
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto start_02 = std::chrono::high_resolution_clock::now();
+            WingboxMultiColoring<Assembler>::apply_coloring(assembler, bsr_data, num_colors, _color_rowp);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto end_02 = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> reorder_time = end_02 - start_02;
+            if (print_all_times) printf("\tmulticolor reorder %.2e, ", reorder_time.count());
+
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto start_03 = std::chrono::high_resolution_clock::now();
+            bsr_data.compute_nofill_pattern();
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto end_03 = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> nofill_time = end_03 - start_03;
+            if (print_all_times) printf("nofill pattern %.2e, ", nofill_time.count());
+            
+        } else {
+
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto start_02 = std::chrono::high_resolution_clock::now();
+            bsr_data.AMD_reordering();
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto end_02 = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> reorder_time = end_02 - start_02;
+            if (print_all_times) printf("\tAMD reorder %.2e, ", reorder_time.count());
+
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto start_03 = std::chrono::high_resolution_clock::now();
+            bsr_data.compute_full_LU_pattern(10.0, false);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto end_03 = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> full_LU_time = end_03 - start_03;
+            if (print_all_times) printf("full LU pattern %.2e, ", full_LU_time.count());
+        }      
+        
+
+        // move bsr data to device
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_04 = std::chrono::high_resolution_clock::now();
+        auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
+        assembler.moveBsrDataToDevice();
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_04 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> move_bsr_time = end_04 - start_04;
+        if (print_all_times) printf("move bsrData to device %2e\n", move_bsr_time.count());
+
+        // compute laods and misc
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_05 = std::chrono::high_resolution_clock::now();
         int nvars = assembler.get_num_vars();
         int nnodes = assembler.get_num_nodes();
         HostVec<T> h_loads(nvars);
@@ -114,68 +165,95 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
         for (int inode = 0; inode < nnodes; inode++) {
             my_loads[6 * inode + 2] = load_mag;
         }
-
-        // do multicolor junction reordering
-        auto &bsr_data = assembler.getBsrData();
-        int num_colors = 0, *_color_rowp;
-
-        bool coarsest_grid = i == 0;
-        if (!coarsest_grid) {
-            WingboxMultiColoring<Assembler>::apply_coloring(assembler, bsr_data, num_colors, _color_rowp);
-            bsr_data.compute_nofill_pattern();
-        } else {
-            // full LU pattern for coarsest grid
-            bsr_data.AMD_reordering();
-            bsr_data.compute_full_LU_pattern(10.0, false);
-        }
-        auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
-        assembler.moveBsrDataToDevice();
-
-        // now compute loads, bcs and assemble kmat
         auto loads = assembler.createVarsVec(my_loads);
         assembler.apply_bcs(loads);
         auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
         auto res = assembler.createVarsVec();
-        auto starta = std::chrono::high_resolution_clock::now();
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_05 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> loads_and_misc_time = end_05 - start_05;
+        
+        // assemble kmat time (TODO : put new methods in here)
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_06 = std::chrono::high_resolution_clock::now();
         assembler.add_jacobian(res, kmat);
         // assembler.apply_bcs(res);
-        assembler.apply_bcs(kmat);
+        assembler.apply_bcs(kmat); // apply bcs should be very small part.. nothing
         CHECK_CUDA(cudaDeviceSynchronize());
-        auto enda = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> assembly_time = enda - starta;
-        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+        auto end_06 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> assemb_kmat_time = end_06 - start_06;
+        printf("\tassemble kmat %.2e, ", assemb_kmat_time.count());
+        if (print_all_times) printf("loads + misc %.2e\n", loads_and_misc_time.count());
+        if (!print_all_times) printf("\b\b\n");
 
-        // build smoother and prolongations
+        // create the smoother
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_07 = std::chrono::high_resolution_clock::now();
         T omega = 1.5; // for GS-SOR
         auto smoother = new Smoother(assembler, kmat, h_color_rowp, omega);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_07 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> create_smoother_time = end_07 - start_07;
+        if (print_all_times) printf("\tcreate smoother %.2e, ", create_smoother_time.count());
+
+        // create prolongation
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_08 = std::chrono::high_resolution_clock::now();
         int ELEM_MAX = 10; // num nearby elements of each fine node for nz pattern construction
         // int ELEM_MAX = 4;
         auto prolongation = new Prolongation(assembler, ELEM_MAX);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_08 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> create_prolong_time = end_08 - start_08;
+        if (print_all_times) printf("create prolong (P1) %.2e, ", create_prolong_time.count());
+
+        // create grid
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_09 = std::chrono::high_resolution_clock::now();
         auto grid = GRID(assembler, prolongation, smoother, kmat, loads);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_09 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> create_grid_time = end_09 - start_09;
+        if (print_all_times) printf("create grid %.2e\n", create_grid_time.count());
 
         if (is_kcycle) {
             kmg->grids.push_back(grid);
         } else {
             mg->grids.push_back(grid);
-            if (coarsest_grid) mg->coarse_solver = new CoarseSolver(assembler, kmat);
+            if (coarsest_grid) {
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto start_10 = std::chrono::high_resolution_clock::now();
+                mg->coarse_solver = new CoarseSolver(assembler, kmat);
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto end_10 = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<double> create_coarse_solver = end_10 - start_10;
+                if (print_all_times) printf("\tcreate coarse solver %.2e\n", create_coarse_solver.count());
+
+            }
         }
+
+        auto end_loc = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> grid_loop_time = end_loc - start_00;
+        printf("\ttotal grid loop time %.2e\n", grid_loop_time.count());
     }
 
     // register the coarse assemblers to the prolongations..
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start_11 = std::chrono::high_resolution_clock::now();
     if (is_kcycle) {
         kmg->template init_prolongations<Basis>();
     } else {
         mg->template init_prolongations<Basis>();
     }
-
-    auto end0 = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> startup_time = end0 - start0;
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto end_11 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> init_prolong_time = end_11 - start_11;
+    printf("total create prolong = %.2e\n", init_prolong_time.count());
 
     T init_resid_nrm = is_kcycle ? kmg->grids[0].getResidNorm() : mg->grids[0].getResidNorm();
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
-    printf("starting v cycle solve\n");
     int pre_smooth = nsmooth, post_smooth = nsmooth;
     // best was V(4,4) before
     // bool print = false;
@@ -197,22 +275,33 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     // bool double_smooth = false;
     bool double_smooth = true; // true tends to be slightly faster sometimes
 
+
     if (is_kcycle) {
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start_12 = std::chrono::high_resolution_clock::now();
         int n_krylov = 500;
         kmg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega2, atol, rtol, print_freq, print);    
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end_12 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> kmg_init = end_12 - start_12;
+        printf("create kmg time = %.2e\n", kmg_init.count());
     }
 
+    auto end0 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> startup_time = end0 - start0;
+
+    
     // fastest is K-cycle usually
-    if (cycle_type == "V") {
+    printf("\nstarting v cycle solve\n");
+    if (cycle_type == "K") {
+        kmg->solve();
+    } else if (cycle_type == "V") {
         mg->vcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, symmetric, time); //(good option)
     } else if (cycle_type == "W") {
         mg->wcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol);
     } else if (cycle_type == "F") {
         mg->fcycle_solve(0, pre_smooth, post_smooth, n_cycles, print, atol, rtol, double_smooth, print_freq, symmetric, time); // also decent
-    } else if (cycle_type == "K") {
-        kmg->solve();
     }
-    
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
@@ -243,128 +332,25 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     }
 }
 
-template <typename T, class Assembler>
-void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
-  
-    using Basis = typename Assembler::Basis;
-    using Physics = typename Assembler::Phys;
-    using Data = typename Physics::Data;
-
-  auto start0 = std::chrono::high_resolution_clock::now();
-
-  TACSMeshLoader mesh_loader{comm};
-  std::string fname = "meshes/aob_wing_L" + std::to_string(level) + ".bdf";
-  mesh_loader.scanBDFFile(fname.c_str());
-
-  //   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
-  double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties
-
-  // make the assembler from the uCRM mesh
-  auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
-
-  // TODO : set this in from optimized design from AOB case
-
-  // BSR factorization
-  auto& bsr_data = assembler.getBsrData();
-  double fillin = 10.0;  // 10.0
-  bool print = true;
-  bsr_data.AMD_reordering();
-
-//   // TRY INSTEAD Mc REORDERING
-//   int num_colors, *_color_rowp, *nodal_num_comps, *node_geom_ind;
-//   GRID::get_nodal_geom_indices(assembler, nodal_num_comps, node_geom_ind);
-//   bsr_data.multicolor_junction_reordering_v2(node_geom_ind, num_colors, _color_rowp);
-
-  bsr_data.compute_full_LU_pattern(fillin, print);
-  assembler.moveBsrDataToDevice();
-
-  // get the loads
-  int nvars = assembler.get_num_vars();
-  int nnodes = assembler.get_num_nodes();
-  HostVec<T> h_loads(nvars);
-  double load_mag = 10.0;
-  double *h_loads_ptr = h_loads.getPtr();
-  for (int inode = 0; inode < nnodes; inode++) {
-    h_loads_ptr[6 * inode + 2] = load_mag;
-  }
-  auto loads = h_loads.createDeviceVec();
-  assembler.apply_bcs(loads);
-
-  // setup kmat and initial vecs
-  auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
-  auto soln = assembler.createVarsVec();
-  auto res = assembler.createVarsVec();
-  auto vars = assembler.createVarsVec();
-
-  // assemble the kmat
-  assembler.set_variables(vars);
-  assembler.add_jacobian(res, kmat);
-  assembler.apply_bcs(res);
-  assembler.apply_bcs(kmat);
-
-  CHECK_CUDA(cudaDeviceSynchronize());
-  auto start1 = std::chrono::high_resolution_clock::now();
-
-  // solve the linear system
-  CUSPARSE::direct_LU_solve(kmat, loads, soln);
-
-  CHECK_CUDA(cudaDeviceSynchronize());
-  auto end1 = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double> solve_time = end1 - start1;
-
-  size_t bytes_per_double = sizeof(double);
-  double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-  printf("direct LU solve on #dof %d, uses memory(MB) %.2e in %.2e sec\n", nvars, mem_mb, solve_time.count());
-
-  // print some of the data of host residual
-  auto h_soln = soln.createHostVec();
-  printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/aob_direct_L" + std::to_string(level) + ".vtk");
-
-  // free data
-  assembler.free();
-  h_loads.free();
-  kmat.free();
-  soln.free();
-  res.free();
-  vars.free();
-  h_soln.free();
-}
-
-template <typename T, class Assembler>
-void gatekeeper_method(bool is_multigrid, MPI_Comm &comm, int level, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
-    if (is_multigrid) {
-        solve_linear_multigrid<T, Assembler>(comm, level, SR, nsmooth, ninnercyc, cycle_type);
-    } else {
-        solve_linear_direct<T, Assembler>(comm, level, SR);
-    }
-}
-
 int main(int argc, char **argv) {
-
     // Intialize MPI and declare communicator
     MPI_Init(&argc, &argv);
     MPI_Comm comm = MPI_COMM_WORLD;
 
     // DEFAULTS
-    int level = 3; // level mesh to solve..
-    bool is_multigrid = true;
-    // bool is_debug = false;
+    int level = 4; // level mesh to solve..
     double SR = 100.0;
     int nsmooth = 4; // typically faster right now
     int ninnercyc = 2; // inner V-cycles to precond K-cycle
     std::string cycle_type = "K"; // "V", "F", "W", "K"
-    std::string elem_type = "CFI4"; // 'MITC4', 'CFI4', 'CFI9'
+    std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
         char* arg = argv[i];
         to_lowercase(arg);
 
-        if (strcmp(arg, "direct") == 0) {
-            is_multigrid = false;
-        } else if (strcmp(arg, "mg") == 0) {
-            is_multigrid = true;
-        } else if (strcmp(arg, "--sr") == 0) {
+        if (strcmp(arg, "--sr") == 0) {
             if (i + 1 < argc) {
                 SR = std::atof(argv[++i]);
             } else {
@@ -422,25 +408,37 @@ int main(int argc, char **argv) {
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
-    printf("AOB mesh with %s elements, level %d and SR %.2e\n------------\n", elem_type.c_str(), level, SR);
-    if (elem_type == "MITC4") {
-        using Basis = LagrangeQuadBasis<T, Quad, 2>;
-        using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        gatekeeper_method<T, Assembler>(is_multigrid, comm, level, SR, nsmooth, ninnercyc, cycle_type);
-    } else if (elem_type == "CFI4") {
-        using Basis = ChebyshevQuadBasis<T, Quad, 1>;
-        using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        gatekeeper_method<T, Assembler>(is_multigrid, comm, level, SR, nsmooth, ninnercyc, cycle_type);
-    } else if (elem_type == "CFI9") {
-        using Basis = ChebyshevQuadBasis<T, Quad, 2>;
-        using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        gatekeeper_method<T, Assembler>(is_multigrid, comm, level, SR, nsmooth, ninnercyc, cycle_type);
-    } else {
-        printf("ERROR : didn't run anything, elem type not in available types (see main function)\n");
-    }
+    // // for faster debugging and compile time, just uncomment this and comment below section out (only compiles a single element)
+    // printf("AOB mesh with MITC4 elements, level %d and SR %.2e\n------------\n", level, SR);
+    // using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    // using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+    // time_wing_multigrid<T, Assembler>(comm, level, SR, nsmooth, ninnercyc, cycle_type);
 
-    // TBD multigrid solve..
+    // for faster debugging, just uncomment this and comment below section out
+    printf("AOB mesh with CFI4 elements, level %d and SR %.2e\n------------\n", level, SR);
+    using Basis = ChebyshevQuadBasis<T, Quad, 1>;
+    using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+    time_wing_multigrid<T, Assembler>(comm, level, SR, nsmooth, ninnercyc, cycle_type);
+
+    // printf("AOB level %d mesh with %s elements, and SR %.2e\n------------\n", level, elem_type.c_str(), SR);
+    // if (elem_type == "MITC4") {
+    //     using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    //     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+    //     time_wing_multigrid<T, Assembler>(comm, level, SR, nsmooth, ninnercyc, cycle_type);
+    // } else if (elem_type == "CFI4") {
+    //     using Basis = ChebyshevQuadBasis<T, Quad, 1>;
+    //     using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+    //     time_wing_multigrid<T, Assembler>(comm, level, SR, nsmooth, ninnercyc, cycle_type);
+    // } else if (elem_type == "CFI9") {
+    //     using Basis = ChebyshevQuadBasis<T, Quad, 2>;
+    //     using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
+    //     time_wing_multigrid<T, Assembler>(comm, level, SR, nsmooth, ninnercyc, cycle_type);
+    // } else {
+    //     printf("ERROR : didn't run anything, elem type not in available types (see main function)\n");
+    // }
 
     MPI_Finalize();
     return 0;
-};
+
+    
+}
