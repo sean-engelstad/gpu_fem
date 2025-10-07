@@ -40,7 +40,8 @@ __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[
 
         // compute rotation matrix at this node
         T C[9], tmp[9];
-        Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
+        // Director::template computeRotationMat<vars_per_node, 1>(&vars[vars_per_node * inode], C);
+        Director::template computeRotationMatSinglePt(&vars[vars_per_node * inode + Director::offset], C);
 
         // compute Ct = T^T * C * T
         using MatOp = A2D::MatOp;
@@ -65,6 +66,7 @@ __HOST_DEVICE__ void ShellComputeDrillStrain(const T quad_pt[], const T refAxis[
     Basis::template interpFields<1, 1>(quad_pt, etn, et);
 
 }  // end of method ShellComputeDrillStrain
+
 
 template <typename T, int vars_per_node, class Data, class Basis, class Director>
 __HOST_DEVICE__ void ShellComputeDrillStrainHfwd(const T quad_pt[], const T refAxis[],
@@ -117,8 +119,10 @@ __HOST_DEVICE__ void ShellComputeDrillStrainSens(const T quad_pt[], const T refA
             A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, C_bar);
 
             // reverse C(vars) to C_bar => res
-            Director::template computeRotationMatSens<vars_per_node, 1>(
-                C_bar, &res[vars_per_node * inode]);
+            // Director::template computeRotationMatSens<vars_per_node, 1>(
+            //     C_bar, &res[vars_per_node * inode]);
+            Director::template computeRotationMatSinglePtSens(
+                C_bar, &res[vars_per_node * inode + Director::offset]);
         }
 
         // backprop u0x_bar to u0xn_bar^T

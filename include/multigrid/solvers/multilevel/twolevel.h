@@ -11,6 +11,9 @@ public:
     MultigridTwoLevelSolver(GRID *fine_grid, GRID *coarse_grid, BaseSolver *coarse_solver_, SolverOptions options) : 
         fine_grid(fine_grid), coarse_grid(coarse_grid), coarse_solver(coarse_solver_), options(options) { }
 
+    // nothing
+    void update_after_assembly() {}
+
     void solve(DeviceVec<T> rhs, DeviceVec<T> soln, bool check_conv = false) {
         // printf("in subpsace solve\n");
 
@@ -27,15 +30,15 @@ public:
             // printf("icycle %d / %d\n", icycle, options.ncycles);
 
             // presmooth and restrict
-            fine_grid->smoothDefect(options.nsmooth, options.debug, options.nsmooth-1, options.omega, options.symmetric);
-            coarse_grid->restrict_defect(fine_grid->nelems, fine_grid->d_iperm, fine_grid->d_defect);
+            fine_grid->smoothDefect(options.nsmooth, options.debug, options.nsmooth-1);
+            coarse_grid->restrict_defect(fine_grid->d_defect);
 
             // coarse grid solve
             coarse_solver->solve(coarse_grid->d_defect, coarse_grid->d_soln);
 
             // prolongate and postsmooth
-            fine_grid->prolongate(coarse_grid->d_iperm, coarse_grid->d_soln);
-            fine_grid->smoothDefect(options.nsmooth, options.debug, options.nsmooth-1, options.omega, options.symmetric);
+            fine_grid->prolongate(coarse_grid->d_soln);
+            fine_grid->smoothDefect(options.nsmooth, options.debug, options.nsmooth-1);
 
             // check convergence if flag on
             if (check_conv || options.print) {

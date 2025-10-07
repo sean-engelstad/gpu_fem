@@ -10,14 +10,15 @@ public:
 
     MultilevelKcycleSolver() = default;
 
-    // TODO : put some of these methods for multilevel in a base multilevel solver class
     template <class Basis>
-    void init_unstructured(int ELEM_MAX = 4) {
-        /* initialize unstructured grid maps */
-        for (int ilevel = 0; ilevel < getNumLevels() - 1; ilevel++) {
-            grids[ilevel].template init_unstructured_grid_maps<Basis>(grids[ilevel + 1], ELEM_MAX);
+    void init_prolongations() {
+        /* pass in coarse assembler data for each prolongation operator */
+        // 0 is the finest grid, nlevels-1 is the coarsest grid here
+        printf("create prolongation nz pattern\n");
+        for (int ilevel = 0; ilevel < getNumLevels()-1; ilevel++) {
+            grids[ilevel].prolongation->init_coarse_data(grids[ilevel+1].assembler);
+            grids[ilevel+1].restriction = grids[ilevel].prolongation; // copy prolong to restriction on coarser grid
         }
-        // setup = true;
     }
 
     int getNumLevels() { return grids.size(); }
@@ -37,7 +38,16 @@ public:
         }
     }
 
-    void init_outer_solver(int n_smooth, int n_cycles, int n_krylov, T omega = 1.0, T atol = 1e-6, T rtol = 1e-6, int print_freq = 1, bool print = true, bool symmetric = false, bool double_smooth = false) {
+    void update_after_assembly() {
+        /* update matrices after new assembly */
+        int num_levels = getNumLevels();
+        for (int ilevel = 0; ilevel < num_levels; ilevel++) {
+            grids[ilevel].update_after_assembly();
+        }
+        if (coarse_solver) coarse_solver->update_after_assembly();
+    }
+
+    void init_outer_solver(int n_smooth, int n_cycles, int n_krylov, T omega = 1.0, T atol = 1e-6, T rtol = 1e-6, int print_freq = 1, bool print = true, bool double_smooth = false) {
         // initialize objects, so we just do K-cycle on outer level
 
         int nvcyc_inner = 1, nvcyc_outer = n_cycles, nkcyc_inner = 2, nkcyc_outer = n_krylov;
@@ -50,7 +60,8 @@ public:
         auto inner_subspaceOptions = SolverOptions(omega, n_smooth, nvcyc_inner);
         auto outer_subspaceOptions = SolverOptions(omega, n_smooth, nvcyc_outer);
         auto innerKrylovOptions = SolverOptions(omega, 0, nkcyc_inner);
-        auto outerKrylovOptions = SolverOptions(omega, 0, nkcyc_outer, symmetric, atol, rtol, print_freq);
+        bool symmetric = false;
+        auto outerKrylovOptions = SolverOptions(omega, 0, nkcyc_outer, false, atol, rtol, print_freq);
         outerKrylovOptions.print = print;
 
         init_solvers(inner_subspaceOptions, outer_subspaceOptions, innerKrylovOptions, outerKrylovOptions, just_outer_krylov, double_smooth);
@@ -67,7 +78,7 @@ public:
         for (int ilevel = nlevels - 1; ilevel >= 0; ilevel--) {
             if (ilevel == nlevels-1) {
                 // create coarse grid direct solver
-                BaseSolver *coarse_solver = new CoarseSolver(&grids[ilevel]);
+                coarse_solver = new CoarseSolver(grids[ilevel].assembler, grids[ilevel].Kmat);
                 solvers.push_back(coarse_solver);
             } else {
                 if (just_outer_krylov) {
@@ -125,6 +136,7 @@ public:
 
 // private:
     BaseSolver *outer_solver;
+    BaseSolver *coarse_solver;
     std::vector<BaseSolver*> solvers; // stored coarse to fine 
     std::vector<GRID> grids; // stored fine to coarse
 };

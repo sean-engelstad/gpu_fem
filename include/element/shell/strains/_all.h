@@ -8,3 +8,7 @@
 #include "mitc_tying_strains.h"
 #include "full_tying_strains.h"
 #include "bending_strains.h"
+
+// newer versions
+#include "drill_strains2.h"
+#include "bending_strains2.h"

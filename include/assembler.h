@@ -4,25 +4,29 @@
 
 #include "chrono"
 #include "cuda_utils.h"
-#include "element/base_elem_group.h"
 #include "mesh/TACSMeshLoader.h"
+
+#ifdef USE_GPU
+#include "assembler.cuh"
+#endif // USE_GPU
 
 // linear algebra formats
 #include "linalg/bsr_data.h"
 #include "linalg/vec.h"
 #include "optimization/analysis_function.h"
 
-template <typename T_, typename ElemGroup, template <typename> class Vec,
-          template <typename> class Mat_>
+template <typename ElemGroup, typename T_, typename Basis_, typename Phys_, 
+    template <typename> class Vec, template <typename> class Mat_>
 class ElementAssembler {
    public:
     using T = T_;
-    using Geo = typename ElemGroup::Geo;
-    using Basis = typename ElemGroup::Basis;
-    using Phys = typename ElemGroup::Phys;
+    using Basis = Basis_;
+    using Geo = typename Basis_::Geo;
+    using Phys = Phys_;
     using Data = typename Phys::Data;
     using Mat = Mat_<Vec<T>>;
     using MyFunction = AnalysisFunction<T, Vec>;
+    using DerivedAssembler = ElemGroup;
 
     template <typename U>
     using VecType = Vec<U>;
@@ -44,7 +48,7 @@ class ElementAssembler {
                      HostVec<int> &bcs, HostVec<Data> &physData, int32_t num_components_ = 0,
                      HostVec<int> elem_component = HostVec<int>(0));
     void moveBsrDataToDevice();
-    static ElementAssembler createFromBDF(TACSMeshLoader &mesh_loader, Data single_data);
+    static DerivedAssembler createFromBDF(TACSMeshLoader &mesh_loader, Data single_data);
     __HOST__ void apply_bcs(Vec<T> &vec, bool can_print = false);
     void apply_bcs(Mat &mat, bool can_print = false);
 #ifdef USE_GPU
@@ -140,7 +144,7 @@ class ElementAssembler {
         dvs.free();
     }
 
-   private:
+   protected:
     int32_t num_geo_nodes;
     int32_t num_vars_nodes;
     int32_t num_elements;  // Number of elements of this type
@@ -154,9 +158,9 @@ class ElementAssembler {
     BsrData bsr_data;
 };  // end of ElementAssembler class declaration
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-ElementAssembler<T, ElemGroup, Vec, Mat>::ElementAssembler(
+ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::ElementAssembler(
     int32_t num_geo_nodes_, int32_t num_vars_nodes_, int32_t num_elements_,
     HostVec<int32_t> &geo_conn, HostVec<int32_t> &vars_conn, HostVec<T> &xpts, HostVec<int> &bcs,
     HostVec<Data> &physData, int32_t num_components_, HostVec<int> elem_components)
@@ -208,9 +212,9 @@ ElementAssembler<T, ElemGroup, Vec, Mat>::ElementAssembler(
 #endif  // end of USE_GPU or not USE_GPU check
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-ElementAssembler<T, ElemGroup, Vec, Mat> ElementAssembler<T, ElemGroup, Vec, Mat>::createFromBDF(
+ElemGroup ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::createFromBDF(
     TACSMeshLoader &mesh_loader, Data single_data) {
     int vars_per_node = Phys::vars_per_node;  // input
 
@@ -231,25 +235,24 @@ ElementAssembler<T, ElemGroup, Vec, Mat> ElementAssembler<T, ElemGroup, Vec, Mat
     // printf("num_components = %d\n", num_components);
 
     // call base constructor
-    return ElementAssembler(num_nodes, num_nodes, num_elements, elem_conn_vec, elem_conn_vec,
+    return ElemGroup(num_nodes, num_nodes, num_elements, elem_conn_vec, elem_conn_vec,
                             xpts_vec, bcs_vec, physData_vec, num_components, elem_components_vec);
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::moveBsrDataToDevice() {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::moveBsrDataToDevice() {
 #ifdef USE_GPU
     this->bsr_data = bsr_data.createDeviceBsrData();
 #endif
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass() {
+T ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_mass() {
 
     using Quadrature = typename ElemGroup::Quadrature;
     constexpr int32_t elems_per_block = ElemGroup::res_block.x;
-
 #ifdef USE_GPU
 
     // temporary mass device pointer (for adding up total mass)
@@ -270,9 +273,9 @@ T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass() {
 #endif
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass_DVsens(Vec<T> &dfdx) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_mass_DVsens(Vec<T> &dfdx) {
     using Quadrature = typename ElemGroup::Quadrature;
 #ifdef USE_GPU
 
@@ -287,9 +290,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_mass_DVsens(Vec<T> &dfdx
 #endif
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, T safetyFactor,
+T ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_ks_failure(T rho_KS, T safetyFactor,
                                                                 bool smooth, T *_max_fail,
                                                                 T *_sumexp_fail) {
     using Quadrature = typename ElemGroup::Quadrature;
@@ -335,9 +338,9 @@ T ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure(T rho_KS, T safe
 #endif
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::compute_visualization_states(Vec<T> &dvs_out,
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::compute_visualization_states(Vec<T> &dvs_out,
                                                                             Vec<T> &fail_index,
                                                                             Vec<T> &strains,
                                                                             Vec<T> &stresses) {
@@ -364,9 +367,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::compute_visualization_states(Vec<
 #endif
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_KS, T safetyFactor,
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_ks_failure_DVsens(T rho_KS, T safetyFactor,
                                                                           Vec<T> &dfdx,
                                                                           T *_max_fail,
                                                                           T *_sumexp_fail) {
@@ -414,9 +417,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_DVsens(T rho_
 #endif
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_KS, T safetyFactor,
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_ks_failure_SVsens(T rho_KS, T safetyFactor,
                                                                           Vec<T> &dfdu,
                                                                           T *_max_fail,
                                                                           T *_sumexp_fail) {
@@ -467,17 +470,17 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_ks_failure_SVsens(T rho_
 };
 
 // doesn't do anything yet, TODO to write it
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionXptSens(MyFunction &func) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::evalFunctionXptSens(MyFunction &func) {
     func.check_setup();
     // then check function through if statement and make call
     // func.xpt_sens
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(const Vec<T> &psi,
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_adjResProduct(const Vec<T> &psi,
                                                                       Vec<T> &dfdx) {
     using Quadrature = typename ElemGroup::Quadrature;
     // apply bcs to the adjoint vector first
@@ -499,9 +502,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::_compute_adjResProduct(const Vec<
 #endif
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-__HOST__ void ElementAssembler<T, ElemGroup, Vec, Mat>::apply_bcs(Vec<T> &vec, bool can_print) {
+__HOST__ void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::apply_bcs(Vec<T> &vec, bool can_print) {
     if (can_print) {
         printf("apply bcs to vector\n");
     }
@@ -518,9 +521,9 @@ __HOST__ void ElementAssembler<T, ElemGroup, Vec, Mat>::apply_bcs(Vec<T> &vec, b
     }
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::apply_bcs(Mat &mat, bool can_print) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::apply_bcs(Mat &mat, bool can_print) {
     if (can_print) {
         printf("apply bcs to matrix\n");
     }
@@ -537,9 +540,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::apply_bcs(Mat &mat, bool can_prin
     }
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-HostVec<T> ElementAssembler<T, ElemGroup, Vec, Mat>::createVarsHostVec(T *data, bool randomize) {
+HostVec<T> ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::createVarsHostVec(T *data, bool randomize) {
     HostVec<T> h_vec;
     if (data == nullptr) {
         h_vec = HostVec<T>(get_num_vars());
@@ -553,9 +556,9 @@ HostVec<T> ElementAssembler<T, ElemGroup, Vec, Mat>::createVarsHostVec(T *data, 
 }
 
 #ifdef USE_GPU
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-DeviceVec<T> ElementAssembler<T, ElemGroup, Vec, Mat>::createVarsVec(T *data, bool randomize,
+DeviceVec<T> ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::createVarsVec(T *data, bool randomize,
                                                                      bool can_print) {
     if (can_print) {
         printf("begin create vars host vec\n");
@@ -571,32 +574,32 @@ DeviceVec<T> ElementAssembler<T, ElemGroup, Vec, Mat>::createVarsVec(T *data, bo
     return d_vec;
 }
 #else
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-HostVec<T> ElementAssembler<T, ElemGroup, Vec, Mat>::createVarsVec(T *data, bool randomize) {
+HostVec<T> ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::createVarsVec(T *data, bool randomize) {
     return createVarsHostVec(data, randomize);
 }
 #endif
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::set_variables(Vec<T> &newVars) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::set_variables(Vec<T> &newVars) {
     /* set the state variables u => assembler */
     // vars is not reordered, permutations for Kmat, res only happen on assembly
     newVars.copyValuesTo(this->vars);
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::set_acceleration(Vec<T> &newAccel) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::set_acceleration(Vec<T> &newAccel) {
     /* set the accel state variables ddot(u) => assembler */
     // if accel was never set before, now we will include unsteady terms in residual
     newAccel.copyValuesTo(this->accel);
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::set_design_variables(Vec<T> &newDVs) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::set_design_variables(Vec<T> &newDVs) {
 // call kernel function to update the physData of each element, component by component
 #ifdef USE_GPU
 
@@ -618,15 +621,14 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::set_design_variables(Vec<T> &newD
 }
 
 //  template <class ExecParameters>
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T *glob_U, bool can_print) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::add_energy(T *glob_U, bool can_print) {
     auto start = std::chrono::high_resolution_clock::now();
     if (can_print) {
         printf("begin add_energy\n");
     }
 
-    using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
 
 // input is either a device array when USE_GPU or a host array if not USE_GPU
@@ -654,15 +656,14 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_energy(T *glob_U, bool can_pr
 };
 
 //  template <class ExecParameters>
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool can_print) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::add_residual(Vec<T> &res, bool can_print) {
     auto start = std::chrono::high_resolution_clock::now();
     if (can_print) {
         printf("begin add_residual\n");
     }
 
-    using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
 
     res.zeroValues();
@@ -695,9 +696,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_residual(Vec<T> &res, bool ca
 };
 
 //  template <class ExecParameters>
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat_>
-void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat_>::add_jacobian(
     Vec<T> &res, Mat_<Vec<T>> &mat,
     bool can_print) {  // TODO : make this Vec here..
     auto start = std::chrono::high_resolution_clock::now();
@@ -705,7 +706,6 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
         printf("begin add_jacobian\n");
     }
 
-    using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
     using Mat = Mat_<Vec<T>>;
 
@@ -740,15 +740,14 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_jacobian(
     }
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::add_mass_residual(Vec<T> &res, bool can_print) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::add_mass_residual(Vec<T> &res, bool can_print) {
     auto start = std::chrono::high_resolution_clock::now();
     if (can_print) {
         printf("begin add_mass_residual\n");
     }
 
-    using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
 
     res.zeroValues();
@@ -778,9 +777,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::add_mass_residual(Vec<T> &res, bo
 };
 
 //  template <class ExecParameters>
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat_>
-void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_mass_jacobian(
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat_>::add_mass_jacobian(
     Vec<T> &res, Mat_<Vec<T>> &mat,
     bool can_print) {  // TODO : make this Vec here..
     auto start = std::chrono::high_resolution_clock::now();
@@ -788,7 +787,6 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_mass_jacobian(
         printf("begin add_mass_jacobian\n");
     }
 
-    using Phys = typename ElemGroup::Phys;
     using Data = typename Phys::Data;
     using Mat = Mat_<Vec<T>>;
 
@@ -817,18 +815,18 @@ void ElementAssembler<T, ElemGroup, Vec, Mat_>::add_mass_jacobian(
     }
 };
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::setupFunction(MyFunction &func) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::setupFunction(MyFunction &func) {
     // setup num DVs, xpt of new mesh potentially
     int num_dvs = get_num_dvs();
     int num_xpts = get_num_xpts();
     func.init_sens(num_dvs, num_xpts);
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunction(MyFunction &func) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::evalFunction(MyFunction &func) {
     func.check_setup();
     if (func.name == "mass") {
         func.value = _compute_mass();
@@ -843,9 +841,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunction(MyFunction &func) {
 
 // plan to solve adjoint system outside of assembler, maybe can make a template or static method
 // later
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionDVSens(MyFunction &func) {
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::evalFunctionDVSens(MyFunction &func) {
     // df/dx partial term (not total derivative
     func.check_setup();
     if (func.name == "mass") {
@@ -860,9 +858,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionDVSens(MyFunction &fu
     }
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionSVSens(const MyFunction &func,
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::evalFunctionSVSens(const MyFunction &func,
                                                                   Vec<T> &dfdu) {
     // df/du partial term
     func.check_setup();
@@ -878,9 +876,9 @@ void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionSVSens(const MyFuncti
     }
 }
 
-template <typename T, typename ElemGroup, template <typename> class Vec,
+template <typename ElemGroup, typename T, typename Basis, typename Phys, template <typename> class Vec,
           template <typename> class Mat>
-void ElementAssembler<T, ElemGroup, Vec, Mat>::evalFunctionAdjResProduct(const Vec<T> &psi,
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::evalFunctionAdjResProduct(const Vec<T> &psi,
                                                                          MyFunction &func) {
     func.check_setup();
     // add into dfdx that is df/dx += psi^T dR/dx

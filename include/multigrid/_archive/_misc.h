@@ -337,3 +337,4 @@ __global__ static void k_unstruct_restrict(const T *fine_defect_in, const int *d
         }
     }
 }
+

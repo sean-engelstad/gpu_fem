@@ -14,8 +14,10 @@
 #include "element/shell/mitc_shell.h"
 
 // multigrid imports
-#include "multigrid/fea.h"
 #include "multigrid/grid.h"
+#include "multigrid/utils/fea.h"
+#include "multigrid/smoothers/mc_smooth1.h"
+#include "multigrid/prolongation/structured.h"
 // #include "multigrid/solvers/gmg.h"
 
 // new multigrid imports for K-cycles, etc.
@@ -24,7 +26,6 @@
 #include "multigrid/solvers/krylov/bsr_pcg.h"
 #include "multigrid/solvers/multilevel/kcycle.h"
 #include "multigrid/solvers/multilevel/twolevel.h"
-
 #include "multigrid/interface.h"
 
 
@@ -39,19 +40,19 @@ class TacsGpuMultigridSolver {
     using Basis = LagrangeQuadBasis<T, Quad, 2>;
     using Data = ShellIsotropicData<T, false>;
     using Physics = IsotropicShell<T, Data, false>;
-    using ElemGroup = MITCShellElementGroup<T, Director, Basis, Physics>;
-    using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
+    using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
 
     // multigrid objects
-    using Prolongation = StructuredProlongation<PLATE>;
-    using GRID = ShellGrid<Assembler, Prolongation, MULTICOLOR_GS_FAST2, LINE_SEARCH>;
+    using Smoother = MulticolorGSSmoother_V1<Assembler>;
+    using Prolongation = StructuredProlongation<Assembler, PLATE>;
+    using GRID = SingleGrid<Assembler, Prolongation, Smoother, LINE_SEARCH>;
     // using MG = GeometricMultigridSolver<GRID>; // old V-cycle solver
 
     // for K-cycles
-    using DirectSolve = CusparseMGDirectLU<GRID>;
     using KrylovSolve = PCGSolver<T, GRID>;
     using TwoLevelSolve = MultigridTwoLevelSolver<GRID>;
-    using KMG = MultilevelKcycleSolver<GRID, DirectSolve, TwoLevelSolve, KrylovSolve>;
+    using KMG = MultilevelKcycleSolver<GRID, CoarseSolver, TwoLevelSolve, KrylovSolve>;
     using StructSolver = TacsMGInterface<T, Assembler, KMG>;
 
     // functions
@@ -89,12 +90,49 @@ class TacsGpuMultigridSolver {
             T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
             printf("making grid with nxe %d\n", c_nxe);
 
+            auto &bsr_data = assembler.getBsrData();
+            int num_colors, *_color_rowp;
+
             // make the grid
-            bool full_LU = c_nxe == nxe_min;  // smallest grid is direct solve
-            bool reorder = true;              // color reorder
-            auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
-            mg->grids.push_back(grid);  // add new grid
+            bool full_LU = c_nxe == nxe_min;
+            if (full_LU) {
+                bsr_data.AMD_reordering();
+                bsr_data.compute_full_LU_pattern(10.0, false);
+            } else {
+                bsr_data.multicolor_reordering(num_colors, _color_rowp);
+                bsr_data.compute_nofill_pattern();
+            }
+            // auto grid = *GRID::buildFromAssembler(assembler, my_loads, full_LU, reorder);
+            auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
+
+            assembler.moveBsrDataToDevice();
+            auto loads = assembler.createVarsVec(my_loads);
+            assembler.apply_bcs(loads);
+            auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+            auto res = assembler.createVarsVec();
+            int N = res.getSize();
+
+            // assemble the kmat
+            auto start0 = std::chrono::high_resolution_clock::now();
+            assembler.add_jacobian(res, kmat);
+            // assembler.apply_bcs(res);
+            assembler.apply_bcs(kmat);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            auto end0 = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> assembly_time = end0 - start0;
+            printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
+            // build smoother and prolongations..
+            auto smoother = new Smoother(assembler, kmat, h_color_rowp, omega);
+            auto prolongation = new Prolongation(assembler);
+            auto grid = GRID(assembler, prolongation, smoother, kmat, loads);
+
+            mg->grids.push_back(grid);
+            if (full_LU) mg->coarse_solver = new CoarseSolver(assembler, kmat);
         }
+
+        mg->template init_prolongations<Basis>();
+        // end of startup
 
         // int n_cycles = 200, pre_smooth = 1, post_smooth = 1, print_freq = 3;
         bool print = true;
@@ -104,14 +142,7 @@ class TacsGpuMultigridSolver {
         T atol = 1e-6, rtol = 1e-6;
 
         mg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print);
-        // mg.solve(); // try solve here..
-
-        // now make the solver interface
-        // solver = std::make_unique<StructSolver>(mg, print);
         solver = new StructSolver(*mg, print);
-        
-        // solver->set_mg_solver_settings(rtol, atol, n_cycles, pre_smooth, post_smooth, print_freq,
-                                    //    double_smooth, omega);
 
         // get struct loads on finest grid
         auto fine_grid = mg->grids[0];
@@ -167,11 +198,6 @@ class TacsGpuMultigridSolver {
     void solve() {
         if (dvs_changed) {
             printf("design changed, new solve\n");
-
-            // debugging
-            // auto h_loads = d_loads.createHostVec();
-            // printf("h_loads:");
-            // printVec<T>(h_loads.getSize(), h_loads.getPtr());
 
             solver->solve(d_loads);
             solver->copy_solution_out(soln);

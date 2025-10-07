@@ -10,7 +10,7 @@ namespace A2D {
 
 enum class ShellStrainType { LINEAR, NONLINEAR };
 
-template <typename T>
+template <typename T> //, bool tying, bool bending, bool drill>
 A2D_FUNCTION void LinearShellStrainCore(const T u0x[], const T u1x[], const T e0ty[], const T et[],
                                         T e[]) {
     // Evaluate the in-plane strains from the tying strain expressions

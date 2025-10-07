@@ -1,4 +1,4 @@
-
+#pragma once
 #include "cuda_utils.h"
 
 /* old default kernels (not as well optimized), nomenclature is k_ for kernel function */
