@@ -1,5 +1,7 @@
 #pragma once
 #include "cuda_utils.h"
+#include "strains/basic_utils.h"
+#include "strains/strain_types.h"
 
 // add_jacobian fast kernel
 // -------------------
@@ -14,6 +16,7 @@ __GLOBAL__ static void k_add_jacobian_fast(int32_t vars_num_nodes, int32_t num_e
 
     int global_elem = blockIdx.x;
     bool active_thread = global_elem < num_elements;
+    if (!active_thread) return;
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
     int nthreads = blockDim.x * blockDim.y;
 
@@ -41,52 +44,80 @@ __GLOBAL__ static void k_add_jacobian_fast(int32_t vars_num_nodes, int32_t num_e
                                 Basis::num_nodes, vars_elem_conn, &block_vars[0]);
      __syncthreads();
 
-    if (active_thread) {
-        // memset may not work well on GPU
-        // memset(&block_mat[0], 0.0, vars_per_elem2 * sizeof(T));
-        if (tid == 0) block_data[0] = _phys_data[global_elem];
-    }
+    if (tid == 0) block_data[0] = _phys_data[global_elem];
     __syncthreads();
 
     int ideriv = threadIdx.y;
     int iquad = threadIdx.x;
 
-    // if (global_elem == 0) {
-    //     printf("tid %d; iquad %d, ideriv %d\n", tid, iquad, ideriv);
-    // }
-
-    T local_res[vars_per_elem];
-    memset(local_res, 0.0, sizeof(T) * vars_per_elem);
-    
     T local_mat_col[vars_per_elem];
     memset(local_mat_col, 0.0, sizeof(T) * vars_per_elem);
 
-    // old call
-    ElemGroup::template add_element_quadpt_jacobian_col<Data>(
-        active_thread, iquad, ideriv, block_xpts, block_vars,
-        block_data[0], local_res, local_mat_col);
+    constexpr bool fast_method = true;
+    // constexpr bool fast_method = false;
 
-    __syncthreads();
+    // OLD slower calls
+    if constexpr (!fast_method) {
+        T local_res[vars_per_elem];
+        memset(local_res, 0.0, sizeof(T) * vars_per_elem);
 
-    // call the device function to get one column of the element stiffness
-    // matrix at one quadrature point
-    // ElemGroup::template add_elem_drill_strain_jacobian_col<Data>(
-    //     active_thread, iquad, ideriv, &block_xpts[0], &block_vars[0], 
-    //     block_data, local_mat_col
-    // );
-    // __syncthreads(); // splits up & reduces registers, alternative to no_inline functions
+        // used here for verification + 
+        constexpr STRAIN strain = ALL;
+        // constexpr STRAIN strain = DRILL;
 
-    // ElemGroup::template add_elem_bending_strain_jacobian_col<Data>(
-    //     active_thread, iquad, ideriv, &block_xpts[0], &block_vars[0], 
-    //     block_data, local_mat_col
-    // );
-    // __syncthreads();
+        ElemGroup::template add_element_quadpt_jacobian_col<Data, strain>(
+            active_thread, iquad, ideriv, block_xpts, block_vars,
+            block_data[0], local_res, local_mat_col);
+        __syncthreads();
+    }
 
-    // ElemGroup::template add_elem_tying_strain_jacobian_col<Data>(
-    //     active_thread, iquad, ideriv, &block_xpts[0], &block_vars[0], 
-    //     block_data, local_mat_col
-    // );
-    // __syncthreads();
+    // NEW faster call
+    if constexpr (fast_method) {
+        // some prelim computations with xpts and quadrature point
+        T pt[2];
+        T weight = Quadrature::getQuadraturePoint(iquad, pt);
+        T fn[nxpts_per_elem];
+        ShellComputeNodeNormals<T, Basis>(block_xpts, fn);
+        T detXd = getDetXd<T, Basis>(pt, block_xpts, fn);
+        T scale = detXd * weight; // scale for energy derivatives
+        __syncthreads();
+        T XdinvT[9], Tmat[9], XdinvzT[9];
+        computeShellRotations<T, Basis, Data>(pt, block_data[0].refAxis, block_xpts, fn, Tmat, XdinvT, XdinvzT);
+        __syncthreads();
+
+        T p_vars[vars_per_elem];
+        memset(p_vars, 0.0, sizeof(T) * vars_per_elem);
+        p_vars[ideriv] = 1.0;
+
+        // // compute drill strains
+        ElemGroup::template add_element_quadpt_jacobian_col_fast<Data, DRILL>(
+            pt, scale, block_xpts, fn, 
+            XdinvT, Tmat, XdinvzT, block_data[0],
+            block_vars, p_vars, local_mat_col);
+        __syncthreads();
+
+        // // compute bending strains
+        ElemGroup::template add_element_quadpt_jacobian_col_fast<Data, BENDING>(
+            pt, scale, block_xpts, fn, 
+            XdinvT, Tmat, XdinvzT, block_data[0],
+            block_vars, p_vars, local_mat_col);
+        __syncthreads();
+
+        // // // compute tying strains
+        ElemGroup::template add_element_quadpt_jacobian_col_fast<Data, TYING>(
+            pt, scale, block_xpts, fn, 
+            XdinvT, Tmat, XdinvzT, block_data[0],
+            block_vars, p_vars, local_mat_col);
+        __syncthreads();
+    }
+
+    // if (blockIdx.x == 0 && tid == 0) {
+    //     printf("local mat col: ");
+    //     for (int i = 0; i < 8; i++) {
+    //         printVec<T>(3, &local_mat_col[3 * i]);
+    //     }
+    // }
+
 
     /* warp shuffle here.. */
     int lane = tid % 32;
@@ -100,6 +131,7 @@ __GLOBAL__ static void k_add_jacobian_fast(int32_t vars_num_nodes, int32_t num_e
         lane_val = __shfl_sync(0xFFFFFFFF, lane_val, group_start);
         local_mat_col[idof] = lane_val;
     }
+    __syncthreads();
 
     int elem_block_row = ideriv / Phys::vars_per_node;
     int elem_inner_row = ideriv % Phys::vars_per_node;

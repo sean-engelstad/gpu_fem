@@ -10,7 +10,7 @@
 // this is so that we are free to call the linear part in Hfwd and Hrev
 
 template <typename T, class Physics, class Basis, bool is_nonlinear>
-__HOST_DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[], const T fn[], const T vars[],
+__DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[], const T fn[], const T vars[],
                                                const T d[], T gty[]) {
     
     static constexpr int vars_per_node = Physics::vars_per_node;
@@ -40,6 +40,7 @@ __HOST_DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[],
     if constexpr (is_nonlinear) {
         gty[1] += 0.5 * A2D::VecDotCore<T, 3>(Uxi, Ueta);
     }
+    __syncthreads();
 
     // 2 transverse shear strains (and g33 = 0) 
     //    cause inextensible director (by defn)
@@ -67,7 +68,7 @@ __HOST_DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[],
 }  // end of computeFullTyingStrain
 
 template <typename T, class Physics, class Basis>
-__HOST_DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpts[], const T fn[], const T vars[],
+__DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpts[], const T fn[], const T vars[],
                                                    const T d[], const T p_vars[], const T p_d[],
                                                    T p_gty[]) {
     
@@ -79,6 +80,7 @@ __HOST_DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpt
         return;  // exit early for linear part
     }
     // otherwise continue and get nonlinear part of the derivatives
+    __syncthreads();
 
     static constexpr int vars_per_node = Physics::vars_per_node;
 
@@ -99,6 +101,8 @@ __HOST_DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpt
     // g12 strain
     p_gty[1] += 0.5 * A2D::VecDotCore<T, 3>(Uxi, p_Ueta);
     p_gty[1] += 0.5 * A2D::VecDotCore<T, 3>(Ueta, p_Uxi);
+
+    __syncthreads();
 
     // 2 transverse shear strains (and g33 = 0) 
     //    cause inextensible director (by defn)
@@ -121,7 +125,7 @@ __HOST_DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpt
 }  // end of computeFullTyingStrainHfwd
 
 template <typename T, class Physics, class Basis, bool is_nonlinear>
-__HOST_DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpts[], const T fn[], const T vars[],
+__DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpts[], const T fn[], const T vars[],
                                                    const T d[], const T gty_bar[], T res[], T d_bar[]) {
     
     static constexpr int vars_per_node = Physics::vars_per_node;
@@ -130,6 +134,7 @@ __HOST_DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpt
     T Uxi[3], Ueta[3], Xxi[3], Xeta[3];
     Basis::template interpFieldsGrad<3, 3>(pt, Xpts, Xxi, Xeta);
     Basis::template interpFieldsGrad<vars_per_node, 3>(pt, vars, Uxi, Ueta);
+    __syncthreads();
 
     // backprop senses for interp
     A2D::Vec<T, 3> Uxi_bar, Ueta_bar, d0_bar;
@@ -156,6 +161,7 @@ __HOST_DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpt
         A2D::VecAddCore<T, 3>(0.5 * gty_bar[1], Uxi, Ueta_bar.get_data());
         A2D::VecAddCore<T, 3>(0.5 * gty_bar[1], Ueta, Uxi_bar.get_data());
     }
+    __syncthreads();
 
     // 2 transverse shear strains (and g33 = 0) 
     //    cause inextensible director (by defn)
@@ -181,6 +187,8 @@ __HOST_DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpt
         A2D::VecAddCore<T, 3>(0.5 * gty_bar[2], d0, Uxi_bar.get_data());
     }
 
+    __syncthreads();
+
     // g33 strain == 0
 
     // final backprop from interp levels to element residual
@@ -196,7 +204,7 @@ __HOST_DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpt
 }  // end of computeFullTyingStrainSens
 
 template <typename T, class Physics, class Basis>
-__HOST_DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpts[], const T fn[], const T vars[],
+__DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpts[], const T fn[], const T vars[],
                                                    const T d[], const T p_vars[], const T p_d[],
                                                    const T gty_bar[], const T h_gty[], T matCol[], T h_d[]) {
     // 2nd order backprop terms, linear part
@@ -206,6 +214,7 @@ __HOST_DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpt
     if constexpr (!is_nonlinear) {
         return;
     }
+    __syncthreads();
     // remaining part is nonlinear mixed term
     // ybar_i * d^2y_i/dxk/dxl * xdot_l mixed term with forward inputs here
     // only valid for nonlinear case (aka uses gradient and second derivs of this step, nonlinear part)
@@ -231,6 +240,8 @@ __HOST_DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpt
     // g12 strain
     A2D::VecAddCore<T, 3>(0.5 * gty_bar[1], p_Uxi, Ueta_hat.get_data());
     A2D::VecAddCore<T, 3>(0.5 * gty_bar[1], p_Ueta, Uxi_hat.get_data());
+
+    __syncthreads();
 
     // 2 transverse shear strains (and g33 = 0) 
     //    cause inextensible director (by defn)
@@ -258,4 +269,12 @@ __HOST_DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpt
 
     // backprop for d0 interp step
     Basis::template interpFieldsTranspose<3, 3>(pt, d0_hat.get_data(), h_d);
+}
+
+template <typename T>
+__HOST_DEVICE__ static void computeEngineerTyingStrains(A2D::SymMat<T, 3> &e0ty) {
+    // double the shear tying strains
+    e0ty[1] *= 2.0; // e12 membrane
+    e0ty[2] *= 2.0; // e13 trv shear
+    e0ty[4] *= 2.0; // e23 trv shear
 }

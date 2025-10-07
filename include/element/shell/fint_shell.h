@@ -2,8 +2,9 @@
 
 #include "../../assembler.h"
 #include "a2dcore.h"
-#include "a2d/a2dshell.h"
 #include "strains/_all.h"
+#include "a2d/a2dsymmatrotateframe.h"
+#include "cuda_utils.h"
 
 #include "_shell.cuh"
 
@@ -257,13 +258,17 @@ class FullyIntegratedShellAssembler : public ElementAssembler<FullyIntegratedShe
                                                                          res);
     }
 
-    template <class Data, bool bending = true, bool tying = true, bool drill = true>
+    template <class Data, STRAIN strain = ALL>
     __HOST_DEVICE__ static void add_element_quadpt_jacobian_col(
         const bool active_thread, const int iquad, const int ivar, const T xpts[xpts_per_elem],
         const T vars[dof_per_elem], const Data physData, T res[dof_per_elem],
         T matCol[dof_per_elem]) {
         
         if (!active_thread) return;
+
+        constexpr bool bending = strain == BENDING || strain == ALL;
+        constexpr bool tying = strain == TYING || strain == ALL;
+        constexpr bool drill = strain == DRILL || strain == ALL;
 
         // data to store in forwards + backwards section
         T fn[3 * num_nodes];  // node normals
@@ -336,7 +341,7 @@ class FullyIntegratedShellAssembler : public ElementAssembler<FullyIntegratedShe
                 computeBendingDispGradHfwd<T, vars_per_node, Basis, Data>(
                     pt, physData.refAxis, xpts, p_vars.get_data(), fn, p_d, 
                     XdinvT, u0x.pvalue().get_data(), u1x.pvalue().get_data());
-            }    
+            }
 
             // compute tying strain
             if constexpr (tying) {
@@ -420,172 +425,167 @@ class FullyIntegratedShellAssembler : public ElementAssembler<FullyIntegratedShe
         }  // end of hreverse scope (2nd order derivs)
     }      // add_element_quadpt_jacobian_col
 
-    template <class Data, bool bending = true, bool tying = true, bool drill = true>
-    __HOST_DEVICE__ static void add_element_quadpt_jacobian_col_fast(
-        const bool active_thread, const int iquad, const int ivar, const T xpts[xpts_per_elem],
-        const T vars[dof_per_elem], const Data physData, T res[dof_per_elem],
+    template <class Data, STRAIN strain = ALL>
+    __DEVICE__ static void add_element_quadpt_jacobian_col_fast(
+        const T pt[2], const T &scale,
+        const T xpts[xpts_per_elem], const T fn[xpts_per_elem],
+        const T XdinvT[9], const T Tmat[9], const T XdinvzT[9], const Data &physData, 
+        const T vars[dof_per_elem], const T pvars[dof_per_elem],
         T matCol[dof_per_elem]) {
-        
-        if (!active_thread) return;
+
+        constexpr bool bending = strain == BENDING || strain == ALL;
+        constexpr bool tying = strain == TYING || strain == ALL;
+        constexpr bool drill = strain == DRILL || strain == ALL;
 
         // data to store in forwards + backwards section
-        T fn[3 * num_nodes];  // node normals
-        T pt[2];              // quadrature point
-        T XdinvT[9]; // shell frame rotation matrix
-        T weight = Quadrature::getQuadraturePoint(iquad, pt);
         static constexpr bool is_nonlinear = Phys::is_nonlinear;
-
-        // in-out of forward & backwards section
-        A2D::A2DObj<A2D::Mat<T, 3, 3>> u0x, u1x;
-        A2D::A2DObj<A2D::SymMat<T, 3>> e0ty;
-        A2D::A2DObj<A2D::Vec<T, 1>> et;
-
-        // some prelim computations
-        ShellComputeNodeNormals<T, Basis>(xpts, fn);
-        T detXd = getDetXd<T, Basis>(pt, xpts, fn);
-        T scale = detXd * weight; // scale for energy derivatives
         
-        // if constexpr (tying || bending) {
-        //     computeXdinvT(pt, physData.refAxis, xpts, fn, XdinvT); // TODO : make this method
-        // }
+        if constexpr (bending) {
+            A2D::A2DObj<A2D::Mat<T, 3, 3>> u0x, u1x;
+            A2D::A2DObj<A2D::Vec<T, 3>> ek;
 
-        // forward section (only needed for nonlinear case, p values otherwise)
-        T d[3 * num_nodes];   // need directors in reverse for nonlinear strains
-        if constexpr (is_nonlinear) {
-            
-            if constexpr (drill) {
-                ShellComputeDrillStrain<T, vars_per_node, Data, Basis, Director>(
-                    pt, physData.refAxis, xpts, vars, fn, et.value().get_data());
-            }
-
-            if constexpr (tying || bending) {
+            // forward
+            if constexpr (is_nonlinear) {
+                T d[3 * num_nodes];
                 Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
+                computeBendingDispGrad<T, vars_per_node, Basis>(pt, vars, d, Tmat, XdinvT, XdinvzT,
+                    u0x.value().get_data(), u1x.value().get_data());
+
+                computeBendingStrain<T, is_nonlinear>(
+                    u0x.value().get_data(), u1x.value().get_data(),
+                    ek.value().get_data());
+            }
+            __syncthreads();
+
+            // just code in the linear part right now
+            // pforward
+            T p_d[3 * num_nodes];
+            {
+                Director::template computeDirector<vars_per_node, num_nodes>(pvars, fn, p_d);
+
+                computeBendingDispGrad<T, vars_per_node, Basis>(pt, pvars, p_d, Tmat, XdinvT, XdinvzT,
+                    u0x.pvalue().get_data(), u1x.pvalue().get_data());
+
+                computeBendingStrainHfwd<T, is_nonlinear>(
+                    u0x.value().get_data(), u1x.value().get_data(),
+                    u0x.pvalue().get_data(), u1x.pvalue().get_data(), 
+                    ek.pvalue().get_data());
+            }
+            __syncthreads();
+
+            // 1st order brev (only need ek.bvalue, so no additional steps here)
+            if constexpr (is_nonlinear) {
+                Phys::computeBendingStress(scale, physData, ek.value(), ek.bvalue());
             }
 
-            // get the bending strains
-            if constexpr (bending) {
-                computeBendingDispGrad<T, vars_per_node, Basis, Data>(
-                pt, physData.refAxis, xpts, vars, fn, d, XdinvT, u0x.value().get_data(),
-                u1x.value().get_data());
-            }
+            // 2nd order hrev
+            {
+                Phys::computeBendingStress(scale, physData, ek.pvalue(), ek.hvalue());
 
-            // compute tying strain
-            if constexpr (tying) {
+                computeBendingStrainHrev<T, is_nonlinear>(
+                    ek.hvalue().get_data(), ek.bvalue().get_data(),
+                    u0x.value().get_data(), u1x.value().get_data(),
+                    u0x.pvalue().get_data(), u1x.pvalue().get_data(),
+                    u0x.hvalue().get_data(), u1x.hvalue().get_data());
+
+                A2D::Vec<T, 3 * num_nodes> d_hat;
+                // TODO : change to Hrev when I add nonlinear back in for this part
+                computeBendingDispGradSens<T, vars_per_node, Basis>(pt, Tmat, XdinvT, XdinvzT, 
+                    u0x.hvalue().get_data(), u1x.hvalue().get_data(), 
+                    d_hat.get_data(), matCol); 
+
+                Director::template computeDirectorHrev<vars_per_node, num_nodes>(
+                    fn, d_hat.get_data(), matCol);
+            }
+        }
+
+
+        if constexpr (tying) {
+            // // TODO : only need 1st order obj not 2nd order here since e0ty is linear to energy
+            // // nonlinear part of tying strains happens in earlier step before e0ty
+            A2D::A2DObj<A2D::SymMat<T, 3>> e0ty; 
+
+            // forward section
+            // --------------------------------
+            T d[3 * num_nodes];   // need directors in reverse for nonlinear strains
+            if constexpr (is_nonlinear) {
+                Director::template computeDirector<vars_per_node, num_nodes>(vars, fn, d);
+
                 A2D::SymMat<T, 3> gty;
-                computeFullTyingStrain<T, Phys, Basis, is_nonlinear>(pt, xpts, fn, vars, d, gty.get_data());
+                computeFullTyingStrain<T, Phys, Basis>(pt, xpts, fn, vars, d, gty.get_data());
 
-                // rotate the tying strains
                 A2D::SymMatRotateFrame<T, 3>(XdinvT, gty, e0ty.value());
-            }
-        }  // end of forward scope
 
-        // hforward section (pvalue's)
-        A2D::Vec<T, dof_per_elem> p_vars;
-        p_vars[ivar] = 1.0;  // p_vars is unit vector for current column to compute
-        T p_d[3 * num_nodes];
-        {
-            if constexpr (drill) {
-                ShellComputeDrillStrainHfwd<T, vars_per_node, Data, Basis, Director>(
-                    pt, physData.refAxis, xpts, p_vars.get_data(), fn, et.pvalue().get_data());
+                computeEngineerTyingStrains<T>(e0ty.value());
+                __syncthreads();
             }
 
-            if constexpr (tying || bending) {
-                Director::template computeDirectorHfwd<vars_per_node, num_nodes>(p_vars.get_data(), fn,
-                                                                             p_d);
-            }
+            // pforward section
+            // -------------------------------
+            T p_d[3 * num_nodes];
+            {
+                 Director::template computeDirectorHfwd<vars_per_node, num_nodes>(pvars, fn,
+                                                                                p_d);
 
-            // forward derivs of bending strains
-            if constexpr (bending) {
-                computeBendingDispGradHfwd<T, vars_per_node, Basis, Data>(
-                    pt, physData.refAxis, xpts, p_vars.get_data(), fn, p_d, 
-                    XdinvT, u0x.pvalue().get_data(), u1x.pvalue().get_data());
-            }    
-
-            // compute tying strain
-            if constexpr (tying) {
                 A2D::SymMat<T, 3> p_gty;
-                computeFullTyingStrainHfwd<T, Phys, Basis>(pt, xpts, fn, vars, d, p_vars.get_data(), p_d, p_gty.get_data());
+                computeFullTyingStrainHfwd<T, Phys, Basis>(pt, xpts, fn, vars, d, pvars, p_d, p_gty.get_data());
 
-                // rotate the tying strains with XdinvT frame
                 A2D::SymMatRotateFrame<T, 3>(XdinvT, p_gty, e0ty.pvalue());
+
+                computeEngineerTyingStrains<T>(e0ty.pvalue());
             }
-        }  // end of hforward scope
+            __syncthreads();
 
-        // derivatives over disp grad to strain energy portion
-        // ---------------------
-        Phys::template computeWeakJacobianCol<T>(physData, scale, u0x, u1x, e0ty, et);
-        // ---------------------
-        // begin reverse blocks from strain energy => physical disp grad sens
+            // 1st order brev
+            A2D::SymMat<T, 3> gty_bar;
+            if constexpr (is_nonlinear) {
+                Phys::computeTyingStress(scale, physData, e0ty.value(), e0ty.bvalue());
 
-        // breverse (1st order derivs)
-        A2D::SymMat<T,3> gty_bar;
-        if constexpr (is_nonlinear) {
-            A2D::Vec<T, 3 * num_nodes> d_bar;  // zeroes out on init
+                computeEngineerTyingStrains<T>(e0ty.bvalue());
 
-            if constexpr (bending) {
-                computeBendingDispGradSens<T, vars_per_node, Basis, Data>(
-                    pt, physData.refAxis, xpts, vars, fn, u0x.bvalue().get_data(),
-                    u1x.bvalue().get_data(), XdinvT, res, d_bar.get_data());
-            }
-
-            if constexpr (tying) {
-                // transpose rotate the tying strains (frame transform)
                 A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.bvalue().get_data(), gty_bar.get_data());
-
-                // backprop tying strain sens
-                computeFullTyingStrainSens<T, Phys, Basis, is_nonlinear>(pt, xpts, fn, vars, d, gty_bar.get_data(), 
-                    res, d_bar.get_data());
+                __syncthreads();
             }
 
-            if constexpr (tying || bending) {
-                Director::template computeDirectorSens<vars_per_node, num_nodes>(fn, d_bar.get_data(),
-                                                                             res);
-            }
+            // 2nd order hrev
+            {
+                Phys::computeTyingStress(scale, physData, e0ty.pvalue(), e0ty.hvalue());
 
-            if constexpr (drill) {
-                ShellComputeDrillStrainSens<T, vars_per_node, Data, Basis, Director>(
-                    pt, physData.refAxis, xpts, vars, fn, et.bvalue().get_data(), res);
-            }
+                computeEngineerTyingStrains<T>(e0ty.hvalue());
 
-        }  // end of breverse scope (1st order derivs)
-
-        // hreverse (2nd order derivs)
-        {
-            A2D::Vec<T, 3 * num_nodes> d_hat;                  // zeroes out on init
-
-            if constexpr (bending) {
-                computeBendingDispGradHrev<T, vars_per_node, Basis, Data>(
-                    pt, physData.refAxis, xpts, vars, fn, u0x.hvalue().get_data(),
-                    u1x.hvalue().get_data(), XdinvT, matCol, d_hat.get_data());
-            }
-
-            // transpose rotate the tying strains
-            if constexpr (tying) {
-                A2D::SymMat<T,3> gty_hat;
+                A2D::SymMat<T, 3> gty_hat;
                 A2D::SymMat3x3RotateFrameReverse<T>(XdinvT, e0ty.hvalue().get_data(), gty_hat.get_data());
 
-                // backprop tying strain sens
-                computeFullTyingStrainHrev<T, Phys, Basis>(pt, xpts, fn, vars, d, p_vars.get_data(), 
+                A2D::Vec<T, 3 * num_nodes> d_hat;
+                computeFullTyingStrainHrev<T, Phys, Basis>(pt, xpts, fn, vars, d, pvars, 
                     p_d, gty_bar.get_data(), gty_hat.get_data(), matCol, d_hat.get_data());
+
+                Director::template computeDirectorHrev<vars_per_node, num_nodes>(
+                    fn, d_hat.get_data(), matCol);
             }
+        }
+
+        // just show the linear case pvalue and hvalue rn
+        if constexpr (drill) {
+            A2D::A2DObj<A2D::Vec<T, 1>> et;
             
-        
-            if constexpr (tying || bending) {
-                Director::template computeDirectorHrev<vars_per_node, num_nodes>(fn, d_hat.get_data(),
-                                                                             matCol);
-            }
+            // pforward
+            ShellComputeDrillStrainFast<T, vars_per_node, Basis, Director>(
+                    pt, Tmat, XdinvT, pvars, et.pvalue().get_data());
+            __syncthreads();
 
-            if constexpr (drill) {
-                ShellComputeDrillStrainHrev<T, vars_per_node, Data, Basis, Director>(
-                    pt, physData.refAxis, xpts, vars, fn, et.hvalue().get_data(), matCol);
-            }
+            // compute drill stress
+            Phys::computeDrillStress(scale, physData, et.pvalue().get_data(), 
+                et.hvalue().get_data());
+            __syncthreads();
 
-            // if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-            //     printf("matCol: ");
-            //     printVec<T>(24, matCol);
-            // }
+            // hreverse for drill
+            ShellComputeDrillStrainFastSens<T, vars_per_node, Basis, Director>(
+                pt, Tmat, XdinvT, et.hvalue().get_data(), matCol
+            );
+        }
 
-        }  // end of hreverse scope (2nd order derivs)
     }      // add_element_quadpt_jacobian_col
 
     template <class Data>

@@ -23,9 +23,11 @@ class BaseDirector {
 };  // end of base director class
 
 // uses CFRP to have compile-time inheritance
-template <typename T, int offset = 3>
-class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T> {
+template <typename T, int offset_ = 3>
+class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset_>, T> {
    public:
+    static constexpr int32_t offset = offset_;
+    static constexpr int32_t is_nonlinear = false;
     static const int32_t num_params = 3;
 
     // TODO fix so in base class only
@@ -52,14 +54,19 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
     template <int vars_per_node, int num_nodes>
     __HOST_DEVICE__ static void computeRotationMat(const T vars[], T C[]) {
         const T *q = &vars[offset];
-        for (int inode = 0; inode < num_nodes; inode++) {
-            // C = I - q^x
-            setMatSkew(-1.0, q, C);
-            C[0] = C[4] = C[8] = 1.0;
+        
+        // C = I - q^x
+        setMatSkew(-1.0, q, C);
+        C[0] = C[4] = C[8] = 1.0;
 
-            C += 9;
-            q += vars_per_node;
-        }
+        C += 9;
+        q += vars_per_node;
+    }
+
+    __HOST_DEVICE__ static void computeRotationMatSinglePt(const T rots[], T C[]) {
+        // C = I - q^x
+        setMatSkew(-1.0, rots, C);
+        C[0] = C[4] = C[8] = 1.0;
     }
 
     template <int vars_per_node, int num_nodes>
@@ -71,6 +78,11 @@ class LinearizedRotation : public BaseDirector<LinearizedRotation<T, offset>, T>
             C_bar += 9;
             r += vars_per_node;
         }
+    }
+
+    __HOST_DEVICE__ static void computeRotationMatSinglePtSens(const T C_bar[], T rot_res[]) {
+        // C = I - q^x
+        setMatSkewSens(-1.0, C_bar, rot_res);
     }
 
     __HOST_DEVICE__ static T evalDrillStrain(const T u0x[], const T Ct[]) {

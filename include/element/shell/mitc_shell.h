@@ -2,8 +2,8 @@
 
 #include "../../assembler.h"
 #include "a2dcore.h"
-#include "a2d/a2dshell.h"
 #include "strains/_all.h"
+#include "a2d/a2dsymmatrotateframe.h"
 
 #include "_shell.cuh"
 

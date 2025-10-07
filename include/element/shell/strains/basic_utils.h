@@ -113,7 +113,8 @@ __HOST_DEVICE__ void computeXdinvT(const T pt[], const T refAxis[], const T xpts
 
 // compute XdinvT and other shell rotations
 template <typename T, class Basis, class Data>
-__HOST_DEVICE__ void computeShellRotations(const T pt[], const T refAxis[], const T xpts[], const T fn[], T Tmat[], T XdinvT[], T XdinvzT[]) {
+__HOST_DEVICE__ void computeShellRotations(const T pt[], const T refAxis[], const T xpts[], 
+    const T fn[], T Tmat[], T XdinvT[], T XdinvzT[]) {
     // Xd, Xdz frame assembly scope
     T Xd[9], Xdz[9];
     {
