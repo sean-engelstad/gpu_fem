@@ -141,13 +141,26 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
         auto res = assembler.createVarsVec();
         auto starta = std::chrono::high_resolution_clock::now();
         // assembler.add_jacobian(res, kmat);
-        assembler.add_jacobian_fast(kmat);
-        // assembler.apply_bcs(res);
+        const int elems_per_blockk = 1; // 1 versus 2 elements => similar runtime (1 slightly better)
+        // const int elems_per_blockk = 2;
+        assembler.template add_jacobian_fast<elems_per_blockk>(kmat);
         assembler.apply_bcs(kmat);
         CHECK_CUDA(cudaDeviceSynchronize());
         auto enda = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> assembly_time = enda - starta;
         printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
+        // CHECK_CUDA(cudaDeviceSynchronize());
+        // auto startar = std::chrono::high_resolution_clock::now();
+        // // const int elems_per_blockr = 32;
+        // const int elems_per_blockr = 8;
+        // // const int elems_per_blockr = 4;
+        // assembler.template add_residual_fast<elems_per_blockr>(res);
+        // // assembler.add_residual(res);
+        // CHECK_CUDA(cudaDeviceSynchronize());
+        // auto endar = std::chrono::high_resolution_clock::now();
+        // std::chrono::duration<double> assemb_resid_time = endar - startar;
+        // printf("\tassemble resid time %.2e\n", assemb_resid_time.count());
 
         // return;
 
@@ -188,11 +201,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     bool print = true;
     T atol = 1e-6, rtol = 1e-6;
     T omega2 = 1.5; // really is set up there
-    int n_cycles = 200;
-    if (SR > 100.0) n_cycles = 1000;
-
+    int n_cycles = SR >= 100.0 ? 1000 : 200;
     bool time = false;
-    bool symmetric = false;
     int print_freq = 5;
 
     // bool double_smooth = false;
@@ -351,7 +361,7 @@ int main(int argc, char **argv) {
     bool is_multigrid = true;
     // bool is_debug = false;
     double SR = 100.0;
-    int nsmooth = 4; // typically faster right now
+    int nsmooth = 2; // may need more here (esp for MITC elements, but CFI can use less)
     int ninnercyc = 2; // inner V-cycles to precond K-cycle
     std::string cycle_type = "K"; // "V", "F", "W", "K"
     std::string elem_type = "CFI4"; // 'MITC4', 'CFI4', 'CFI9'
@@ -420,6 +430,7 @@ int main(int argc, char **argv) {
     using Director = LinearizedRotation<T>;
     constexpr bool has_ref_axis = false;
     constexpr bool is_nonlinear = false;
+    // constexpr bool is_nonlinear = true;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
 

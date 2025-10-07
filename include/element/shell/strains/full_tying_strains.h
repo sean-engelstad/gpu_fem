@@ -270,11 +270,3 @@ __DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpts[], 
     // backprop for d0 interp step
     Basis::template interpFieldsTranspose<3, 3>(pt, d0_hat.get_data(), h_d);
 }
-
-template <typename T>
-__HOST_DEVICE__ static void computeEngineerTyingStrains(A2D::SymMat<T, 3> &e0ty) {
-    // double the shear tying strains
-    e0ty[1] *= 2.0; // e12 membrane
-    e0ty[2] *= 2.0; // e13 trv shear
-    e0ty[4] *= 2.0; // e23 trv shear
-}
