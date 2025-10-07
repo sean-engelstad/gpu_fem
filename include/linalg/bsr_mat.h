@@ -182,7 +182,8 @@ class BsrMat {
     __DEVICE__
     void addElementMatRow(const bool active_thread, const int elem_block_row, const int inner_row,
                           const int ielem, const int start, const int stride,
-                          const int dof_per_node, const int nodes_per_elem, const T *elem_row) {
+                          const int dof_per_node, const int nodes_per_elem,
+                          const int32_t *elem_conn, const T *elem_row) {
         /* add row from elem stiffness matrix (adding by row is coalesced, while col is not) */
 
         // int dof_per_elem = dof_per_node * nodes_per_elem,
@@ -199,19 +200,6 @@ class BsrMat {
             int glob_block_ind = loc_elem_ind_map[elem_block];
             int inner_col = idof % dof_per_node;
             int ival = nnz_per_block * glob_block_ind + block_dim * inner_row + inner_col;
-
-            // DEBUG
-            // int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            // if (tid == 9) {
-            //     // if (tid == 0) {
-            //     // printf("tid %d\n", tid);
-            //     // printf("tid %d, start elem_ind_map %d\n", tid, blocks_per_elem * ielem);
-            //     printf(
-            //         "thread %d, elem_block %d, at glob_block_ind %d, trying to add
-            //         elem_row[%d/9]= "
-            //         "%.2e into => kmat_vals[%d/%d]\n",
-            //         tid, elem_block, glob_block_ind, idof, elem_row[idof], ival, get_nnz());
-            // }
 
             atomicAdd(&valPtr[ival], elem_row[idof]);
         }

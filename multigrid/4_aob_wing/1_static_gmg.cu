@@ -140,13 +140,16 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
         auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
         auto res = assembler.createVarsVec();
         auto starta = std::chrono::high_resolution_clock::now();
-        assembler.add_jacobian(res, kmat);
+        // assembler.add_jacobian(res, kmat);
+        assembler.add_jacobian_fast(kmat);
         // assembler.apply_bcs(res);
         assembler.apply_bcs(kmat);
         CHECK_CUDA(cudaDeviceSynchronize());
         auto enda = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> assembly_time = enda - starta;
         printf("\tassemble kmat time %.2e\n", assembly_time.count());
+
+        // return;
 
         // build smoother and prolongations
         T omega = 1.5; // for GS-SOR
@@ -178,7 +181,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
-    printf("starting v cycle solve\n");
+    printf("starting %s cycle solve\n", cycle_type.c_str());
     int pre_smooth = nsmooth, post_smooth = nsmooth;
     // best was V(4,4) before
     // bool print = false;

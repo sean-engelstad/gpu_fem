@@ -176,7 +176,8 @@ void time_wing_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, int 
         // assemble kmat time (TODO : put new methods in here)
         CHECK_CUDA(cudaDeviceSynchronize());
         auto start_06 = std::chrono::high_resolution_clock::now();
-        assembler.add_jacobian(res, kmat);
+        // assembler.add_jacobian(res, kmat);
+        assembler.add_jacobian_fast(kmat);
         // assembler.apply_bcs(res);
         assembler.apply_bcs(kmat); // apply bcs should be very small part.. nothing
         CHECK_CUDA(cudaDeviceSynchronize());
@@ -284,7 +285,7 @@ void time_wing_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, int 
 
     
     // fastest is K-cycle usually
-    printf("\nstarting v cycle solve\n");
+    printf("\nstarting %s cycle solve\n", cycle_type.c_str());
     if (cycle_type == "K") {
         kmg->solve();
     } else if (cycle_type == "V") {
@@ -331,8 +332,8 @@ int main(int argc, char **argv) {
 
     // DEFAULTS
     int level = 4; // level mesh to solve..
-    double SR = 100.0;
-    int nsmooth = 4; // typically faster right now
+    double SR = 300.0;
+    int nsmooth = 2; // typically faster right now
     int ninnercyc = 2; // inner V-cycles to precond K-cycle
     std::string cycle_type = "K"; // "V", "F", "W", "K"
     std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'

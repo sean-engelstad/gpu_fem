@@ -5,6 +5,8 @@
 #include "a2d/a2dshell.h"
 #include "strains/_all.h"
 
+#include "_shell.cuh"
+
 template <typename T, class Director_, class Basis_, class Phys_, template <typename> class Vec_,
           template <typename> class Mat_>
 class MITCShellAssembler : public ElementAssembler<MITCShellAssembler<T, Director_, Basis_, Phys_, Vec_, Mat_>, T, Basis_, Phys_, Vec_, Mat_> {
@@ -18,6 +20,7 @@ class MITCShellAssembler : public ElementAssembler<MITCShellAssembler<T, Directo
     using Base = ElementAssembler<Assembler, T, Basis_, Phys_, Vec_, Mat_>;
     using Quadrature = typename Basis::Quadrature;
     using FADType = typename A2D::ADScalar<T, 1>;
+    using Mat = Mat_<Vec_<T>>;
 
     static constexpr int32_t num_nodes = Basis::num_nodes;
     static constexpr int32_t vars_per_node = Phys::vars_per_node;
@@ -46,6 +49,29 @@ class MITCShellAssembler : public ElementAssembler<MITCShellAssembler<T, Directo
                      HostVec<int> elem_component = HostVec<int>(0)) : 
             Base(num_geo_nodes, num_vars_nodes, num_elements, geo_conn, vars_conn,
             xpts, bcs, physData, num_components, elem_component) {}
+
+    void add_jacobian_fast(Mat &mat) {
+        // method for testing out faster jacobian GPU
+        
+        mat.zeroValues();
+        // dim3 block = jac_block;
+        // dim3 block(1, dof_per_elem, num_quad_pts);
+        dim3 block(num_quad_pts, dof_per_elem, 1); // better order for consecutive threads and mem reads
+        int nblocks = this->num_elements;
+        dim3 grid(nblocks);
+        // only one element per block
+
+        k_add_jacobian_fast<T, Assembler, Data, Vec_, Mat><<<grid, block>>>(
+            this->num_vars_nodes, this->num_elements, this->geo_conn, this->vars_conn, 
+            this->xpts, this->vars, this->physData, mat);
+
+        // k_add_jacobian<T, Assembler, Data, 1, Vec_, Mat><<<grid, block>>>(
+        //     this->num_vars_nodes, this->num_elements, this->geo_conn, this->vars_conn, 
+        //     this->xpts, this->vars, this->physData, res, mat);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+// #endif
+    }
 
     template <class Data>
     __HOST_DEVICE__ static void add_element_quadpt_energy(const bool active_thread, const int iquad,
