@@ -138,6 +138,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
         auto loads = assembler.createVarsVec(my_loads);
         assembler.apply_bcs(loads);
         auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+        auto vars = assembler.createVarsVec();
+        assembler.set_variables(vars);
         auto res = assembler.createVarsVec();
         auto starta = std::chrono::high_resolution_clock::now();
         // assembler.add_jacobian(res, kmat);
@@ -202,7 +204,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     T atol = 1e-6, rtol = 1e-6;
     T omega2 = 1.5; // really is set up there
     int n_cycles = SR >= 100.0 ? 1000 : 200;
-    bool time = false;
+    // bool time = false;
+    bool time = true;
     int print_freq = 5;
 
     // bool double_smooth = false;
@@ -309,12 +312,21 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
 
   // assemble the kmat
   assembler.set_variables(vars);
-  assembler.add_jacobian(res, kmat);
+  
+  CHECK_CUDA(cudaDeviceSynchronize());
+  auto starta = std::chrono::high_resolution_clock::now();
+//   assembler.add_jacobian(res, kmat);
+  assembler.add_jacobian_fast(kmat);
+  CHECK_CUDA(cudaDeviceSynchronize());
+  auto enda = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> assemb_time = enda - starta;
+
   assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
 
   CHECK_CUDA(cudaDeviceSynchronize());
   auto start1 = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> startup_time = start1 - start0;
 
   // solve the linear system
   CUSPARSE::direct_LU_solve(kmat, loads, soln);
@@ -322,10 +334,12 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   CHECK_CUDA(cudaDeviceSynchronize());
   auto end1 = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> solve_time = end1 - start1;
+  std::chrono::duration<double> total_time = end1 - start0;
 
   size_t bytes_per_double = sizeof(double);
   double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
-  printf("direct LU solve on #dof %d, uses memory(MB) %.2e in %.2e sec\n", nvars, mem_mb, solve_time.count());
+  printf("direct LU solve on #dof %d, uses memory(MB) %.2e\n", nvars, mem_mb);
+  printf("\tassembly %.2e and ovr startup %.2e, solve time %.2e and total time %.2e (sec)\n", assemb_time.count(), startup_time.count(), solve_time.count(), total_time.count());
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();
@@ -357,10 +371,10 @@ int main(int argc, char **argv) {
     MPI_Comm comm = MPI_COMM_WORLD;
 
     // DEFAULTS
-    int level = 3; // level mesh to solve..
+    int level = 3; // level mesh to solve.. level 4 also a good starting setting (big case)
     bool is_multigrid = true;
     // bool is_debug = false;
-    double SR = 100.0;
+    double SR = 300.0;
     int nsmooth = 2; // may need more here (esp for MITC elements, but CFI can use less)
     int ninnercyc = 2; // inner V-cycles to precond K-cycle
     std::string cycle_type = "K"; // "V", "F", "W", "K"
