@@ -107,11 +107,11 @@ __DEVICE__ void computeBendingStrainHfwd(
     computeBendingStrain<T, false>(u0xF, u1xF, ekF);
 
     if constexpr (is_nonlinear) {
-        ekF[0] = u0xF[0] * u1x[0] + u0x[0] * u1xF[0] + +u0xF[3] * u1x[3] + u0x[3] * u1xF[3] +
+        ekF[0] += u0xF[0] * u1x[0] + u0x[0] * u1xF[0] + u0xF[3] * u1x[3] + u0x[3] * u1xF[3] +
                        u0xF[6] * u1x[6] + u0x[6] * u1xF[6];  // k11
-        ekF[1] = u0xF[1] * u1x[1] + u0x[1] * u1xF[1] + u0xF[4] * u1x[4] + u0x[4] * u1xF[4] +
+        ekF[1] += u0xF[1] * u1x[1] + u0x[1] * u1xF[1] + u0xF[4] * u1x[4] + u0x[4] * u1xF[4] +
                         u0xF[7] * u1x[7] + u0x[7] * u1xF[7];  // k22
-        ekF[2] = u0xF[0] * u1x[1] + u0x[0] * u1xF[1] + u0xF[3] * u1x[4] + u0x[3] * u1xF[4] +
+        ekF[2] += u0xF[0] * u1x[1] + u0x[0] * u1xF[1] + u0xF[3] * u1x[4] + u0x[3] * u1xF[4] +
                 u0xF[6] * u1x[7] + u0x[6] * u1xF[7] + u1xF[0] * u0x[1] + u1x[0] * u0xF[1] +
                 u1xF[3] * u0x[4] + u1x[3] * u0xF[4] + u1xF[6] * u0x[7] + u1x[6] * u0xF[7];  // k12
     }
