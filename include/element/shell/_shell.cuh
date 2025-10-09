@@ -24,7 +24,7 @@ __GLOBAL__ static void k_add_jacobian_fast(int32_t vars_num_nodes, int32_t num_e
 
     const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
     const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
-    const int vars_per_elem2 = vars_per_elem * vars_per_elem;
+    // const int vars_per_elem2 = vars_per_elem * vars_per_elem;
 
     const int32_t *_geo_conn = geo_conn.getPtr();
     const int32_t *_vars_conn = vars_conn.getPtr();
@@ -149,11 +149,11 @@ __GLOBAL__ static void k_add_residual_fast(int32_t vars_num_nodes, int32_t num_e
     bool active_thread = global_elem < num_elements;
     if (!active_thread) return;
     int tid = blockDim.x * threadIdx.y + threadIdx.x;
-    int nthreads = blockDim.x * blockDim.y;
+    // int nthreads = blockDim.x * blockDim.y;
 
     const int nxpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
     const int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
-    const int vars_per_elem2 = vars_per_elem * vars_per_elem;
+    // const int vars_per_elem2 = vars_per_elem * vars_per_elem;
 
     const int32_t *_geo_conn = geo_conn.getPtr();
     const int32_t *_vars_conn = vars_conn.getPtr();

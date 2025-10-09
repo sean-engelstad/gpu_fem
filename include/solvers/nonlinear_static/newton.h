@@ -14,7 +14,7 @@ using LinearSolveFunc = void (*)(Mat &, Vec &, Vec &, bool, bool);
 #ifdef USE_GPU  // TODO : go back and make host compatible too with cublas
 
 // assume data is on the device
-template <typename T, class Mat, class Vec, class Assembler>
+template <typename T, class Mat, class Vec, class Assembler, bool fast_assembly = false>
 void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads, Vec &soln,
                   Assembler &assembler, Vec &res, Vec &rhs, Vec &vars, int num_load_factors,
                   T min_load_factor, T max_load_factor, int num_newton, T abs_tol, T rel_tol,
@@ -31,7 +31,13 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
         for (int inewton = 0; inewton < num_newton; inewton++) {
             // compute internal residual and stiffness matrix
             assembler.set_variables(vars);
-            assembler.add_jacobian(res, kmat);
+            if constexpr (fast_assembly) {
+                assembler.add_jacobian_fast(kmat);
+                assembler.add_residual_fast(res);
+            } else {
+                // default slower assembly
+                assembler.add_jacobian(res, kmat);
+            }
             assembler.apply_bcs(res);
             assembler.apply_bcs(kmat);
 
@@ -54,7 +60,12 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             assembler.set_variables(vars);
             // assembler.add_residual(res); // TODO : for some reason using this add_residual
             // doesn't match add_jacobian res..
-            assembler.add_jacobian(res, kmat);
+            if constexpr (fast_assembly) {
+                assembler.add_residual_fast(res);
+            } else {
+                // assembler.add_jacobian(res, kmat);
+                assembler.add_residual(res);
+            }
             assembler.apply_bcs(res);
             rhs.zeroValues();
             CUBLAS::axpy(load_factor, loads, rhs);

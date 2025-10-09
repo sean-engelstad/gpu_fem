@@ -48,6 +48,17 @@ __HOST_DEVICE__ void printVec<A2D::ADScalar<double, 1>>(const int N,
     printf("\n");
 }
 
+template <typename T>
+__HOST_DEVICE__ void printVecLong(const int N, const T *vec);
+
+template <>
+__HOST_DEVICE__ void printVecLong<double>(const int N, const double *vec) {
+    for (int i = 0; i < N; i++) {
+        printf("%.10e,", vec[i]);
+    }
+    printf("\n");
+}
+
 // template <>
 // __HOST_DEVICE__ void
 // printVec<std::complex<double>>(const int N, const std::complex<double> *vec) {

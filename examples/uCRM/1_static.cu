@@ -6,9 +6,14 @@
 
 // shell imports
 #include "assembler.h"
-#include "element/basis/lagrange_basis.h"
+#include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
+
+// lagrange MITC element
+#include "element/shell/basis/lagrange_basis.h"
 #include "element/shell/mitc_shell.h"
+
+// case utils
 #include "_src/crm_utils.h"
 
 
@@ -45,9 +50,7 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true) {
   constexpr bool is_nonlinear = false;
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-  using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+  using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
 
@@ -101,7 +104,8 @@ void solve_linear(MPI_Comm &comm, bool full_LU = true) {
 
   // assemble the kmat
   assembler.set_variables(vars);
-  assembler.add_jacobian(res, kmat);
+  // assembler.add_jacobian(res, kmat);
+  assembler.add_jacobian_fast(kmat);
   assembler.apply_bcs(res);
   assembler.apply_bcs(kmat);
 
@@ -153,9 +157,7 @@ void solve_nonlinear(MPI_Comm &comm) {
   constexpr bool is_nonlinear = true;
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-  using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+  using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
   double E = 70e9, nu = 0.3, thick = 0.02;  // material & thick properties
 
@@ -196,7 +198,10 @@ void solve_nonlinear(MPI_Comm &comm) {
   auto solve_func = CUSPARSE::direct_LU_solve<T>;
   bool write_vtk = true;
   std::string outputPrefix = "out/uCRM_";
-  newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler>(
+
+  const bool fast_assembly = true;
+  // const bool fast_assembly = false;
+  newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler, fast_assembly>(
       solve_func, kmat, loads, soln, assembler, res, rhs, vars,
       num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
       rel_tol, outputPrefix, print, write_vtk);

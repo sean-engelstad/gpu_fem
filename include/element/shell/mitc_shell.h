@@ -73,7 +73,7 @@ class MITCShellAssembler : public ElementAssembler<MITCShellAssembler<T, Directo
         
         res.zeroValues();
         dim3 block(num_quad_pts, elems_per_block); // better order for consecutive threads and mem reads
-        int nblocks = this->num_elements;
+        int nblocks = (this->num_elements + elems_per_block - 1) / elems_per_block;
         dim3 grid(nblocks);
 
         k_add_residual_fast<T, elems_per_block, Assembler, Data, Vec_><<<grid, block>>>(
