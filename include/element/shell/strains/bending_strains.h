@@ -3,7 +3,8 @@
 
 template <typename T, int vars_per_node, class Basis, class Data>
 __HOST_DEVICE__ T computeBendingDispGrad(const T pt[], const T refAxis[], const T xpts[],
-                                       const T vars[], const T fn[], const T d[], T XdinvT[], T u0x[], T u1x[]) {
+                                         const T vars[], const T fn[], const T d[], T XdinvT[],
+                                         T u0x[], T u1x[]) {
     // Xd, Xdz frame assembly scope
     A2D::Mat<T, 3, 3> Tmat;
     T Xd[9], Xdz[9];
@@ -71,17 +72,18 @@ __HOST_DEVICE__ T computeBendingDispGrad(const T pt[], const T refAxis[], const 
 
 template <typename T, int vars_per_node, class Basis, class Data>
 __HOST_DEVICE__ void computeBendingDispGradHfwd(const T pt[], const T refAxis[], const T xpts[],
-                                              const T p_vars[], const T fn[], const T p_d[],
-                                              T XdinvT[9], T p_u0x[], T p_u1x[]) {
+                                                const T p_vars[], const T fn[], const T p_d[],
+                                                T XdinvT[9], T p_u0x[], T p_u1x[]) {
     // this is purely linear function, so hforward equiv to forward analysis
-    computeBendingDispGrad<T, vars_per_node, Basis, Data>(pt, refAxis, xpts, p_vars, fn, p_d, XdinvT,
-                                                        p_u0x, p_u1x);
+    computeBendingDispGrad<T, vars_per_node, Basis, Data>(pt, refAxis, xpts, p_vars, fn, p_d,
+                                                          XdinvT, p_u0x, p_u1x);
 }
 
 template <typename T, int vars_per_node, class Basis, class Data>
 __HOST_DEVICE__ void computeBendingDispGradSens(const T pt[], const T refAxis[], const T xpts[],
-                                              const T vars[], const T fn[], const T u0x_bar[],
-                                              const T u1x_bar[], T XdinvT[9], T res[], T d_bar[]) {
+                                                const T vars[], const T fn[], const T u0x_bar[],
+                                                const T u1x_bar[], T XdinvT[9], T res[],
+                                                T d_bar[]) {
     // define some custom matrix multiplies
     constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
     constexpr A2D::MatOp TRANS = A2D::MatOp::TRANSPOSE;
@@ -128,7 +130,7 @@ __HOST_DEVICE__ void computeBendingDispGradSens(const T pt[], const T refAxis[],
 
             // u0d_bar^t += XdinvzT * u1x_bar^t * T^t
             A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvzT, u1x_bar, tmp);
-            A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat.get_data(), u0d_barT);
+            A2D::MatMatMultCore3x3Add<T, NORM, TRANS>(tmp, Tmat.get_data(), u0d_barT);
 
             // transfer back to u0xi, u0eta, d0 bar (with transpose so columns now available in
             // rows)
@@ -153,10 +155,10 @@ __HOST_DEVICE__ void computeBendingDispGradSens(const T pt[], const T refAxis[],
 
 template <typename T, int vars_per_node, class Basis, class Data>
 __HOST_DEVICE__ void computeBendingDispGradHrev(const T pt[], const T refAxis[], const T xpts[],
-                                              const T vars[], const T fn[], const T h_u0x[],
-                                              const T h_u1x[], T XdinvT[9], T matCol[], T h_d[]) {
+                                                const T vars[], const T fn[], const T h_u0x[],
+                                                const T h_u1x[], T XdinvT[9], T matCol[], T h_d[]) {
     // this is purely linear function, so hreverse equivalent to 1st order reverse (aka Sens
     // function)
     computeBendingDispGradSens<T, vars_per_node, Basis, Data>(pt, refAxis, xpts, vars, fn, h_u0x,
-                                                            h_u1x, XdinvT, matCol, h_d);
+                                                              h_u1x, XdinvT, matCol, h_d);
 }

@@ -63,8 +63,8 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
             if constexpr (fast_assembly) {
                 assembler.add_residual_fast(res);
             } else {
-                // assembler.add_jacobian(res, kmat);
-                assembler.add_residual(res);
+                assembler.add_jacobian(res, kmat);
+                // assembler.add_residual(res);
             }
             assembler.apply_bcs(res);
             rhs.zeroValues();

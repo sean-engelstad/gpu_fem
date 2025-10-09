@@ -77,7 +77,7 @@ int main(int argc, char *argv[]) {
     if (nz_vars) {
         for (int ivar = 0; ivar < num_vars; ivar++) {
             vars[ivar] = (1.4543 + 6.4323 * ivar) * 1e-6;
-            if (nonlinear) vars[ivar] *= 1e6;
+            vars[ivar] *= 1e6;
         }
     }
 

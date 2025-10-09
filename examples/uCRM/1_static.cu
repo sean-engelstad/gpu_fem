@@ -160,6 +160,7 @@ void solve_nonlinear(MPI_Comm &comm) {
   using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
   double E = 70e9, nu = 0.3, thick = 0.02;  // material & thick properties
+  // double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
 
   // make the assembler from the uCRM mesh
   auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
@@ -177,6 +178,7 @@ void solve_nonlinear(MPI_Comm &comm) {
   int nnodes = assembler.get_num_nodes();
   HostVec<T> h_loads(nvars);
   double load_mag = 15.0; // 9.0 with 40 load steps, now 15.0 with 70 load steps
+  // double load_mag = 1.0;
   double *h_loads_ptr = h_loads.getPtr();
   for (int inode = 0; inode < nnodes; inode++) {
     h_loads_ptr[6 * inode + 2] = load_mag;

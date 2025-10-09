@@ -4,11 +4,15 @@
 #include "chrono"
 #include "linalg/_linalg.h"
 #include "solvers/_solvers.h"
+#include "mesh/TACSMeshLoader.h"
 
 // shell imports
-#include "assembler.h"
+#include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
-#include "element/shell/shell_elem_group.h"
+
+// lagrange MITC element
+#include "element/shell/basis/lagrange_basis.h"
+#include "element/shell/mitc_shell.h"
 
 template <typename T, class Assembler>
 HostVec<T> getTipLoads(Assembler &assembler, T length, T beam_tip_force) {
@@ -37,12 +41,15 @@ HostVec<T> getTipLoads(Assembler &assembler, T length, T beam_tip_force) {
 /**
  solve on CPU with cusparse for debugging
  **/
-int main(void) {
+int main(int argc, char **argv) {
   using T = double;
+
+  MPI_Init(&argc, &argv);
+  MPI_Comm comm = MPI_COMM_WORLD;
 
   std::ios::sync_with_stdio(false);  // always flush print immediately
 
-  TACSMeshLoader<T> mesh_loader{};
+  TACSMeshLoader mesh_loader{comm};
   mesh_loader.scanBDFFile("Beam.bdf");
 
   using Quad = QuadLinearQuadrature<T>;
@@ -55,9 +62,7 @@ int main(void) {
   // constexpr bool is_nonlinear = false;
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-  using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+  using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
   // material & thick properties
   double E = 1.2e6, nu = 0.0, thick = 0.1;

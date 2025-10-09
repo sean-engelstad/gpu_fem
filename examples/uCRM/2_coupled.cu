@@ -5,13 +5,16 @@
 #include "coupled/_coupled.h"
 #include "linalg/_linalg.h"
 #include "solvers/_solvers.h"
-#include "_src/_crm_utils.h"
+#include "_src/crm_utils.h"
 
 // shell imports
 #include "assembler.h"
+#include "element/shell/director/linear_rotation.h"
 #include "element/shell/physics/isotropic_shell.h"
-#include "element/shell/shell_elem_group.h"
 
+// lagrange MITC element
+#include "element/shell/basis/lagrange_basis.h"
+#include "element/shell/mitc_shell.h"
 /* command line args:
     [meld|coupled] [--linear]
 
@@ -85,9 +88,7 @@ void meld_demo(MPI_Comm &comm) {
   constexpr bool is_nonlinear = false;
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, is_nonlinear>;
-
-  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-  using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+  using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties
 
@@ -228,9 +229,7 @@ void coupled_analysis(MPI_Comm &comm) {
   constexpr bool has_ref_axis = false;
   using Data = ShellIsotropicData<T, has_ref_axis>;
   using Physics = IsotropicShell<T, Data, nonlinear_strain>;
-
-  using ElemGroup = ShellElementGroup<T, Director, Basis, Physics>;
-  using Assembler = ElementAssembler<T, ElemGroup, VecType, BsrMat>;
+  using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
   using AeroSolver = FixedAeroSolver<T, DeviceVec<T>>;
   using Transfer = MELD<T, MELD_NN_PER_BLOCK>;

@@ -48,8 +48,9 @@ args = parser.parse_args()
 # Constants
 # ==============================================================================
 COMM = MPI.COMM_WORLD
-PWD = os.path.join(os.path.dirname(__file__), "output")
-BDF_FILE = os.path.join(PWD, "Beam.bdf")
+CDIR = os.path.dirname(__file__)
+PWD = os.path.join(CDIR, "out")
+BDF_FILE = os.path.join(CDIR, "Beam.bdf")
 E = 1.2e6  # Young's modulus
 NU = 0.0  # Poisson's ratio
 RHO = 1.0  # density

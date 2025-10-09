@@ -2,9 +2,8 @@
 #include "../../../cuda_utils.h"
 
 template <typename T, int vars_per_node, class Basis>
-__DEVICE__ void computeBendingDispGrad(const T pt[], const T vars[], const T d[], 
-    const T Tmat[], const T XdinvT[], const T XdinvzT[], T u0x[], T u1x[]) {
-    
+__DEVICE__ void computeBendingDispGrad(const T pt[], const T vars[], const T d[], const T Tmat[],
+                                       const T XdinvT[], const T XdinvzT[], T u0x[], T u1x[]) {
     {  // u0x, u1x frame assembly scope
         // interp directors
         T d0[3], d0xi[3], d0eta[3];
@@ -39,9 +38,9 @@ __DEVICE__ void computeBendingDispGrad(const T pt[], const T vars[], const T d[]
 }
 
 template <typename T, int vars_per_node, class Basis>
-__DEVICE__ void computeBendingDispGradSens(const T pt[],
-    const T Tmat[], const T XdinvT[], const T XdinvzT[],
-    const T u0xb[], const T u1xb[], T d_bar[], T res[]) {
+__DEVICE__ void computeBendingDispGradSens(const T pt[], const T Tmat[], const T XdinvT[],
+                                           const T XdinvzT[], const T u0xb[], const T u1xb[],
+                                           T d_bar[], T res[]) {
     /* since this computation is linear, this can be reused for hrev also */
 
     constexpr A2D::MatOp NORM = A2D::MatOp::NORMAL;
@@ -58,13 +57,13 @@ __DEVICE__ void computeBendingDispGradSens(const T pt[],
 
         // u0d_bar^t += XdinvzT * u1x_bar^t * T^t
         A2D::MatMatMultCore3x3<T, NORM, TRANS>(XdinvzT, u1xb, tmp);
-        A2D::MatMatMultCore3x3<T, NORM, TRANS>(tmp, Tmat, u0d_barT);
+        A2D::MatMatMultCore3x3Add<T, NORM, TRANS>(tmp, Tmat, u0d_barT);
 
         // transfer back to u0xi, u0eta, d0 bar (with transpose so columns now available in
         // rows)
         Basis::template interpFieldsTranspose<3, 3>(pt, &u0d_barT[6], d_bar);
-        Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0d_barT[0],
-                                                                    &u0d_barT[3], res);
+        Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, &u0d_barT[0], &u0d_barT[3],
+                                                                    res);
     }  // end of u0d_barT scope
     __syncthreads();
 
@@ -81,7 +80,6 @@ __DEVICE__ void computeBendingDispGradSens(const T pt[],
     }  // end of u0d_barT scope
 }  // ShellComputeDispGradSens
 
-
 template <typename T, bool is_nonlinear = false>
 __DEVICE__ void computeBendingStrain(const T u0x[9], const T u1x[9], T ek[3]) {
     /* just computing the linear part of the strains for now, will add back NL later */
@@ -92,35 +90,33 @@ __DEVICE__ void computeBendingStrain(const T u0x[9], const T u1x[9], T ek[3]) {
     if constexpr (is_nonlinear) {
         ek[0] += u0x[0] * u1x[0] + u0x[3] * u1x[3] + u0x[6] * u1x[6];  // k11
         ek[1] += u0x[1] * u1x[1] + u0x[4] * u1x[4] + u0x[7] * u1x[7];  // k22
-        ek[2] += u0x[0] * u1x[1] + u0x[3] * u1x[4] + u0x[6] * u1x[7] 
-              + u1x[0] * u0x[1] + u1x[3] * u0x[4] + u1x[6] * u0x[7];  // k12
+        ek[2] += u0x[0] * u1x[1] + u0x[3] * u1x[4] + u0x[6] * u1x[7] + u1x[0] * u0x[1] +
+                 u1x[3] * u0x[4] + u1x[6] * u0x[7];  // k12
     }
 }
 
 template <typename T, bool is_nonlinear = false>
-__DEVICE__ void computeBendingStrainHfwd(
-    const T u0x[9], const T u1x[9], 
-    const T u0xF[9], const T u1xF[9], T ekF[3]) {
+__DEVICE__ void computeBendingStrainHfwd(const T u0x[9], const T u1x[9], const T u0xF[9],
+                                         const T u1xF[9], T ekF[3]) {
     /* just computing the linear part of the strains for now, will add back NL later */
-    
+
     // linear part
     computeBendingStrain<T, false>(u0xF, u1xF, ekF);
 
     if constexpr (is_nonlinear) {
-        ekF[0] += u0xF[0] * u1x[0] + u0x[0] * u1xF[0] + u0xF[3] * u1x[3] 
-               + u0x[3] * u1xF[3] + u0xF[6] * u1x[6] + u0x[6] * u1xF[6];  // k11
-        ekF[1] += u0xF[1] * u1x[1] + u0x[1] * u1xF[1] + u0xF[4] * u1x[4] 
-               + u0x[4] * u1xF[4] + u0xF[7] * u1x[7] + u0x[7] * u1xF[7];  // k22
+        ekF[0] += u0xF[0] * u1x[0] + u0x[0] * u1xF[0] + u0xF[3] * u1x[3] + u0x[3] * u1xF[3] +
+                  u0xF[6] * u1x[6] + u0x[6] * u1xF[6];  // k11
+        ekF[1] += u0xF[1] * u1x[1] + u0x[1] * u1xF[1] + u0xF[4] * u1x[4] + u0x[4] * u1xF[4] +
+                  u0xF[7] * u1x[7] + u0x[7] * u1xF[7];  // k22
         ekF[2] += u0xF[0] * u1x[1] + u0x[0] * u1xF[1] + u0xF[3] * u1x[4] + u0x[3] * u1xF[4] +
-                u0xF[6] * u1x[7] + u0x[6] * u1xF[7] + u1xF[0] * u0x[1] + u1x[0] * u0xF[1] +
-                u1xF[3] * u0x[4] + u1x[3] * u0xF[4] + u1xF[6] * u0x[7] + u1x[6] * u0xF[7];  // k12
+                  u0xF[6] * u1x[7] + u0x[6] * u1xF[7] + u1xF[0] * u0x[1] + u1x[0] * u0xF[1] +
+                  u1xF[3] * u0x[4] + u1x[3] * u0xF[4] + u1xF[6] * u0x[7] + u1x[6] * u0xF[7];  // k12
     }
 }
 
 template <typename T, bool is_nonlinear = false>
-__DEVICE__ void computeBendingStrainSens(
-    const T ekb[3], const T u0x[9], const T u1x[9],
-    T u0xb[9], T u1xb[9]) {
+__DEVICE__ void computeBendingStrainSens(const T ekb[3], const T u0x[9], const T u1x[9], T u0xb[9],
+                                         T u1xb[9]) {
     /* just computing the linear part of the strains for now, will add back NL later */
     u1xb[0] += ekb[0];
     u1xb[4] += ekb[1];
@@ -159,17 +155,13 @@ __DEVICE__ void computeBendingStrainSens(
 }
 
 template <typename T, bool is_nonlinear = false>
-__DEVICE__ void computeBendingStrainHrev(
-    const T ekh[3], const T ekb[3], 
-    const T u0x[9], const T u1x[9],
-    const T u0xp[9], const T u1xp[9],
-    T u0xh[9], T u1xh[9]) {
+__DEVICE__ void computeBendingStrainHrev(const T ekh[3], const T ekb[3], const T u0x[9],
+                                         const T u1x[9], const T u0xp[9], const T u1xp[9],
+                                         T u0xh[9], T u1xh[9]) {
     /* just computing the linear part of the strains for now, will add back NL later */
 
     // nonlinear backprop grad style strains_h => disp grads_h
-    computeBendingStrainSens<T, is_nonlinear>(
-        ekh, u0x, u1x, u0xh, u1xh
-    );
+    computeBendingStrainSens<T, is_nonlinear>(ekh, u0x, u1x, u0xh, u1xh);
 
     if constexpr (is_nonlinear) {
         // only nonlinear part is bending strains

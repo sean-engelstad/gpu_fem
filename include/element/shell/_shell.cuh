@@ -189,7 +189,7 @@ __GLOBAL__ static void k_add_residual_fast(int32_t vars_num_nodes, int32_t num_e
     if constexpr (!fast_method) {
         // // used here for verification + 
         // constexpr STRAIN strain = ALL;
-        // // constexpr STRAIN strain = DRILL;
+        // constexpr STRAIN strain = DRILL;
 
         ElemGroup::template add_element_quadpt_residual<Data>(
         active_thread, iquad, block_xpts[local_elem], block_vars[local_elem],

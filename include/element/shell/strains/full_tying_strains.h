@@ -3,16 +3,15 @@
 
 /* the tying strains include the 3 membrane and 2 transverse shear strains (5 of them in total) */
 
-// the term 'full' tying strains, means all 5 tying strains are simply computed at the desired quadpt for full integration
-// this is for the fully integrated element
+// the term 'full' tying strains, means all 5 tying strains are simply computed at the desired
+// quadpt for full integration this is for the fully integrated element
 
 // NOTE : only the forward + sens methods have is_nonlinear separate from the physics is_nonlinear
 // this is so that we are free to call the linear part in Hfwd and Hrev
 
 template <typename T, class Physics, class Basis, bool is_nonlinear>
-__DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[], const T fn[], const T vars[],
-                                               const T d[], T gty[]) {
-    
+__DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[], const T fn[],
+                                              const T vars[], const T d[], T gty[]) {
     static constexpr int vars_per_node = Physics::vars_per_node;
 
     // Interpolate the field values
@@ -42,7 +41,7 @@ __DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[], cons
     }
     __syncthreads();
 
-    // 2 transverse shear strains (and g33 = 0) 
+    // 2 transverse shear strains (and g33 = 0)
     //    cause inextensible director (by defn)
     // ----------------------------------------
 
@@ -68,10 +67,9 @@ __DEVICE__ static void computeFullTyingStrain(const T pt[], const T Xpts[], cons
 }  // end of computeFullTyingStrain
 
 template <typename T, class Physics, class Basis>
-__DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpts[], const T fn[], const T vars[],
-                                                   const T d[], const T p_vars[], const T p_d[],
-                                                   T p_gty[]) {
-    
+__DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpts[], const T fn[],
+                                                  const T vars[], const T d[], const T p_vars[],
+                                                  const T p_d[], T p_gty[]) {
     // linear part
     computeFullTyingStrain<T, Physics, Basis, false>(pt, Xpts, fn, p_vars, p_d, p_gty);
 
@@ -104,7 +102,7 @@ __DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpts[], 
 
     __syncthreads();
 
-    // 2 transverse shear strains (and g33 = 0) 
+    // 2 transverse shear strains (and g33 = 0)
     //    cause inextensible director (by defn)
     // ----------------------------------------
 
@@ -125,9 +123,9 @@ __DEVICE__ static void computeFullTyingStrainHfwd(const T pt[], const T Xpts[], 
 }  // end of computeFullTyingStrainHfwd
 
 template <typename T, class Physics, class Basis, bool is_nonlinear>
-__DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpts[], const T fn[], const T vars[],
-                                                   const T d[], const T gty_bar[], T res[], T d_bar[]) {
-    
+__DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpts[], const T fn[],
+                                                  const T vars[], const T d[], const T gty_bar[],
+                                                  T res[], T d_bar[]) {
     static constexpr int vars_per_node = Physics::vars_per_node;
 
     // Interpolate the field values
@@ -163,7 +161,7 @@ __DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpts[], 
     }
     __syncthreads();
 
-    // 2 transverse shear strains (and g33 = 0) 
+    // 2 transverse shear strains (and g33 = 0)
     //    cause inextensible director (by defn)
     // ----------------------------------------
 
@@ -196,7 +194,7 @@ __DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpts[], 
 
     // backprop for Uxi, Ueta interp step
     Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_bar.get_data(),
-                                                                    Ueta_bar.get_data(), res);
+                                                                Ueta_bar.get_data(), res);
 
     // backprop for d0 interp step
     Basis::template interpFieldsTranspose<3, 3>(pt, d0_bar.get_data(), d_bar);
@@ -204,20 +202,23 @@ __DEVICE__ static void computeFullTyingStrainSens(const T pt[], const T Xpts[], 
 }  // end of computeFullTyingStrainSens
 
 template <typename T, class Physics, class Basis>
-__DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpts[], const T fn[], const T vars[],
-                                                   const T d[], const T p_vars[], const T p_d[],
-                                                   const T gty_bar[], const T h_gty[], T matCol[], T h_d[]) {
+__DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpts[], const T fn[],
+                                                  const T vars[], const T d[], const T p_vars[],
+                                                  const T p_d[], const T gty_bar[], const T h_gty[],
+                                                  T matCol[], T h_d[]) {
     // 2nd order backprop terms, linear part
-    computeFullTyingStrainSens<T, Physics, Basis, false>(pt, Xpts, fn, vars, d, h_gty, matCol, h_d);
-
     static constexpr bool is_nonlinear = Physics::is_nonlinear;
+    computeFullTyingStrainSens<T, Physics, Basis, is_nonlinear>(pt, Xpts, fn, vars, d, h_gty,
+                                                                matCol, h_d);
+
     if constexpr (!is_nonlinear) {
         return;
     }
     __syncthreads();
     // remaining part is nonlinear mixed term
     // ybar_i * d^2y_i/dxk/dxl * xdot_l mixed term with forward inputs here
-    // only valid for nonlinear case (aka uses gradient and second derivs of this step, nonlinear part)
+    // only valid for nonlinear case (aka uses gradient and second derivs of this step, nonlinear
+    // part)
 
     static constexpr int vars_per_node = Physics::vars_per_node;
 
@@ -243,7 +244,7 @@ __DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpts[], 
 
     __syncthreads();
 
-    // 2 transverse shear strains (and g33 = 0) 
+    // 2 transverse shear strains (and g33 = 0)
     //    cause inextensible director (by defn)
     // ----------------------------------------
 
@@ -265,7 +266,7 @@ __DEVICE__ static void computeFullTyingStrainHrev(const T pt[], const T Xpts[], 
 
     // backprop for Uxi, Ueta interp step
     Basis::template interpFieldsGradTranspose<vars_per_node, 3>(pt, Uxi_hat.get_data(),
-                                                                    Ueta_hat.get_data(), matCol);
+                                                                Ueta_hat.get_data(), matCol);
 
     // backprop for d0 interp step
     Basis::template interpFieldsTranspose<3, 3>(pt, d0_hat.get_data(), h_d);
