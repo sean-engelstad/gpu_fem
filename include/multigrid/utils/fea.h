@@ -206,6 +206,51 @@ T *getPlatePointLoad(int nxe, int nye, double Lx, double Ly, double load_mag) {
 }
 
 template <typename T, class Phys>
+T *getPlateNonlinearLoads(int nxe, int nye, double Lx, double Ly, double load_mag,
+                 double in_plane_frac = 0.0) {
+    /*
+    make a rectangular plate mesh of shell elements
+    simply supported with transverse constrant distributed load
+
+    make the load set for this mesh
+    q(x,y) = Q * sin(pi * x / a) * sin(pi * y / b)
+    */
+
+    // number of nodes per direction
+    int nnx = nxe + 1;
+    int nny = nye + 1;
+    int num_nodes = nnx * nny;
+
+    T dx = Lx / nxe;
+    T dy = Ly / nye;
+
+    double PI = 3.1415926535897;
+
+    int num_dof = Phys::vars_per_node * num_nodes;
+    T *my_loads = new T[num_dof];
+    memset(my_loads, 0.0, num_dof * sizeof(T));
+
+    // technically we should be integrating this somehow or distributing this
+    // among the elements somehow..
+    // the actual rhs is integral q(x,y) * phi_i(x,y) dxdy, fix later if want
+    // better error conv.
+    for (int iy = 0; iy < nny; iy++) {
+        for (int ix = 0; ix < nnx; ix++) {
+            int inode = nnx * iy + ix;
+            T x = ix * dx, y = iy * dy;
+            T nodal_load = load_mag * sin(PI * x / Lx) * sin(PI * y / Ly);
+            my_loads[Phys::vars_per_node * inode + 2] = nodal_load;
+        }
+
+        int ix = nnx - 1;  // pos x1 edge for in-plane
+        int inode = nnx * iy + ix;
+        T x = ix * dx, y = iy * dy;
+        my_loads[Phys::vars_per_node * inode] = -load_mag * in_plane_frac;
+    }
+    return my_loads;
+}
+
+template <typename T, class Phys>
 T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
     /*
     make a rectangular plate mesh of shell elements

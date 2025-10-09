@@ -36,8 +36,9 @@ void solve_direct(int nxe) {
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
 
     int nye = nxe;
-    double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005;
-    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick);
+    double Lx = 2.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005, rho = 2500, ys = 350e6;
+    int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
+    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
     // BSR factorization
     auto& bsr_data = assembler.getBsrData();
@@ -47,9 +48,12 @@ void solve_direct(int nxe) {
     bsr_data.compute_full_LU_pattern(fillin, print);
     assembler.moveBsrDataToDevice();
 
-    // get the loads
-    double Q = 1e4; // load magnitude
+    // get plate loads
+    double Q = 5e2;
+    // double Q = 1e2;
     T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
+    // double in_plane_frac = 0.3;
+    // T *my_loads = getPlateNonlinearLoads<T, Physics>(nxe, nye, Lx, Ly, Q, in_plane_frac);
     // T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
@@ -63,11 +67,11 @@ void solve_direct(int nxe) {
 
     if constexpr (is_nonlinear) {
         // newton solve
-        int num_load_factors = 100, num_newton = 30;
-        T min_load_factor = 0.05, max_load_factor = 1.0, abs_tol = 1e-6,
-            rel_tol = 1e-4;
+        int num_load_factors = 100, num_newton = 20;
+        T min_load_factor = 0.01, max_load_factor = 1.0, abs_tol = 1e-6,
+            rel_tol = 1e-6;
         auto solve_func = CUSPARSE::direct_LU_solve<T>;
-        std::string outputPrefix = "out/uCRM_";
+        std::string outputPrefix = "out/plate_";
 
         // const bool fast_assembly = true;
         const bool fast_assembly = false;
@@ -99,6 +103,7 @@ int main(int argc, char **argv) {
     bool use_multigrid = false;
     bool full_LU = true;
     int nxe = 10;  // default value
+    // int nxe = 64;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {

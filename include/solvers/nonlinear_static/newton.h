@@ -98,6 +98,9 @@ void newton_solve(LinearSolveFunc<Mat, Vec> linear_solve, Mat &kmat, Vec &loads,
         }
 
     }  // end of load factor loop
+
+    // now copy vars to soln (for VTK writing)
+    vars.copyValuesTo(soln);
 }
 
 #endif  // USE_GPU
