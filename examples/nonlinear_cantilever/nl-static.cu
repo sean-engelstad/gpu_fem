@@ -116,10 +116,9 @@ int main(int argc, char **argv) {
     }
   }
 
-  printf("ref (u,v,w): -3.316, 0.0, 6.72\n"); // even with linear rotation element
-
-  // additional debug printout stiffness matrix from random displacements here?
-  // maybe residual is wrong?
+  // using linear rotationType (not default quadratic)
+  // perfect match now!
+  printf("ref (u,v,w): -2.218, 0.0, 5.791\n");
 
   return 0;
 };
