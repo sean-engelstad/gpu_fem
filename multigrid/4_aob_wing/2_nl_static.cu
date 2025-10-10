@@ -112,13 +112,19 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
         int level_exp = 1 << level;
         printf("level_exp %d\n", level_exp);
         double load_mag = 40.0 * (16.0 / level_exp / level_exp); // 4x the linear loads (so get more geomNL deflections)
-        double SR1 = (300.0 / SR);
-        double SR3 = SR1 * SR1 * SR1;
-        load_mag *= SR3;
         double *my_loads = h_loads.getPtr();
         for (int inode = 0; inode < nnodes; inode++) {
             my_loads[6 * inode + 2] = load_mag;
         }
+
+        // SET DVs
+        // -------------------
+
+        // see _get_thicks.py and _thicks.txt (for this design)
+        T h_dvs_ptr[111] = {0.004818181818181818, 0.0047272727272727275, 0.0047272727272727275, 0.018636363636363635, 0.00490909090909091, 0.004818181818181818, 0.018636363636363635, 0.017954545454545456, 0.017954545454545456, 0.0046363636363636355, 0.0046363636363636355, 0.004818181818181818, 0.0047272727272727275, 0.01931818181818182, 0.005, 0.00490909090909091, 0.01931818181818182, 0.00490909090909091, 0.01727272727272727, 0.01727272727272727, 0.004545454545454545, 0.004545454545454545, 0.0046363636363636355, 0.02, 0.005, 0.02, 0.005, 0.01659090909090909, 0.01659090909090909, 0.004454545454545454, 0.004454545454545454, 0.004545454545454545, 0.015909090909090907, 0.015909090909090907, 0.004363636363636364, 0.004363636363636364, 0.004454545454545454, 0.015227272727272728, 0.015227272727272728, 0.004272727272727273, 0.004272727272727273, 0.004363636363636364, 0.014545454545454545, 0.014545454545454545, 0.0041818181818181815, 0.0041818181818181815, 0.004272727272727273, 0.013863636363636363, 0.013863636363636363, 0.00409090909090909, 0.00409090909090909, 0.0041818181818181815, 0.01318181818181818, 0.01318181818181818, 0.004, 0.004, 0.00409090909090909, 0.0125, 0.0125, 0.003909090909090909, 0.003909090909090909, 0.004, 0.01181818181818182, 0.01181818181818182, 0.003818181818181818, 0.003818181818181818, 0.003909090909090909, 0.011136363636363635, 0.011136363636363635, 0.0037272727272727275, 0.0037272727272727275, 0.003818181818181818, 0.010454545454545454, 0.010454545454545454, 0.0036363636363636364, 0.0036363636363636364, 0.0037272727272727275, 0.009772727272727273, 0.009772727272727273, 0.003545454545454545, 0.003545454545454545, 0.0036363636363636364, 0.00909090909090909, 0.00909090909090909, 0.003454545454545455, 0.003454545454545455, 0.003545454545454545, 0.00840909090909091, 0.00840909090909091, 0.003363636363636364, 0.003363636363636364, 0.003454545454545455, 0.007727272727272727, 0.007727272727272727, 0.003272727272727273, 0.003272727272727273, 0.003363636363636364, 0.007045454545454546, 0.007045454545454546, 0.003181818181818182, 0.003181818181818182, 0.003272727272727273, 0.006363636363636364, 0.006363636363636364, 0.0030909090909090908, 0.0030909090909090908, 0.003181818181818182, 0.005681818181818181, 0.005681818181818181, 0.003, 0.0030909090909090908};
+        auto h_dvs = HostVec<T>(111, h_dvs_ptr);
+        auto global_dvs = h_dvs.createDeviceVec();
+        assembler.set_design_variables(global_dvs);
 
         // do multicolor junction reordering
         auto &bsr_data = assembler.getBsrData();
@@ -245,11 +251,15 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
     // 2) solve nonlinear Newton-Raphson load-step scheme
 
     // try solving a nonlinear load step scheme (Newton-mg)
-    int num_load_factors = 10, num_newton = 10;
-    T min_load_factor = 1.0 / (num_load_factors - 1), max_load_factor = 1.0, abs_tol = 1e-8,
-        rel_tol = 1e-8;
+    int num_load_factors = 20, num_newton = 10; // num_load_factors = 10
+    // careful, multigrid solve currently breaks down (may need galerkin coarse grids) when the wing buckles
+    T max_load_factor = 1.0; 
+    // T max_load_factor = 0.1; // with old thicknesses 2.0 / SR each panel (not optimized design), can't get large deflections before buckling
+    T min_load_factor = max_load_factor / (num_load_factors - 1);
+    T abs_tol = 1e-8, rel_tol = 1e-8;
     std::string outputPrefix = "out/wing_nl_mg_";
-    bool write_vtk = true;
+    bool write_vtk = level <= 2; // otherwise it's too slow
+    // bool write_vtk = false;
 
     // fine grid states
     auto& fine_assembler = grids[0].assembler;
@@ -320,6 +330,13 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
             double rhs_norm = CUBLAS::get_vec_norm(fine_rhs);
             grids[0].setDefect(fine_rhs, perm_out);
             grids[0].zeroSolution();
+
+            if (iload == 0 && inewton == 0) {
+                // set the abs tol of outer K-cycle krylov solver to rtol * init norm here (this will have it do less work on inner solves)
+                if (is_kcycle) {
+                    kmg->outer_solver->set_abs_tol(rtol * rhs_norm);
+                }
+            }
 
             // debug the V-cycle process here
             // if (iload == 1 && inewton == 1) {
@@ -407,6 +424,9 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
     double total = startup_time.count() + solve_time.count();
     double mem_MB = is_kcycle ? kmg->get_memory_usage_mb() : mg->get_memory_usage_mb();
     printf("wingbox GMG solve, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
+    if (write_vtk) {
+        printf("\n--------------------\nWARNING : VTK writes could affect timing!\n--------------------\n");
+    }
 
     if (is_kcycle) {
         // double check with true resid nrm
@@ -415,7 +435,7 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
 
         // print some of the data of host residual
         int *d_perm = kmg->grids[0].d_perm;
-        auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+        auto h_soln = kmg->grids[0].d_vars.createPermuteVec(6, d_perm).createHostVec();
         printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/aob_wing_mg.vtk");
     } else {
         // double check with true resid nrm
@@ -424,7 +444,7 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
 
         // print some of the data of host residual
         int *d_perm = mg->grids[0].d_perm;
-        auto h_soln = mg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+        auto h_soln = mg->grids[0].d_vars.createPermuteVec(6, d_perm).createHostVec();
         printToVTK<Assembler,HostVec<T>>(mg->grids[0].assembler, h_soln, "out/aob_wing_mg.vtk");
     }
 }
@@ -524,6 +544,9 @@ void solve_nonlinear_direct(MPI_Comm &comm, int level, double SR) {
   double mem_mb = static_cast<double>(bytes_per_double) * static_cast<double>(bsr_data.nnzb) * 36.0 / 1024.0 / 1024.0;
   printf("Newton-Raphson, direct LU solves on #dof %d, uses memory(MB) %.2e\n", nvars, mem_mb);
   printf("\tassembly %.2e and ovr startup %.2e, solve time %.2e and total time %.2e (sec)\n", assemb_time.count(), startup_time.count(), solve_time.count(), total_time.count());
+  if (write_vtk) {
+        printf("\n--------------------\nWARNING : VTK writes could affect timing!\n--------------------\n");
+    }
 
   // print some of the data of host residual
   auto h_soln = soln.createHostVec();

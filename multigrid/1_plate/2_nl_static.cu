@@ -167,8 +167,8 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
     auto start1 = std::chrono::high_resolution_clock::now();
 
     int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
-    // bool print = true;
-    bool print = false;
+    bool print = true;
+    // bool print = false;
     T omega2 = 1.5;
     T atol = 1e-6, rtol = 1e-6;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
@@ -211,7 +211,8 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
         rel_tol = 1e-8;
     auto solve_func = CUSPARSE::direct_LU_solve<T>;
     std::string outputPrefix = "out/plate_nl_mg_";
-    bool write_vtk = true;
+    // bool write_vtk = true;
+    bool write_vtk = false; // make sure this is not on if timing it
 
     // fine grid states
     auto& fine_assembler = grids[0].assembler;
@@ -312,6 +313,15 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
 
     }  // end of load factor loop
 
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end1 - start1;
+    int ndof = cycle_type == "K" ? kmg->grids[0].N : mg->grids[0].N;
+    double total = startup_time.count() + solve_time.count();
+    double mem_MB = is_kcycle ? kmg->get_memory_usage_mb() : mg->get_memory_usage_mb();
+    printf("nonlinear Newton-Raphson GMG solve of plate geom, ndof %d : startup time %.2e, solve time %.2e, total %.2e, with mem(MB) %.2e\n", ndof, startup_time.count(), solve_time.count(), total, mem_MB);
+    if (write_vtk) {
+        printf("\n--------------------\nWARNING : VTK writes could affect timing!\n--------------------\n");
+    }
 }
 
 template <typename T, class Assembler>
@@ -319,6 +329,9 @@ void solve_direct(int nxe, double SR, T load_mag = 5.0e7) {
 
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start0 = std::chrono::high_resolution_clock::now();
 
     int nye = nxe;
     double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005, rho = 2500, ys = 350e6;
@@ -354,13 +367,18 @@ void solve_direct(int nxe, double SR, T load_mag = 5.0e7) {
     auto rhs = assembler.createVarsVec();
     auto vars = assembler.createVarsVec();
 
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> startup_time = start1 - start0;
+
     // newton solve
     int num_load_factors = 50, num_newton = 10;
     T min_load_factor = 1.0 / (num_load_factors - 1), max_load_factor = 1.0, abs_tol = 1e-8,
         rel_tol = 1e-8;
     auto solve_func = CUSPARSE::direct_LU_solve<T>;
     std::string outputPrefix = "out/plate_";
-    bool write_vtk = true;
+    // bool write_vtk = true;
+    bool write_vtk = false;
 
     const bool fast_assembly = true;
     // const bool fast_assembly = false;
@@ -373,6 +391,14 @@ void solve_direct(int nxe, double SR, T load_mag = 5.0e7) {
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_nl.vtk");
 
+    auto end1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end1 - start1;
+    int ndof = assembler.get_num_vars();
+    double total = startup_time.count() + solve_time.count();
+    printf("nonlinear Newton-Raphson Direct-LU solve of plate geom, ndof %d : startup time %.2e, solve time %.2e, total %.2e\n", ndof, startup_time.count(), solve_time.count(), total);
+    if (write_vtk) {
+        printf("\n--------------------\nWARNING : VTK writes could affect timing!\n--------------------\n");
+    }
 }
 
 template <typename T, class Assembler>

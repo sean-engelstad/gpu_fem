@@ -35,6 +35,8 @@ public:
         factor_matrix();
     }
 
+    void set_abs_tol(T atol) {}
+
     void factor_matrix() {
         // copy the data from the original matrix to new place for factor
         CHECK_CUDA(

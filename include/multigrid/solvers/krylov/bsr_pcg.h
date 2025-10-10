@@ -55,6 +55,10 @@ public:
     // nothing
     void update_after_assembly() {}
 
+    void set_abs_tol(T atol) {
+        options.atol = atol;
+    }
+
     void solve(DeviceVec<T> rhs_in, DeviceVec<T> soln_out, bool check_conv = false) {
         // assumes rhs_in and soln_out are in permutation for solve (not natural order)
         // performs full K-cycle with left-precond flexible PCG (note this shows true resid even though it is left precond, unlike GMRES)!

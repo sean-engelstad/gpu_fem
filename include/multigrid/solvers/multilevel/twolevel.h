@@ -14,6 +14,8 @@ public:
     // nothing
     void update_after_assembly() {}
 
+    void set_abs_tol(T atol) {}
+
     void solve(DeviceVec<T> rhs, DeviceVec<T> soln, bool check_conv = false) {
         // printf("in subpsace solve\n");
 

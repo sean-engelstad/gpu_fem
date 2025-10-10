@@ -250,6 +250,11 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
     grids[numLevels-1].setSolution(coarse_soln, perm_out);
     for (int ilevel = numLevels-1; ilevel >= 1; ilevel--) {
         grids[ilevel-1].prolongation->prolongate(grids[ilevel].d_soln, grids[ilevel-1].d_soln);
+        
+        // apply bcs to prolong
+        grids[ilevel-1].d_soln.permuteData(6, grids[ilevel-1].d_perm);  // better way to do this later?
+        grids[ilevel-1].assembler.apply_bcs(grids[ilevel-1].d_soln);
+        grids[ilevel-1].d_soln.permuteData(6, grids[ilevel-1].d_iperm);  // better way to do this later?
     }
     grids[0].getSolution(fine_vars, perm_out);
 
