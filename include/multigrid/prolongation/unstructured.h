@@ -62,6 +62,13 @@ class UnstructuredProlongation {
         d_PT_rowp = PT_bsr_data.rowp,  d_PT_rows = PT_bsr_data.rows, d_PT_cols = PT_bsr_data.cols;
         PT_nnzb = PT_bsr_data.nnzb;
         d_coarse_iperm = PT_bsr_data.iperm;
+
+        // optional d_weights
+        N_fine = nnodes_fine * block_dim;
+        d_weights = DeviceVec<T>(N_fine);
+        nnodes_coarse = coarse_assembler.get_num_nodes();
+        N_coarse = nnodes_coarse * block_dim;
+        d_coarse_weights = DeviceVec<T>(N_coarse);
     }   
 
     void assemble_matrices() {
@@ -102,6 +109,7 @@ class UnstructuredProlongation {
         }
     }
 
+    template <bool normalize = false>
     void restrict_vec(DeviceVec<T> fine_vec_in, DeviceVec<T> coarse_vec_out) {
 
         if constexpr (is_bsr) {
@@ -117,6 +125,22 @@ class UnstructuredProlongation {
             dim3 grid((PT_nnzb + 31) / 32);
             k_csr_mat_vec<T><<<grid, block>>>(PT_nnzb, block_dim, d_PT_rows, d_PT_cols, d_PT_vals, fine_vec_in.getPtr(),
                                             coarse_vec_out.getPtr());
+        }
+
+        // NORMALIZE section, only for restricting the solution (not defects)
+        if constexpr (normalize) {
+            // set weights values here
+            dim3 block(32);
+            int nblock1 = (N_fine + 31) / 32;
+            dim3 grid1(nblock1);
+            k_vec_set<T><<<grid1, block>>>(N_fine, 1.0, d_weights.getPtr());
+            cudaMemset(d_coarse_weights.getPtr(), 0.0, N_coarse * sizeof(T)); 
+            restrict_vec<false>(d_weights, d_coarse_weights);
+
+            // now divide the coarse vec by coarse weights to normalize
+            int nblock2 = (N_coarse + 31) / 32;
+            dim3 grid2(nblock2);
+            k_vec_normalize2<T><<<grid2, block>>>(N_coarse, coarse_vec_out.getPtr(), d_coarse_weights.getPtr());
         }
     }
 
@@ -134,9 +158,11 @@ class UnstructuredProlongation {
     int *d_P_rowp, *d_P_rows, *d_P_cols;
     int *d_PT_rowp, *d_PT_rows, *d_PT_cols;
     int P_nnzb, PT_nnzb;
+    DeviceVec<T> d_weights, d_coarse_weights;
 
     int *d_coarse_conn, *d_n2e_ptr, *d_n2e_elems;
     T *d_n2e_xis;
     int *d_coarse_iperm, *d_fine_iperm;
-    int nnodes_fine, block_dim;
+    int nnodes_fine, block_dim, N_fine;
+    int nnodes_coarse, N_coarse;
 };

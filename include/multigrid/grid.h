@@ -107,6 +107,12 @@ class SingleGrid {
         if (perm) d_defect.permuteData(block_dim, d_iperm);  // unperm to permuted
     }
 
+    void setStateVars(DeviceVec<T> new_vars, bool perm = true) {
+        // set the defect on the finest grid
+        new_vars.copyValuesTo(d_vars);
+        if (perm) d_vars.permuteData(block_dim, d_iperm);  // unperm to permuted
+    }
+
     void getDefect(DeviceVec<T> defect_out, bool perm = true) {
         // copy solution to another device vec outside this class
         d_defect.copyValuesTo(defect_out);
@@ -204,25 +210,24 @@ class SingleGrid {
         cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
     }
 
-    void restrict_soln(DeviceVec<T> fine_soln_in) {
-        /* transfer defect from a finer mesh to THIS coarse mesh */
+    void restrict_soln(DeviceVec<T> fine_vars_in) {
+        /* transfer soln (du) from a finer mesh to THIS coarse mesh */
 
         // zero this coarse defect + restrict the finer defect to this coarse grid
-        cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));  // reset defect
+        cudaMemset(d_vars.getPtr(), 0.0, N * sizeof(T));  // reset defect
         const bool normalize = true; // need to normalize
-        restriction->template restrict_vec<normalize>(fine_soln_in, d_soln);
+        restriction->template restrict_vec<normalize>(fine_vars_in, d_vars);
 
         // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
         // apply bcs is on un-permuted data
-        d_soln.permuteData(block_dim, d_perm);  // better way to do this later?
-        assembler.apply_bcs(d_soln);
+        d_vars.permuteData(block_dim, d_perm);  // better way to do this later?
+        assembler.apply_bcs(d_vars);
 
         // now that in orig mesh order, copy to vars and set into assembler
-        d_soln.copyValuesTo(d_vars);
         assembler.set_variables(d_vars);
 
         // then unpermute back to solve order
-        d_soln.permuteData(block_dim, d_iperm);
+        d_vars.permuteData(block_dim, d_iperm);
     }
 
     void free() {

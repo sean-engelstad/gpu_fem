@@ -42,6 +42,8 @@
     ./1_static_gmg.out mg --nxe 2048 --SR 100.0    to run geometric multigrid plate solve on 2048 x 2048 elem grid with slenderness ratio 100
 */
 
+// NOTE : weird BCs might be slowing down the multigrid + nonlinear solver conv here (we get weird nonlinear direct convergence initially as well, something we don't see for wings)
+
 void to_lowercase(char *str) {
     for (; *str; ++str) {
         *str = std::tolower(*str);
@@ -49,7 +51,7 @@ void to_lowercase(char *str) {
 }
 
 template <typename T, class Assembler>
-void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
+void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
     // geometric multigrid method here..
     // need to make a number of grids..
     using Basis = typename Assembler::Basis;
@@ -241,20 +243,23 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::
             fine_assembler.apply_bcs(fine_kmat);
 
             // pass current states to coarse grids and update their assemblies
+            grids[0].setStateVars(fine_vars); // set vars into finest grid (so we can pass this down to coarser grids)
             kmg->update_coarse_grid_states(); // restrict state variables to coarse grids
             kmg->update_coarse_grid_jacobians(); // compute coarse grid NL stiffness matrices
             kmg->update_after_assembly(); // updates any dependent matrices like Dinv
 
-            if (iload == 1 && inewton == 1) {
-                // show the solution on the coarse grid
-                int *d_perm = kmg->grids[0].d_perm;
-                auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/plate_nl_debug0.vtk");
+            // if (iload == 1 && inewton == 1) {
 
-                int *d_perm1 = kmg->grids[1].d_perm;
-                auto h_soln1 = kmg->grids[1].d_soln.createPermuteVec(6, d_perm1).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(kmg->grids[1].assembler, h_soln1, "out/plate_nl_debug1.vtk");
-            }
+            //     break;
+            //     // // show the solution on the coarse grid
+            //     // int *d_perm = kmg->grids[0].d_perm;
+            //     // auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
+            //     // printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/plate_nl_debug0.vtk");
+
+            //     // int *d_perm1 = kmg->grids[1].d_perm;
+            //     // auto h_soln1 = kmg->grids[1].d_soln.createPermuteVec(6, d_perm1).createHostVec();
+            //     // printToVTK<Assembler,HostVec<T>>(kmg->grids[1].assembler, h_soln1, "out/plate_nl_debug1.vtk");
+            // }
 
             // compute the new RHS for load factor schemes (on fine grid)
             fine_rhs.zeroValues();
@@ -391,15 +396,15 @@ int main(int argc, char **argv) {
     if (elem_type == "MITC4") {
         using Basis = LagrangeQuadBasis<T, Quad, 2>;
         using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        multigrid_plate_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else if (elem_type == "CFI4") {
         using Basis = ChebyshevQuadBasis<T, Quad, 1>;
         using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        multigrid_plate_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else if (elem_type == "CFI9") {
         using Basis = ChebyshevQuadBasis<T, Quad, 2>;
         using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        multigrid_plate_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else {
         printf("ERROR : didn't run anything, elem type not in available types (see main function)\n");
     }

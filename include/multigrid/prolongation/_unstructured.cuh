@@ -154,3 +154,19 @@ __global__ static void k_csr_mat_vec(const int nnzb, const int block_dim, const 
         atomicAdd(&vec_out[block_dim * row + idof], coeff * val_in);
     }
 }
+
+template <typename T>
+__global__ static void k_vec_normalize2(int N, T *vec_in, T *weights) {
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid < N) {
+        vec_in[tid] /= (weights[tid] + 1e-12);
+    }
+}
+
+template <typename T>
+__global__ static void k_vec_set(int N, T val, T *vec) {
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid < N) {
+        vec[tid] = val;
+    }
+}

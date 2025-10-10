@@ -39,6 +39,21 @@ class GeometricMultigridSolver {
         }
     }
 
+    void update_coarse_grid_states() {
+        /* update all state variables from fine grid down to coarser grids (for nonlinear solutions) */
+        for (int ilevel = 0; ilevel < getNumLevels() - 1; ilevel++) {
+            grids[ilevel + 1].restrict_soln(grids[ilevel].d_soln);
+        }
+    }
+
+    void update_coarse_grid_jacobians() {
+        /* update all state variables from fine grid down to coarser grids (for nonlinear solutions) */
+        for (int ilevel = 0; ilevel < getNumLevels() - 1; ilevel++) {
+            grids[ilevel + 1].assembler.add_jacobian_fast(grids[ilevel + 1].Kmat);
+            grids[ilevel + 1].assembler.apply_bcs(grids[ilevel + 1].Kmat);
+        }
+    }
+
     void update_after_assembly() {
         /* update matrices after new assembly */
         int num_levels = getNumLevels();
