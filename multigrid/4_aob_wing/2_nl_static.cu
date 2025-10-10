@@ -65,8 +65,8 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
     using Physics = typename Assembler::Phys;
     using Data = typename Physics::Data;
     using Smoother = MulticolorGSSmoother_V1<Assembler>;
-    // const bool is_bsr = true; // need this one if want to smooth prolongation
-    const bool is_bsr = false; // no difference in intra-nodal (default old working prolong)
+    const bool is_bsr = true; // need this one if want to smooth prolongation
+    // const bool is_bsr = false; // no difference in intra-nodal (default old working prolong)
     using Prolongation = UnstructuredProlongation<Assembler, Basis, is_bsr>; 
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, LINE_SEARCH>;
     using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
@@ -311,6 +311,34 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
             double rhs_norm = CUBLAS::get_vec_norm(fine_rhs);
             grids[0].setDefect(fine_rhs, perm_out);
             grids[0].zeroSolution();
+
+            // debug the V-cycle process here
+            if (iload == 1 && inewton == 1) {
+
+                // assume two grids only
+
+                // 1) print the fine grid defect and vars
+                int *d_perm = kmg->grids[0].d_perm;
+                auto h_defect0 = kmg->grids[0].d_defect.createPermuteVec(6, d_perm).createHostVec();
+                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_defect0, "out/wing_defect0.vtk");
+                auto h_vars0 = kmg->grids[0].d_vars.createPermuteVec(6, d_perm).createHostVec();
+                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_vars0, "out/wing_vars0.vtk");
+
+                // V-cycle transfer fine grid defect to the coarse grid
+                grids[1].restrict_defect(grids[0].d_defect);
+
+                // 2) print the coarse grid defect and vars
+                int *d_perm1 = kmg->grids[1].d_perm;
+                auto h_defect1 = kmg->grids[1].d_defect.createPermuteVec(6, d_perm1).createHostVec();
+                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_defect1, "out/wing_defect1.vtk");
+                auto h_vars1 = kmg->grids[1].d_vars.createPermuteVec(6, d_perm1).createHostVec();
+                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_vars1, "out/wing_vars1.vtk");
+
+                // 3) do a coarse grid solve
+
+
+                return;
+            }
 
             // solve the linear system using GMG solver for soln = u - u0 (and update variables)
             if (cycle_type == "V") {

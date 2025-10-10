@@ -49,8 +49,13 @@ void solve_direct(int nxe) {
     assembler.moveBsrDataToDevice();
 
     // get plate loads
-    double Q = 1.0e5;
-    T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
+    double Q = 5.0e7 / (c_nxe + 1) / (c_nxe + 1);
+    Q *= (100.0 / SR) * (100.0 / SR) * (100.0 / SR);
+    // T *my_loads = getPlatePointLoad<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+    T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+
+    // double Q = 1.0e5;
+    // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
     // double in_plane_frac = 0.3;
     // T *my_loads = getPlateNonlinearLoads<T, Physics>(nxe, nye, Lx, Ly, Q, in_plane_frac);
     // T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);

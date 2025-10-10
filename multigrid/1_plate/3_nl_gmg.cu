@@ -95,8 +95,10 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
         double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
         int nxe_per_comp = c_nxe / 4, nye_per_comp = c_nye/4; // for now (should have 25 grids)
         auto assembler = createPlateAssembler<Assembler>(c_nxe, c_nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
-        double Q = 1.0e5;
-        T *my_loads = getPlatePointLoad<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+        double Q = 5.0e7 / (c_nxe+1) / (c_nye + 1);
+        Q *= (100.0 / SR) * (100.0 / SR) * (100.0 / SR);
+        // T *my_loads = getPlatePointLoad<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+        T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
         // double in_plane_frac = 0.3;
         // T *my_loads = getPlateNonlinearLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q, in_plane_frac);
         printf("making grid with nxe %d\n", c_nxe);
@@ -313,10 +315,100 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, std::string
 
 }
 
+template <bool is_nonlinear>
+void solve_direct(int nxe, double SR) {
+    using T = double;   
+
+    using Quad = QuadLinearQuadrature<T>;
+    using Director = LinearizedRotation<T>;
+    using Basis = LagrangeQuadBasis<T, Quad, 2>;
+    using Geo = Basis::Geo;
+    constexpr bool has_ref_axis = false;
+    using Data = ShellIsotropicData<T, has_ref_axis>;
+    using Physics = IsotropicShell<T, Data, is_nonlinear>;
+    using Assembler = MITCShellAssembler<T, Director, Basis, Physics, DeviceVec, BsrMat>;
+
+    int nye = nxe;
+    double Lx = 1.0, Ly = 1.0, E = 70e9, nu = 0.3, thick = 0.005, rho = 2500, ys = 350e6;
+    int nxe_per_comp = nxe / 4, nye_per_comp = nye/4; // for now (should have 25 grids)
+    auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+
+    // BSR factorization
+    auto& bsr_data = assembler.getBsrData();
+    double fillin = 10.0;  // 10.0
+    bool print = true;
+    bsr_data.AMD_reordering();
+    bsr_data.compute_full_LU_pattern(fillin, print);
+    assembler.moveBsrDataToDevice();
+
+    // get plate loads
+    double Q = 5.0e7 / (c_nxe + 1) / (c_nxe + 1);
+    Q *= (100.0 / SR) * (100.0 / SR) * (100.0 / SR);
+    // T *my_loads = getPlatePointLoad<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+    T *my_loads = getPlateLoads<T, Physics>(c_nxe, c_nye, Lx, Ly, Q);
+
+    // double Q = 1.0e5;
+    // T *my_loads = getPlatePointLoad<T, Physics>(nxe, nye, Lx, Ly, Q);
+    // double in_plane_frac = 0.3;
+    // T *my_loads = getPlateNonlinearLoads<T, Physics>(nxe, nye, Lx, Ly, Q, in_plane_frac);
+    // T *my_loads = getPlateLoads<T, Physics>(nxe, nye, Lx, Ly, Q);
+    auto loads = assembler.createVarsVec(my_loads);
+    assembler.apply_bcs(loads);
+
+    // setup kmat and initial vecs
+    auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto soln = assembler.createVarsVec();
+    auto res = assembler.createVarsVec();
+    auto rhs = assembler.createVarsVec();
+    auto vars = assembler.createVarsVec();
+
+    if constexpr (is_nonlinear) {
+        // newton solve
+        int num_load_factors = 50, num_newton = 10;
+        T min_load_factor = 0.05, max_load_factor = 1.0, abs_tol = 1e-8,
+            rel_tol = 1e-8;
+        auto solve_func = CUSPARSE::direct_LU_solve<T>;
+        std::string outputPrefix = "out/plate_";
+        bool write_vtk = true;
+
+        const bool fast_assembly = true;
+        // const bool fast_assembly = false;
+        newton_solve<T, BsrMat<DeviceVec<T>>, DeviceVec<T>, Assembler, fast_assembly>(
+            solve_func, kmat, loads, soln, assembler, res, rhs, vars,
+            num_load_factors, min_load_factor, max_load_factor, num_newton, abs_tol,
+            rel_tol, outputPrefix, print, write_vtk);
+
+        // print some of the data of host residual
+        auto h_soln = soln.createHostVec();
+        printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_nl.vtk");
+
+    } else {
+        // assembly
+        assembler.add_jacobian(res, kmat);
+        assembler.apply_bcs(kmat);
+
+        // direct LU solve
+        CUSPARSE::direct_LU_solve(kmat, loads, soln);
+
+        // print some of the data of host residual
+        auto h_soln = soln.createHostVec();
+        printToVTK<Assembler,HostVec<T>>(assembler, h_soln, "out/plate_lin.vtk");
+    }
+}
+
+template <typename T, class Assembler>
+void gatekeeper_method(bool is_multigrid, int nxe, double SR, int nsmooth, int ninnercyc, std::string cycle_type) {
+    if (is_multigrid) {
+        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+    } else {
+        solve_direct<T, Assembler>(nxe, SR);
+    }
+}
+
 int main(int argc, char **argv) {
     // input ----------
     bool is_multigrid = true;
-    int nxe = 64; // default value (two grids)
+    int nxe = 128; // default value (three grids)
     double SR = 100.0; // default
     int n_vcycles = 50;
 
@@ -392,19 +484,19 @@ int main(int argc, char **argv) {
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
 
-    printf("plate mesh with %s elements, nxe %d and SR %.2e\n------------\n", elem_type.c_str(), nxe, SR);
+    printf("plate mesh with geomNL %s elements, nxe %d and SR %.2e\n------------\n", elem_type.c_str(), nxe, SR);
     if (elem_type == "MITC4") {
         using Basis = LagrangeQuadBasis<T, Quad, 2>;
         using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+        gatekeeper_method<T, Assembler>(is_multigrid, nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else if (elem_type == "CFI4") {
         using Basis = ChebyshevQuadBasis<T, Quad, 1>;
         using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+        gatekeeper_method<T, Assembler>(is_multigrid, nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else if (elem_type == "CFI9") {
         using Basis = ChebyshevQuadBasis<T, Quad, 2>;
         using Assembler = FullyIntegratedShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-        multigrid_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, cycle_type);
+        gatekeeper_method<T, Assembler>(is_multigrid, nxe, SR, nsmooth, ninnercyc, cycle_type);
     } else {
         printf("ERROR : didn't run anything, elem type not in available types (see main function)\n");
     }

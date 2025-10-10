@@ -41,7 +41,7 @@ public:
     void update_coarse_grid_states() {
         /* update all state variables from fine grid down to coarser grids (for nonlinear solutions) */
         for (int ilevel = 0; ilevel < getNumLevels() - 1; ilevel++) {
-            grids[ilevel + 1].restrict_soln(grids[ilevel].d_soln);
+            grids[ilevel + 1].restrict_soln(grids[ilevel].d_vars);
         }
     }
 

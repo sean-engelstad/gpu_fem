@@ -127,21 +127,30 @@ class UnstructuredProlongation {
                                             coarse_vec_out.getPtr());
         }
 
-        // NORMALIZE section, only for restricting the solution (not defects)
-        if constexpr (normalize) {
-            // set weights values here
-            dim3 block(32);
-            int nblock1 = (N_fine + 31) / 32;
-            dim3 grid1(nblock1);
-            k_vec_set<T><<<grid1, block>>>(N_fine, 1.0, d_weights.getPtr());
-            cudaMemset(d_coarse_weights.getPtr(), 0.0, N_coarse * sizeof(T)); 
-            restrict_vec<false>(d_weights, d_coarse_weights);
+        // // NORMALIZE section, only for restricting the solution (not defects)
+        // if constexpr (normalize) {
+        //     // set weights values here
+        //     dim3 block(32);
+        //     int nblock1 = (N_fine + 31) / 32;
+        //     dim3 grid1(nblock1);
+        //     k_vec_set<T><<<grid1, block>>>(N_fine, 1.0, d_weights.getPtr());
+        //     cudaMemset(d_coarse_weights.getPtr(), 0.0, N_coarse * sizeof(T)); 
+        //     restrict_vec<false>(d_weights, d_coarse_weights);
 
-            // now divide the coarse vec by coarse weights to normalize
-            int nblock2 = (N_coarse + 31) / 32;
-            dim3 grid2(nblock2);
-            k_vec_normalize2<T><<<grid2, block>>>(N_coarse, coarse_vec_out.getPtr(), d_coarse_weights.getPtr());
-        }
+        //     // print out fine weights and coarse weights
+        //     int *d_perm = fine_assembler.getBsrData().iperm;
+        //     auto h_fine_weights = d_weights.createPermuteVec(6, d_perm).createHostVec();
+        //     printToVTK<Assembler,HostVec<T>>(fine_assembler, h_fine_weights, "out/fine_weights.vtk");
+
+        //     int *d_perm1 = coarse_assembler.getBsrData().iperm;
+        //     auto h_c_weights = d_coarse_weights.createPermuteVec(6, d_perm1).createHostVec();
+        //     printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_c_weights, "out/coarse_weights.vtk");
+
+        //     // now divide the coarse vec by coarse weights to normalize
+        //     int nblock2 = (N_coarse + 31) / 32;
+        //     dim3 grid2(nblock2);
+        //     k_vec_normalize2<T><<<grid2, block>>>(N_coarse, coarse_vec_out.getPtr(), d_coarse_weights.getPtr());
+        // }
     }
 
     // public
