@@ -102,7 +102,7 @@ class UnstructuredProlongation {
         }
     }
 
-    void restrict_defect(DeviceVec<T> fine_defect_in, DeviceVec<T> coarse_defect_out) {
+    void restrict_vec(DeviceVec<T> fine_vec_in, DeviceVec<T> coarse_vec_out) {
 
         if constexpr (is_bsr) {
             T a = 1.0, b = 0.0;
@@ -110,13 +110,13 @@ class UnstructuredProlongation {
             CHECK_CUSPARSE(cusparseDbsrmv(handle, CUSPARSE_DIRECTION_ROW,
                                                 CUSPARSE_OPERATION_NON_TRANSPOSE, mb, nb, PT_nnzb,
                                                 &a, descr_PT, d_PT_vals, d_PT_rowp, d_PT_cols, block_dim,
-                                                fine_defect_in.getPtr(), &b,
-                                                coarse_defect_out.getPtr()));
+                                                fine_vec_in.getPtr(), &b,
+                                                coarse_vec_out.getPtr()));
         } else {
             dim3 block(32);
             dim3 grid((PT_nnzb + 31) / 32);
-            k_csr_mat_vec<T><<<grid, block>>>(PT_nnzb, block_dim, d_PT_rows, d_PT_cols, d_PT_vals, fine_defect_in.getPtr(),
-                                            coarse_defect_out.getPtr());
+            k_csr_mat_vec<T><<<grid, block>>>(PT_nnzb, block_dim, d_PT_rows, d_PT_cols, d_PT_vals, fine_vec_in.getPtr(),
+                                            coarse_vec_out.getPtr());
         }
     }
 

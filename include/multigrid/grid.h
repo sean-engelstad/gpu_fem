@@ -68,7 +68,8 @@ class SingleGrid {
 
         // init some util vecs
         d_defect = DeviceVec<T>(N);
-        d_soln = DeviceVec<T>(N);
+        d_soln = DeviceVec<T>(N); // local linear du solns
+        d_vars = DeviceVec<T>(N); // full nonlinear solution
         d_temp_vec = DeviceVec<T>(N);
         d_temp = d_temp_vec.getPtr();
         d_temp2 = DeviceVec<T>(N).getPtr();
@@ -191,7 +192,7 @@ class SingleGrid {
 
         // zero this coarse defect + restrict the finer defect to this coarse grid
         cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T));  // reset defect
-        restriction->restrict_defect(fine_defect_in, d_defect);
+        restriction->restrict_vec(fine_defect_in, d_defect);
 
         // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
         // apply bcs is on un-permuted data
@@ -201,6 +202,27 @@ class SingleGrid {
 
         // reset soln (with bcs zero here, TBD others later)
         cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
+    }
+
+    void restrict_soln(DeviceVec<T> fine_soln_in) {
+        /* transfer defect from a finer mesh to THIS coarse mesh */
+
+        // zero this coarse defect + restrict the finer defect to this coarse grid
+        cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));  // reset defect
+        const bool normalize = true; // need to normalize
+        restriction->template restrict_vec<normalize>(fine_soln_in, d_soln);
+
+        // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
+        // apply bcs is on un-permuted data
+        d_soln.permuteData(block_dim, d_perm);  // better way to do this later?
+        assembler.apply_bcs(d_soln);
+
+        // now that in orig mesh order, copy to vars and set into assembler
+        d_soln.copyValuesTo(d_vars);
+        assembler.set_variables(d_vars);
+
+        // then unpermute back to solve order
+        d_soln.permuteData(block_dim, d_iperm);
     }
 
     void free() {
@@ -215,7 +237,7 @@ class SingleGrid {
     Assembler assembler;
     int N, nelems, block_dim, nnodes;
     int *d_perm, *d_iperm;
-    DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec;
+    DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec, d_vars;
     BsrMat<DeviceVec<T>> Kmat;
     cublasHandle_t cublasHandle = NULL;
     cusparseHandle_t cusparseHandle = NULL;

@@ -239,13 +239,13 @@ T *getPlateNonlinearLoads(int nxe, int nye, double Lx, double Ly, double load_ma
             int inode = nnx * iy + ix;
             T x = ix * dx, y = iy * dy;
             T nodal_load = load_mag * sin(PI * x / Lx) * sin(PI * y / Ly);
-            my_loads[Phys::vars_per_node * inode + 2] = nodal_load;
+            my_loads[Phys::vars_per_node * inode + 2] = nodal_load * 10 / nxe / nye;
         }
 
         int ix = nnx - 1;  // pos x1 edge for in-plane
         int inode = nnx * iy + ix;
         T x = ix * dx, y = iy * dy;
-        my_loads[Phys::vars_per_node * inode] = -load_mag * in_plane_frac;
+        my_loads[Phys::vars_per_node * inode] = -load_mag * in_plane_frac / nye;
     }
     return my_loads;
 }

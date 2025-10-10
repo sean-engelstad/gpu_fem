@@ -50,24 +50,27 @@ class StructuredProlongation {
         k_vec_normalize<T><<<grid2, block>>>(N_fine, dx_fine.getPtr(), d_weights);
     }
 
-    void restrict_defect(DeviceVec<T> fine_defect_in, DeviceVec<T> coarse_defect_out) {
+    template <bool normalize = false>
+    void restrict_vec(DeviceVec<T> fine_vec_in, DeviceVec<T> coarse_vec_out) {
         // zero weights to ensure partition of unity 
-        cudaMemset(d_weights, 0.0, N_fine * sizeof(T));
+        if constexpr (normalize) {
+            cudaMemset(d_weights, 0.0, N_fine * sizeof(T));
+        }
 
         /* launch struct restrict kernel */
         dim3 block(32);
         int nblocks_x = (nelems_fine + 31) / 32;
         dim3 grid(nblocks_x);
         k_plate_restrict<T, geom><<<grid, block>>>(nxe_coarse, nxe_fine, nelems_fine, d_coarse_iperm,
-                                             d_fine_iperm, fine_defect_in.getPtr(),
-                                             coarse_defect_out.getPtr(), d_weights);
+                                             d_fine_iperm, fine_vec_in.getPtr(),
+                                             coarse_vec_out.getPtr(), d_weights);
 
-        // now normalize by the weights so partition of unity remains
-        // NOTE : technically partition of unity for restriction not required (equiv results with remove this usually)
-        // but may depend on element type, esp higher order..
-        int nblock2 = (N_coarse + 31) / 32;
-        dim3 grid2(nblock2);
-        k_vec_normalize<T><<<grid2, block>>>(N_coarse, coarse_defect_out.getPtr(), d_weights);
+        // now normalize by the weights so partition of unity remains (only for restricting soln in NL problems, not loads))
+        if constexpr (normalize) {
+            int nblock2 = (N_coarse + 31) / 32;
+            dim3 grid2(nblock2);
+            k_vec_normalize<T><<<grid2, block>>>(N_coarse, coarse_vec_out.getPtr(), d_weights);
+        }
     }
 
   private:
