@@ -69,7 +69,7 @@ __global__ static void k_prolong_mat_assembly(const int *d_coarse_iperm, const i
 
 template <typename T, class Basis, bool is_bsr>
 __global__ static void k_restrict_mat_assembly(const int *d_coarse_iperm, const int *coarse_elem_conn, const int *node2elem_ptr, const int *node2elem_elems, 
-    const T *node2elem_xis, const int nnodes_fine, const int *d_fine_iperm, int *d_rowp, int *d_cols, int block_dim, T *d_vals) {
+    const T *node2elem_xis, const int nnodes_fine, const int *d_fine_iperm, int *d_rowp, int *d_cols, int block_dim, T *d_vals, T *d_coarse_weights) {
 
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int fine_node = tid;
@@ -128,6 +128,13 @@ __global__ static void k_restrict_mat_assembly(const int *d_coarse_iperm, const 
                 } else {
                     atomicAdd(&d_vals[PT_nz_ind], scale2 * N_cf);
                 }
+
+                // compute coarse weights if we need to normalize after (for partition of unity)
+                // i.e. defect vs soln normalization
+                for (int idof = 0; idof < block_dim; idof++) {
+                    atomicAdd(&d_coarse_weights[block_dim * perm_coarse_node + idof], scale2 * N_cf);
+                }
+
             } // end of loop through that row
         } // end of loop through the local elem dof
     } // end of attached element loop

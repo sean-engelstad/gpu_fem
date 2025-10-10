@@ -109,7 +109,12 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
         int nvars = assembler.get_num_vars();
         int nnodes = assembler.get_num_nodes();
         HostVec<T> h_loads(nvars);
-        double load_mag = 40.0; // 4x the linear loads (so get more geomNL deflections)
+        int level_exp = 1 << level;
+        printf("level_exp %d\n", level_exp);
+        double load_mag = 40.0 * (16.0 / level_exp / level_exp); // 4x the linear loads (so get more geomNL deflections)
+        double SR1 = (300.0 / SR);
+        double SR3 = SR1 * SR1 * SR1;
+        load_mag *= SR3;
         double *my_loads = h_loads.getPtr();
         for (int inode = 0; inode < nnodes; inode++) {
             my_loads[6 * inode + 2] = load_mag;
@@ -241,7 +246,7 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
 
     // try solving a nonlinear load step scheme (Newton-mg)
     int num_load_factors = 10, num_newton = 10;
-    T min_load_factor = 0.01, max_load_factor = 1.0, abs_tol = 1e-8,
+    T min_load_factor = 1.0 / (num_load_factors - 1), max_load_factor = 1.0, abs_tol = 1e-8,
         rel_tol = 1e-8;
     std::string outputPrefix = "out/wing_nl_mg_";
     bool write_vtk = true;
@@ -291,16 +296,20 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
             }
 
             // if (iload == 1 && inewton == 1) {
+            //     // break;
+            //     // show the solution on the coarse grid
+            //     printf("writing iload 1, inewton 1 debug files\n");
+            //     int *d_perm = kmg->grids[0].d_perm;
+            //     auto h_vars = kmg->grids[0].d_vars.createPermuteVec(6, d_perm).createHostVec();
+            //     printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_vars, "out/wing_nl_debug0.vtk");
 
-            //     break;
-            //     // // show the solution on the coarse grid
-            //     // int *d_perm = kmg->grids[0].d_perm;
-            //     // auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
-            //     // printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/plate_nl_debug0.vtk");
+            //     int *d_perm1 = kmg->grids[1].d_perm;
+            //     auto h_vars1 = kmg->grids[1].d_vars.createPermuteVec(6, d_perm1).createHostVec();
+            //     printToVTK<Assembler,HostVec<T>>(kmg->grids[1].assembler, h_vars1, "out/wing_nl_debug1.vtk");
 
-            //     // int *d_perm1 = kmg->grids[1].d_perm;
-            //     // auto h_soln1 = kmg->grids[1].d_soln.createPermuteVec(6, d_perm1).createHostVec();
-            //     // printToVTK<Assembler,HostVec<T>>(kmg->grids[1].assembler, h_soln1, "out/plate_nl_debug1.vtk");
+            //     int *d_perm2 = kmg->grids[2].d_perm;
+            //     auto h_vars2 = kmg->grids[2].d_vars.createPermuteVec(6, d_perm2).createHostVec();
+            //     printToVTK<Assembler,HostVec<T>>(kmg->grids[2].assembler, h_vars2, "out/wing_nl_debug2.vtk");
             // }
 
             // compute the new RHS for load factor schemes (on fine grid)
@@ -313,32 +322,31 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
             grids[0].zeroSolution();
 
             // debug the V-cycle process here
-            if (iload == 1 && inewton == 1) {
+            // if (iload == 1 && inewton == 1) {
 
-                // assume two grids only
+            //     // assume two grids only
 
-                // 1) print the fine grid defect and vars
-                int *d_perm = kmg->grids[0].d_perm;
-                auto h_defect0 = kmg->grids[0].d_defect.createPermuteVec(6, d_perm).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_defect0, "out/wing_defect0.vtk");
-                auto h_vars0 = kmg->grids[0].d_vars.createPermuteVec(6, d_perm).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_vars0, "out/wing_vars0.vtk");
+            //     // 1) print the fine grid defect and vars
+            //     int *d_perm = kmg->grids[0].d_perm;
+            //     auto h_defect0 = kmg->grids[0].d_defect.createPermuteVec(6, d_perm).createHostVec();
+            //     printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_defect0, "out/wing_defect0.vtk");
+            //     auto h_vars0 = kmg->grids[0].d_vars.createPermuteVec(6, d_perm).createHostVec();
+            //     printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_vars0, "out/wing_vars0.vtk");
 
-                // V-cycle transfer fine grid defect to the coarse grid
-                grids[1].restrict_defect(grids[0].d_defect);
+            //     // V-cycle transfer fine grid defect to the coarse grid
+            //     grids[1].restrict_defect(grids[0].d_defect);
 
-                // 2) print the coarse grid defect and vars
-                int *d_perm1 = kmg->grids[1].d_perm;
-                auto h_defect1 = kmg->grids[1].d_defect.createPermuteVec(6, d_perm1).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_defect1, "out/wing_defect1.vtk");
-                auto h_vars1 = kmg->grids[1].d_vars.createPermuteVec(6, d_perm1).createHostVec();
-                printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_vars1, "out/wing_vars1.vtk");
+            //     // 2) print the coarse grid defect and vars
+            //     int *d_perm1 = kmg->grids[1].d_perm;
+            //     auto h_defect1 = kmg->grids[1].d_defect.createPermuteVec(6, d_perm1).createHostVec();
+            //     printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_defect1, "out/wing_defect1.vtk");
+            //     auto h_vars1 = kmg->grids[1].d_vars.createPermuteVec(6, d_perm1).createHostVec();
+            //     printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_vars1, "out/wing_vars1.vtk");
 
-                // 3) do a coarse grid solve
+            //     // 3) do a coarse grid solve
 
-
-                return;
-            }
+            //     return;
+            // }
 
             // solve the linear system using GMG solver for soln = u - u0 (and update variables)
             if (cycle_type == "V") {
@@ -374,6 +382,7 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth
                 printf("\tnewton step %d, rhs = %.4e, soln = %.4e\n", inewton, full_resid_norm,
                        soln_norm);
             }
+
 
             if (abs(full_resid_norm) < (abs_tol + rel_tol * init_res)) {
                 break;
@@ -453,7 +462,11 @@ void solve_nonlinear_direct(MPI_Comm &comm, int level, double SR) {
   int nvars = assembler.get_num_vars();
   int nnodes = assembler.get_num_nodes();
   HostVec<T> h_loads(nvars);
-  double load_mag = 40.0; // 4x the linear loads (so get more geomNL deflections)
+  int level_exp = 1 << level;
+  double load_mag = 40.0 * (16.0 / level_exp / level_exp); // 4x the linear loads (so get more geomNL deflections)
+  double SR1 = (300.0 / SR);
+  double SR3 = SR1 * SR1 * SR1;
+  load_mag *= SR3;
   double *h_loads_ptr = h_loads.getPtr();
   for (int inode = 0; inode < nnodes; inode++) {
     h_loads_ptr[6 * inode + 2] = load_mag;

@@ -65,10 +65,9 @@ class UnstructuredProlongation {
 
         // optional d_weights
         N_fine = nnodes_fine * block_dim;
-        d_weights = DeviceVec<T>(N_fine);
         nnodes_coarse = coarse_assembler.get_num_nodes();
         N_coarse = nnodes_coarse * block_dim;
-        d_coarse_weights = DeviceVec<T>(N_coarse);
+        d_coarse_weights = DeviceVec<T>(N_coarse).getPtr();
     }   
 
     void assemble_matrices() {
@@ -85,7 +84,7 @@ class UnstructuredProlongation {
         // assemble PT mat
         k_restrict_mat_assembly<T, Basis, is_bsr><<<grid, block>>>(
             d_coarse_iperm, d_coarse_conn, d_n2e_ptr, d_n2e_elems, d_n2e_xis, nnodes_fine,
-            d_fine_iperm, d_PT_rowp, d_PT_cols, red_block_dim, d_PT_vals);
+            d_fine_iperm, d_PT_rowp, d_PT_cols, red_block_dim, d_PT_vals, d_coarse_weights);
     }
 
     void prolongate(DeviceVec<T> perm_coarse_soln_in, DeviceVec<T> perm_dx_fine) {
@@ -127,30 +126,19 @@ class UnstructuredProlongation {
                                             coarse_vec_out.getPtr());
         }
 
-        // // NORMALIZE section, only for restricting the solution (not defects)
-        // if constexpr (normalize) {
-        //     // set weights values here
-        //     dim3 block(32);
-        //     int nblock1 = (N_fine + 31) / 32;
-        //     dim3 grid1(nblock1);
-        //     k_vec_set<T><<<grid1, block>>>(N_fine, 1.0, d_weights.getPtr());
-        //     cudaMemset(d_coarse_weights.getPtr(), 0.0, N_coarse * sizeof(T)); 
-        //     restrict_vec<false>(d_weights, d_coarse_weights);
+        // NORMALIZE section, only for restricting the solution (not defects)
+        if constexpr (normalize) {
 
-        //     // print out fine weights and coarse weights
-        //     int *d_perm = fine_assembler.getBsrData().iperm;
-        //     auto h_fine_weights = d_weights.createPermuteVec(6, d_perm).createHostVec();
-        //     printToVTK<Assembler,HostVec<T>>(fine_assembler, h_fine_weights, "out/fine_weights.vtk");
+            int *d_perm1 = coarse_assembler.getBsrData().iperm;
+            auto h_c_weights = DeviceVec<T>(N_coarse, d_coarse_weights).createPermuteVec(6, d_perm1).createHostVec();
+            printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_c_weights, "out/coarse_weights.vtk");
 
-        //     int *d_perm1 = coarse_assembler.getBsrData().iperm;
-        //     auto h_c_weights = d_coarse_weights.createPermuteVec(6, d_perm1).createHostVec();
-        //     printToVTK<Assembler,HostVec<T>>(coarse_assembler, h_c_weights, "out/coarse_weights.vtk");
-
-        //     // now divide the coarse vec by coarse weights to normalize
-        //     int nblock2 = (N_coarse + 31) / 32;
-        //     dim3 grid2(nblock2);
-        //     k_vec_normalize2<T><<<grid2, block>>>(N_coarse, coarse_vec_out.getPtr(), d_coarse_weights.getPtr());
-        // }
+            // now divide the coarse vec by coarse weights to normalize
+            dim3 block(32);
+            int nblock = (N_coarse + 31) / 32;
+            dim3 grid(nblock);
+            k_vec_normalize2<T><<<grid, block>>>(N_coarse, coarse_vec_out.getPtr(), d_coarse_weights);
+        }
     }
 
     // public
@@ -167,7 +155,7 @@ class UnstructuredProlongation {
     int *d_P_rowp, *d_P_rows, *d_P_cols;
     int *d_PT_rowp, *d_PT_rows, *d_PT_cols;
     int P_nnzb, PT_nnzb;
-    DeviceVec<T> d_weights, d_coarse_weights;
+    T* d_coarse_weights;
 
     int *d_coarse_conn, *d_n2e_ptr, *d_n2e_elems;
     T *d_n2e_xis;

@@ -108,9 +108,15 @@ class SingleGrid {
     }
 
     void setStateVars(DeviceVec<T> new_vars, bool perm = true) {
-        // set the defect on the finest grid
+        // set the state vars (u0) on the finest grid
         new_vars.copyValuesTo(d_vars);
         if (perm) d_vars.permuteData(block_dim, d_iperm);  // unperm to permuted
+    }
+
+    void setSolution(DeviceVec<T> new_soln, bool perm = true) {
+        // set the solution (du) on the finest grid
+        new_soln.copyValuesTo(d_soln);
+        if (perm) d_soln.permuteData(block_dim, d_iperm);  // unperm to permuted
     }
 
     void getDefect(DeviceVec<T> defect_out, bool perm = true) {
