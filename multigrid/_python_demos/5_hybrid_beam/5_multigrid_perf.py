@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy as sp
-from src import EBAssembler, HybridAssembler, TimoshenkoAssembler, ChebyshevTSAssembler
+from src import EBAssembler, HybridAssembler, TimoshenkoAssembler, ChebyshevTSAssembler, HRBeamAssembler
 from src import vcycle_solve, block_gauss_seidel_smoother
 import time
 
@@ -16,7 +16,7 @@ args = parser.parse_args()
 
 
 SR_vec = [1.0, 10.0, 30.0, 50.0, 1e2, 300.0, 500.0, 1e3, 1e4]
-beam_types = ['eb', 'ts', 'hyb', 'cfe1', 'cfe2', 'cfe3', 'cfe4']
+beam_types = ['eb', 'ts', 'hyb', 'cfe1', 'cfe2', 'cfe3', 'cfe4', 'hr']
 runtimes = {key:[] for key in beam_types}
 
 for SR in SR_vec:
@@ -70,6 +70,16 @@ for SR in SR_vec:
                 grids += [hyb_grid]
                 nxe = nxe // 2
 
+        elif beam == 'hr':
+            # make hybrid beam assemblers
+            nxe = args.nxe
+            while (nxe >= args.nxe_min):
+                hr_grid = HRBeamAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
+                hr_grid.red_int = False
+                hr_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
+                grids += [hr_grid]
+                nxe = nxe // 2
+
         elif 'cfe' in beam:
 
             if beam == 'cfe1':
@@ -96,11 +106,21 @@ for SR in SR_vec:
         # ----------------------------------
 
         start_time = time.time()
-        fine_soln, n_iters = vcycle_solve(grids, nvcycles=100, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
-            # debug_print=True,
-            debug_print=False,
-            print_freq=5
-        )
+        if SR == 1.0 and beam == 'hr':
+            runtimes[beam] += [np.nan] # bugged out cause constraint [-H, G; G^T, 0] formulation with BSR is tough to factor
+            # better way to handle that?
+            continue
+
+        n_cycles = 50
+        try:
+            fine_soln, n_iters = vcycle_solve(grids, nvcycles=n_cycles, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
+                # debug_print=True,
+                debug_print=False,
+                print_freq=5,
+                double_smooth=True,
+            )
+        except:
+            n_iters = n_cycles
         dt = time.time() - start_time
 
         # runtimes[beam] += [dt]

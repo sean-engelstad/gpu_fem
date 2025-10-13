@@ -5,11 +5,12 @@ from src import TimoshenkoAssembler
 from src import HybridAssembler
 from src import ChebyshevTSAssembler
 from src import HybridChebyshevAssembler
+from src import HRBeamAssembler
 
 # SR = 0.1
-# SR = 1.0
+SR = 1.0
 # SR = 10.0
-SR = 100.0
+# SR = 100.0
 # SR = 1000.0
 # SR = 1e4
 
@@ -31,6 +32,8 @@ rho_KS = 50.0 # rho = 50 for 100 elements, used 500 later
 # nxe = num_elements = int(1e3)
 # nxe = num_elements = int(3e2)
 nxe = num_elements = int(100)
+# nxe = num_elements = int(64)
+
 # nxe = num_elements = int(30)
 
 # num DVs
@@ -57,6 +60,13 @@ ts_beam.solve_forward(hvec)
 hyb_beam = HybridAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False)
 hyb_beam.solve_forward(hvec)
 # hyb_beam.plot_disp()
+
+# 4) hellinger-reissner beam
+# ------------------------
+
+hr_beam = HRBeamAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False) #, load_fcn=lambda x : np.sin(3 * np.pi * x / L))
+hr_beam.solve_forward(hvec)
+hr_beam.plot_disp()
 
 # 4) chebyshev beam
 # ------------------

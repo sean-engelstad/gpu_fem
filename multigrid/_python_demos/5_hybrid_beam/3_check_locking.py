@@ -5,7 +5,7 @@
 # now let's test this out and visualize it
 import numpy as np
 import matplotlib.pyplot as plt
-from src import HybridAssembler
+from src import HybridAssembler, HRBeamAssembler
 from src import TimoshenkoAssembler
 from src import ChebyshevTSAssembler
 from scipy.sparse.linalg import spsolve
@@ -54,8 +54,10 @@ for SR in SR_vec:
     disps = []
     exact_disps = []
 
-    for nxe in [8, 16, 32, 64, 128, 256, 512, 1024]: #, 2048, 4096]:
+    # for nxe in [8, 16, 32, 64, 128, 256, 512, 1024]: #, 2048, 4096]:
+    for nxe in [8, 16, 32, 128, 256, 512, 1024]: #, 2048, 4096]:
         
+        print(f"{SR=:.2e} {nxe=}")
 
         nxh = nxe
         hvec = np.array([thick] * nxh)
@@ -73,6 +75,27 @@ for SR in SR_vec:
 
             # numerical solution for center deflection
             w_vec = hyb_beam.u[0::3]
+            nnodes = w_vec.shape[0]
+            center = (0 + nnodes - 1) // 2
+            pred_disp = w_vec[center]
+
+            disps += [pred_disp]
+            dof_vec += [nxe * 3]
+
+        elif "hr" in args.beam:
+
+            # get hybrid beam disp
+            hr_beam = HRBeamAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L))
+            hr_beam.solve_forward(hvec)
+            # hr_beam.plot_disp()
+            
+            # if nxe == 512 and SR == 1.0:
+            #     hyb_beam.plot_disp()
+            #     # 7.67e-7 disp at SR = 1000.0
+            #     # 2.93e-6 disp at SR = 1.0
+
+            # numerical solution for center deflection
+            w_vec = hr_beam.u[0::3]
             nnodes = w_vec.shape[0]
             center = (0 + nnodes - 1) // 2
             pred_disp = w_vec[center]
@@ -197,6 +220,9 @@ if args.beam == 'hyb':
 
 elif args.beam == 'ts':
     prefix = 'timoshenko'
+
+elif args.beam == 'hr':
+    prefix = 'hell-reisner'
 
 elif args.beam == 'ts-nd':
     prefix = 'timoshenko-nondim'

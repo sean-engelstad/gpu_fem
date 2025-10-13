@@ -40,6 +40,11 @@ def block_gauss_seidel(A, b: np.ndarray, x0: np.ndarray, num_iter=1, dof_per_nod
 
             # Check for singular or ill-conditioned diagonal block
             try:
+                # if Aii[0,0] == 0.0: # ill-cond constraint style
+                #     # Aii[:2,:2] += np.eye(2) * 1e-6
+                #     # print(f"here")
+                #     # Aii += np.eye(ndof) * 1e-8 #* np.trace(Aii)
+                #     pass
                 x[row_block_start:row_block_end] = np.linalg.solve(Aii, rhs)
             except np.linalg.LinAlgError:
                 print(f"Warning: singular block at node {i}, skipping update.")
@@ -58,12 +63,13 @@ def debug_plot(dof_per_node, grid, vec1, vec2):
     import matplotlib.pyplot as plt
     vpn = dof_per_node
     fig, ax = plt.subplots(vpn, 2, figsize=(12, 9))
+    # print(f"{vec1.shape=} {vec2.shape=} {grid.num_nodes=}")
     for iv in range(vpn):
         ax[iv,0].plot(grid.xvec, vec1[iv::vpn])
         ax[iv,1].plot(grid.xvec, vec2[iv::vpn])
     plt.show()
 
-def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int=1, debug_print:bool=False, print_freq:int=1):
+def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int=1, debug_print:bool=False, print_freq:int=1, double_smooth:bool=True):
     # grids are just assembler objects usually (no unified GRID object)
     nlevels = len(grids)
     dof_per_node = grids[0].dof_per_node # get from finest grid assembler
@@ -90,11 +96,12 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
 
             # pre-smooth
             if debug_print: print(f"\tpre-smooth grid[{i}]")
-            solns[i], defects[i] = block_gauss_seidel_smoother(mats[i], solns[i], defects[i], num_iter=pre_smooth, dof_per_node=dof_per_node)
+            num_iter = pre_smooth * 2**i if double_smooth else pre_smooth
+            solns[i], defects[i] = block_gauss_seidel_smoother(mats[i], solns[i], defects[i], num_iter=num_iter, dof_per_node=dof_per_node)
 
             # debug_plot(dof_per_node, grids[0], vec1=pre_defect, vec2=defects[i])
 
-            # # plot the defect after smoothing
+            # # plot the defect after smoothing (DEBUG)
             # grids[i].u = defects[i].copy()
             # grids[i].plot_disp(idof=1)
 
@@ -121,6 +128,8 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             dx = grids[i].prolongate(solns[i+1])
             df = mats[i].dot(dx)
 
+            # print(f"{dx.shape=}")
+
             # if debug_print: 
             #     # # try single element interpolations first..
             #     import matplotlib.pyplot as plt
@@ -134,9 +143,9 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
             #     print(f"{elem_u_c=}")
 
             # # compare the solution the fine solution to prolongate solution (I think something is wrong with the theta DOFs)
-            # fine_soln = sp.sparse.linalg.spsolve(mats[i].copy(), defects[i])
-            # debug_plot(dof_per_node, grids[0], vec1=dx, vec2=fine_soln)
-            # debug_plot(dof_per_node, grids[0], vec1=df, vec2=defects[i])
+            fine_soln = sp.sparse.linalg.spsolve(mats[i].copy(), defects[i])
+            # debug_plot(dof_per_node, grids[i], vec1=dx, vec2=fine_soln)
+            # debug_plot(dof_per_node, grids[i], vec1=df, vec2=defects[i])
             # defect_init = defects[i].copy()
 
             # line search scaling of prolongation (since coarse grid less nodes, one DOF scaling not appropriate on default, 
@@ -153,7 +162,8 @@ def vcycle_solve(grids:list, nvcycles:int=100, pre_smooth:int=1, post_smooth:int
 
             # post-smooth
             if debug_print: print(f"\tpost-smooth grid[{i}]")
-            solns[i], defects[i] = block_gauss_seidel_smoother(mats[i], solns[i], defects[i], num_iter=post_smooth, dof_per_node=dof_per_node)
+            num_iter = post_smooth * 2**i if double_smooth else post_smooth
+            solns[i], defects[i] = block_gauss_seidel_smoother(mats[i], solns[i], defects[i], num_iter=num_iter, dof_per_node=dof_per_node)
 
             # debug_plot(dof_per_node, grids[0], vec1=post_init_defect, vec2=defects[i])
 

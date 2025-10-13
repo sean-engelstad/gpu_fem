@@ -2,7 +2,7 @@
 import numpy as np
 from src import EBAssembler, plot_hermite_cubic
 from src import TimoshenkoAssembler
-from src import HybridAssembler
+from src import HybridAssembler, HRBeamAssembler
 
 # verify the hybrid assembler solution against exact Timoshenko beam theory solution for constant distributed load
 
@@ -65,6 +65,12 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
     max_kirchoff_rot = np.max(np.abs(hyb_beam.u[1::3]))
     print(f"{max_kirchoff_rot=:.2e}")
 
+    # 4) hellinger-reissner beam analysis
+    # ------------------------
+
+    hr_beam = HRBeamAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : 1.0)
+    hr_beam.solve_forward(hvec)
+    # hyb_beam.plot_disp()
 
     # numerical solution for center deflection
     w_vec = hyb_beam.u[0::3]
@@ -109,7 +115,8 @@ for SR in [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0]:
 
     # compute the condition number of the stiffness matrix
     # Kmat = hyb_beam.Kmat.toarray()
-    Kmat = ts_beam.Kmat.toarray()
+    # Kmat = ts_beam.Kmat.toarray()
+    Kmat = hr_beam.Kmat.toarray()
     cond = np.linalg.cond(Kmat)
     print(f"\t{cond=:.2e}")
 

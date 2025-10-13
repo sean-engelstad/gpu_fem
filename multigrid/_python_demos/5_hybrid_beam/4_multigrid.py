@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy as sp
 from src import EBAssembler, HybridAssembler, TimoshenkoAssembler, ChebyshevTSAssembler
-from src import HybridChebyshevAssembler
+from src import HybridChebyshevAssembler, HRBeamAssembler
 from src import vcycle_solve, block_gauss_seidel_smoother
 
 import argparse
@@ -62,6 +62,16 @@ elif args.beam == 'hyb':
         hyb_grid = HybridAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
         hyb_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
         grids += [hyb_grid]
+        nxe = nxe // 2
+
+elif args.beam == 'hr':
+    # make hybrid beam assemblers
+    nxe = args.nxe
+    while (nxe >= args.nxe_min):
+        hr_grid = HRBeamAssembler(nxe, nxe, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=load_fcn)
+        hr_grid.red_int = False
+        hr_grid._compute_mat_vec(np.array([thick for _ in range(nxe)]))
+        grids += [hr_grid]
         nxe = nxe // 2
 
 elif args.beam == 'cfe':
