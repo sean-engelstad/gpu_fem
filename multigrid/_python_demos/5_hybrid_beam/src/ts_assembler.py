@@ -6,7 +6,7 @@ from ._ts_elem import *
 
 class TimoshenkoAssembler:
     def __init__(self, nxe:int, nxh:int, E:float, b:float, L:float, rho:float, 
-                 qmag:float, ys:float, rho_KS:float, dense:bool=False, load_fcn=None):
+                 qmag:float, ys:float, rho_KS:float, dense:bool=False, load_fcn=None, use_nondim:bool=False):
         self.nxe = nxe
         self.nnxh = nxe // nxh
         self.nxh = nxh
@@ -20,6 +20,7 @@ class TimoshenkoAssembler:
         self.load_fcn = load_fcn
         if load_fcn is None:
             self.load_fcn = lambda x : np.sin(4.0 * np.pi * x / L)
+        self.use_nondim = use_nondim
 
         self.dof_per_node = 2 # need this for multigrid
 
@@ -79,11 +80,16 @@ class TimoshenkoAssembler:
         # red_int = True
         # red_int = False
 
+        # nondim transform
+        self.gam = gam = np.sqrt(EI / (5.0 / 6.0) / GA)
+
         # temp debug
         # EI = 0.0
 
-        Kelem_nom = get_kelem(J=self.dx / 2.0, EI=EI, GA=GA, use_reduced_integration_for_shear=self.red_int)
+        Kelem_nom = get_kelem(J=self.dx / 2.0, EI=EI, GA=GA, use_reduced_integration_for_shear=self.red_int, use_nondim=self.use_nondim)
         felem_nom = get_felem(self.dx / 2.0)
+        if self.use_nondim:
+            felem_nom *= gam
 
         # Kelem_nom = get_kelem(J=self.dx, EI=EI, GA=GA, use_reduced_integration_for_shear=red_int)
         # felem_nom = get_felem(self.dx)
@@ -184,6 +190,9 @@ class TimoshenkoAssembler:
         else:
             # print(f"{self.Kmat.toarray()=}")
             self.u = sp.sparse.linalg.spsolve(self.Kmat, self.force)
+
+        if self.use_nondim:
+            self.u[0::2] *= self.gam
 
         return self.u
 

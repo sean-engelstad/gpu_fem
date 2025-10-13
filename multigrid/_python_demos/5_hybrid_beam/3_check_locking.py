@@ -13,7 +13,7 @@ from scipy.sparse.linalg import spsolve
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--beam", type=str, default='hyb', help="--beam, options: hyb, ts")
+parser.add_argument("--beam", type=str, default='hyb', help="--beam, options: hyb, ts, ts-nd")
 parser.add_argument("--rint", type=int, default=0, help="reduced integrated 0 or 1 for False,True (default False), only applies to regular TS element")
 args = parser.parse_args()
 
@@ -80,10 +80,37 @@ for SR in SR_vec:
             disps += [pred_disp]
             dof_vec += [nxe * 3]
 
-        elif "ts" in args.beam or "tim" in args.beam:
+        elif args.beam == 'ts':
 
             # get standard timoshenko beam disp
-            ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L))
+            ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L), use_nondim=False)
+            
+            if args.rint:
+                ts_beam.red_int = True
+            else:
+                ts_beam.red_int = False
+            
+            ts_beam.solve_forward(hvec)
+            
+            # if nxe == 512 and SR == 1.0:
+            #     ts_beam.plot_disp()
+            #     # 7.62e-7 at SR = 1000.0
+            #     # 2.96e-6 at SR = 10.0
+
+            # numerical solution for center deflection
+            w_vec = ts_beam.u[0::2]
+            nnodes = w_vec.shape[0]
+            center = (0 + nnodes - 1) // 2
+            pred_disp = w_vec[center]
+
+            disps += [pred_disp]
+            dof_vec += [nxe * 2]
+
+        elif args.beam == 'ts-nd':
+
+            # get standard timoshenko beam disp
+            print(f"timoshenko using nondim")
+            ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, load_fcn=lambda x : np.sin(3 * np.pi * x / L), use_nondim=True)
             
             if args.rint:
                 ts_beam.red_int = True
@@ -170,6 +197,9 @@ if args.beam == 'hyb':
 
 elif args.beam == 'ts':
     prefix = 'timoshenko'
+
+elif args.beam == 'ts-nd':
+    prefix = 'timoshenko-nondim'
 
 elif args.beam == 'cfe':
     prefix = 'chebyshev'

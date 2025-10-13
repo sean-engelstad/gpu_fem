@@ -9,8 +9,8 @@ from src import HybridChebyshevAssembler
 # SR = 0.1
 # SR = 1.0
 # SR = 10.0
-# SR = 100.0
-SR = 1000.0
+SR = 100.0
+# SR = 1000.0
 # SR = 1e4
 
 # 1) Euler-Bernoulli Beam
@@ -29,7 +29,8 @@ qmag *= thick**3
 rho_KS = 50.0 # rho = 50 for 100 elements, used 500 later
 # nxe = num_elements = int(3e2) #100, 300, 1e3
 # nxe = num_elements = int(1e3)
-nxe = num_elements = int(3e2)
+# nxe = num_elements = int(3e2)
+nxe = num_elements = int(100)
 # nxe = num_elements = int(30)
 
 # num DVs
@@ -45,7 +46,7 @@ eb_beam.solve_forward(hvec)
 # 2) TACS timoshenko beam
 # ------------------------
 
-ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False)
+ts_beam = TimoshenkoAssembler(nxe, nxh, E, b, L, rho, qmag, ys, rho_KS, dense=False, use_nondim=True)
 ts_beam.solve_forward(hvec)
 # ts_beam.plot_disp()
 

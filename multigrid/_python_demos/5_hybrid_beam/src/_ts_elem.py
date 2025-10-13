@@ -54,7 +54,7 @@ def interp_lagrange_transpose(xi, nodal_in):
         coarse_out[2 * ibasis + 1] += N_i * th_in
     return coarse_out
 
-def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True):
+def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True, use_nondim:bool=False):
     """
     J : Jacobian = L/2 (so L = 2*J)
     EI : bending stiffness
@@ -78,8 +78,12 @@ def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True
         # quadrature factor dx = J * dxi
         qfactor = weight * J
 
+        Le = J * 2.0
+        gam = np.sqrt(EI / k_shear / GA / 0.125)
+        J2 = J if not(use_nondim) else J / gam #/ Le # since w has changed
+
         # th_s uses Lagrange; its x-derivative:
-        dpsi = [lagrange_d1dx(i, xi, J) for i in range(2)]
+        dpsi = [lagrange_d1dx(i, xi, J) * gam for i in range(2)]
         # shear shape values too if needed (for kGA * th_s^2)
         psi_val = [lagrange_value(i, xi) for i in range(2)]
 
@@ -98,6 +102,14 @@ def get_kelem(J, EI, GA, k_shear=5.0/6.0, use_reduced_integration_for_shear=True
 
                 # K_[th,th] block
                 Kelem[2 + i, 2 + j] += k_shear * GA * qfactor * psi_val[i] * psi_val[j]
+
+    if gam <= 0.1: 
+        cond_num = np.linalg.cond(Kelem)
+        print(f"{gam=:.2e} {cond_num=:.2e}")
+    
+        # import matplotlib.pyplot as plt
+        # plt.imshow(Kelem)
+        # plt.show()
 
     for xi, weight in quads:
         # quadrature factor dx = J * dxi
