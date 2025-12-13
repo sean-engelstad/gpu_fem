@@ -33,6 +33,7 @@ class BsrData {
           tr_cols(nullptr),
           tr_block_map(nullptr),
           host(true) {
+        // get rowp and cols from element connectivity
         _get_row_col_ptrs_sparse();
 
         // make a nominal ordering (no permutation)
@@ -115,6 +116,13 @@ class BsrData {
         nnzb = su_mat->nnz;
         rowp = su_mat->rowp;
         cols = su_mat->cols;
+        // then also compute rows here
+        rows = new int[nnzb];
+        for (int i = 0; i < nnodes; i++) {
+            for (int jp = rowp[i]; jp < rowp[i + 1]; jp++) {
+                rows[jp] = i;
+            }
+        }
     }
 
     __HOST__ static int getBandWidth(const int &nnodes, const int &nnzb, int *rowp, int *cols) {
@@ -454,8 +462,8 @@ class BsrData {
     }
 
     __HOST__ void multicolor_junction_reordering_v2(int node_geom_ind[], int &n_colors,
-                                                 int *&color_rowp) {
-        /* a multicolor reordering for colored Gauss-seidel multigrid, using 0,1,2 geom levels for 
+                                                    int *&color_rowp) {
+        /* a multicolor reordering for colored Gauss-seidel multigrid, using 0,1,2 geom levels for
         face, edge and corner node */
 
         int *colors = new int[nnodes];
@@ -491,7 +499,7 @@ class BsrData {
 
         // now color the edge nodes
         for (int row = 0; row < nnodes; row++) {
-            if (node_geom_ind[row] != 1) continue; // just edge nodes now
+            if (node_geom_ind[row] != 1) continue;  // just edge nodes now
 
             // get list of adjacent colors
             std::vector<int> adj_colors;
@@ -514,7 +522,7 @@ class BsrData {
 
         // now color the corner nodes
         for (int row = 0; row < nnodes; row++) {
-            if (node_geom_ind[row] != 2) continue; // just corner nodes now
+            if (node_geom_ind[row] != 2) continue;  // just corner nodes now
 
             // get list of adjacent colors
             std::vector<int> adj_colors;
@@ -586,37 +594,39 @@ class BsrData {
         if (_new_perm) delete[] _new_perm;
     }
 
-    __HOST__ void qorder_reordering(double p_factor, int rcm_iters = 5, bool print = true) {
+    __HOST__ void qorder_reordering(double p_factor, bool print = true) {
         /*  qordering combines RCM reordering to reduce bandwidth with random reordering
                 to reduce chain lengths in ILU factorization for more stable ILU decomp numerically
                 this also should improve GMRES convergence
             #rows for random = 1/pfactor * bandwidth so lower pfactor is more random
         */
 
-        // keep orig rowp, cols
-        int *orig_rowp = new int[nnodes + 1];
-        int *orig_cols = new int[nnzb];
-        for (int i = 0; i < nnodes + 1; i++) {
-            orig_rowp[i] = rowp[i];
-        }
-        for (int i = 0; i < nnzb; i++) {
-            orig_cols[i] = cols[i];
-        }
+        // keep orig rowp, cols (when I was doing RCM reordering too)
+        // int *orig_rowp = new int[nnodes + 1];
+        // int *orig_cols = new int[nnzb];
+        // for (int i = 0; i < nnodes + 1; i++) {
+        //     orig_rowp[i] = rowp[i];
+        // }
+        // for (int i = 0; i < nnzb; i++) {
+        //     orig_cols[i] = cols[i];
+        // }
 
         // first we perform RCM reordering to lower bandwidth
-        int bandwidth_0 = getBandWidth(nnodes, nnzb, rowp, cols);
-        RCM_reordering(rcm_iters);
-        compute_nofill_pattern();
-        int bandwidth_1 = getBandWidth(nnodes, nnzb, rowp, cols);
-        if (print)
-            printf("prelim RCM reordering reduces bandwidth from %d to %d\n", bandwidth_0,
-                   bandwidth_1);
+        // int bandwidth_0 = getBandWidth(nnodes, nnzb, rowp, cols);
+        // RCM_reordering(rcm_iters);
+        // compute_nofill_pattern();
+        // int bandwidth_1 = getBandWidth(nnodes, nnzb, rowp, cols);
+        // if (print)
+        //     printf("prelim RCM reordering reduces bandwidth from %d to %d\n", bandwidth_0,
+        //            bandwidth_1);
+        // int bandwidth_1 = getBandWidth(nnodes, nnzb, rowp, cols);
+
+        int bandwidth = getBandWidth(nnodes, nnzb, rowp, cols);
 
         // then we perform random reordering to reduce chain lengths
-        int prune_width = (int)(1.0 / p_factor * bandwidth_1);
+        int prune_width = (int)(1.0 / p_factor * bandwidth);
         if (print)
-            printf("qordering with init bandwidth %d and prune width %d\n", bandwidth_1,
-                   prune_width);
+            printf("qordering with init bandwidth %d and prune width %d\n", bandwidth, prune_width);
         int num_prunes = (nnodes + prune_width - 1) / prune_width;
         std::random_device rd;  // random number generator
         std::mt19937 g(rd());
@@ -630,10 +640,10 @@ class BsrData {
 
         // also reset the rowp, cols to original (was changed after reordering computation to check
         // bandwidth)
-        if (rowp) delete[] rowp;
-        if (cols) delete[] cols;
-        rowp = orig_rowp;
-        cols = orig_cols;
+        // if (rowp) delete[] rowp;
+        // if (cols) delete[] cols;
+        // rowp = orig_rowp;
+        // cols = orig_cols;
 
         // update final permutation and iperm (deep copy)
         for (int i = 0; i < nnodes; i++) {
@@ -644,6 +654,31 @@ class BsrData {
             // iperm[i] = q_perm[i];
             // perm[q_perm[i]] = i;
         }
+    }
+
+    __HOST__ void random_reordering() {
+        /*  fully random reordering
+         */
+        std::random_device rd;  // random number generator
+        std::mt19937 g(rd());
+        // since iperm is used for sparsity change now, qperm modifies that
+        std::vector<int> q_perm(perm, perm + nnodes);
+        std::shuffle(q_perm.begin(), q_perm.begin() + nnodes, g);
+
+        // update final permutation and iperm (deep copy)
+        for (int i = 0; i < nnodes; i++) {
+            perm[i] = q_perm[i];
+            iperm[q_perm[i]] = i;
+
+            // try swapping perm, iperm
+            // iperm[i] = q_perm[i];
+            // perm[q_perm[i]] = i;
+        }
+
+        // printf("perm: ");
+        // printVec<int>(nnodes, perm);
+        // printf("iperm: ");
+        // printVec<int>(nnodes, iperm);
     }
 
     __HOST__ void _compute_symbolic_maps_for_gpu() {
@@ -751,11 +786,12 @@ class BsrData {
 #endif
 
         // create HostVec wrapper objects in CUDA, transfer to device and get ptr for new object
-        DeviceVec<int> d_rowp(nnodes + 1, rowp), d_cols(nnzb, cols), d_perm(nnodes, perm),
-            d_iperm(nnodes, iperm), d_elem_ind_map(n_eim, elem_ind_map),
+        DeviceVec<int> d_rowp(nnodes + 1, rowp), d_rows(nnzb, rows), d_cols(nnzb, cols),
+            d_perm(nnodes, perm), d_iperm(nnodes, iperm), d_elem_ind_map(n_eim, elem_ind_map),
             d_tr_rowp(nnodes + 1, tr_rowp), d_tr_cols(nnzb, tr_cols),
             d_tr_block_map(nnzb, tr_block_map);
         new_bsr.rowp = d_rowp.createHostVec().getPtr();
+        new_bsr.rows = d_rows.createHostVec().getPtr();
         new_bsr.cols = d_cols.createHostVec().getPtr();
         new_bsr.perm = d_perm.createHostVec().getPtr();
         new_bsr.iperm = d_iperm.createHostVec().getPtr();
@@ -803,9 +839,10 @@ class BsrData {
             new_bsr.elem_conn = d_elem_conn;
         }
 
-        HostVec<int> h_rowp(nnodes + 1, rowp), h_cols(nnzb, cols), h_perm(nnodes, perm),
-            h_iperm(nnodes, iperm);
+        HostVec<int> h_rowp(nnodes + 1, rowp), h_rows(nnzb, rows), h_cols(nnzb, cols),
+            h_perm(nnodes, perm), h_iperm(nnodes, iperm);
         new_bsr.rowp = h_rowp.createDeviceVec().getPtr();
+        new_bsr.rows = h_rows.createDeviceVec().getPtr();
         new_bsr.cols = h_cols.createDeviceVec().getPtr();
         new_bsr.perm = h_perm.createDeviceVec().getPtr();
         new_bsr.iperm = h_iperm.createDeviceVec().getPtr();
@@ -823,6 +860,7 @@ class BsrData {
 #ifdef USE_GPU
             // delete data on device
             if (rowp) cudaFree(rowp);
+            if (rows) cudaFree(rows);
             if (cols) cudaFree(cols);
             if (perm) cudaFree(perm);
             if (iperm) cudaFree(iperm);
@@ -834,6 +872,7 @@ class BsrData {
         } else {
             // delete data on host
             if (rowp) delete[] rowp;
+            if (rows) delete[] rows;
             if (cols) delete[] cols;
             if (perm) delete[] perm;
             if (iperm) delete[] iperm;

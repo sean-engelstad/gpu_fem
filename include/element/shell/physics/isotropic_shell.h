@@ -1,29 +1,31 @@
 #pragma once
 
-#include "../a2d/a2dshellstrain1.h"
 #include "../a2d/a2disostress.h"
-
+#include "../a2d/a2dshellstrain1.h"
 #include "../data/isotropic.h"
 #include "a2dcore.h"
 
-template <typename T, class Data_, bool isNonlinear = false>
+template <typename T, class Data_, bool isNonlinear = false, bool hellingerReissner_ = false>
 class IsotropicShell {
    public:
     using Data = Data_;
+    static constexpr bool hellingerReissner = hellingerReissner_;
 
     // ensure the data is only allowed to be ShellIsotropicData
     // static_assert(std::is_same<Data_, ShellIsotropicData>::value,
     //               "Error IsotropicShell physics class must use Data class 'ShellIsotropicData'");
 
     // u, v, w, thx, thy, thz
-    static constexpr int32_t vars_per_node = 6;
+    static constexpr int32_t vars_per_node = hellingerReissner ? 11 : 6;
+    static constexpr int32_t std_vpn = 6;
     // whether strain is linear or nonlinear (in this case linear)
     static constexpr A2D::ShellStrainType STRAIN_TYPE =
         isNonlinear ? A2D::ShellStrainType::NONLINEAR : A2D::ShellStrainType::LINEAR;
     static constexpr bool is_nonlinear = isNonlinear;
     static constexpr int num_dvs = 1;
 
-    __HOST_DEVICE__ static void computeTyingStress(const T &scale, const Data &data, A2D::SymMat<T, 3> &e, A2D::SymMat<T, 3> &s) {
+    __HOST_DEVICE__ static void computeTyingStress(const T &scale, const Data &data,
+                                                   A2D::SymMat<T, 3> &e, A2D::SymMat<T, 3> &s) {
         /* compute membrane + trv shear stresses from the tying strains */
 
         T C[6];
@@ -51,7 +53,8 @@ class IsotropicShell {
         s[4] = As * e[4];
     }
 
-    __HOST_DEVICE__ static void computeBendingStress(const T &scale, const Data &data, const A2D::Vec<T, 3> &e, A2D::Vec<T, 3> &s) {
+    __HOST_DEVICE__ static void computeBendingStress(const T &scale, const Data &data,
+                                                     const A2D::Vec<T, 3> &e, A2D::Vec<T, 3> &s) {
         /* compute membrane + trv shear stresses from the tying strains */
 
         T C[6];
@@ -64,16 +67,16 @@ class IsotropicShell {
         s[0] = C[0] * e[0] + C[1] * e[1] + C[2] * e[2];
         s[1] = C[1] * e[0] + C[3] * e[1] + C[4] * e[2];
         s[2] = C[2] * e[0] + C[4] * e[1] + C[5] * e[2];
-        T thick = data.thick;
-        T I = thick * thick * thick / 12.0;
+        T I = data.getPanelIzz();
         s[0] *= I * scale;
         s[1] *= I * scale;
         s[2] *= I * scale;
     }
 
-    __HOST_DEVICE__ static void computeDrillStress(const T &scale, const Data &data, const T ed[1], T sd[1]) {
+    __HOST_DEVICE__ static void computeDrillStress(const T &scale, const Data &data, const T ed[1],
+                                                   T sd[1]) {
         T G = data.E / 2.0 / (1.0 + data.nu);
-        T As = Data::getTransShearCorrFactor() * G * data.thick; 
+        T As = Data::getTransShearCorrFactor() * G * data.thick;
         T drill = Data::getDrillingRegularization() * As;
         sd[0] = scale * drill * ed[0];
     }
@@ -156,32 +159,6 @@ class IsotropicShell {
         // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
     }  // end of JacobianCol
 
-    // template <typename T2>
-    // __HOST_DEVICE__ static void computeBendingJacStack(const Data &physData, const T &scale,
-    //                                                    A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u0x,
-    //                                                    A2D::A2DObj<A2D::Mat<T2, 3, 3>> &u1x) {
-    //     /* only really need the stack for the bending strain energy (since that is nonlinear step) */
-
-    //     // using ADVec = A2D::ADObj<A2D::Vec<T2,9>>;
-    //     A2D::A2DObj<A2D::Vec<T2, 3>> ek, sk;
-    //     A2D::A2DObj<T2> ES_dot, Uelem;
-
-    //     // use stack to compute shell strains, stresses and then to strain energy
-    //     auto strain_energy_stack =
-    //         A2D::MakeStack(A2D::BendingStrain<STRAIN_TYPE>(u0x, u1x, e0ty, et, E),
-    //                        A2D::BendingStress<T, Data>(
-    //                            physData.E, physData.nu, physData.thick, physData.tOffset, E, S),
-    //                        // no 1/2 here to match TACS formulation (just scales eqns) [is removing
-    //                        // the 0.5 correct?]
-    //                        A2D::VecDot(E, S, ES_dot), A2D::Eval(T2(scale) * ES_dot, Uelem));
-    //     // note TACS differentiates based on 2 * Uelem here.. hmm
-    //     // printf("Uelem = %.8e\n", Uelem.value());
-
-    //     Uelem.bvalue() = 1.0;
-    //     strain_energy_stack.hproduct();  // computes projected hessians
-    //     // bvalue outputs stored in u0x, u1x, e0ty, et and are backpropagated
-    // }  // end of JacobianCol
-
     __HOST_DEVICE__ static void getMassMoments(const Data &physData, T moments[]) {
         // for mass residual + jacobian (unsteady analyses)
         const T &rho = physData.rho;
@@ -243,73 +220,6 @@ class IsotropicShell {
         physData.evalStrainDVSensProduct(scale, E.get_data(), psi_E.get_data(), loc_dv_sens);
 
     }  // end of computeWeakRes
-
-    template <typename T2>
-    __HOST_DEVICE__ static void computeWeakResThickDVSens(const Data &physData, const T &scale,
-                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u0x,
-                                                          A2D::ADObj<A2D::Mat<T2, 3, 3>> &u1x,
-                                                          A2D::ADObj<A2D::SymMat<T2, 3>> &e0ty,
-                                                          A2D::ADObj<A2D::Vec<T2, 1>> &et) {
-        // manually for linear isotropic case for now
-        A2D::Vec<T, 9> e, eb, s, sb;
-        auto &u0xF = u0x.value();
-        auto &u0xb = u0x.bvalue();
-        auto &u1xF = u1x.value();
-        auto &u1xb = u1x.bvalue();
-        auto &e0tyF = e0ty.value();
-        auto &e0tyb = e0ty.bvalue();
-        auto &etF = et.value();
-        auto &etb = et.bvalue();
-
-        // linear shell strains
-        // Evaluate the in-plane strains from the tying strain expressions
-        e[0] = e0tyF[0];        // e11
-        e[1] = e0tyF[3];        // e22
-        e[2] = 2.0 * e0tyF[1];  // e12
-
-        // Compute the bending strain
-        e[3] = u1xF[0];            // k11
-        e[4] = u1xF[4];            // k22
-        e[5] = u1xF[1] + u1xF[3];  // k12
-
-        // Add the components of the shear strain
-        e[6] = 2.0 * e0tyF[4];  // e23, transverse shear
-        e[7] = 2.0 * e0tyF[2];  // e13, transverse shear
-        e[8] = etF[0];          // e12 (drill strain)
-
-        printf("e:");
-        printVec<T>(9, e.get_data());
-
-        // forward stresses derivs (dstress/dthick) are dU/dstrain/dx
-        T C[6];
-        Data::evalTangentStiffness2D(physData.E, physData.nu, C);
-        T thick = physData.thick;
-        A2D::SymMatVecCoreScale3x3<T, false>(1.0, C, e.get_data(), s.get_data());
-        A2D::SymMatVecCoreScale3x3<T, true>(thick * thick / 4.0, C, &e.get_data()[3],
-                                            &s.get_data()[3]);
-        T dAs = Data::getTransShearCorrFactor() * C[5];
-        s[6] = dAs * e[6];
-        s[7] = dAs * e[7];
-        T ddrill = Data::getDrillingRegularization() * dAs;
-        s[8] = ddrill * e[8];
-        for (int i = 0; i < 9; i++) eb[i] = scale * s[i];
-
-        // strain derivs back to input disp grad derivs
-        e0tyb[0] += eb[0];        // e1
-        e0tyb[3] += eb[1];        // e22
-        e0tyb[1] += 2.0 * eb[2];  // e12
-
-        // Compute the bending strain
-        u1xb[0] += eb[3];  // k11
-        u1xb[4] += eb[4];  // k22
-        u1xb[1] += eb[5];  // k12
-        u1xb[3] += eb[5];  // k12
-
-        // Add the components of the shear strain
-        e0tyb[4] += 2.0 * eb[6];  // e23, transverse shear
-        e0tyb[2] += 2.0 * eb[7];  // e13, transverse shear
-        etb[0] += eb[8];          // e12 (drill strain)
-    }                             // end of computeWeakRes
 
     template <typename T2>
     __HOST_DEVICE__ static void computeFailureIndex(const Data physData, A2D::Mat<T2, 3, 3> u0x,

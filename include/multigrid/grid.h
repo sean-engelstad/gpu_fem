@@ -11,7 +11,7 @@
 #include <set>
 
 enum SCALER : short {
-    ZERO, // doesn't add directly into defect
+    ZERO,  // doesn't add directly into defect
     NONE,
     LINE_SEARCH,
     PCG,
@@ -19,21 +19,33 @@ enum SCALER : short {
 
 template <class Assembler, class Prolongation, class Smoother, SCALER scaler>
 class SingleGrid {
-    /* single grid class for multigrid, that manages smoothing, prolong and soln + defect of a given level */
+    /* single grid class for multigrid, that manages smoothing, prolong and soln + defect of a given
+     * level */
 
    public:
     using T = double;
 
     SingleGrid() = default;
 
-    SingleGrid(Assembler &assembler_, Prolongation *prolongation_, Smoother *smoother_, 
-        BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_) : assembler(assembler_), prolongation(prolongation_), smoother(smoother_),
-        Kmat(Kmat_), d_rhs(d_rhs_) {
-        
+    SingleGrid(Assembler &assembler_, Prolongation *prolongation_, Smoother *smoother_,
+               BsrMat<DeviceVec<T>> Kmat_, DeviceVec<T> d_rhs_, cublasHandle_t &cublasHandle_,
+               cusparseHandle_t &cusparseHandle_, T omega_min_ = 0.5, T omega_max_ = 2.0,
+               int smooth_matrix_iters_ = 0)
+        : assembler(assembler_),
+          prolongation(prolongation_),
+          smoother(smoother_),
+          Kmat(Kmat_),
+          d_rhs(d_rhs_),
+          cublasHandle(cublasHandle_),
+          cusparseHandle(cusparseHandle_) {
         N = assembler.get_num_vars();
-        block_dim = 6;
-        nnodes = N / 6;
-        
+        block_dim = assembler.getBsrData().block_dim;
+        nnodes = N / block_dim;
+
+        omega_min = omega_min_;
+        omega_max = omega_max_;
+        smooth_matrix_iters = smooth_matrix_iters_;
+
         // get data out of kmat
         auto d_kmat_bsr_data = Kmat.getBsrData();
         d_kmat_vals = Kmat.getVec().getPtr();
@@ -47,8 +59,11 @@ class SingleGrid {
         // update dependent ILU and other matrices from new assembly
         if (prolongation) prolongation->update_after_assembly();
         if (restriction) restriction->update_after_assembly();
-        if (smoother) smoother->update_after_assembly();
-    }    
+        if (smoother) smoother->update_after_assembly(d_vars);
+        if (smoother && smooth_matrix_iters > 0) {
+            smoothMatrix(smooth_matrix_iters);
+        }
+    }
 
     double get_memory_usage_mb() {
         // get memory usage for kmat in megabytes
@@ -62,13 +77,14 @@ class SingleGrid {
 
     template <bool startup = true>
     void initCuda() {
-        // init handles
-        CHECK_CUBLAS(cublasCreate(&cublasHandle));
-        CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+        // init handles (copied now from outside the class to not fracture cublas memory as much)
+        // CHECK_CUBLAS(cublasCreate(&cublasHandle));
+        // CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
         // init some util vecs
         d_defect = DeviceVec<T>(N);
-        d_soln = DeviceVec<T>(N);
+        d_soln = DeviceVec<T>(N);  // local linear du solns
+        d_vars = DeviceVec<T>(N);  // full nonlinear solution
         d_temp_vec = DeviceVec<T>(N);
         d_temp = d_temp_vec.getPtr();
         d_temp2 = DeviceVec<T>(N).getPtr();
@@ -103,19 +119,32 @@ class SingleGrid {
     void setDefect(DeviceVec<T> new_defect, bool perm = true) {
         // set the defect on the finest grid
         new_defect.copyValuesTo(d_defect);
-        if (perm) d_defect.permuteData(block_dim, d_iperm);  // unperm to permuted
+        if (perm) d_defect.permuteData(block_dim, d_iperm);  // VIS to SOLVE order
+    }
+
+    void setStateVars(DeviceVec<T> new_vars, bool perm = true) {
+        // set the state vars (u0) on the finest grid
+        new_vars.copyValuesTo(d_vars);
+        // if perm is true, converts from VIS to solve order
+        if (perm) d_vars.permuteData(block_dim, d_iperm);  // VIS to SOLVE order
+    }
+
+    void setSolution(DeviceVec<T> new_soln, bool perm = true) {
+        // set the solution (du) on the finest grid
+        new_soln.copyValuesTo(d_soln);
+        if (perm) d_soln.permuteData(block_dim, d_iperm);  // VIS to SOLVE order
     }
 
     void getDefect(DeviceVec<T> defect_out, bool perm = true) {
         // copy solution to another device vec outside this class
         d_defect.copyValuesTo(defect_out);
-        if (perm) defect_out.permuteData(block_dim, d_perm);  // permuted to unperm order
+        if (perm) defect_out.permuteData(block_dim, d_perm);  // SOLVE to VIS order
     }
 
     void getSolution(DeviceVec<T> soln_out, bool perm = true) {
         // copy solution to another device vec outside this class
         d_soln.copyValuesTo(soln_out);
-        if (perm) soln_out.permuteData(block_dim, d_perm);  // permuted to unperm order
+        if (perm) soln_out.permuteData(block_dim, d_perm);  // SOLVE to VIS order
     }
 
     T getResidNorm() {
@@ -142,6 +171,16 @@ class SingleGrid {
         smoother->smoothDefect(d_defect, d_soln, n_iters, print, print_freq);
     }
 
+    void smoothMatrix(int n_iters = 5) {
+        /* call the smoother on the prolongation matrix */
+        if constexpr (Prolongation::smoothed) {
+            smoother->smoothMatrix(n_iters, prolongation->prolong_mat, prolongation->Z_mat,
+                                   prolongation->Zprev_mat, prolongation->nnzb_prod,
+                                   prolongation->d_P_prodBlocks, prolongation->d_K_prodBlocks,
+                                   prolongation->d_Z_prodBlocks);
+        }
+    }
+
     void prolongate(DeviceVec<T> coarse_soln_in) {
         /* prolongate from a coarser grid to this fine grid */
 
@@ -162,9 +201,9 @@ class SingleGrid {
                                       block_dim, d_temp, &b, d_temp2));
 
         if constexpr (scaler == ZERO) {
-            return; // no update to solution, just keep soln update in temp and use that in outer K-cycle
+            return;  // no update to solution, just keep soln update in temp and use that in outer
+                     // K-cycle
         }
-        T omega;
         if constexpr (scaler == NONE) {
             // no rescaling
             omega = 1.0;
@@ -177,6 +216,11 @@ class SingleGrid {
             T sT_Ks;
             CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_temp2, 1, d_temp, 1, &sT_Ks));
             omega = sT_defect / sT_Ks;
+
+            // clip omega between some min & max values here (to not degrade perf too much)
+            omega = std::clamp(omega, omega_min, omega_max);  // could tune these cutoffs
+
+            // printf("Vcycle GMG line search omega = %.4e\n", omega);
         }
 
         // now add coarse-fine dx into soln and update defect (with u = u0 + omega * d_temp)
@@ -186,12 +230,12 @@ class SingleGrid {
         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp2, 1, d_defect.getPtr(), 1));
     }
 
-    void restrict_defect(DeviceVec<T> fine_defect_in) {
+    void restrict_defect(DeviceVec<T> &fine_defect_in) {
         /* transfer defect from a finer mesh to THIS coarse mesh */
 
         // zero this coarse defect + restrict the finer defect to this coarse grid
         cudaMemset(d_defect.getPtr(), 0.0, N * sizeof(T));  // reset defect
-        restriction->restrict_defect(fine_defect_in, d_defect);
+        restriction->restrict_vec(fine_defect_in, d_defect);
 
         // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
         // apply bcs is on un-permuted data
@@ -203,8 +247,64 @@ class SingleGrid {
         cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
     }
 
+    void restrict_loads(DeviceVec<T> &fine_loads_in) {
+        /* transfer total loads from a finer mesh to THIS coarse mesh and then compute defect */
+
+        // zero this coarse defect + restrict the finer defect to this coarse grid
+        cudaMemset(d_rhs.getPtr(), 0.0, N * sizeof(T));  // reset defect
+        restriction->restrict_vec(fine_loads_in, d_rhs);
+
+        // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
+        // apply bcs is on un-permuted data
+        d_rhs.permuteData(block_dim, d_perm);  // better way to do this later?
+        assembler.apply_bcs(d_rhs);
+        d_rhs.permuteData(block_dim, d_iperm);
+
+        // now compute new defect based on d_vars, defect = d_rhs - K * d_vars
+        d_rhs.copyValuesTo(d_defect);  // so we can now compute defect
+        T a = -1.0, b = 1.0;           // -K * d_vars + 1.0 * d_defect => d_defect
+        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                      CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, kmat_nnzb,
+                                      &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
+                                      block_dim, d_vars.getPtr(), &b, d_defect.getPtr()));
+
+        // reset soln (with bcs zero here, TBD others later)
+        cudaMemset(d_soln.getPtr(), 0.0, N * sizeof(T));
+    }
+
+    void restrict_soln(DeviceVec<T> &fine_vars_in) {
+        /* transfer soln (du) from a finer mesh to THIS coarse mesh */
+
+        // zero this coarse defect + restrict the finer defect to this coarse grid
+        cudaMemset(d_vars.getPtr(), 0.0, N * sizeof(T));  // reset defect
+        const bool normalize = true;                      // need to normalize
+        restriction->template restrict_vec<normalize>(fine_vars_in, d_vars);
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        // apply bcs to the defect again (cause it will accumulate on the boundary by backprop)
+        // apply bcs is on un-permuted data
+        d_vars.permuteData(block_dim, d_perm);  // from SOLVE to VIS order
+        assembler.apply_bcs(d_vars);
+
+        // now that in orig mesh order, copy to vars and set into assembler
+        assembler.set_variables(d_vars);  // set into assembler with VIS order
+
+        // then unpermute back to solve order
+        d_vars.permuteData(block_dim, d_iperm);  // back to SOLVE order
+    }
+
     void free() {
-        // TBD::
+        if (is_free) return;
+        is_free = true;  // now it's freed
+
+        d_rhs.free();
+        d_defect.free();
+        d_soln.free();
+        d_temp_vec.free();
+        d_vars.free();
+        if (d_temp2) cudaFree(d_temp2);
+        if (d_temp) cudaFree(d_temp);
+        if (d_resid) cudaFree(d_resid);
     }
 
     // public data
@@ -215,13 +315,20 @@ class SingleGrid {
     Assembler assembler;
     int N, nelems, block_dim, nnodes;
     int *d_perm, *d_iperm;
-    DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec;
+    DeviceVec<T> d_rhs, d_defect, d_soln, d_temp_vec, d_vars;
     BsrMat<DeviceVec<T>> Kmat;
-    cublasHandle_t cublasHandle = NULL;
-    cusparseHandle_t cusparseHandle = NULL;
+    cublasHandle_t &cublasHandle;
+    cusparseHandle_t &cusparseHandle;
 
-  private:
-    T *d_temp, *d_temp2, *d_resid;
+    T *d_temp2, *d_temp;  // temporarily not private
+    T omega;
+    int smooth_matrix_iters;
+
+   private:
+    T *d_resid;
+    T omega_min, omega_max;
+
+    bool is_free = false;
 
     // private data
     cusparseMatDescr_t descrKmat = 0, descrDinvMat = 0;

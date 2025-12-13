@@ -30,6 +30,11 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     auto d_xpts = assembler.getXpts();
     auto h_xpts = d_xpts.createHostVec();
 
+    using Phys = typename Assembler::Phys;
+    int vpn = Phys::vars_per_node;
+    int std_vpn = Phys::std_vpn;
+    int offset = (vpn == std_vpn) ? 0 : 5;  // for hellinger-reissner
+
     double *xpts_ptr = h_xpts.getPtr();
     for (int inode = 0; inode < num_nodes; inode++) {
         double *node_xpts = &xpts_ptr[3 * inode];
@@ -46,38 +51,94 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     auto h_vars_conn = d_vars_conn.createHostVec();
     int *conn_ptr = h_vars_conn.getPtr();
 
-    const int32_t local_perm[4] = {0, 1, 3, 2};
-    for (int ielem = 0; ielem < num_elems; ielem++) {
-        const int *elem_conn = &conn_ptr[nodes_per_elem * ielem];
-        myfile << nodes_per_elem;
-        for (int inode = 0; inode < nodes_per_elem; inode++) {
-            myfile << sp << elem_conn[local_perm[inode]];
+    if (nodes_per_elem == 4) {
+        const int32_t local_perm[4] = {0, 1, 3, 2};
+        for (int ielem = 0; ielem < num_elems; ielem++) {
+            const int *elem_conn = &conn_ptr[nodes_per_elem * ielem];
+            myfile << nodes_per_elem;
+            for (int inode = 0; inode < nodes_per_elem; inode++) {
+                myfile << sp << elem_conn[local_perm[inode]];
+            }
+            myfile << "\n";
         }
-        myfile << "\n";
+    } else if (nodes_per_elem == 9) {
+        const int32_t local_perm[9] = {0, 2, 8, 6, 1, 5, 7, 3, 4};
+        for (int ielem = 0; ielem < num_elems; ielem++) {
+            const int *elem_conn = &conn_ptr[nodes_per_elem * ielem];
+            myfile << nodes_per_elem;
+            for (int inode = 0; inode < nodes_per_elem; inode++) {
+                myfile << sp << elem_conn[local_perm[inode]];
+            }
+            myfile << "\n";
+        }
+    } else if (nodes_per_elem == 16) {
+        // VTK_LAGRANGE_QUADRILATERAL (order 3 → 16 nodes)
+        const int32_t local_perm[16] = {
+            // corners (LL, LR, UR, UL)
+            0, 3, 15, 12,
+            // edge internal nodes (bottom left->right, right bottom->top,
+            //                      top right->left, left top->bottom)
+            1, 2, 7, 11, 14, 13, 8, 4,
+            // interior nodes (row-major for i=1..2, j=1..2, bottom->top)
+            5, 6, 9, 10};
+
+        for (int ielem = 0; ielem < num_elems; ielem++) {
+            const int *elem_conn = &conn_ptr[nodes_per_elem * ielem];
+            myfile << nodes_per_elem;
+            for (int inode = 0; inode < nodes_per_elem; inode++) {
+                myfile << sp << elem_conn[local_perm[inode]];
+            }
+            myfile << "\n";
+        }
     }
 
     // cell type 9 is for CQUAD4 basically
     myfile << "CELL_TYPES " << num_elems << "\n";
+    int cell_type = (nodes_per_elem == 4) ? 9 :  // VTK_QUAD
+                        (nodes_per_elem == 9) ? 28
+                                              :  // VTK_BIQUADRATIC_QUAD
+                        (nodes_per_elem == 16) ? 70
+                                               :  // VTK_LAGRANGE_QUADRILATERAL
+                        -1;
     for (int ielem = 0; ielem < num_elems; ielem++) {
-        myfile << 9 << "\n";
+        myfile << cell_type << "\n";
     }
 
     // disp vector field now
     myfile << "POINT_DATA " << num_nodes << "\n";
     string scalarName = "disp";
     myfile << "VECTORS " << scalarName << " double64\n";
+
     for (int inode = 0; inode < num_nodes; inode++) {
-        myfile << soln[6 * inode] << sp;
-        myfile << soln[6 * inode + 1] << sp;
-        myfile << soln[6 * inode + 2] << "\n";
+        myfile << soln[vpn * inode + offset] << sp;
+        myfile << soln[vpn * inode + offset + 1] << sp;
+        myfile << soln[vpn * inode + offset + 2] << "\n";
     }
 
     scalarName = "rot";
     myfile << "VECTORS " << scalarName << " double64\n";
     for (int inode = 0; inode < num_nodes; inode++) {
-        myfile << soln[6 * inode + 3] << sp;
-        myfile << soln[6 * inode + 4] << sp;
-        myfile << soln[6 * inode + 5] << "\n";
+        myfile << soln[vpn * inode + offset + 3] << sp;
+        myfile << soln[vpn * inode + offset + 4] << sp;
+        myfile << soln[vpn * inode + offset + 5] << "\n";
+    }
+
+    if constexpr (Phys::hellingerReissner) {
+        scalarName = "HRmem";
+        myfile << "VECTORS " << scalarName << " double64\n";
+        for (int inode = 0; inode < num_nodes; inode++) {
+            myfile << soln[vpn * inode + 0] << sp;
+            myfile << soln[vpn * inode + 1] << sp;
+            myfile << soln[vpn * inode + 2] << "\n";
+        }
+
+        scalarName = "HRtrv";
+        myfile << "VECTORS " << scalarName << " double64\n";
+        for (int inode = 0; inode < num_nodes; inode++) {
+            myfile << soln[vpn * inode + 3] << sp;
+            myfile << soln[vpn * inode + 4] << sp;
+            myfile << 0.0 << "\n";
+        }
     }
 
     // init visualization states
@@ -95,13 +156,42 @@ void printToVTK(Assembler assembler, Vec soln, std::string filename) {
     // write thicknesses
     double *h_dvs = d_dvs.createHostVec().getPtr();
     int *h_elem_comp = elem_components.createHostVec().getPtr();
+    int ndvs_per_comp = d_dvs.getSize() / assembler.get_num_components();
     myfile << "CELL_DATA " << num_elems << "\n";
     scalarName = "thickness";
     myfile << "SCALARS " << scalarName << " double64 1\n";
     myfile << "LOOKUP_TABLE default\n";
     for (int ielem = 0; ielem < num_elems; ielem++) {
         int comp_id = h_elem_comp[ielem];
-        myfile << h_dvs[comp_id] << "\n";
+        myfile << h_dvs[ndvs_per_comp * comp_id] << "\n";
+    }
+
+    if (ndvs_per_comp > 1) {
+        // like stiffened panel, writeout additional DVs also
+        scalarName = "stiffHeight";
+        myfile << "SCALARS " << scalarName << " double64 1\n";
+        myfile << "LOOKUP_TABLE default\n";
+        for (int ielem = 0; ielem < num_elems; ielem++) {
+            int comp_id = h_elem_comp[ielem];
+            myfile << h_dvs[ndvs_per_comp * comp_id + 1] << "\n";
+        }
+
+        scalarName = "stiffThick";
+        myfile << "SCALARS " << scalarName << " double64 1\n";
+        myfile << "LOOKUP_TABLE default\n";
+        for (int ielem = 0; ielem < num_elems; ielem++) {
+            int comp_id = h_elem_comp[ielem];
+            myfile << h_dvs[ndvs_per_comp * comp_id + 2] << "\n";
+        }
+
+        scalarName = "stiffPitch";
+        myfile << "SCALARS " << scalarName << " double64 1\n";
+        myfile << "LOOKUP_TABLE default\n";
+        for (int ielem = 0; ielem < num_elems; ielem++) {
+            int comp_id = h_elem_comp[ielem];
+            myfile << h_dvs[ndvs_per_comp * comp_id + 3] << "\n";
+        }
+
     }
 
     // write failure indexes

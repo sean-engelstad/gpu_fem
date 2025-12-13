@@ -2,19 +2,21 @@
 #include "a2dcore.h"
 #include "quadrature.h"
 
-// technically order = 2 is linear.. change this later
-template <typename T, class Quadrature_, int order = 2>
+// technically nx = 2 is linear.. change this later
+template <typename T, class Quadrature_, int _order = 1>
 class LagrangeQuadBasis {
    public:
     using Quadrature = Quadrature_;
+    static constexpr int32_t order = _order;
+    static constexpr int32_t nx = order + 1;
 
     // Required for loading solution data
-    static constexpr int32_t num_nodes = order * order;
+    static constexpr int32_t num_nodes = nx * nx;
     static constexpr int32_t param_dim = 2;
 
     // MITC method => number of tying points for each strain component
-    static constexpr int32_t mitcLevel2 = order * (order - 1);
-    static constexpr int32_t mitcLevel3 = (order - 1) * (order - 1);
+    static constexpr int32_t mitcLevel2 = nx * (nx - 1);
+    static constexpr int32_t mitcLevel3 = (nx - 1) * (nx - 1);
     static constexpr int32_t num_tying_components = 5;  // five gij components for tying strains
     static constexpr int32_t num_all_tying_points = 4 * mitcLevel2 + mitcLevel3;
 
@@ -38,7 +40,7 @@ class LagrangeQuadBasis {
         static constexpr int32_t spatial_dim = 3;
 
         // Required for knowning number of spatial coordinates per node
-        static constexpr int32_t num_nodes = 4;
+        static constexpr int32_t num_nodes = nx * nx;
 
         // Number of quadrature points
         static constexpr int32_t num_quad_pts = Quadrature::num_quad_pts;
@@ -48,47 +50,113 @@ class LagrangeQuadBasis {
     };  // end of class LinearQuadGeo
     using Geo = LinearQuadGeo;
 
+    __HOST_DEVICE__ static T getGaussPoint(int i) {
+        // evenly spaced gauss-points
+        return -1.0 + 2.0 * i / (nx-1);
+    }
+
+    // generic evalBasis call for interps in multigrid and FEA
+    __HOST_DEVICE__ static void getBasis(const T pt[2], T N[num_nodes]) {
+        lagrangeLobatto2D(pt[0], pt[1], N);
+    }
+
     // shape functions here
     __HOST_DEVICE__ static void lagrangeLobatto1D(const T u, T *N) {
-        if constexpr (order == 2) {
+        if constexpr (nx == 2) {
+            // Linear
             N[0] = 0.5 * (1.0 - u);
             N[1] = 0.5 * (1.0 + u);
         }
+
+        else if constexpr (nx == 3) {
+            // Quadratic Lobatto: nodes = [-1, 0, 1]
+            N[0] = 0.5 * u * (u - 1.0);
+            N[1] = 1.0 - u * u;
+            N[2] = 0.5 * u * (u + 1.0);
+        }
+
+        else if constexpr (nx == 4) {
+            // Cubic Lobatto: nodes = [-1, -1/3, 1/3, 1]
+            const T a = u;
+            N[0] = -(9.0 / 16.0) * (a + 1.0) * (a + 1.0 / 3.0) * (a - 1.0 / 3.0);
+            N[1] = (27.0 / 16.0) * (a + 1.0) * (a + 1.0 / 3.0) * (a - 1.0);
+            N[2] = -(27.0 / 16.0) * (a + 1.0) * (a - 1.0 / 3.0) * (a - 1.0);
+            N[3] = (9.0 / 16.0) * (a - 1.0 / 3.0) * (a + 1.0 / 3.0) * (a - 1.0);
+        }
     }
 
-    template <int tyingOrder>
+    template <int tying_nx>
     __HOST_DEVICE__ static void lagrangeLobatto1D_tying(const T u, T *N) {
-        if constexpr (tyingOrder == 1) {
+        if constexpr (tying_nx == 1) {
             N[0] = 1.0;
-        } else if constexpr (tyingOrder == 2) {
+        } else if constexpr (tying_nx == 2) {
             N[0] = 0.5 * (1.0 - u);
             N[1] = 0.5 * (1.0 + u);
+        } else if constexpr (tying_nx == 3) {
+            // Quadratic Lobatto: nodes = [-1, 0, 1]
+            N[0] = 0.5 * u * (u - 1.0);
+            N[1] = 1.0 - u * u;
+            N[2] = 0.5 * u * (u + 1.0);
+        } else if constexpr (tying_nx == 4) {
+            // Cubic Lobatto: nodes = [-1, -1/3, 1/3, 1]
+            const T a = u;
+            N[0] = -(9.0 / 16.0) * (a + 1.0) * (a + 1.0 / 3.0) * (a - 1.0 / 3.0);
+            N[1] = (27.0 / 16.0) * (a + 1.0) * (a + 1.0 / 3.0) * (a - 1.0);
+            N[2] = -(27.0 / 16.0) * (a + 1.0) * (a - 1.0 / 3.0) * (a - 1.0);
+            N[3] = (9.0 / 16.0) * (a - 1.0 / 3.0) * (a + 1.0 / 3.0) * (a - 1.0);
         }
     }
 
     __HOST_DEVICE__ static void lagrangeLobatto1DGrad(const T u, T *N, T *Nd) {
-        if constexpr (order == 2) {
+        if constexpr (nx == 2) {
             N[0] = 0.5 * (1.0 - u);
             N[1] = 0.5 * (1.0 + u);
 
-            // dN/du
             Nd[0] = -0.5;
             Nd[1] = 0.5;
+        }
+
+        else if constexpr (nx == 3) {
+            // Quadratic
+            N[0] = 0.5 * u * (u - 1.0);
+            N[1] = 1.0 - u * u;
+            N[2] = 0.5 * u * (u + 1.0);
+
+            Nd[0] = u - 0.5;
+            Nd[1] = -2.0 * u;
+            Nd[2] = u + 0.5;
+        }
+
+        else if constexpr (nx == 4) {
+            // Cubic
+            const T a = u;
+
+            N[0] = -(9.0 / 16.0) * (a + 1.0) * (a + 1.0 / 3.0) * (a - 1.0 / 3.0);
+            N[1] = (27.0 / 16.0) * (a + 1.0) * (a + 1.0 / 3.0) * (a - 1.0);
+            N[2] = -(27.0 / 16.0) * (a + 1.0) * (a - 1.0 / 3.0) * (a - 1.0);
+            N[3] = (9.0 / 16.0) * (a - 1.0 / 3.0) * (a + 1.0 / 3.0) * (a - 1.0);
+
+            Nd[0] = -(9.0 / 16.0) * ((a + 1.0) * (a + 1.0 / 3.0) + (a + 1.0) * (a - 1.0 / 3.0) +
+                                     (a + 1.0 / 3.0) * (a - 1.0 / 3.0));
+            Nd[1] = (27.0 / 16.0) * ((a + 1.0) * (a + 1.0 / 3.0) + (a + 1.0) * (a - 1.0) +
+                                     (a + 1.0 / 3.0) * (a - 1.0));
+            Nd[2] = -(27.0 / 16.0) * ((a + 1.0) * (a - 1.0 / 3.0) + (a + 1.0) * (a - 1.0) +
+                                      (a - 1.0 / 3.0) * (a - 1.0));
+            Nd[3] = (9.0 / 16.0) * ((a - 1.0 / 3.0) * (a + 1.0 / 3.0) +
+                                    (a - 1.0 / 3.0) * (a - 1.0) + (a + 1.0 / 3.0) * (a - 1.0));
         }
     }
 
     __HOST_DEVICE__ static void lagrangeLobatto2D(const T xi, const T eta, T *N) {
         // compute N_i(u) shape function values at each node
-        if constexpr (order == 2) {
-            T na[order], nb[order];
-            lagrangeLobatto1D(xi, na);
-            lagrangeLobatto1D(eta, nb);
+        T na[nx], nb[nx];
+        lagrangeLobatto1D(xi, na);
+        lagrangeLobatto1D(eta, nb);
 
-            // now compute 2D N_a(xi) * N_b(eta) for each node
-            for (int ieta = 0; ieta < order; ieta++) {
-                for (int ixi = 0; ixi < order; ixi++) {
-                    N[order * ieta + ixi] = na[ixi] * nb[ieta];
-                }
+        // now compute 2D N_a(xi) * N_b(eta) for each node
+        for (int ieta = 0; ieta < nx; ieta++) {
+            for (int ixi = 0; ixi < nx; ixi++) {
+                N[nx * ieta + ixi] = na[ixi] * nb[ieta];
             }
         }
     }  // end of lagrangeLobatto2D
@@ -96,19 +164,17 @@ class LagrangeQuadBasis {
     __HOST_DEVICE__ static void lagrangeLobatto2DGrad(const T xi, const T eta, T *N, T *dNdxi,
                                                       T *dNdeta) {
         // compute N_i(u) shape function values at each node
-        if constexpr (order == 2) {
-            T na[order], nb[order];
-            T dna[order], dnb[order];
-            lagrangeLobatto1DGrad(xi, na, dna);
-            lagrangeLobatto1DGrad(eta, nb, dnb);
+        T na[nx], nb[nx];
+        T dna[nx], dnb[nx];
+        lagrangeLobatto1DGrad(xi, na, dna);
+        lagrangeLobatto1DGrad(eta, nb, dnb);
 
-            // now compute 2D N_a(xi) * N_b(eta) for each node
-            for (int ieta = 0; ieta < order; ieta++) {
-                for (int ixi = 0; ixi < order; ixi++) {
-                    N[order * ieta + ixi] = na[ixi] * nb[ieta];
-                    dNdxi[order * ieta + ixi] = dna[ixi] * nb[ieta];
-                    dNdeta[order * ieta + ixi] = na[ixi] * dnb[ieta];
-                }
+        // now compute 2D N_a(xi) * N_b(eta) for each node
+        for (int ieta = 0; ieta < nx; ieta++) {
+            for (int ixi = 0; ixi < nx; ixi++) {
+                N[nx * ieta + ixi] = na[ixi] * nb[ieta];
+                dNdxi[nx * ieta + ixi] = dna[ixi] * nb[ieta];
+                dNdeta[nx * ieta + ixi] = na[ixi] * dnb[ieta];
             }
         }
     }  // end of lagrangeLobatto2D_grad
@@ -131,8 +197,8 @@ class LagrangeQuadBasis {
 
     __HOST_DEVICE__ static void getNodePoint(const int n, T pt[]) {
         // get xi, eta coordinates of each node point
-        pt[0] = -1.0 + (2.0 / (order - 1)) * (n % order);
-        pt[1] = -1.0 + (2.0 / (order - 1)) * (n / order);
+        pt[0] = -1.0 + (2.0 / (nx - 1)) * (n % nx);
+        pt[1] = -1.0 + (2.0 / (nx - 1)) * (n / nx);
     }
 
     template <int vars_per_node, int num_fields>
@@ -165,6 +231,56 @@ class LagrangeQuadBasis {
     }  // end of interpFieldsGrad method
 
     template <int vars_per_node, int num_fields>
+    __HOST_DEVICE__ static void interpFieldsMixedGrad(const T pt[], const T values[], T d2mixed[]) {
+        // Compute 1D basis and gradients
+        T na[nx], nb[nx];
+        T dna[nx], dnb[nx];
+
+        lagrangeLobatto1DGrad(pt[0], na, dna);
+        lagrangeLobatto1DGrad(pt[1], nb, dnb);
+
+        for (int ifield = 0; ifield < num_fields; ifield++) {
+            T val = 0.0;
+
+            // Loop over 2D nodes: N(xi_i, eta_j) = na[i] * nb[j]
+            for (int j = 0; j < nx; j++) {
+                for (int i = 0; i < nx; i++) {
+                    const int inode = nx * j + i;
+
+                    // Mixed derivative:  dN/dxi * dN/deta = dna[i] * dnb[j]
+                    const T Nmixed = dna[i] * dnb[j];
+
+                    val += Nmixed * values[inode * vars_per_node + ifield];
+                }
+            }
+
+            d2mixed[ifield] = val;
+        }
+    }
+
+    template <int vars_per_node, int num_fields>
+    __HOST_DEVICE__ static void interpFieldsMixedGradTranspose(const T pt[], const T d2mixed_b[],
+                                                               T values_b[]) {
+        // Compute 1D basis and gradients
+        T na[nx], nb[nx];
+        T dna[nx], dnb[nx];
+        lagrangeLobatto1DGrad(pt[0], na, dna);
+        lagrangeLobatto1DGrad(pt[1], nb, dnb);
+
+        // Loop over 2D nodes to accumulate adjoints
+        for (int j = 0; j < nx; j++) {
+            for (int i = 0; i < nx; i++) {
+                const int inode = nx * j + i;
+                T coeff = dna[i] * dnb[j];  // mixed derivative
+
+                for (int ifield = 0; ifield < num_fields; ifield++) {
+                    values_b[inode * vars_per_node + ifield] += coeff * d2mixed_b[ifield];
+                }
+            }
+        }
+    }
+
+    template <int vars_per_node, int num_fields>
     __HOST_DEVICE__ static void interpFieldsTranspose(const T pt[], const T field_bar[],
                                                       T values_bar[]) {
         T N[num_nodes];  // TODO : double check this method (can we store less
@@ -193,83 +309,105 @@ class LagrangeQuadBasis {
     }  // end of interpFieldsGrad method
 
     __HOST_DEVICE__ static void getTyingKnots(T red_knots[], T full_knots[]) {
-        if constexpr (order == 2) {
-            red_knots[0] = 0.0;
+        // reduced integration points (not the same as lagrange-lobatto)
+        if constexpr (nx == 2) {
             full_knots[0] = -1.0;
             full_knots[1] = 1.0;
+
+            red_knots[0] = 0.0;
+        }
+
+        if constexpr (nx == 3) {
+            full_knots[0] = -0.774596669241483;
+            full_knots[1] = 0.0;
+            full_knots[2] = 0.774596669241483;
+
+            red_knots[0] = -0.577350269189626;
+            red_knots[1] = 0.577350269189626;
+        }
+
+        if constexpr (nx == 4) {
+            full_knots[0] = -0.861136311594053;
+            full_knots[1] = -0.339981043584856;
+            full_knots[2] = 0.339981043584856;
+            full_knots[3] = 0.861136311594053;
+
+            red_knots[0] = -0.774596669241483;
+            red_knots[1] = 0.0;
+            red_knots[2] = 0.774596669241483;
         }
     }
 
     // section for tying point interpolations
     template <int icomp>
     __HOST_DEVICE__ static void getTyingPoint(const int n, T pt[]) {
-        T red_knots[order * (order - 1)], full_knots[order * order];
+        T red_knots[nx * (nx - 1)], full_knots[nx * nx];
         getTyingKnots(red_knots, full_knots);
 
         // use constexpr here to prevent warp divergence
         if constexpr (icomp == 0 || icomp == 4) {  // g11 or g13
             // 1-dir uses reduced knots for 1j strains
-            // also order*(order-1) matrix but order-1 columns
-            pt[0] = red_knots[n % (order - 1)];
-            pt[1] = full_knots[n / (order - 1)];
+            // also nx*(nx-1) matrix but nx-1 columns
+            pt[0] = red_knots[n % (nx - 1)];
+            pt[1] = full_knots[n / (nx - 1)];
         } else if constexpr (icomp == 1 || icomp == 3) {  // g22 or g23
             // 2-dir uses reduced knots for 2j strains
-            // also order*(order-1) matrix but order columns
-            pt[0] = full_knots[n % order];
-            pt[1] = red_knots[n / order];
+            // also nx*(nx-1) matrix but nx columns
+            pt[0] = full_knots[n % nx];
+            pt[1] = red_knots[n / nx];
         } else if constexpr (icomp == 2) {  // g12
             // 1-dir and 2-dir use reduced knots here
-            pt[0] = red_knots[n % (order - 1)];
-            pt[1] = red_knots[n / (order - 1)];
+            pt[0] = red_knots[n % (nx - 1)];
+            pt[1] = red_knots[n / (nx - 1)];
         }
     }
 
     template <int icomp>
     __HOST_DEVICE__ static void getTyingInterp(const T pt[], T N[]) {
         // get 1d knot vectors
-        // T red_knots[(order-1)], full_knots[order];
+        // T red_knots[(nx-1)], full_knots[nx];
         // getTyingKnots(red_knots, full_knots);
 
-        T na[order], nb[order];
-        lagrangeLobatto1D_tying<order>(pt[0], na);
-        lagrangeLobatto1D_tying<order>(pt[1], nb);
+        T na[nx], nb[nx];
+        lagrangeLobatto1D_tying<nx>(pt[0], na);
+        lagrangeLobatto1D_tying<nx>(pt[1], nb);
 
-        T nar[order], nbr[order];
-        lagrangeLobatto1D_tying<order - 1>(pt[0], nar);
-        lagrangeLobatto1D_tying<order - 1>(pt[1], nbr);
+        T nar[nx], nbr[nx];
+        lagrangeLobatto1D_tying<nx - 1>(pt[0], nar);
+        lagrangeLobatto1D_tying<nx - 1>(pt[1], nbr);
 
         if constexpr (icomp == 0) {
             // g11
-            for (int j = 0; j < order; j++) {
-                for (int i = 0; i < order - 1; i++, N++) {
+            for (int j = 0; j < nx; j++) {
+                for (int i = 0; i < nx - 1; i++, N++) {
                     N[0] = nar[i] * nb[j];
                 }
             }
         } else if constexpr (icomp == 2) {
             // g12
-            for (int j = 0; j < order - 1; j++) {
-                for (int i = 0; i < order - 1; i++, N++) {
+            for (int j = 0; j < nx - 1; j++) {
+                for (int i = 0; i < nx - 1; i++, N++) {
                     N[0] = nar[i] * nbr[j];
                 }
             }
         } else if constexpr (icomp == 4) {
             // g13
-            for (int j = 0; j < order; j++) {
-                for (int i = 0; i < order - 1; i++, N++) {
+            for (int j = 0; j < nx; j++) {
+                for (int i = 0; i < nx - 1; i++, N++) {
                     N[0] = nar[i] * nb[j];
                 }
             }
         } else if constexpr (icomp == 1) {
             // g22
-            for (int j = 0; j < order - 1; j++) {
-                for (int i = 0; i < order; i++, N++) {
+            for (int j = 0; j < nx - 1; j++) {
+                for (int i = 0; i < nx; i++, N++) {
                     N[0] = na[i] * nbr[j];
                 }
             }
         } else if constexpr (icomp == 3) {
             // g23
-            for (int j = 0; j < order - 1; j++) {
-                for (int i = 0; i < order; i++, N++) {
+            for (int j = 0; j < nx - 1; j++) {
+                for (int i = 0; i < nx; i++, N++) {
                     N[0] = na[i] * nbr[j];
                 }
             }

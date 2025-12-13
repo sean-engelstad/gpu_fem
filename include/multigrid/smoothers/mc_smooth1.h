@@ -1,26 +1,30 @@
 #pragma once
-#include "linalg/vec.h"
+#include "../solvers/solve_utils.h"
 #include "_smoothers.cuh"
+#include "linalg/vec.h"
 
 template <class Assembler>
-class MulticolorGSSmoother_V1 {
+class MulticolorGSSmoother_V1 : public BaseSolver {
     /* a multicolor submat gauss seidel smoother */
-public:
+   public:
     using T = typename Assembler::T;
 
-    MulticolorGSSmoother_V1() = default;
+    // MulticolorGSSmoother_V1() = default;
 
-    MulticolorGSSmoother_V1(Assembler &assembler_, BsrMat<DeviceVec<T>> Kmat_, 
-        HostVec<int> h_color_rowp_, T omega_ = 1.0, bool symmetric_ = false) {
-
+    MulticolorGSSmoother_V1(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
+                            Assembler &assembler_, BsrMat<DeviceVec<T>> Kmat_,
+                            HostVec<int> h_color_rowp_, T omega_ = 1.0, bool symmetric_ = false,
+                            int n_solve_steps_ = 4)
+        : cublasHandle(cublasHandle_), cusparseHandle(cusparseHandle_) {
         Kmat = Kmat_;
         h_color_rowp = h_color_rowp_;
-        block_dim = 6;
+        block_dim = assembler_.getBsrData().block_dim;
         N = assembler_.get_num_vars();
-        nnodes = N / 6;
+        nnodes = N / block_dim;
         assembler = assembler_;
         omega = omega_;
         symmetric = symmetric_;
+        n_solve_steps = n_solve_steps_;  // only used for it as a preconditioner (not MG smoother)
 
         // get data out of kmat
         auto d_kmat_bsr_data = Kmat.getBsrData();
@@ -35,22 +39,49 @@ public:
         buildTransposeColorMatrices<startup>();
     }
 
-    void update_after_assembly() {
+    bool solve(DeviceVec<T> rhs, DeviceVec<T> soln, bool check_conv = false) {
+        /* solve method for the smoother if it is used as a preconditioner instead */
+
+        // setup rhs and soln with init guess of 0
+        cudaMemcpy(d_rhs, rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+        cudaMemset(d_inner_soln, 0.0, N * sizeof(T));  // re-zero the solution
+
+        // call smoother on the defect=rhs and solution pair
+        this->smoothDefect(d_rhs_vec, d_inner_soln_vec, n_solve_steps);
+
+        // copy internal soln to external solution of the solve method
+        cudaMemcpy(soln.getPtr(), d_inner_soln, N * sizeof(T), cudaMemcpyDeviceToDevice);
+        return false;  // fail = False
+    }
+
+    void update_after_assembly(DeviceVec<T> &vars) {
         const bool startup = false;
         buildDiagInvMat<startup>();
         buildTransposeColorMatrices<startup>();
     }
 
+    void set_abs_tol(T atol) {}
+    void set_rel_tol(T atol) {}
+    int get_num_iterations() { return 0; }
+    void set_print(bool print) {}
+    void free() {}  // TBD on this one
+
     void initCuda() {
-        // init handles
-        CHECK_CUBLAS(cublasCreate(&cublasHandle));
-        CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+        // // init handles
+        // CHECK_CUBLAS(cublasCreate(&cublasHandle));
+        // CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
         // init some util vecs
         d_temp_vec = DeviceVec<T>(N);
         d_temp = d_temp_vec.getPtr();
         d_temp2 = DeviceVec<T>(N).getPtr();
         d_resid = DeviceVec<T>(N).getPtr();
+
+        // for linear solver / precond use
+        d_rhs_vec = DeviceVec<T>(N);
+        d_rhs = d_rhs_vec.getPtr();
+        d_inner_soln_vec = DeviceVec<T>(N);
+        d_inner_soln = d_inner_soln_vec.getPtr();
 
         // make mat handles for SpMV
         CHECK_CUSPARSE(cusparseCreateMatDescr(&descrKmat));
@@ -87,8 +118,8 @@ public:
             d_diag_cols = HostVec<int>(nnodes, h_diag_cols).createDeviceVec().getPtr();
 
             // create the bsr data object on device
-            d_diag_bsr_data = BsrData(nnodes, 6, diag_inv_nnzb, d_diag_rowp, d_diag_cols, nullptr,
-                                      nullptr, false);
+            d_diag_bsr_data = BsrData(nnodes, block_dim, diag_inv_nnzb, d_diag_rowp, d_diag_cols,
+                                      nullptr, nullptr, false);
             delete[] h_diag_rowp;
             delete[] h_diag_cols;
 
@@ -112,7 +143,7 @@ public:
 
             delete[] h_kmat_rowp;
             delete[] h_kmat_cols;
-        }
+        }  // end of startup
 
         // call the kernel to copy out diag vals first
         int ndiag_vals = block_dim * block_dim * nnodes;
@@ -122,15 +153,85 @@ public:
         k_copyBlockDiagFromBsrMat<T>
             <<<grid, block>>>(nnodes, block_dim, d_kmat_diagp, d_kmat_vals, d_diag_LU_vals);
 
+        // ilu0 factoriation
+        if constexpr (startup) {
+            // create M matrix object (for full numeric factorization)
+            cusparseCreateMatDescr(&descr_M);
+            cusparseSetMatIndexBase(descr_M, CUSPARSE_INDEX_BASE_ZERO);
+            cusparseSetMatType(descr_M, CUSPARSE_MATRIX_TYPE_GENERAL);
+            cusparseCreateBsrilu02Info(&info_M);
+
+            // init L matrix objects (for triangular solve)
+            cusparseCreateMatDescr(&descr_L);
+            cusparseSetMatIndexBase(descr_L, CUSPARSE_INDEX_BASE_ZERO);
+            cusparseSetMatType(descr_L, CUSPARSE_MATRIX_TYPE_GENERAL);
+            cusparseSetMatFillMode(descr_L, CUSPARSE_FILL_MODE_LOWER);
+            cusparseSetMatDiagType(descr_L, CUSPARSE_DIAG_TYPE_UNIT);
+            cusparseCreateBsrsv2Info(&info_L);
+
+            // init U matrix objects (for triangular solve)
+            cusparseCreateMatDescr(&descr_U);
+            cusparseSetMatIndexBase(descr_U, CUSPARSE_INDEX_BASE_ZERO);
+            cusparseSetMatType(descr_U, CUSPARSE_MATRIX_TYPE_GENERAL);
+            cusparseSetMatFillMode(descr_U, CUSPARSE_FILL_MODE_UPPER);
+            cusparseSetMatDiagType(descr_U, CUSPARSE_DIAG_TYPE_NON_UNIT);
+            cusparseCreateBsrsv2Info(&info_U);
+
+            // symbolic and numeric factorizations
+            CHECK_CUSPARSE(cusparseDbsrilu02_bufferSize(
+                cusparseHandle, dir, nnodes, diag_inv_nnzb, descr_M, d_diag_LU_vals, d_diag_rowp,
+                d_diag_cols, block_dim, info_M, &pBufferSize_M));
+            CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(
+                cusparseHandle, dir, trans_L, nnodes, diag_inv_nnzb, descr_L, d_diag_LU_vals,
+                d_diag_rowp, d_diag_cols, block_dim, info_L, &pBufferSize_L));
+            CHECK_CUSPARSE(cusparseDbsrsv2_bufferSize(
+                cusparseHandle, dir, trans_U, nnodes, diag_inv_nnzb, descr_U, d_diag_LU_vals,
+                d_diag_rowp, d_diag_cols, block_dim, info_U, &pBufferSize_U));
+            pBufferSize = std::max({pBufferSize_M, pBufferSize_L, pBufferSize_U});
+            // cudaMalloc((void **)&pBuffer, pBufferSize);
+            cudaMalloc(&pBuffer, pBufferSize);
+
+            // perform ILU symbolic factorization on L
+            CHECK_CUSPARSE(cusparseDbsrilu02_analysis(
+                cusparseHandle, dir, nnodes, diag_inv_nnzb, descr_M, d_diag_LU_vals, d_diag_rowp,
+                d_diag_cols, block_dim, info_M, policy_M, pBuffer));
+            status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &structural_zero);
+            if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+                printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
+            }
+
+            // analyze sparsity patern of L for efficient triangular solves
+            CHECK_CUSPARSE(cusparseDbsrsv2_analysis(
+                cusparseHandle, dir, trans_L, nnodes, diag_inv_nnzb, descr_L, d_diag_LU_vals,
+                d_diag_rowp, d_diag_cols, block_dim, info_L, policy_L, pBuffer));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            // analyze sparsity pattern of U for efficient triangular solves
+            CHECK_CUSPARSE(cusparseDbsrsv2_analysis(
+                cusparseHandle, dir, trans_U, nnodes, diag_inv_nnzb, descr_U, d_diag_LU_vals,
+                d_diag_rowp, d_diag_cols, block_dim, info_U, policy_U, pBuffer));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // perform ILU numeric factorization (with M policy)
+        CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, nnodes, diag_inv_nnzb, descr_M,
+                                         d_diag_LU_vals, d_diag_rowp, d_diag_cols, block_dim,
+                                         info_M, policy_M, pBuffer));
+        CHECK_CUDA(cudaDeviceSynchronize());
+        status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
+        if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+            printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
+        }
+
         // then on each nodal block of D matrix, cusparse computes LU factorization
-        CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
-                                             &pBuffer, nnodes, diag_inv_nnzb, block_dim,
-                                             d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
-                                             trans_U, policy_L, policy_U, dir);
+        // CUSPARSE::perform_ilu0_factorization(cusparseHandle, descr_L, descr_U, info_L, info_U,
+        //                                      &pBuffer, nnodes, diag_inv_nnzb, block_dim,
+        //                                      d_diag_LU_vals, d_diag_rowp, d_diag_cols, trans_L,
+        //                                      trans_U, policy_L, policy_U, dir);
 
         // now compute Dinv linear operator from LU triang solves (so don't need triang solves in
         // main solve), costs 6 triang solves of D^-1 = U^-1 L^-1
-    
+
         // startup part of Dinv linear operator
         if constexpr (startup) {
             d_dinv_vals = DeviceVec<T>(ndiag_vals);
@@ -152,10 +253,9 @@ public:
                 d_diag_rowp, d_diag_cols, block_dim, info_L, d_temp, d_resid, policy_L,
                 pBuffer));  // prob only need U^-1 part for block diag.. TBD
 
-            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, nnodes, nnodes,
-                                                    &alpha, descr_U, d_diag_LU_vals, d_diag_rowp,
-                                                    d_diag_cols, block_dim, info_U, d_resid,
-                                                    d_temp2, policy_U, pBuffer));
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                cusparseHandle, dir, trans_U, nnodes, nnodes, &alpha, descr_U, d_diag_LU_vals,
+                d_diag_rowp, d_diag_cols, block_dim, info_U, d_resid, d_temp2, policy_U, pBuffer));
 
             // now copy temp2 into columns of new operator
             dim3 grid2((N + 31) / 32);
@@ -284,8 +384,8 @@ public:
         }
     }
 
-    void smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln,
-        int n_iters, bool print = false, int print_freq = 10) {
+    void smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln, int n_iters, bool print = false,
+                      int print_freq = 10) {
         /* first fast version of the smoother using color submatrices */
 
         int num_colors = h_color_rowp.getSize() - 1;
@@ -297,7 +397,7 @@ public:
         if (time_debug) printf("\t\tncolors = %d, #iters %d MC-BGS\n", num_colors, n_iters);
         print_freq = max(print_freq, 1);  // so not zero
 
-        int m = symmetric ? 2*n_iters : n_iters;
+        int m = symmetric ? 2 * n_iters : n_iters;
 
         for (int iter = 0; iter < m; iter++) {
             for (int _icolor = 0; _icolor < num_colors; _icolor++) {
@@ -307,7 +407,7 @@ public:
                 if (time_debug) CHECK_CUDA(cudaDeviceSynchronize());
                 auto prelim_time = std::chrono::high_resolution_clock::now();
                 // int _icolor2 = (_icolor + iter) % num_colors;  // permute order as you go
-                bool rev_colors = symmetric ? iter % 2 == 0 : false;
+                bool rev_colors = symmetric ? iter % 2 == 1 : false;
                 int icolor = rev_colors ? num_colors - 1 - _icolor : _icolor;
 
                 // get active rows / cols for this color
@@ -404,14 +504,22 @@ public:
         }  // next block-GS iteration
     }
 
+    void smoothMatrix(BsrMat<DeviceVec<T>> *prolong_mat, BsrMat<DeviceVec<T>> *Z_mat,
+                      BsrMat<DeviceVec<T>> *Zprev_mat, int n_iters, int nnzb_prod,
+                      int *d_P_prodBlocks, int *d_K_prodblocks, int *d_Z_prodblocks) {
+        printf("WARNING: MC-Smoother doesn't smooth the matrix yet\n");
+    }
+
     // data
     Assembler assembler;
     int N, nelems, block_dim, nnodes;
     BsrMat<DeviceVec<T>> Kmat, D_LU_mat;  // can't get Dinv_mat directly at moment
-    DeviceVec<T> d_temp_vec;
+    DeviceVec<T> d_temp_vec, d_rhs_vec, d_inner_soln_vec;
     T *d_temp, *d_temp2, *d_resid;
+    T *d_rhs, *d_inner_soln;
     const int *d_elem_conn;
     HostVec<int> h_color_rowp;
+    int n_solve_steps;
 
     // turn off private during debugging
     //    private:  // private data for cusparse and cublas
@@ -422,8 +530,8 @@ public:
     bool symmetric = false;
 
     // private data
-    cublasHandle_t cublasHandle = NULL;
-    cusparseHandle_t cusparseHandle = NULL;
+    cublasHandle_t &cublasHandle;
+    cusparseHandle_t &cusparseHandle;
     cusparseMatDescr_t descrKmat = 0, descrDinvMat = 0;
     size_t bufferSizeMV;
     void *buffer_MV = nullptr;
@@ -463,4 +571,13 @@ public:
     cusparseMatDescr_t descr_kmat_L = 0, descr_kmat_U = 0;
     bsrsv2Info_t info_kmat_L = 0, info_kmat_U = 0;
     void *kmat_pBuffer = 0;
+
+    // more objects for ilu0 factorization
+    cusparseMatDescr_t descr_M = 0;
+    bsrilu02Info_t info_M = 0;
+    int pBufferSize_M, pBufferSize_L, pBufferSize_U, pBufferSize;
+    int structural_zero, numerical_zero;
+    const cusparseSolvePolicy_t policy_M =
+        CUSPARSE_SOLVE_POLICY_USE_LEVEL;  // CUSPARSE_SOLVE_POLICY_NO_LEVEL;
+    cusparseStatus_t status;
 };

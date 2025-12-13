@@ -3,20 +3,25 @@
 
 /* the tying strains include the 3 membrane and 2 transverse shear strains (5 of them in total) */
 
-// in the MITC (mixed interpolation of tensorial component shell), lower order Gauss quadrature is used
+// in the MITC (mixed interpolation of tensorial component shell), lower order Gauss quadrature is
+// used
 //    for each strain to prevent transverse shear and membrane locking
-// e.g. for a first order element with 2nd order Gauss quadrature that has 4 quadpts for full integration,
-//    the two transverse shear strains gam_13 and gam_23 use 2 quadpts, reduced along the 1 and 2 directions respectively
-//    , while the membrane shear strain gam_12 uses only 1 quadpt (reduced in both directions)
-// this is an improved version of reduced integration as it prevents zero energy modes while somewhat reducing the integration to prevent locking
-// however, it is not as multigrid friendly as fully integrated elements, though fully integrated normally lock (with some exceptions for advanced elements.. see my paper)
+// e.g. for a first order element with 2nd order Gauss quadrature that has 4 quadpts for full
+// integration,
+//    the two transverse shear strains gam_13 and gam_23 use 2 quadpts, reduced along the 1 and 2
+//    directions respectively , while the membrane shear strain gam_12 uses only 1 quadpt (reduced
+//    in both directions)
+// this is an improved version of reduced integration as it prevents zero energy modes while
+// somewhat reducing the integration to prevent locking however, it is not as multigrid friendly as
+// fully integrated elements, though fully integrated normally lock (with some exceptions for
+// advanced elements.. see my paper)
 
 // NOTE : only the forward + sens methods have is_nonlinear separate from the physics is_nonlinear
 // this is so that we are free to call the linear part in Hfwd and Hrev
 
 template <typename T, class Physics, class Basis, bool is_nonlinear>
 __HOST_DEVICE__ static void computeMITCTyingStrain(const T Xpts[], const T fn[], const T vars[],
-                                               const T d[], T ety[]) {
+                                                   const T d[], T ety[]) {
     // using unrolled loop here for efficiency (if statements and for loops not
     // great for device)
     int32_t offset, num_tying;
@@ -154,8 +159,8 @@ __HOST_DEVICE__ static void computeMITCTyingStrain(const T Xpts[], const T fn[],
 
 template <typename T, class Physics, class Basis>
 __HOST_DEVICE__ static void computeMITCTyingStrainHfwd(const T Xpts[], const T fn[], const T vars[],
-                                                   const T d[], const T p_vars[], const T p_d[],
-                                                   T p_ety[]) {
+                                                       const T d[], const T p_vars[], const T p_d[],
+                                                       T p_ety[]) {
     // linear part
     computeMITCTyingStrain<T, Physics, Basis, false>(Xpts, fn, p_vars, p_d, p_ety);
 
@@ -264,8 +269,8 @@ __HOST_DEVICE__ static void computeMITCTyingStrainHfwd(const T Xpts[], const T f
 
 template <typename T, class Physics, class Basis, bool is_nonlinear>
 __HOST_DEVICE__ static void computeMITCTyingStrainSens(const T Xpts[], const T fn[], const T vars[],
-                                                   const T d[], const T ety_bar[], T res[],
-                                                   T d_bar[]) {
+                                                       const T d[], const T ety_bar[], T res[],
+                                                       T d_bar[]) {
     // using unrolled loop here for efficiency (if statements and for loops not
     // great for device)
     int32_t offset, num_tying;
@@ -440,13 +445,13 @@ __HOST_DEVICE__ static void computeMITCTyingStrainSens(const T Xpts[], const T f
 
 template <typename T, class Physics, class Basis>
 __HOST_DEVICE__ static void computeMITCTyingStrainHrev(const T Xpts[], const T fn[], const T vars[],
-                                                   const T d[], const T p_vars[], const T p_d[],
-                                                   const T ety_bar[], const T h_ety[], T matCol[],
-                                                   T h_d[]) {
+                                                       const T d[], const T p_vars[], const T p_d[],
+                                                       const T ety_bar[], const T h_ety[],
+                                                       T matCol[], T h_d[]) {
     // 2nd order backprop terms, linear part
-    computeMITCTyingStrainSens<T, Physics, Basis, false>(Xpts, fn, vars, d, h_ety, matCol, h_d);
-
     static constexpr bool is_nonlinear = Physics::is_nonlinear;
+    computeMITCTyingStrainSens<T, Physics, Basis, is_nonlinear>(Xpts, fn, vars, d, h_ety, matCol,
+                                                                h_d);
 
     if constexpr (!is_nonlinear) {
         return;
@@ -577,8 +582,6 @@ __HOST_DEVICE__ static void computeMITCTyingStrainHrev(const T Xpts[], const T f
 
     }  // end of itying for loop for g13
 }
-
-
 
 // interp section
 // ------------------

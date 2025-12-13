@@ -69,7 +69,7 @@ __global__ static void k_prolong_mat_assembly(const int *d_coarse_iperm, const i
 
 template <typename T, class Basis, bool is_bsr>
 __global__ static void k_restrict_mat_assembly(const int *d_coarse_iperm, const int *coarse_elem_conn, const int *node2elem_ptr, const int *node2elem_elems, 
-    const T *node2elem_xis, const int nnodes_fine, const int *d_fine_iperm, int *d_rowp, int *d_cols, int block_dim, T *d_vals) {
+    const T *node2elem_xis, const int nnodes_fine, const int *d_fine_iperm, int *d_rowp, int *d_cols, int block_dim, T *d_vals, T *d_coarse_weights) {
 
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     int fine_node = tid;
@@ -128,10 +128,46 @@ __global__ static void k_restrict_mat_assembly(const int *d_coarse_iperm, const 
                 } else {
                     atomicAdd(&d_vals[PT_nz_ind], scale2 * N_cf);
                 }
+
+                // compute coarse weights if we need to normalize after (for partition of unity)
+                // i.e. defect vs soln normalization
+                for (int idof = 0; idof < block_dim; idof++) {
+                    atomicAdd(&d_coarse_weights[block_dim * perm_coarse_node + idof], scale2 * N_cf);
+                }
+
             } // end of loop through that row
         } // end of loop through the local elem dof
     } // end of attached element loop
 }
+
+template <typename T>
+__global__ static void k_bsrmv_transpose(const int nnzb, const int block_dim, const int *rows, const int *cols, 
+        const T *vals, const T *fine_vec_in, T *coarse_vec_out) {
+        /* transpose product like u_c = P^T * u_f (since cusparse doesn't have bsrmv_transpose option) */
+        // this way we don't have to store a transposed copy R = P^T
+        // assumes vectors are in solve order (so no permutations during product)
+        // also the fact we use rows instead of rowp (may be more efficient than cusparse (less reads))
+
+        // parallelizes over each product individually
+        // can explore different methods later
+        int block_dim2 = block_dim * block_dim;
+        int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        int nprods = nnzb * block_dim2;
+        if (tid >= nprods) return;
+
+        // loops through Pmat in BSR order (during product)
+        int block_id = tid / block_dim2;
+        int block_row = rows[block_id], block_col = cols[block_id];
+        int ii_prod = tid % block_dim2; // which of the block_dim^2 products we do for this thread
+        int ii_fine = ii_prod / block_dim, ii_coarse = ii_prod % block_dim; // not sure which order best here yet
+
+        // get the fine vec and mat value for this thread
+        T f_val = fine_vec_in[block_dim * block_row + ii_fine];
+        T mat_val = vals[block_dim2 * block_id + ii_prod];
+
+        // now add into the output
+        atomicAdd(&coarse_vec_out[block_dim * block_col + ii_coarse], mat_val * f_val);
+    }
 
 template <typename T>
 __global__ static void k_csr_mat_vec(const int nnzb, const int block_dim, const int *d_rows, const int *d_cols, const T *d_vals, const T *vec_in, T *vec_out) {
@@ -152,5 +188,21 @@ __global__ static void k_csr_mat_vec(const int nnzb, const int block_dim, const 
         //     printf("cpnode %d to fpnode %d, idof %d with val_in %.2e, A[r,c] %.2e and val_out %.2e\n", col, row, idof, val_in, coeff, val_in * coeff);
         // }
         atomicAdd(&vec_out[block_dim * row + idof], coeff * val_in);
+    }
+}
+
+template <typename T>
+__global__ static void k_vec_normalize2(int N, T *vec_in, T *weights) {
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid < N) {
+        vec_in[tid] /= (weights[tid] + 1e-12);
+    }
+}
+
+template <typename T>
+__global__ static void k_vec_set(int N, T val, T *vec) {
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid < N) {
+        vec[tid] = val;
     }
 }
