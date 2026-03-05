@@ -106,6 +106,7 @@ class ChebyshevQuadBasis {
     using Quadrature = Quadrature_;
     using Basis1D = ChebyShev1D<T, _order>;
     static constexpr int32_t order = _order;
+    static constexpr bool ISOGEOM = false;
 
     // Required for loading solution data
     static constexpr int32_t nx = order + 1;  // num nodes in a single direction
@@ -132,8 +133,10 @@ class ChebyshevQuadBasis {
     using Geo = LinearQuadGeo;
 
     __HOST_DEVICE__ static T getGaussPoint(int i) {
-        // for use in assembler and structured prolong (external tools)
-        return Basis1D::getXi(i);
+        // evenly spaced gauss-points
+        T pt[2] = {0};
+        Quadrature::getQuadraturePoint(i, pt);
+        return pt[0];
     }
 
     // generic evalBasis call for interps in multigrid and FEA

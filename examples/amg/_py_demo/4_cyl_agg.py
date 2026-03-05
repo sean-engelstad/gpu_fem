@@ -10,12 +10,13 @@ import sys
 # plate case imports from milu python cases
 sys.path.append("../../milu/")
 from _cylinder import make_cylinder_case
-from __src import right_pgmres, plot_cylinder_vec, sort_vis_maps, right_pcg
+from __src import plot_cylinder_vec, sort_vis_maps
+from __linalg import right_pgmres, right_pcg
 # AMG imports
 sys.path.append("_src/")
 from csr_aggregation import plot_plate_aggregation
 from bsr_aggregation import greedy_serial_aggregation_bsr, tentative_prolongator_bsr, smooth_prolongator_bsr
-from smoothers import block_gauss_seidel_6dof
+from _smoothers import block_gauss_seidel_6dof
 from bsr_aggregation import AMG_BSRSolver
 
 # ====================================================

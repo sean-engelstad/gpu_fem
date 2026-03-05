@@ -213,7 +213,7 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR,
         CHECK_CUDA(cudaDeviceSynchronize());
         auto enda = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> assembly_time = enda - starta;
-        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+        printf("\tassemble kmat in %.2e sec\n", assembly_time.count());
 
         // build smoother and prolongations
         auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, omega, ORDER);
@@ -288,7 +288,9 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR,
     // 1) do a linear solve here
     // -------------------------------------------------------
 
+    kmg->set_print(true);
     kmg->solve();
+    kmg->set_print(false);
     int *d_perm = kmg->grids[0].d_perm;
     auto h_soln = kmg->grids[0].d_soln.createPermuteVec(6, d_perm).createHostVec();
     printToVTK<Assembler,HostVec<T>>(kmg->grids[0].assembler, h_soln, "out/wing_mg_lin.vtk");

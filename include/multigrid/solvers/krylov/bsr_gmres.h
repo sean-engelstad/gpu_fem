@@ -76,10 +76,12 @@ class GMRESSolver : public BaseSolver {
         grid->update_after_assembly();
         if (pc) pc->update_after_assembly(vars);
     }
+    void factor() {}
 
     void set_print(bool print) { options.print = print; }
     void set_abs_tol(T atol) { options.atol = atol; }
     void set_rel_tol(T rtol) { options.rtol = rtol; }
+    void set_cycle_type(std::string cycle_) {}
 
     T getResidualNorm(DeviceVec<T> rhs_in, DeviceVec<T> soln_in) {
         // compute r_0 = b - Ax
@@ -101,6 +103,9 @@ class GMRESSolver : public BaseSolver {
         T a, b;
         total_iter = 0;
         bool converged = false;
+
+        T init_beta;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, rhs_in.getPtr(), 1, &init_beta));
 
         // zero prev data on new call
         CHECK_CUDA(cudaMemset(d_x, 0.0, N * sizeof(T)));
@@ -205,7 +210,7 @@ class GMRESSolver : public BaseSolver {
                 H[N_SUBSPACE * j + j] = r;
                 H[N_SUBSPACE * (j + 1) + j] = 0.0;
 
-                if (check_conv && abs(g[j + 1]) < (options.atol + beta * options.rtol)) {
+                if (check_conv && abs(g[j + 1]) < (options.atol + init_beta * options.rtol)) {
                     // if (options.print)
                     //     printf("GMRES converged in %d iterations to %.9e resid\n", j + 1, g[j +
                     //     1]);

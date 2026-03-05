@@ -139,7 +139,7 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, T ome
         CHECK_CUDA(cudaDeviceSynchronize());
         auto end0 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> assembly_time = end0 - start0;
-        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+        printf("\tassemble kmat in %.2e sec\n", assembly_time.count());
 
         // build smoother and prolongations..
         auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, omega);
@@ -167,13 +167,11 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, T ome
 
     T init_resid_nrm = is_kcycle ? kmg->grids[0].getResidNorm() : mg->grids[0].getResidNorm();
 
-    CHECK_CUDA(cudaDeviceSynchronize());
-    auto start1 = std::chrono::high_resolution_clock::now();
 
     int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     bool print = true;
     // bool print = false;omegaLS_min
-    T atol = 1e-6, rtol = 1e-6;
+    T atol = 1e-10, rtol = 1e-6;
     bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
 
     int n_cycles = 500; // max # cycles
@@ -182,7 +180,13 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, T ome
     if (is_kcycle) {
         int n_krylov = 500;
         kmg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, double_smooth);    
+        kmg->coarse_solver->factor();
+    } else {
+        mg->coarse_solver->factor();
     }
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start1 = std::chrono::high_resolution_clock::now();
 
     // fastest is K-cycle usually
     if (cycle_type == "V") {
@@ -195,6 +199,7 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, T ome
         kmg->solve(); // best
     }
 
+    CHECK_CUDA(cudaDeviceSynchronize());
     auto end1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> solve_time = end1 - start1;
     int ndof = cycle_type == "K" ? kmg->grids[0].N : mg->grids[0].N;
@@ -295,9 +300,10 @@ int main(int argc, char **argv) {
     double omega = 0.3; // smoother omega for Chebyshev-jacobi
 
     int nsmooth = 2; // typically faster right now
-    int ninnercyc = 2; // inner V-cycles to precond K-cycle
+    int ninnercyc = 1; // inner V-cycles to precond K-cycle
     std::string cycle_type = "K"; // "V", "F", "W", "K"
-    std::string elem_type = "CFI4"; // 'MITC4', 'CFI4', 'CFI9'
+    // std::string elem_type = "CFI4"; // 'MITC4', 'CFI4', 'CFI9'
+    std::string elem_type = "MITC4";
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {

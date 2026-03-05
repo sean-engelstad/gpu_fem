@@ -135,7 +135,7 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
         CHECK_CUDA(cudaDeviceSynchronize());
         auto end0 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> assembly_time = end0 - start0;
-        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+        printf("\tassemble kmat in %.2e sec\n", assembly_time.count());
 
         // build smoother and prolongations..
         Smoother *smoother = nullptr;
@@ -194,6 +194,7 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
     auto start1 = std::chrono::high_resolution_clock::now();
 
     // fastest is K-cycle usually
+    kmg->coarse_solver->factor(); // factor
     kmg->solve(rhs, soln);
 
     // get final residual
@@ -286,7 +287,7 @@ void solve_direct(int nxe, double SR) {
     CHECK_CUDA(cudaDeviceSynchronize());
     auto endkmat = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> assembly_time = endkmat - startkmat;
-    printf("\tassemble kmat time %.2e\n", assembly_time.count());
+    printf("\tassemble kmat in %.2e sec\n", assembly_time.count());
 
     // build smoother and prolongations..
     // nsmooth steps per precond set in the solver
@@ -326,7 +327,7 @@ void solve_direct(int nxe, double SR) {
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start_solve = std::chrono::high_resolution_clock::now();
     // run factor again so that we give fair comparison
-    pc->factor_matrix();
+    pc->factor();
     
 
     // get initial residual

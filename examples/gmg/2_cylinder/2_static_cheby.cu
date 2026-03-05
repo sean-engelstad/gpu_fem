@@ -110,7 +110,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omega, st
         constexpr bool compressive = false;
         const int load_case = 3; // petal and chirp load
         double Q = 1.0; // load magnitude
-        T *my_loads = getCylinderLoads<T, Physics, load_case>(c_nxe, c_nhe, L, R, Q);
+        T *my_loads = getCylinderLoads<T, Basis, Physics, load_case>(c_nxe, c_nhe, L, R, Q);
         printf("making grid with nxe %d\n", c_nxe);
 
         auto &bsr_data = assembler.getBsrData();
@@ -143,7 +143,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omega, st
         CHECK_CUDA(cudaDeviceSynchronize());
         auto end0 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> assembly_time = end0 - start0;
-        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+        printf("\tassemble kmat in %.2e sec\n", assembly_time.count());
 
         // build smoother and prolongations..
         auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, omega, ORDER);
@@ -181,6 +181,9 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omega, st
     if (is_kcycle) {
         int n_krylov = 500;
         kmg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, double_smooth);    
+        kmg->coarse_solver->factor();
+    } else {
+        mg->coarse_solver->factor();
     }
 
     // fastest is K-cycle usually
@@ -239,7 +242,7 @@ void direct_solve(int nxe, double SR) {
     // get the loads
     constexpr bool compressive = false;
     double Q = 1.0; // load magnitude
-    T *my_loads = getCylinderLoads<T, Physics, compressive>(nxe, nhe, L, R, Q);
+    T *my_loads = getCylinderLoads<T, Basis, Physics, compressive>(nxe, nhe, L, R, Q);
 
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
@@ -295,8 +298,8 @@ int main(int argc, char **argv) {
     int ninnercyc = 2; // inner V-cycles to precond K-cycle
     std::string cycle_type = "K"; // "V", "F", "W", "K"
 
-    // std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'
-    std::string elem_type = "CFI4";
+    std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'
+    // std::string elem_type = "CFI4";
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {

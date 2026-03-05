@@ -10,7 +10,8 @@
 template <class Assembler>
 Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E, double nu,
                                double thick, double rho = 2500, double ys = 350e6,
-                               int nxe_per_comp = 1, int nye_per_comp = 1) {
+                               int nxe_per_comp = 1, int nye_per_comp = 1,
+                               bool theta_ss_bc = true) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -44,10 +45,12 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     assert(nye % nye_per_comp == 0);
 
     // number of nodes per direction
-    int nnx = order * nxe + 1;
-    int nny = order * nye + 1;
+    int nnx = Basis::ISOGEOM ? nxe + order : order * nxe + 1;
+    int nny = Basis::ISOGEOM ? nye + order : order * nye + 1;
     int num_nodes = nnx * nny;
     int num_elements = nxe * nye;
+
+    // printf("num nodes %d, num_elements %d\n", num_nodes, num_elements);
 
     // printf("checkpoint 1\n");
 
@@ -61,7 +64,11 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     std::vector<int> my_bcs;
     // (0,0) corner with dof 123456
     for (int idof = 0; idof < vpn; idof++) {
-        my_bcs.push_back(idof);
+        if (idof == 3 || idof == 4) {
+            if (theta_ss_bc) my_bcs.push_back(idof);
+        } else {
+            my_bcs.push_back(idof);
+        }
     }
     // negative x2 (or y) edge with dof 23
     for (int ix = 1; ix < nnx; ix++) {
@@ -77,18 +84,18 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
                                   // coupling in nodal matrix (this is right)
         }
 
-        my_bcs.push_back(vpn * inode + offset + 1);  // dof 2 for v
-        my_bcs.push_back(vpn * inode + offset + 2);  // dof 3 for w
-        my_bcs.push_back(vpn * inode + offset + 4);  // dof 4 for thy
+        my_bcs.push_back(vpn * inode + offset + 1);                   // dof 2 for v
+        my_bcs.push_back(vpn * inode + offset + 2);                   // dof 3 for w
+        if (theta_ss_bc) my_bcs.push_back(vpn * inode + offset + 4);  // dof 4 for thy
     }
     // neg and pos x1 edges with dof 13 and 3 resp.
     for (int iy = 1; iy < nny; iy++) {
         // neg x1 edge
         int ix = 0;
         int inode = nnx * iy + ix;
-        my_bcs.push_back(vpn * inode + offset);      // u
-        my_bcs.push_back(vpn * inode + offset + 2);  // w
-        my_bcs.push_back(vpn * inode + offset + 3);  // dof 3 for thx
+        my_bcs.push_back(vpn * inode + offset);                       // u
+        my_bcs.push_back(vpn * inode + offset + 2);                   // w
+        if (theta_ss_bc) my_bcs.push_back(vpn * inode + offset + 3);  // dof 3 for thx
         if constexpr (IS_HR_ELEM) {
             my_bcs.push_back(vpn * inode + 0);  // v0 equiv to e11 strain-gap disp (zero like u)
             my_bcs.push_back(vpn * inode + 1);  // v1 equiv to e12 strain-gap disp (zero like u)
@@ -99,8 +106,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         // pos x1 edge
         ix = nnx - 1;
         inode = nnx * iy + ix;
-        my_bcs.push_back(vpn * inode + offset + 2);  // corresp dof 3 for w
-        my_bcs.push_back(vpn * inode + offset + 3);  // corresp dof 3 for thx
+        my_bcs.push_back(vpn * inode + offset + 2);                   // corresp dof 3 for w
+        if (theta_ss_bc) my_bcs.push_back(vpn * inode + offset + 3);  // corresp dof 3 for thx
         // no HR constraints needed on positive edges
         if constexpr (IS_HR_ELEM) {
             // in-plane BCs a bit weird still (needed v12 or v1 = 0 on positive x1,x2 edges but not
@@ -116,8 +123,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         int iy = nny - 1;
         int inode = nnx * iy + ix;
         // printf("new bc = %d\n", 6 * inode + 2);
-        my_bcs.push_back(vpn * inode + offset + 4);  // dof 5 for thy
-        my_bcs.push_back(vpn * inode + offset + 2);  // corresp dof 3 for w
+        if (theta_ss_bc) my_bcs.push_back(vpn * inode + offset + 4);  // dof 5 for thy
+        my_bcs.push_back(vpn * inode + offset + 2);                   // corresp dof 3 for w
         // no HR constraints needed on positive edges
         if constexpr (IS_HR_ELEM) {
             // my_bcs.push_back(vpn * inode + 1);  // v1 equiv to e12 strain-gap disp (zero like v)
@@ -127,7 +134,7 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     }
     // (+x1,+x2) corner node, add thy DOF
     int inode = nnx * (nny - 1) + nnx - 1;
-    my_bcs.push_back(vpn * inode + offset + 4);  // set thy DOF zero here too
+    if (theta_ss_bc) my_bcs.push_back(vpn * inode + offset + 4);  // set thy DOF zero here too
     if constexpr (IS_HR_ELEM) {
         // my_bcs.push_back(vpn * inode + 1);  // v1 equiv to e12 strain-gap disp (zero like v)
         // my_bcs.push_back(vpn * inode + 2);  // v2 equiv to e22 strain-gap disp (zero like v)
@@ -135,14 +142,14 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     }
     // (-x1,+x2) corner node, top left
     inode = nnx * (nny - 1);
-    my_bcs.push_back(vpn * inode + offset + 4);  // set thy DOF zero here too
+    if (theta_ss_bc) my_bcs.push_back(vpn * inode + offset + 4);  // set thy DOF zero here too
     if constexpr (IS_HR_ELEM) {
         my_bcs.push_back(vpn * inode + 1);  // v1 equiv to e12 strain-gap disp (zero like v)
         my_bcs.push_back(vpn * inode + 4);  // v4 equiv to gam23 strain-gap disp (like thy)
     }
     // (+x1,-x2) corner node, bottom right
     inode = nnx - 1;
-    my_bcs.push_back(vpn * inode + offset + 3);  // corresp dof 3 for thx
+    if (theta_ss_bc) my_bcs.push_back(vpn * inode + offset + 3);  // corresp dof 3 for thx
     if constexpr (IS_HR_ELEM) {
         my_bcs.push_back(vpn * inode + 1);  // v1 equiv to e12 strain-gap disp (zero like v)
         my_bcs.push_back(vpn * inode + 3);  // v3 equiv to gam13 strain-gap disp (like thx)
@@ -157,7 +164,7 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     // printf("checkpoint 2 - post bcs\n");
 
     // printf("bcs: ");
-    // printVec<int>(my_bcs.size(), bcs.getPtr());
+    // printVec<int>(bcs.getSize(), bcs.getPtr());
     int n = order + 1;  // num local nodes
 
     // now initialize the element connectivity
@@ -170,8 +177,8 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
             // no sorted order like in MITC?
             for (int iloc = 0; iloc < n * n; iloc++) {
                 int ilx = iloc % n, ily = iloc / n;
-                int ix = order * ixe + ilx;
-                int iy = order * iye + ily;
+                int ix = Basis::ISOGEOM ? ixe + ilx : order * ixe + ilx;
+                int iy = Basis::ISOGEOM ? iye + ily : order * iye + ily;
                 int inode = nnx * iy + ix;
 
                 elem_conn[Basis::num_nodes * ielem + iloc] = inode;
@@ -196,7 +203,7 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
         for (int ix = 0; ix < nnx; ix++) {
             int inode = nnx * iy + ix;
             T *xpt_node = &xpts[Geo::spatial_dim * inode];
-            if constexpr (Basis::order == 1) {
+            if constexpr (Basis::order == 1 || Basis::ISOGEOM) {
                 xpt_node[0] = dx * ix;
                 xpt_node[1] = dy * iy;
                 xpt_node[2] = 0.0;
@@ -261,6 +268,215 @@ Assembler createPlateAssembler(int nxe, int nye, double Lx, double Ly, double E,
     // printf("num_components = %d\n", num_components);
     // printf("elem_components:");
     // printVec<int>(elem_components.getSize(), elem_components.getPtr());
+
+    return assembler;
+}
+
+template <class Assembler, bool swap_xy = false>
+Assembler createPlateClampedAssembler(int nxe, int nye, double Lx, double Ly, double E, double nu,
+                                      double thick, double rho = 2500, double ys = 350e6,
+                                      int nxe_per_comp = 1, int nye_per_comp = 1) {
+    using T = typename Assembler::T;
+    using Basis = typename Assembler::Basis;
+    using Geo = typename Assembler::Geo;
+    using Data = typename Assembler::Data;
+    using Physics = typename Assembler::Phys;
+    const int order = Basis::order;
+
+    /*
+    make a rectangular plate mesh of shell elements
+    simply supported with transverse constrant distributed load
+
+    - In the very thin-walled regime (low thick) becomes
+    CPT or Kirchoff plate theory with no transverse shear effects
+    - PDE for Kirchoff plate theory, linear static analysis
+        D * nabla^4 w = q(x,y)
+        w = 0, w_{,n} = 0 (clamped)
+    - if transverse loads q(x,y) = Q * sin(pi * x / a) * sin(pi * y / b)
+      [one half-wave each direction], then solution is:
+        w(x,y) = A * sin(pi * x / a) * sin(pi * y / b)
+        with A = Q / D / pi^4 / (1/a^4 + 1 / b^4 + 2 / a^2 b^2)
+
+    - clamped BCs are: 123456 on each edge
+    */
+
+    assert(nxe % nxe_per_comp == 0);
+    assert(nye % nye_per_comp == 0);
+
+    // number of nodes per direction
+    int nnx = Basis::ISOGEOM ? nxe + order : order * nxe + 1;
+    int nny = Basis::ISOGEOM ? nye + order : order * nye + 1;
+    int num_nodes = nnx * nny;
+    int num_elements = nxe * nye;
+
+    // printf("num nodes %d, num_elements %d\n", num_nodes, num_elements);
+
+    // printf("checkpoint 1\n");
+
+    constexpr bool IS_HR_ELEM = Physics::hellingerReissner;
+    int offset = IS_HR_ELEM ? 5 : 0;  // for where standard u,v,w,thx,thy,thz DOF are
+    int vpn = Physics::vars_per_node;
+
+    // make our bcs vec (note I use 1-based terminology from nastran in
+    // description above) but since this is in C++ I apply BCs here 0-based as
+    // in 012345
+    std::vector<int> my_bcs;
+    // (0,0) corner with dof 123456
+    for (int idof = 0; idof < vpn; idof++) {
+        my_bcs.push_back(idof);
+    }
+    // negative x2 (or y) edge with dof 23
+    for (int ix = 1; ix < nnx; ix++) {
+        int iy = 0;
+        int inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+        for (int idof = 0; idof < vpn; idof++) {
+            my_bcs.push_back(vpn * inode + offset + idof);
+        }
+    }
+    // neg and pos x1 edges with dof 13 and 3 resp.
+    for (int iy = 1; iy < nny; iy++) {
+        // neg x1 edge
+        int ix = 0;
+        int inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+        for (int idof = 0; idof < vpn; idof++) {
+            my_bcs.push_back(vpn * inode + offset + idof);
+        }
+
+        // pos x1 edge
+        ix = nnx - 1;
+        inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+        for (int idof = 0; idof < vpn; idof++) {
+            my_bcs.push_back(vpn * inode + offset + idof);
+        }
+    }
+    // pos x2 edge (up to one before upper-right corner)
+    for (int ix = 1; ix < nnx - 1; ix++) {
+        int iy = nny - 1;
+        int inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+        for (int idof = 0; idof < vpn; idof++) {
+            my_bcs.push_back(vpn * inode + offset + idof);
+        }
+    }
+    // (+x1,+x2) corner node, add thy DOF
+    int ix = nnx - 1, iy = nny - 1;
+    int inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+    for (int idof = 0; idof < vpn; idof++) {
+        my_bcs.push_back(vpn * inode + offset + idof);
+    }
+    // (-x1,+x2) corner node, top left
+    ix = 0, iy = nny - 1;
+    inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+    for (int idof = 0; idof < vpn; idof++) {
+        my_bcs.push_back(vpn * inode + offset + idof);
+    }
+    // (+x1,-x2) corner node, bottom right
+    ix = nnx - 1, iy = 0;
+    inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+    for (int idof = 0; idof < vpn; idof++) {
+        my_bcs.push_back(vpn * inode + offset + idof);
+    }
+
+    HostVec<int> bcs(my_bcs.size());
+    // deep copy here
+    for (int ibc = 0; ibc < my_bcs.size(); ibc++) {
+        bcs[ibc] = my_bcs.at(ibc);
+    }
+
+    // printf("checkpoint 2 - post bcs\n");
+
+    // printf("bcs: ");
+    // printVec<int>(bcs.getSize(), bcs.getPtr());
+    int n = order + 1;  // num local nodes
+
+    // now initialize the element connectivity
+    int N = Basis::num_nodes * num_elements;
+    int32_t *elem_conn = new int[N];
+    for (int iye = 0; iye < nye; iye++) {
+        for (int ixe = 0; ixe < nxe; ixe++) {
+            int ielem = nxe * iye + ixe;
+
+            // no sorted order like in MITC?
+            for (int iloc = 0; iloc < n * n; iloc++) {
+                int ilx = iloc % n, ily = iloc / n;
+                int ix = Basis::ISOGEOM ? ixe + ilx : order * ixe + ilx;
+                int iy = Basis::ISOGEOM ? iye + ily : order * iye + ily;
+                int inode = swap_xy ? (nny * ix + iy) : nnx * iy + ix;
+
+                elem_conn[Basis::num_nodes * ielem + iloc] = inode;
+            }
+        }
+    }
+    // return;
+
+    // printf("elem_conn with nnodes_per_elem %d: ", Basis::num_nodes);
+    // printVec<int>(N, elem_conn);
+    // printf("checkpoint 3 - post elem_conn\n");
+
+    HostVec<int32_t> geo_conn(N, elem_conn);
+    HostVec<int32_t> vars_conn(N, elem_conn);
+
+    // now set the x-coordinates of the panel
+    int32_t num_xpts = Geo::spatial_dim * num_nodes;
+    HostVec<T> xpts(num_xpts);
+    T dx = Lx / (nnx - 1);
+    T dy = Ly / (nny - 1);
+    if constexpr (swap_xy) {
+        for (int ix = 0; ix < nnx; ix++) {
+            for (int iy = 0; iy < nny; iy++) {
+                int inode = nny * ix + iy;
+                T *xpt_node = &xpts[Geo::spatial_dim * inode];
+                if constexpr (Basis::order == 1 || Basis::ISOGEOM) {
+                    xpt_node[0] = dx * ix;
+                    xpt_node[1] = dy * iy;
+                    xpt_node[2] = 0.0;
+                } else {
+                    // pass
+                }
+            }
+        }
+    } else {
+        // not swap xy
+        for (int iy = 0; iy < nny; iy++) {
+            for (int ix = 0; ix < nnx; ix++) {
+                int inode = nny * iy + ix;
+                T *xpt_node = &xpts[Geo::spatial_dim * inode];
+                if constexpr (Basis::order == 1 || Basis::ISOGEOM) {
+                    xpt_node[0] = dx * ix;
+                    xpt_node[1] = dy * iy;
+                    xpt_node[2] = 0.0;
+                } else {
+                    // pass
+                }
+            }
+        }
+    }
+
+    // printf("checkpoint 4 - post xpts\n");
+    HostVec<Data> physData(num_elements, Data(E, nu, thick, rho, ys));
+
+    // printf("checkpoint 5 - create physData\n");
+
+    // make elem_components
+    int num_xcomp = nxe / nxe_per_comp;
+    int num_ycomp = nye / nye_per_comp;
+    int num_components = num_xcomp * num_ycomp;
+
+    HostVec<int> elem_components(num_elements);
+    for (int iye = 0; iye < nye; iye++) {
+        for (int ixe = 0; ixe < nxe; ixe++) {
+            int ielem = nxe * iye + ixe;
+            int ix_comp = ixe / nxe_per_comp;
+            int iy_comp = iye / nye_per_comp;
+
+            int icomp = num_xcomp * iy_comp + ix_comp;
+
+            elem_components[ielem] = icomp;
+        }
+    }
+
+    // make the assembler
+    Assembler assembler(num_nodes, num_nodes, num_elements, geo_conn, vars_conn, xpts, bcs,
+                        physData, num_components, elem_components);
 
     return assembler;
 }
@@ -338,7 +554,7 @@ T *getPlatePointLoad(int nxe, int nye, double Lx, double Ly, double load_mag) {
 // }
 
 template <typename T, class Basis, class Phys>
-T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
+T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag, double axial_frac = 0.0) {
     /*
     make a rectangular plate mesh of shell elements
     simply supported with transverse constrant distributed load
@@ -432,11 +648,14 @@ T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
 
                 T r = sqrt(x * x + y * y);
                 T th = atan2(y, x);
-                T nodal_load = load_mag * sin(5.0 * PI * r / Lx) * cos(4.0 * th); // + 0.1 * load_mag;
+                T nodal_load =
+                    load_mag * sin(5.0 * PI * r / Lx) * cos(4.0 * th);  // + 0.1 * load_mag;
                 // somehow need to scale by local dGP area though no?
                 nodal_load *= weight * J;
 
                 my_loads[vpn * inode + offset + 2] += nodal_load;
+
+                my_loads[vpn * inode + offset + 0] += axial_frac * nodal_load; // add axial component to load
             }
         }
     }
@@ -445,7 +664,8 @@ T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag) {
 }
 
 template <typename T, class Basis, class Phys>
-T *getPlateNonlinearLoads(int nxe, int nye, double Lx, double Ly, double load_mag, double in_plane_frac = 0.1) {
+T *getPlateNonlinearLoads(int nxe, int nye, double Lx, double Ly, double load_mag,
+                          double in_plane_frac = 0.1) {
     /*
     make a rectangular plate mesh of shell elements
     simply supported with transverse constrant distributed load
@@ -539,19 +759,22 @@ T *getPlateNonlinearLoads(int nxe, int nye, double Lx, double Ly, double load_ma
 
                 T r = sqrt(x * x + y * y);
                 T th = atan2(y, x);
-                T nodal_load = load_mag * sin(5.0 * PI * r / Lx) * cos(4.0 * th); // + 0.1 * load_mag;
+                T nodal_load =
+                    load_mag * sin(5.0 * PI * r / Lx) * cos(4.0 * th);  // + 0.1 * load_mag;
                 // somehow need to scale by local dGP area though no?
                 nodal_load *= weight * J;
 
                 my_loads[vpn * inode + offset + 2] += nodal_load;
 
                 // add an obliquue in-plane load.. like shear load with striations
-                T in_plane_load = -1.0 * sin(PI * r / Lx / 1.414); // should be compressive all along diagonal (shear, radial load)
+                T in_plane_load =
+                    -1.0 *
+                    sin(PI * r / Lx /
+                        1.414);  // should be compressive all along diagonal (shear, radial load)
                 in_plane_load *= weight * J * load_mag * in_plane_frac;
                 // radially aligned in-plane load (want to make sure it's compressive though..)
                 my_loads[vpn * inode + offset + 0] += in_plane_load * cos(th);
                 my_loads[vpn * inode + offset + 1] += in_plane_load * sin(th);
-
             }
         }
     }
@@ -597,8 +820,8 @@ T *getPlateSineLoads(int nxe, int nye, double Lx, double Ly, int m, int n, doubl
 }
 
 template <typename T, class Assembler>
-T *getPlateMeshConvLoads(Assembler &assembler, int nxe, int nye, double Lx, double Ly, int mx,
-                         int my, double load_mag) {
+T *getPlateMeshConvLoads(Assembler &assembler, int nxe, int nye, double Lx, double Ly,
+                         double load_mag, bool uniform_load = false, int mx = 1, int my = 1) {
     /* more robust version of cylinder loads */
 
     using Phys = typename Assembler::Phys;
@@ -609,8 +832,8 @@ T *getPlateMeshConvLoads(Assembler &assembler, int nxe, int nye, double Lx, doub
     using Quadrature = typename Basis::Quadrature;
 
     // number of nodes per direction
-    int nnx = order * nxe + 1;
-    int nny = order * nye + 1;
+    int nnx = Basis::ISOGEOM ? order + nxe : order * nxe + 1;
+    int nny = Basis::ISOGEOM ? order + nye : order * nye + 1;
     int num_nodes = nnx * nny;
 
     constexpr bool IS_HR_ELEM = Phys::hellingerReissner;
@@ -660,7 +883,12 @@ T *getPlateMeshConvLoads(Assembler &assembler, int nxe, int nye, double Lx, doub
 
                 // compute load magnitudes at the quadrature point
                 // T M_PI = 3.141592653589723846;
-                T mag = load_mag * sin(M_PI * mx * xpt[0] / Lx) * sin(M_PI * my * xpt[1] / Ly);
+                T mag = 0.0;
+                if (uniform_load) {
+                    mag = load_mag;
+                } else {
+                    mag = load_mag * sin(M_PI * mx * xpt[0] / Lx) * sin(M_PI * my * xpt[1] / Ly);
+                }
 
                 // compute element basis functions at the quadpt (for nodal load distribution)
                 T N[Basis::num_nodes] = {0.0};
@@ -1329,8 +1557,6 @@ T *getCylinderLoadsRobust(Assembler &assembler, int nxe, int nhe, double L, doub
     return my_loads;
 }
 
-
-
 template <typename T, class Assembler>
 T *getCylinderLoadsSimple(Assembler &assembler, int nxe, int nhe, double L, double R,
                           double load_mag) {
@@ -1423,8 +1649,6 @@ T *getCylinderLoadsSimple(Assembler &assembler, int nxe, int nhe, double L, doub
 
     return my_loads;
 }
-
-
 
 template <class Assembler>
 Assembler createHemisphereAssembler(int nxe, int nhe, double phi, double R, double E, double nu,

@@ -38,12 +38,23 @@ class BsrMat {
     __HOST_DEVICE__ int *getRowPtr() { return bsr_data.rowp; }
     __HOST_DEVICE__ int *getColPtr() { return bsr_data.cols; }
 
-    __HOST__ void apply_bcs(DeviceVec<int> bcs, bool include_cols = true) {
+    template <bool ones_on_diag = true>
+    __HOST__ void apply_bc_rows(DeviceVec<int> bcs) {
+        apply_bcs<ones_on_diag>(bcs, false, true);
+    }
+    template <bool ones_on_diag = true>
+    __HOST__ void apply_bc_cols(DeviceVec<int> bcs) {
+        apply_bcs<ones_on_diag>(bcs, true, false);
+    }
+
+    template <bool ones_on_diag = true>
+    __HOST__ void apply_bcs(DeviceVec<int> bcs, bool include_cols = true,
+                            bool include_rows = true) {
         /* apply bcs to the matrix values (rows + cols) */
         int nbcs = bcs.getSize();
         const index_t *rowPtr = bsr_data.rowp, *colPtr = bsr_data.cols, *iperm = bsr_data.iperm,
                       *tr_rowp = bsr_data.tr_rowp, *tr_cols = bsr_data.tr_cols,
-                      *tr_block_map = bsr_data.tr_block_map;
+                      *tr_block_map = bsr_data.tr_block_map, *c_iperm = bsr_data.c_iperm;
         int nnodes = bsr_data.nnodes, nodes_per_elem = bsr_data.nodes_per_elem,
             block_dim = bsr_data.block_dim;
         int nnz_per_block = block_dim * block_dim,
@@ -56,12 +67,15 @@ class BsrMat {
         dim3 grid(nblocks);
 
         // launch two kernels asynchronously
-        apply_mat_bcs_rows_kernel<T, DeviceVec><<<grid, block>>>(
-            bcs, rowPtr, colPtr, iperm, nnodes, valPtr, blocks_per_elem, nnz_per_block, block_dim);
+        if (include_rows) {
+            apply_mat_bcs_rows_kernel<T, DeviceVec, ones_on_diag>
+                <<<grid, block>>>(bcs, rowPtr, colPtr, iperm, nnodes, valPtr, blocks_per_elem,
+                                  nnz_per_block, block_dim);
+        }
 
         if (include_cols) {
-            apply_mat_bcs_cols_kernel<T, DeviceVec>
-                <<<grid, block>>>(bcs, tr_rowp, tr_cols, tr_block_map, iperm, nnodes, valPtr,
+            apply_mat_bcs_cols_kernel<T, DeviceVec, ones_on_diag>
+                <<<grid, block>>>(bcs, tr_rowp, tr_cols, tr_block_map, c_iperm, nnodes, valPtr,
                                   blocks_per_elem, nnz_per_block, block_dim);
         }
 
@@ -70,7 +84,7 @@ class BsrMat {
     }
 
     __HOST__ void add_diag_nugget(T eta) {
-        /* apply bcs to the matrix values (rows + cols) */
+        /* add lam*I to the diagonal matrix */
         const index_t *rowPtr = bsr_data.rowp, *colPtr = bsr_data.cols;
         int nnodes = bsr_data.nnodes, block_dim = bsr_data.block_dim;
         int ndiag = bsr_data.nnodes * bsr_data.block_dim;

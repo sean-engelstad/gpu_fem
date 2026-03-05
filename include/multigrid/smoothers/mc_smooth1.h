@@ -59,12 +59,20 @@ class MulticolorGSSmoother_V1 : public BaseSolver {
         buildDiagInvMat<startup>();
         buildTransposeColorMatrices<startup>();
     }
+    void factor() {}
+
+    T precond_complexity() {
+        // get [nnzb(precond) + nnzb(A)] / nnzb(A)
+        int precond_nnzb = diag_inv_nnzb * 2;
+        return (precond_nnzb + kmat_nnzb) * 1.0 / kmat_nnzb;
+    }
 
     void set_abs_tol(T atol) {}
     void set_rel_tol(T atol) {}
     int get_num_iterations() { return 0; }
     void set_print(bool print) {}
     void free() {}  // TBD on this one
+    void set_cycle_type(std::string cycle_) {}
 
     void initCuda() {
         // // init handles

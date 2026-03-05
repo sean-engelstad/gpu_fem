@@ -211,7 +211,7 @@ void solve_nonlinear_multigrid(MPI_Comm &comm, int level, double SR,
         CHECK_CUDA(cudaDeviceSynchronize());
         auto enda = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> assembly_time = enda - starta;
-        printf("\tassemble kmat time %.2e\n", assembly_time.count());
+        printf("\tassemble kmat in %.2e sec\n", assembly_time.count());
 
         // build smoother and prolongations
         auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, h_color_rowp, omega);
@@ -624,8 +624,8 @@ int main(int argc, char **argv) {
     std::string cycle_type = "K"; // "V", "F", "W", "K"
 
     // probably need more locking / multigrid friendly element than either of these (CFI4 is locking, while MITC4 has bad GMG performance)
-    std::string elem_type = "CFI4"; // 'MITC4', 'CFI4', 'CFI9'
-    // std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'
+    // std::string elem_type = "CFI4"; // 'MITC4', 'CFI4', 'CFI9'
+    std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {

@@ -10,12 +10,13 @@ import sys
 # plate case imports from milu python cases
 sys.path.append("../../milu/")
 from _plate import make_plate_case
-from __src import right_pgmres, plot_plate_vec, sort_vis_maps, right_pcg
+from __src import plot_plate_vec, sort_vis_maps
+from __linalg import right_pgmres, right_pcg
 # AMG imports
 sys.path.append("_src/")
 from csr_aggregation import plot_plate_aggregation
 from bsr_aggregation import greedy_serial_aggregation_bsr, tentative_prolongator_bsr, smooth_prolongator_bsr
-from smoothers import block_gauss_seidel_6dof
+from _smoothers import block_gauss_seidel_6dof
 from bsr_aggregation import AMG_BSRSolver
 
 # ====================================================
@@ -30,12 +31,13 @@ parser.add_argument("--noprec", action=argparse.BooleanOptionalAction, default=F
 parser.add_argument("--thick", type=float, default=1e-2) # 2e-3
 parser.add_argument("--justpc", action=argparse.BooleanOptionalAction, default=False, help="yes: just use pc one vec, no: solve with GMRES")
 parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=False, help="whether to debug multilevel process")
+parser.add_argument("--nokernel", action=argparse.BooleanOptionalAction, default=False, help="whether to turnoff kernel or not")
 # it can even do thin plate quite well! maybe even better than multigrid?
 parser.add_argument("--nxe", type=int, default=10, help="num elems each direction x and y")
 parser.add_argument("--fill", type=int, default=0, help="ILU(k) fill level")
 parser.add_argument("--iters", type=int, default=1, help="num energy-opt iters (if iter == 1 same as SA-AMG)")
 parser.add_argument("--nsmooth", type=int, default=2, help="num Jacobi ML smoothing steps (multilevel/multigrid-like)")
-parser.add_argument("--threshold", type=float, default=0.1, help="aggregation sparsity threshold")
+parser.add_argument("--threshold", type=float, default=0.13, help="aggregation sparsity threshold, higher threshold increases operator complexity and takes fewer GMRES iters, but inc memory and more time per iteration (tradeoff)")
 parser.add_argument("--omega", type=float, default=None, help="jacobi smoother update coeff, default is None and uses spectral radius")
 args = parser.parse_args()
 
@@ -64,8 +66,11 @@ if args.debug:
     # compute node aggregate sets
     # make sure to use unconstrained matrix for aggregation indicators originally
     # need threshold a bit lower sometimes to get proper coarsening
-    aggregate_ind = greedy_serial_aggregation_bsr(A_free, threshold=0.1)
+    # aggregate_ind = greedy_serial_aggregation_bsr(A, threshold=0.15)
+    aggregate_ind = greedy_serial_aggregation_bsr(A_free, threshold=0.14)
     num_agg = np.max(aggregate_ind) + 1
+
+    print(f'{aggregate_ind=}')
 
     # print(f"{aggregate_ind=}")
     print(f"{num_agg=}")
@@ -74,21 +79,34 @@ if args.debug:
 
     # get rigid body modes for DEBUG: (check rigid body modes)
     from bsr_aggregation import get_rigid_body_modes, get_bc_flags_bsr #, get_coarse_rigid_body_modes
+
+    # for debug temporarily swap x and y vals in xpts0 (since TACS reordered it weird..)
+    # x = xpts0[0::3] * 1.0
+    # y = xpts0[1::3] * 1.0
+    # xpts0[0::3] = y * 1.0
+    # xpts0[1::3] = x * 1.0
+
     B = get_rigid_body_modes(xpts0)
-    print(f"{B.shape=}")
-    for imode in range(6):
-        bi = B[:,:,imode].copy().reshape((N,))
-        bi /= np.linalg.norm(bi)
-        rvec = np.random.rand(N)
-        rvec /= np.linalg.norm(rvec)
-        # compare residual norm of Bi vs random displacement vector (with high freq error)
-        #    on free matrix of fine grid
-        F_bi = A.dot(bi)
-        F_rv = A.dot(rvec)
-        b_nrm = np.linalg.norm(F_bi)
-        r_nrm = np.linalg.norm(F_rv)
-        print(f"rigid body mode {imode} with norm {np.linalg.norm(bi):.4e} => A*vec norm {b_nrm:.4e}")
-        print(f"\tvs random unit vec with A*vec norm {r_nrm:.4e}")
+    # print(f"{B.shape=}")
+    
+    print(f"{xpts0=}")
+
+    # for imode in range(6):
+    #     bi = B[:,:,imode].copy().reshape((N,))
+    #     bi /= np.linalg.norm(bi)
+    #     rvec = np.random.rand(N)
+    #     rvec /= np.linalg.norm(rvec)
+    #     # compare residual norm of Bi vs random displacement vector (with high freq error)
+    #     #    on free matrix of fine grid
+    #     F_bi = A.dot(bi)
+    #     F_rv = A.dot(rvec)
+    #     b_nrm = np.linalg.norm(F_bi)
+    #     r_nrm = np.linalg.norm(F_rv)
+    #     print(f"rigid body mode {imode} with norm {np.linalg.norm(bi):.4e} => A*vec norm {b_nrm:.4e}")
+    #     print(f"\tvs random unit vec with A*vec norm {r_nrm:.4e}")
+
+    for inode in range(B.shape[0]):
+        print(f"B {inode=} : {B[inode]=}")
 
     omega = None
     # omega = 0.0
@@ -103,14 +121,107 @@ if args.debug:
     # # create tentative prolongator then smooth it
     # T, Bc = tentative_prolongator_bsr(xpts_arr, aggregate_ind)
     bc_flags = get_bc_flags_bsr(A)
+    # bc_flags[:] = False # temp debug
     T, Bc = tentative_prolongator_bsr(B, aggregate_ind, bc_flags)
     # P = T.copy()
-    P = smooth_prolongator_bsr(T, A, Bc, bc_flags, omega=omega) # single damped jacobi step, so only one step of fillin
+    P = smooth_prolongator_bsr(T, A, Bc, bc_flags, omega=omega, 
+                               near_kernel=not(args.nokernel)) # single damped jacobi step, so only one step of fillin
     R = P.T # sym matrix so restriction is transpose prolong
+
+    Bc *= -1 # DEBUG
+
+    for inode in range(Bc.shape[0]):
+        print(f"Bc {inode=} :")
+        for i in range(6):
+            Bc_vec = Bc[inode,i,:]
+            Bc_vec = np.array([np.round(Bc_vec[i], 4) for i in range(6)])
+            print(Bc_vec)
+
+    T *= -1 # DEBUG
+
+    nnodes = B.shape[0]
+    for inode in range(nnodes):
+        for jp in range(T.indptr[inode], T.indptr[inode+1]):
+            j = T.indices[jp]
+            print(f"T (node {inode}, agg {j}) :")
+            T_block = T.data[jp]
+            for i in range(6):
+                T_vec = T_block[i,:]
+                T_vec = np.array([np.round(T_vec[i], 4) for i in range(6)])
+                print(T_vec)
+
+    P *= -1 # DEBUG
+
+    for inode in range(nnodes):
+        for jp in range(P.indptr[inode], P.indptr[inode+1]):
+            j = P.indices[jp]
+            print(f"P (node {inode}, agg {j}) :")
+            P_block = P.data[jp]
+            for i in range(6):
+                P_vec = P_block[i,:]
+                P_vec = np.array([np.round(P_vec[i], 4) for i in range(6)])
+                print(P_vec)
+
+    # print(f"{P=}")
+    P_rowp = P.indptr
+    P_cols = P.indices
+    # some entries have lost sparsity due to zero Dirichlet effects
+    print(f"{P_rowp=}\n{P_cols=}")
+    # P_csr = P.tocsr()
+    # # plt.spy(P_csr)
+    # # plt.show()
+    # plt.imshow(P_csr.toarray())
+    # plt.show()
 
     # galerkin coarse grid construction
     Ac = R @ (A @ P)
     Ac_free = R @ (A_free @ P)
+
+    # matches
+    # for inode in range(nnodes):
+    #     for jp in range(A.indptr[inode], A.indptr[inode+1]):
+    #         j = A.indices[jp]
+    #         print(f"A (node {inode}, node {j}) :")
+    #         A_block = A.data[jp] * 1.0
+    #         for i in range(6):
+    #             A_vec = A_block[i,:]
+    #             A_vec = np.array([np.round(A_vec[i], 0) for i in range(6)])
+    #             print(A_vec)
+
+    # for inode in range(nnodes):
+    #     for jp in range(A_free.indptr[inode], A_free.indptr[inode+1]):
+    #         j = A_free.indices[jp]
+    #         print(f"A_free (node {inode}, node {j}) :")
+    #         A_block = A_free.data[jp] * 1.0
+    #         for i in range(6):
+    #             A_vec = A_block[i,:]
+    #             A_vec = np.array([np.round(A_vec[i], 0) for i in range(6)])
+    #             print(A_vec)
+
+    for iagg in range(num_agg):
+        for jp in range(Ac.indptr[iagg], Ac.indptr[iagg+1]):
+            j = Ac.indices[jp]
+            print(f"Ac (agg {iagg}, agg {j}) :")
+            Ac_block = Ac.data[jp]
+            for i in range(6):
+                Ac_vec = Ac_block[i,:]
+                Ac_vec = np.array([np.round(Ac_vec[i], 0) for i in range(6)])
+                print(Ac_vec)
+
+    Ac_rowp = Ac.indptr
+    Ac_cols = Ac.indices
+    print(f"{Ac_rowp=}\n{Ac_cols=}")
+
+    # print(f'{P.shape=}')
+    P_40 = P.data[0] * 1.0
+    A_44 = None
+    inode = 4
+    for jp in range(A.indptr[inode], A.indptr[inode+1]):
+        j = A.indices[jp]
+        if j == 4:
+            A_44 = A.data[jp] * 1.0
+    Ac_v2 = P_40.T @ A_44 @ P_40
+    print(f"{Ac_v2=}")
 
     # print(f"{Ac.shape=}")
 
@@ -187,16 +298,17 @@ if args.debug:
 
     # plot soln comparison
     # for plotting
-    nxe = int(nnodes**0.5)-1
-    sort_fw = np.arange(0, N)
-    fig = plt.figure()
-    ax = fig.add_subplot(121, projection='3d')
-    plot_plate_vec(nxe, x_direct.copy(), ax, sort_fw, nodal_dof=2)
 
-    # plot right-precond solution
-    ax = fig.add_subplot(122, projection='3d')
-    plot_plate_vec(nxe, x_fine.copy(), ax, sort_fw, nodal_dof=2)
-    plt.show()
+    # nxe = int(nnodes**0.5)-1
+    # sort_fw = np.arange(0, N)
+    # fig = plt.figure()
+    # ax = fig.add_subplot(121, projection='3d')
+    # plot_plate_vec(nxe, x_direct.copy(), ax, sort_fw, nodal_dof=2)
+
+    # # plot right-precond solution
+    # ax = fig.add_subplot(122, projection='3d')
+    # plot_plate_vec(nxe, x_fine.copy(), ax, sort_fw, nodal_dof=2)
+    # plt.show()
 
     print("END OF DEBUG, exiting before solve..")
     exit()
@@ -209,7 +321,8 @@ if args.debug:
 from bsr_aggregation import get_rigid_body_modes #, get_coarse_rigid_body_modes
 B = get_rigid_body_modes(xpts0)
 
-pc = AMG_BSRSolver(A_free, A, B, threshold=args.threshold, omega=args.omega, pre_smooth=args.nsmooth, post_smooth=args.nsmooth) #, near_kernel=args.kernel)
+pc = AMG_BSRSolver(A_free, A, B, threshold=args.threshold, omega=args.omega, 
+                   pre_smooth=args.nsmooth, post_smooth=args.nsmooth, near_kernel=not(args.nokernel))
 
 # # check V-cycle symmetry
 # x = np.random.rand(N)
