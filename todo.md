@@ -18,9 +18,21 @@
 * cite FETI in thesis it's similar to BDDC
 * here's the reading list (in order)
 
-1. [ ] BDDC method, [A Preconditioner for Substructuring Based on Constrained Energy Minimization](https://epubs.siam.org/doi/abs/10.1137/S1064827502412887)
+1. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
+   Papers needed for this:
+   - [ ] [Preconditioning Schur complement matrices based on an aggregation multigrid method for shell structures](https://www.sciencedirect.com/science/article/pii/S0045794906002252)
+   - [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
+   - [ ] thesis on BPX preconditioners for cylindrical shells [Die nicht¨uberlappende gebietszerlegungsmethode zur parallelisierung und
+vorkonditionierung iterativer verfahren zur l¨osung von platten- und schalenproblemen](https://onlinelibrary.wiley.com/doi/epdf/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7?saml_referrer)
+   - [ ] another thesis on domain decomp multilevel methods and biharmonic Dirichlet (Zhang) [Studies in domain decomposition: multilevel methods and the biharmonic Dirichlet
+problem](https://onlinelibrary.wiley.com/doi/epdf/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7?saml_referrer)
+   - [ ] [Multilevel Schwarz methods](https://link.springer.com/article/10.1007/BF01385873)
+   - [ ] [Multilevel Schwarz methods for the biharmonic dirichlet problem]()
+   - [ ] [Multilevel Schwarz methods for elliptic partial differential equations](https://www.sciencedirect.com/science/article/pii/S0045782511001307)
+   - [ ] [Multilevel Optimized Schwarz Methods](https://epubs.siam.org/doi/10.1137/19M1259389)
+
 2. [ ] [Robust BDDC preconditioners for Reissner–Mindlin plate bending problems and MITC elements](https://epubs.siam.org/doi/10.1137/080717729)
-3. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
+3. [ ] BDDC method, [A Preconditioner for Substructuring Based on Constrained Energy Minimization](https://epubs.siam.org/doi/abs/10.1137/S1064827502412887)
 4. [ ] [Multispace and multilevel BDDC](https://link.springer.com/article/10.1007/s00607-008-0014-7)
 5. [ ] [Adaptive-Multilevel BDDC and its parallel implementation](https://arxiv.org/pdf/1301.0191v1)
 6. [ ] [A method of finite element tearing and interconnecting and its parallel solution algorithm](https://onlinelibrary.wiley.com/doi/10.1002/nme.1620320604?msockid=23acff188a4965cd21b2ebae8ba76408)
@@ -33,6 +45,14 @@
 13. [ ] [Balancing domain decomposition method for large-scale analysis of an assembly structure having millions of multipoint constraints](https://www.sciencedirect.com/science/article/pii/S0045782522008027)
 14. [ ] BDD for plates [Balancing Domain Decomposition for Plates](https://www.bing.com/ck/a?!&&p=6353b886f484c62d61d41a929dbaaee579ab842d7a670e7024a82b7ea43f97b4JmltdHM9MTc3MjY2ODgwMA&ptn=3&ver=2&hsh=4&fclid=23acff18-8a49-65cd-21b2-ebae8ba76408&psq=Balancing+domain+decomposition+for+plates&u=a1aHR0cHM6Ly9kbC5hY20ub3JnL2RvaS9ib29rLzEwLjU1NTUvODY1NzA0)
 15. [ ] BDDC for elasticity [A Substructuring Preconditioner for Nearly Incompressible Elasticity Prob-lems]()
+16. [ ] [Fast and Robust Multilevel Schwarz Methods using Tensor Structure for High-Order Finite Elements ](https://archiv.ub.uni-heidelberg.de/volltextserver/32404/)
+
+BPX preconditioners for shells
+1. [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
+2. [ ] [BPX preconditioners for isogeometric analysis using (truncated) hierarchical B-splines](https://www.sciencedirect.com/science/article/pii/S0045782521000785)
+3. [ ] [BPX‐type Preconditioners for Second and Fourth Order Elliptic Problems on the Sphere](https://epubs.siam.org/doi/10.1137/050647414)
+4. [ ] [Direct optimization of BPX preconditioners](https://arxiv.org/abs/2205.06158)
+5. [ ] [Nonlinear Analysis on Manifolds. Monge-Ampère Equations ](https://link.springer.com/book/10.1007/978-1-4612-5734-9)
 
 ## Next Tasks
 
