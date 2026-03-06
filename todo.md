@@ -18,6 +18,10 @@
 * cite FETI in thesis it's similar to BDDC
 * here's the reading list (in order)
 
+MAS: Multilevel additive schwarz
+- [ ] [A GPU-based multilevel additive schwarz preconditioner for cloth and deformable body simulation](https://dl.acm.org/doi/10.1145/3528223.3530085)
+   - [ ] Nicolaides coarsening [Deflation of Conjugate Gradients with Applications to Boundary Value Problems](https://epubs.siam.org/doi/abs/10.1137/0724027?journalCode=sjnaam)
+
 1. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
    Papers needed for this:
    - [ ] [FETI–DP, BDDC, and Block Cholesky Method](https://cs.nyu.edu/~widlund/li_widlund_041211.pdf)
