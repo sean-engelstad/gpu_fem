@@ -716,114 +716,289 @@ class DirectCSRSolver:
 #         x = np.linalg.solve(self.L.T, y)
 #         return x
 
+import numpy as np
+import scipy.sparse as sp
+
+def build_asw_block_inverses_bsr(A: sp.bsr_matrix,
+                                 asw_sd_size: int,
+                                 overlap: int = 0):
+    """
+    Build dense ASW / block-Jacobi local inverses from contiguous diagonal blocks of A,
+    optionally with overlap.
+
+    Parameters
+    ----------
+    A : bsr_matrix
+        Square system matrix on this level.
+    asw_sd_size : int
+        Subdomain size in scalar DOFs.
+    overlap : int
+        Overlap size in scalar DOFs.
+        overlap = 0 gives non-overlapping block Jacobi.
+        overlap > 0 gives overlapping ASW-style subdomains.
+
+    Returns
+    -------
+    block_inv : list[np.ndarray]
+        Dense inverses of each local subdomain matrix.
+    block_ranges : list[tuple[int, int]]
+        Half-open DOF index ranges (start, end) for each subdomain.
+    """
+    assert sp.isspmatrix_bsr(A)
+    assert A.shape[0] == A.shape[1]
+    assert asw_sd_size >= 1
+    assert overlap >= 0
+    if overlap >= asw_sd_size:
+        raise ValueError(f"Require overlap < asw_sd_size, got {overlap=} and {asw_sd_size=}")
+
+    A_csr = A.tocsr(copy=True)
+
+    n = A.shape[0]
+    stride = asw_sd_size - overlap
+
+    block_inv = []
+    block_ranges = []
+
+    start = 0
+    while start < n:
+        end = min(start + asw_sd_size, n)
+
+        Ablock = A_csr[start:end, start:end].toarray()
+        block_inv.append(np.linalg.inv(Ablock))
+        block_ranges.append((start, end))
+
+        if end == n:
+            break
+        start += stride
+
+    return block_inv, block_ranges
+
+
+def apply_asw_blocks_bsr(rhs: np.ndarray,
+                         block_inv: list[np.ndarray],
+                         block_ranges: list[tuple[int, int]],
+                         weights: np.ndarray = None) -> np.ndarray:
+    """
+    Apply stored ASW / block-Jacobi inverse:
+        z = sum_i R_i^T A_i^{-1} R_i rhs
+
+    For non-overlapping blocks, this reduces to ordinary block Jacobi.
+    For overlapping blocks, local corrections are accumulated.
+
+    Parameters
+    ----------
+    rhs : ndarray
+        Global residual / RHS.
+    block_inv : list[np.ndarray]
+        Dense local inverses.
+    block_ranges : list[(int,int)]
+        Half-open DOF index ranges for each subdomain.
+    weights : ndarray or None
+        Optional partition-of-unity weights of shape (n,). If provided,
+        each accumulated DOF is scaled by weights[dof] at the end.
+
+    Returns
+    -------
+    z : ndarray
+        Global accumulated correction.
+    """
+    z = np.zeros_like(rhs)
+
+    for Binv, (s, e) in zip(block_inv, block_ranges):
+        z[s:e] += Binv @ rhs[s:e]
+
+    if weights is not None:
+        z *= weights
+
+    return z
+
 
 class AMG_BSRSolver:
     """general multilevel AMG solver..."""
-    def __init__(self, A_free:sp.bsr_matrix, A:sp.bsr_matrix, B:np.ndarray, threshold:float=0.25,
-                 omega:float=0.7, pre_smooth=1, post_smooth=1, level:int=0, ncyc:int=1, near_kernel:bool=True):
-        """
-        A : fine-grid operator (CSR) without bcs
-        A : fine-grid operator (CSR) with bcs
-        B : fine rigid body modes
-        threshold: float for coarsening threshold
-        """
+
+    def __init__(self,
+                 A_free: sp.bsr_matrix,
+                 A: sp.bsr_matrix,
+                 B: np.ndarray,
+                 threshold: float = 0.25,
+                 omega: float = 0.7,
+                 level: int = 0,
+                 nsmooth: int = 1,
+                 near_kernel: bool = True,
+                 smoother: str = "gs",
+                 asw_overlap:int=0,
+                 omegaSmooth: float = 0.7,
+                 asw_sd_size: int = None):
         assert sp.isspmatrix_bsr(A_free)
         assert sp.isspmatrix_bsr(A)
 
+        smoother = smoother.lower()
+        if smoother not in ("gs", "asw"):
+            raise ValueError(f"Unknown smoother '{smoother}', expected 'gs' or 'asw'")
+
+        if smoother == "asw" and asw_sd_size is None:
+            raise ValueError("Must provide asw_sd_size when smoother='asw'")
+
         self.A_free = A_free
         self.A = A
-        self.near_kernel = near_kernel
-        bs = self.A_free.data.shape[-1]
-        nnodes = self.A_free.shape[0] // bs
         self.B = B
-        self.ncyc = ncyc # how many inner AMG cycles before Krylov step
-        self.iters = 0 # count how many AMG cycles used
+        self.near_kernel = near_kernel
+        self.nsmooth = nsmooth
+        self.iters = 0
+        self.level = level
+        self.smoother = smoother
+        self.omegaSmooth = omegaSmooth
+        self.asw_sd_size = asw_sd_size
 
-        # compute node aggregate sets
-        # make sure to use unconstrained matrix for aggregation indicators originally
+        # aggregation on unconstrained operator
         aggregate_ind = greedy_serial_aggregation_bsr(A_free, threshold=threshold)
-        num_agg = np.max(aggregate_ind) + 1
-
-        # print(f"{aggregate_ind=}")
-        # TODO: do this
-        # bc_flags = None
         bc_flags = get_bc_flags_bsr(A)
-        # print(f"{bc_flags=}")
 
-        # create tentative prolongator then smooth it
+        # tentative + smoothed prolongator
         block_dim = A.data.shape[-1]
         self.T, self.Bc = tentative_prolongator_bsr(self.B, aggregate_ind, bc_flags, vpn=block_dim)
-        # self.P = smooth_prolongator_bsr(self.T, A, self.Bc, bc_flags, omega=omega, near_kernel=near_kernel) # single damped jacobi step, so only one step of fillin
-        self.P = smooth_prolongator_bsr_iterative(self.T, A, self.Bc, bc_flags, omega=omega, near_kernel=near_kernel, niter=1) # single damped jacobi step, so only one step of fillin
-        # self.P = self.T # DEBUG
-        self.R = self.P.T # sym matrix so restriction is transpose prolong
+        self.P = smooth_prolongator_bsr_iterative(
+            self.T, A, self.Bc, bc_flags,
+            omega=omega,
+            near_kernel=near_kernel,
+            niter=1
+        )
+        self.R = self.P.T
 
-        self.pre_smooth = pre_smooth
-        self.post_smooth = post_smooth
-        self.level = level
+        # Galerkin coarse operators
+        self.Ac = (self.R @ (A @ self.P)).tobsr()
+        self.Ac_free = (self.R @ (A_free @ self.P)).tobsr()
 
-        # Galerkin coarse operator
-        self.Ac = self.R @ (A @ self.P)
-        # on GPU would not do extra allocation for this
-        self.Ac_free = self.R @ (A_free @ self.P)
+        # build ASW smoother data for this level if requested
+        self.asw_block_inv = None
+        self.asw_block_ranges = None
+        if self.smoother == "asw":
+            self.asw_block_inv, self.asw_block_ranges = build_asw_block_inverses_bsr(
+                self.A, self.asw_sd_size, overlap=asw_overlap
+            )
 
-        self.Ac = self.Ac.tobsr()
-        self.Ac_free = self.Ac_free.tobsr()
-        # print(f"{type(self.Ac)=}")
-
-        # plt.spy(self.Ac_free)
-        # plt.show()
-        # plt.imshow(self.Ac_free.toarray())
-        # plt.show()
-
-        # compute two-grid operator complexity
+        # complexity bookkeeping
         self.fine_nnz = self.A.nnz
         self.coarse_nnz = self.Ac.nnz
-        self.coarse_solver = None 
+        self.coarse_solver = None
 
         if level == 0:
             print("level 0 is AMG solver..")
 
-        # check fillin of coarse grid solver..
         coarse_nnodes = self.Ac.shape[0]
         max_coarse_nnz = coarse_nnodes**2
 
-        # print(f"{level=} {self.fine_nnz=} {self.coarse_nnz=} {max_coarse_nnz=}")
         if self.fine_nnz == self.coarse_nnz:
-            raise RuntimeError(f"ERROR: {self.fine_nnz=} == {self.coarse_nnz=} : lower aggregation threshold from {threshold=} to lower value..\n")
+            raise RuntimeError(
+                f"ERROR: {self.fine_nnz=} == {self.coarse_nnz=} : "
+                f"lower aggregation threshold from {threshold=} to lower value..\n"
+            )
 
         if self.coarse_nnz >= 0.4 * max_coarse_nnz or coarse_nnodes <= 100:
-            # then do direct solver
             print(f"level {level+1} building direct solver")
             self.coarse_solver = DirectCSRSolver(self.Ac)
         else:
             print(f"level {level+1} building AMG solver")
-            # print(f"{type(self.Ac_free)=} {type(self.Ac)=}")
-            self.coarse_solver = AMG_BSRSolver(self.Ac_free, self.Ac, self.Bc, threshold, omega, pre_smooth, post_smooth, level+1, near_kernel=near_kernel)
+            self.coarse_solver = AMG_BSRSolver(
+                self.Ac_free,
+                self.Ac,
+                self.Bc,
+                threshold=threshold,
+                omega=omega,
+                level=level + 1,
+                nsmooth=nsmooth,
+                near_kernel=near_kernel,
+                smoother=smoother,
+                omegaSmooth=omegaSmooth,
+                asw_sd_size=asw_sd_size,
+            )
 
         if level == 0:
             print(f"Multilevel AMG with {self.num_levels=} and {self.operator_complexity=}")
             print(f"\tnum nodes per level = [{self.num_nodes_list}]")
 
+    def _smooth_gs(self, rhs: np.ndarray, x: np.ndarray, transpose: bool = False) -> np.ndarray:
+        """
+        One damped GS sweep:
+            x <- x + omegaSmooth * (x_gs - x)
+        """
+        if transpose:
+            x_gs = block_gauss_seidel_6dof_transpose(self.A, rhs, x0=x, num_iter=1)
+        else:
+            x_gs = block_gauss_seidel_6dof(self.A, rhs, x0=x, num_iter=1)
+        return x + self.omegaSmooth * (x_gs - x)
+
+    def _smooth_asw(self, rhs: np.ndarray, x: np.ndarray) -> np.ndarray:
+        """
+        One damped ASW / block-Jacobi defect-correction sweep:
+            x <- x + omegaSmooth * M^{-1}(rhs - A x)
+        """
+        r = rhs - self.A.dot(x)
+        z = apply_asw_blocks_bsr(r, self.asw_block_inv, self.asw_block_ranges)
+        return x + self.omegaSmooth * z
+
+    def _apply_smoother(self,
+                        rhs: np.ndarray,
+                        x: np.ndarray,
+                        nsweeps: int,
+                        transpose: bool = False) -> np.ndarray:
+        if nsweeps <= 0:
+            return x
+
+        if self.smoother == "gs":
+            for _ in range(nsweeps):
+                x = self._smooth_gs(rhs, x, transpose=transpose)
+            return x
+
+        elif self.smoother == "asw":
+            for _ in range(nsweeps):
+                x = self._smooth_asw(rhs, x)
+            return x
+
+        raise RuntimeError(f"Unsupported smoother '{self.smoother}'")
+
+    def solve(self, rhs):
+        """
+        One AMG V-cycle:
+          1) pre-smooth nsmooth times
+          2) coarse-grid correction once
+          3) post-smooth nsmooth times
+        """
+        x = np.zeros_like(rhs)
+        self.iters += 1
+
+        # pre-smoothing
+        x = self._apply_smoother(rhs, x, self.nsmooth, transpose=False)
+
+        # coarse-grid correction
+        r = rhs - self.A.dot(x)
+        rc = self.R.dot(r)
+        ec = self.coarse_solver.solve(rc)
+        x += self.P.dot(ec)
+
+        # post-smoothing
+        x = self._apply_smoother(rhs, x, self.nsmooth, transpose=True)
+
+        return x
+
     @property
     def total_nnz(self) -> int:
-        # get total nnz across all levels
         if isinstance(self.coarse_solver, AMG_BSRSolver):
             return self.fine_nnz + self.coarse_solver.total_nnz
-        else: # direct solver
+        else:
             return self.fine_nnz + self.coarse_nnz
 
     @property
     def operator_complexity(self) -> float:
-        return self.total_nnz / self.fine_nnz     
+        return self.total_nnz / self.fine_nnz
 
     @property
     def num_levels(self) -> int:
         if isinstance(self.coarse_solver, AMG_BSRSolver):
             return self.coarse_solver.num_levels + 1
-        else: # direct solver
+        else:
             return 2
-        
+
     @property
     def num_nodes_list(self) -> str:
         bs = self.A.data.shape[-1]
@@ -831,69 +1006,9 @@ class AMG_BSRSolver:
         nnodes_c = self.Ac.shape[0] // bs
         if isinstance(self.coarse_solver, AMG_BSRSolver):
             return str(nnodes_f) + "," + self.coarse_solver.num_nodes_list
-        else: # direct solver
+        else:
             return f"{nnodes_f},{nnodes_c}"
 
-    # def solve(self, rhs):
-    #     """
-    #     Fully symmetric AMG V-cycle (SPD) for PCG
-    #     """
-    #     x = np.zeros_like(rhs)
-
-    #     # Pre-smoothing (forward GS)
-    #     if self.pre_smooth > 0:
-    #         x = block_gauss_seidel_6dof(self.A, rhs, x0=x,
-    #                                     num_iter=self.pre_smooth)
-
-    #     # Coarse-grid correction
-    #     r = rhs - self.A @ x
-    #     rc = self.R @ r
-    #     ec = self.coarse_solver.solve(rc)
-    #     x += self.P @ ec
-
-    #     # Post-smoothing (backward GS, applied to x!)
-    #     if self.post_smooth > 0:
-    #         x = block_gauss_seidel_6dof_transpose(self.A, rhs, x0=x,
-    #                                             num_iter=self.post_smooth)
-
-    #     return x
-
-    def solve(self, rhs):
-        """
-        Fully symmetric AMG V-cycle (SPD) for PCG
-        """
-        x = np.zeros_like(rhs)
-
-        self.iters += self.ncyc
-
-        for _ in range(self.ncyc):
-
-            # Pre-smoothing (forward GS)
-            if self.pre_smooth > 0:
-                x = block_gauss_seidel_6dof(self.A, rhs, x0=x,
-                                            num_iter=self.pre_smooth)
-
-            # # Coarse-grid correction
-            r = rhs - self.A.dot(x)
-            rc = self.R.dot(r)
-            ec = self.coarse_solver.solve(rc)
-            xc = self.P.dot(ec)
-
-            # now do line-search update of this
-            # fc = self.A.dot(xc)
-            # omega_LS = np.dot(rhs, xc) / np.dot(xc, fc)
-            # print(f"{omega_LS=}")
-            # x += omega_LS * xc
-            # just results in omega_LS = 1 from AMG
-            x += xc
-
-            # Post-smoothing (backward GS, applied to x!)
-            if self.post_smooth > 0:
-                x = block_gauss_seidel_6dof_transpose(self.A, rhs, x0=x,
-                                                num_iter=self.post_smooth)
-
-        return x
-    
     @property
     def total_vcycles(self) -> int:
         return self.iters

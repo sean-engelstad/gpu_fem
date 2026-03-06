@@ -329,8 +329,24 @@ if args.debug:
 from bsr_aggregation import get_rigid_body_modes #, get_coarse_rigid_body_modes
 B = get_rigid_body_modes(xpts0)
 
-pc = AMG_BSRSolver(A_free, A, B, threshold=args.threshold, omega=args.omega, 
-                   pre_smooth=args.nsmooth, post_smooth=args.nsmooth, near_kernel=not(args.nokernel))
+# Gauss-Seidel actually performs better than block-Jacobi style non-overlapping ASWs smoother (not quite elem-based + hence, not much better prob)
+smoother, omegas, overlap = 'gs', 0.8, 0
+# smoother, omegas, overlap = 'asw', 0.5, 0
+# smoother, omegas, overlap = 'asw', 0.3, 1
+
+pc = AMG_BSRSolver(
+    A_free, A, B, threshold=args.threshold, omega=args.omega, 
+    near_kernel=not(args.nokernel),
+    smoother=smoother,
+    omegaSmooth=omegas,
+    nsmooth=args.nsmooth,
+    # asw_overlap=0,
+    asw_overlap=overlap,
+    # asw_sd_size=4,
+    # asw_sd_size=3,
+    asw_sd_size=2
+    # asw_sd_size=1,
+)
 
 # # check V-cycle symmetry
 # x = np.random.rand(N)
