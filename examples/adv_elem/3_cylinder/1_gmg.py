@@ -36,20 +36,20 @@ Also caches some prolong matrices in multigrid
 
 import argparse
 parser = argparse.ArgumentParser()
-# parser.add_argument("--elem", type=str, default='mitc_gp', help="--elem, options: tbd")
-# parser.add_argument("--solve", type=str, default='kmg', help="--solve : [direct, vmg, kmg]")
-# parser.add_argument("--plot", type=str, default=None, help="--plot is str : [w, u, v, thx, thy, thz] or None")
-# parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=True,
-#                     help="Cache assembled kmat/force per MG level to disk") # --no-cache to turn off and reset
-# parser.add_argument("--nxe", type=int, default=32, help="number of elements") # 32
-
-# TEMP DEBUG drig element
-parser.add_argument("--elem", type=str, default='drig', help="--elem, options: tbd")
+parser.add_argument("--elem", type=str, default='mitc_ep', help="--elem, options: tbd")
 parser.add_argument("--solve", type=str, default='kmg', help="--solve : [direct, vmg, kmg]")
-parser.add_argument("--plot", type=str, default='w', help="--plot is str : [w, u, v, thx, thy, thz] or None")
+parser.add_argument("--plot", type=str, default=None, help="--plot is str : [w, u, v, thx, thy, thz] or None")
 parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=True,
                     help="Cache assembled kmat/force per MG level to disk") # --no-cache to turn off and reset
 parser.add_argument("--nxe", type=int, default=32, help="number of elements") # 32
+
+# TEMP DEBUG drig element
+# parser.add_argument("--elem", type=str, default='drig', help="--elem, options: tbd")
+# parser.add_argument("--solve", type=str, default='kmg', help="--solve : [direct, vmg, kmg]")
+# parser.add_argument("--plot", type=str, default='w', help="--plot is str : [w, u, v, thx, thy, thz] or None")
+# parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=True,
+#                     help="Cache assembled kmat/force per MG level to disk") # --no-cache to turn off and reset
+# parser.add_argument("--nxe", type=int, default=32, help="number of elements") # 32
 
 # which load case
 parser.add_argument("--load", type=str, default='axial', help="--load, axial or shear bending modes")

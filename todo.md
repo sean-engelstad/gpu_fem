@@ -18,14 +18,11 @@
 * cite FETI in thesis it's similar to BDDC
 * here's the reading list (in order)
 
-MAS: Multilevel additive schwarz
-- [ ] [A GPU-based multilevel additive schwarz preconditioner for cloth and deformable body simulation](https://dl.acm.org/doi/10.1145/3528223.3530085)
-   - [ ] Nicolaides coarsening [Deflation of Conjugate Gradients with Applications to Boundary Value Problems](https://epubs.siam.org/doi/abs/10.1137/0724027?journalCode=sjnaam)
 
 1. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
    Papers needed for this:
    - [ ] [FETI–DP, BDDC, and Block Cholesky Method](https://cs.nyu.edu/~widlund/li_widlund_041211.pdf)
-   - [ ] [Preconditioning Schur complement matrices based on an aggregation multigrid method for shell structures](https://www.sciencedirect.com/science/article/pii/S0045794906002252g
+   - [ ] [Preconditioning Schur complement matrices based on an aggregation multigrid method for shell structures](https://www.sciencedirect.com/science/article/pii/S0045794906002252g)
 g  - [ ] [Domain Decomposition Methods - Algorithms and Theory](https://link.springer.com/book/10.1007/b137868)
    - [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
    - [ ] thesis on BPX preconditioners for cylindrical shells [Die nicht¨uberlappende gebietszerlegungsmethode zur parallelisierung und
@@ -60,6 +57,11 @@ BPX preconditioners for shells
 3. [ ] [BPX‐type Preconditioners for Second and Fourth Order Elliptic Problems on the Sphere](https://epubs.siam.org/doi/10.1137/050647414)
 4. [ ] [Direct optimization of BPX preconditioners](https://arxiv.org/abs/2205.06158)
 5. [ ] [Nonlinear Analysis on Manifolds. Monge-Ampère Equations ](https://link.springer.com/book/10.1007/978-1-4612-5734-9)
+
+
+MAS: Multilevel additive schwarz
+- [x] [A GPU-based multilevel additive schwarz preconditioner for cloth and deformable body simulation](https://dl.acm.org/doi/10.1145/3528223.3530085)
+   - [x] Nicolaides coarsening [Deflation of Conjugate Gradients with Applications to Boundary Value Problems](https://epubs.siam.org/doi/abs/10.1137/0724027?journalCode=sjnaam)
 
 ## Next Tasks
 

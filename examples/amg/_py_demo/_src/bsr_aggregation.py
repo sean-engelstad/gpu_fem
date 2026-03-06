@@ -469,6 +469,122 @@ def smooth_prolongator_bsr(T: sp.bsr_matrix, A: sp.bsr_matrix, Bc: np.ndarray,
     return P
 
 
+
+def enforce_symmetric_dirichlet_bcs_bsr(A: sp.bsr_matrix, tol: float = 1e-12) -> sp.bsr_matrix:
+    """
+    Symmetrize Dirichlet BC treatment for a BSR matrix without changing
+    the BSR nonzero pattern.
+
+    Assumes constrained scalar DOFs already appear as identity rows
+    numerically:
+        diag = 1
+        all off-diagonal entries in that scalar row are zero (up to tol)
+
+    This routine:
+      1. Detects constrained scalar DOFs from the existing BSR values
+      2. Zeros both the corresponding rows and columns numerically
+         while preserving the exact BSR sparsity pattern
+      3. Restores 1 on constrained scalar diagonal entries
+
+    Parameters
+    ----------
+    A : bsr_matrix
+        Square BSR matrix with row-only Dirichlet BC treatment.
+    tol : float
+        Tolerance for detecting unit diagonal / zero off-diagonals.
+
+    Returns
+    -------
+    A_sym : bsr_matrix
+        BSR matrix with same sparsity pattern as A, but with symmetric
+        Dirichlet treatment suitable for PCG.
+    """
+    assert sp.isspmatrix_bsr(A)
+    assert A.shape[0] == A.shape[1]
+
+    bs_row, bs_col = A.blocksize
+    assert bs_row == bs_col
+    bs = bs_row
+
+    n = A.shape[0]
+    assert n % bs == 0
+    nblock = n // bs
+
+    indptr = A.indptr
+    indices = A.indices
+    data = A.data
+
+    # --------------------------------------------------
+    # 1) Detect constrained scalar DOFs from scalar rows
+    #    inside the BSR structure
+    # --------------------------------------------------
+    bc_dofs = np.zeros(n, dtype=bool)
+
+    for ib in range(nblock):
+        row_start = indptr[ib]
+        row_end = indptr[ib + 1]
+
+        # check each scalar row inside this BSR block-row
+        for rloc in range(bs):
+            ig = ib * bs + rloc
+
+            diag_val = 0.0
+            found_diag = False
+            offdiag_max = 0.0
+
+            for k in range(row_start, row_end):
+                jb = indices[k]
+                blk = data[k]
+
+                for cloc in range(bs):
+                    jg = jb * bs + cloc
+                    val = blk[rloc, cloc]
+
+                    if ig == jg:
+                        diag_val = val
+                        found_diag = True
+                    else:
+                        offdiag_max = max(offdiag_max, abs(val))
+
+            if found_diag and abs(diag_val - 1.0) <= tol and offdiag_max <= tol:
+                bc_dofs[ig] = True
+
+    if not np.any(bc_dofs):
+        return A.copy()
+    
+    print("FOUND BC DOFs, zeroing cols")
+
+    # --------------------------------------------------
+    # 2) Zero corresponding rows/cols numerically
+    #    but preserve exact BSR pattern
+    # --------------------------------------------------
+    A_sym = A.copy()
+
+    for ib in range(nblock):
+        row_start = A_sym.indptr[ib]
+        row_end = A_sym.indptr[ib + 1]
+
+        for k in range(row_start, row_end):
+            jb = A_sym.indices[k]
+            blk = A_sym.data[k]
+
+            for rloc in range(bs):
+                ig = ib * bs + rloc
+                row_is_bc = bc_dofs[ig]
+
+                for cloc in range(bs):
+                    jg = jb * bs + cloc
+                    col_is_bc = bc_dofs[jg]
+
+                    if row_is_bc or col_is_bc:
+                        if ig == jg and row_is_bc:
+                            blk[rloc, cloc] = 1.0
+                        else:
+                            blk[rloc, cloc] = 0.0
+
+    return A_sym
+
+
 class DirectCSRSolver:
     def __init__(self, A_csr):
         # convert to dense matrix (full fillin)

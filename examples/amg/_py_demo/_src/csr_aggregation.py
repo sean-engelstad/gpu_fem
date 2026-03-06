@@ -253,7 +253,8 @@ class DirectCSRSolver:
 class AMGSolver:
     """general multilevel AMG solver..."""
     def __init__(self, A_free:sp.csr_matrix, A:sp.csr_matrix, threshold:float=0.25,
-                 omega:float=0.7, pre_smooth=1, post_smooth=1, level:int=0, near_kernel:bool=True):
+                 omega:float=0.7, pre_smooth=1, post_smooth=1, level:int=0, 
+                 near_kernel:bool=True, coarsening_fcn=greedy_serial_aggregation_csr):
         """
         A : fine-grid operator (CSR) without bcs
         A : fine-grid operator (CSR) with bcs
@@ -268,7 +269,7 @@ class AMGSolver:
 
         # compute node aggregate sets
         # make sure to use unconstrained matrix for aggregation indicators originally
-        aggregate_ind = greedy_serial_aggregation_csr(A_free, threshold=threshold)
+        aggregate_ind = coarsening_fcn(A_free, threshold=threshold)
         num_agg = np.max(aggregate_ind) + 1
 
         # print(f"{aggregate_ind=}")

@@ -9,15 +9,21 @@ import matplotlib.pyplot as plt
 import sys
 # plate case imports from milu python cases
 sys.path.append("../../milu/")
+sys.path.append("./")
 from _cylinder import make_cylinder_case
 from __src import plot_cylinder_vec, sort_vis_maps
-from __linalg import right_pgmres, right_pcg
+# from __linalg import right_pgmres, right_pcg
+
+
+sys.path.append("../../adv_elem/1_beam/src/")
+from smoothers import right_pcg2, right_pgmres2
+
 # AMG imports
 sys.path.append("_src/")
 from csr_aggregation import plot_plate_aggregation
 from bsr_aggregation import greedy_serial_aggregation_bsr, tentative_prolongator_bsr, smooth_prolongator_bsr
 from _smoothers import block_gauss_seidel_6dof
-from bsr_aggregation import AMG_BSRSolver
+from bsr_aggregation import AMG_BSRSolver, enforce_symmetric_dirichlet_bcs_bsr
 
 # ====================================================
 # 1) make plate case
@@ -32,7 +38,7 @@ parser.add_argument("--thick", type=float, default=1e-2) # 2e-3
 parser.add_argument("--justpc", action=argparse.BooleanOptionalAction, default=False, help="yes: just use pc one vec, no: solve with GMRES")
 parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=False, help="whether to debug multilevel process")
 # it can even do thin plate quite well! maybe even better than multigrid?
-parser.add_argument("--nxe", type=int, default=10, help="num elems each direction x and y")
+parser.add_argument("--nxe", type=int, default=32, help="num elems each direction x and y")
 parser.add_argument("--fill", type=int, default=0, help="ILU(k) fill level")
 parser.add_argument("--iters", type=int, default=1, help="num energy-opt iters (if iter == 1 same as SA-AMG)")
 parser.add_argument("--nsmooth", type=int, default=2, help="num Jacobi ML smoothing steps (multilevel/multigrid-like)")
@@ -45,6 +51,10 @@ complex_load = True
 
 _, _, A, rhs, perm, xpts0 = make_cylinder_case(args, complex_load=complex_load, apply_bcs=True)
 _, _, A_free, _, _, _ = make_cylinder_case(args, complex_load=complex_load, apply_bcs=False)
+
+
+print("ENFORCE SYM BCs")
+A = enforce_symmetric_dirichlet_bcs_bsr(A)
 
 N = A.shape[0]
 nnodes = N // 6
@@ -224,10 +234,10 @@ pc = AMG_BSRSolver(A_free, A, B, threshold=args.threshold, omega=args.omega, pre
 if args.justpc:
     x2 = pc.solve(rhs)
 else:
-    x2 = right_pgmres(A, b=rhs, x0=None, restart=500, max_iter=500, M=pc if not(args.noprec) else None)
+    # x2 = right_pgmres2(A, b=rhs, x0=None, restart=500, max_iter=500, M=pc if not(args.noprec) else None)
     # coarse grid matrix is not exactly numerically symmetric rn.. (due to spsolve function?) so GMRES is doing better..
     # after fix orthog projector may work again (cause less near-zero pivots)?
-    # x2 = right_pcg(A, b=rhs, x0=None, M=pc if not(args.noprec) else None)
+    x2, iters = right_pcg2(A, b=rhs, x0=None, M=pc if not(args.noprec) else None, rtol=1e-6, atol=1e-6)
 
 
 # ------------------------------------------------------------
@@ -237,14 +247,18 @@ else:
 if not args.noplot:
     print("plot fine soln using direct vs iterative solver")
 
+    # whether to project cylinder onto flat surface or not (to see all sides basically)
+    # flat = False
+    flat = True
+
     # for plotting
     nxe = args.nxe
     sort_fw = np.arange(0, N)
     fig = plt.figure()
     ax = fig.add_subplot(121, projection='3d')
-    plot_cylinder_vec(nxe, x_direct.copy(), ax, sort_fw, nodal_dof=2)
+    plot_cylinder_vec(nxe, x_direct.copy(), ax, sort_fw, nodal_dof=2, flat=flat)
 
     # plot right-precond solution
     ax = fig.add_subplot(122, projection='3d')
-    plot_cylinder_vec(nxe, x2.copy(), ax, sort_fw, nodal_dof=2)
+    plot_cylinder_vec(nxe, x2.copy(), ax, sort_fw, nodal_dof=2, flat=flat)
     plt.show()

@@ -50,7 +50,8 @@ def poisson_apply_bcs(A, f, nx, ny):
         for i in range(nx):
             if i == 0 or i == nx-1 or j == 0 or j == ny-1:
                 k = i + j * nx
-                A2[k, :] = 0.0
+                A2[k, :] = 0.0 # apply bc rows
+                A2[:, k] = 0.0 # apply bc cols so symmetric
                 A2[k, k] = 1.0
                 f[k] = 0.0
     return A2

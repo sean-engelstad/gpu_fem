@@ -11,13 +11,17 @@ import sys
 sys.path.append("../../milu/")
 from _plate import make_plate_case
 from __src import plot_plate_vec, sort_vis_maps
-from __linalg import right_pgmres, right_pcg
+# from __linalg import right_pgmres, right_pcg
+
+sys.path.append("../../adv_elem/1_beam/src/")
+from smoothers import right_pcg2, right_pgmres2
+
 # AMG imports
 sys.path.append("_src/")
 from csr_aggregation import plot_plate_aggregation
 from bsr_aggregation import greedy_serial_aggregation_bsr, tentative_prolongator_bsr, smooth_prolongator_bsr
 from _smoothers import block_gauss_seidel_6dof
-from bsr_aggregation import AMG_BSRSolver
+from bsr_aggregation import AMG_BSRSolver, enforce_symmetric_dirichlet_bcs_bsr
 
 # ====================================================
 # 1) make plate case
@@ -33,12 +37,12 @@ parser.add_argument("--justpc", action=argparse.BooleanOptionalAction, default=F
 parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=False, help="whether to debug multilevel process")
 parser.add_argument("--nokernel", action=argparse.BooleanOptionalAction, default=False, help="whether to turnoff kernel or not")
 # it can even do thin plate quite well! maybe even better than multigrid?
-parser.add_argument("--nxe", type=int, default=10, help="num elems each direction x and y")
+parser.add_argument("--nxe", type=int, default=32, help="num elems each direction x and y")
 parser.add_argument("--fill", type=int, default=0, help="ILU(k) fill level")
 parser.add_argument("--iters", type=int, default=1, help="num energy-opt iters (if iter == 1 same as SA-AMG)")
 parser.add_argument("--nsmooth", type=int, default=2, help="num Jacobi ML smoothing steps (multilevel/multigrid-like)")
 parser.add_argument("--threshold", type=float, default=0.13, help="aggregation sparsity threshold, higher threshold increases operator complexity and takes fewer GMRES iters, but inc memory and more time per iteration (tradeoff)")
-parser.add_argument("--omega", type=float, default=None, help="jacobi smoother update coeff, default is None and uses spectral radius")
+parser.add_argument("--omega", type=float, default=0.5, help="jacobi smoother update coeff, default is None and uses spectral radius")
 args = parser.parse_args()
 
 complex_load = True
@@ -46,6 +50,10 @@ complex_load = True
 
 _, _, A, rhs, perm, xpts0 = make_plate_case(args, complex_load=complex_load, apply_bcs=True)
 _, _, A_free, _, _, _ = make_plate_case(args, complex_load=complex_load, apply_bcs=False)
+
+
+print("ENFORCE SYM BCs")
+A = enforce_symmetric_dirichlet_bcs_bsr(A)
 
 N = A.shape[0]
 nnodes = N // 6
@@ -336,10 +344,11 @@ pc = AMG_BSRSolver(A_free, A, B, threshold=args.threshold, omega=args.omega,
 if args.justpc:
     x2 = pc.solve(rhs)
 else:
-    x2 = right_pgmres(A, b=rhs, x0=None, restart=500, max_iter=500, M=pc if not(args.noprec) else None)
+    # x2 = right_pgmres2(A, b=rhs, x0=None, restart=500, max_iter=500, M=pc if not(args.noprec) else None)
     # coarse grid matrix is not exactly numerically symmetric rn.. (due to spsolve function?) so GMRES is doing better..
     # after fix orthog projector may work again (cause less near-zero pivots)?
-    # x2 = right_pcg(A, b=rhs, x0=None, M=pc if not(args.noprec) else None)
+    # NOPE : issue was that only BCs applied to rows not cols (fixed above) => now can use PCG
+    x2, iters = right_pcg2(A, b=rhs, x0=None, M=pc if not(args.noprec) else None, rtol=1e-6, atol=1e-12)
 
 
 # ------------------------------------------------------------
