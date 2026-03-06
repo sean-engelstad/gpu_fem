@@ -468,6 +468,112 @@ def smooth_prolongator_bsr(T: sp.bsr_matrix, A: sp.bsr_matrix, Bc: np.ndarray,
 
     return P
 
+def smooth_prolongator_bsr_iterative(
+    T: sp.bsr_matrix,
+    A: sp.bsr_matrix,
+    Bc: np.ndarray,
+    bc_flags: np.ndarray = None,
+    omega: float = None,
+    near_kernel: bool = True,
+    niter: int = 2,
+    mask: sp.bsr_matrix = None,
+):
+    """
+    Iterative Jacobi-style energy smoothing for a tentative prolongator in BSR format.
+
+    Iteration:
+        P_{k+1} = P_k - omega * D^{-1} * A * P_k
+
+    with the following modifications applied each iteration:
+      1. update is orthogonally projected against the near-kernel
+      2. Dirichlet DOFs in the update are zeroed
+      3. result is filtered to a fixed BSR sparsity pattern given by `mask`
+
+    If `mask` is not provided, the fixed sparsity pattern is taken from `A @ T`.
+    """
+    if not sp.isspmatrix_bsr(A):
+        raise TypeError("A must be a scipy.sparse.bsr_matrix")
+    if not sp.isspmatrix_bsr(T):
+        raise TypeError("T must be a scipy.sparse.bsr_matrix")
+    if A.blocksize != T.blocksize:
+        raise ValueError("A and T must have the same blocksize")
+
+    b = A.blocksize[0]
+    nblock_rows = A.shape[0] // b
+
+    # --- default mask from A*T, not T ---
+    if mask is None:
+        mask = (A @ T).tobsr(blocksize=T.blocksize)
+
+    if not sp.isspmatrix_bsr(mask):
+        raise TypeError("mask must be a scipy.sparse.bsr_matrix")
+    if mask.blocksize != T.blocksize:
+        raise ValueError("mask and T must have the same blocksize")
+    if mask.shape != T.shape:
+        raise ValueError("mask and T must have the same shape")
+
+    # --- omega ---
+    if omega is None:
+        rho = spectral_radius_block_DinvA_bsr(A)
+        omega = 2.0 / rho * 0.9
+        print(f"{omega=}")
+
+    # --- block diagonal inverse ---
+    Dinv_blocks = np.zeros((nblock_rows, b, b), dtype=A.data.dtype)
+    for i in range(nblock_rows):
+        start, end = A.indptr[i], A.indptr[i + 1]
+        diag_idx = np.where(A.indices[start:end] == i)[0]
+        if diag_idx.size == 0:
+            raise ValueError(f"No diagonal block for row {i}")
+        D_block = A.data[start + diag_idx[0]]
+        Dinv_blocks[i] = np.linalg.inv(D_block)
+
+    def apply_block_Dinv(X: sp.bsr_matrix) -> sp.bsr_matrix:
+        """Apply block diagonal inverse on the left: X <- D^{-1} X."""
+        Y = X.copy()
+        for i in range(nblock_rows):
+            start, end = Y.indptr[i], Y.indptr[i + 1]
+            Y.data[start:end] = Dinv_blocks[i] @ Y.data[start:end]
+        return Y
+
+    def zero_dirichlet_rows_bsr(X: sp.bsr_matrix) -> sp.bsr_matrix:
+        """Zero constrained fine-grid DOF rows inside each BSR block row."""
+        if bc_flags is None:
+            return X
+        Y = X.copy()
+        ndof = Y.blocksize[0]
+        for i in range(Y.shape[0] // ndof):
+            start, end = Y.indptr[i], Y.indptr[i + 1]
+            for j in range(ndof):
+                if bc_flags[i * ndof + j]:
+                    Y.data[start:end, j, :] = 0.0
+        return Y
+
+    def filter_to_mask_bsr(X: sp.bsr_matrix, mask: sp.bsr_matrix) -> sp.bsr_matrix:
+        """
+        Enforce fixed BSR sparsity pattern from `mask`.
+        """
+        Xcsr = X.tocsr()
+        Mcsr = mask.tocsr()
+        Ycsr = Xcsr.multiply(Mcsr != 0)
+        return Ycsr.tobsr(blocksize=mask.blocksize)
+
+    # start from T, but immediately enforce target sparsity
+    P = filter_to_mask_bsr(T, mask)
+
+    for _ in range(niter):
+        # dP = D^{-1} A P
+        dP = apply_block_Dinv((A @ P).tobsr(blocksize=T.blocksize))
+
+        if near_kernel:
+            dP = orthog_nullspace_projector(dP, Bc, bc_flags)
+
+        dP = zero_dirichlet_rows_bsr(dP)
+
+        P = P - omega * dP
+        P = filter_to_mask_bsr(P, mask)
+
+    return P
 
 
 def enforce_symmetric_dirichlet_bcs_bsr(A: sp.bsr_matrix, tol: float = 1e-12) -> sp.bsr_matrix:
@@ -647,7 +753,8 @@ class AMG_BSRSolver:
         # create tentative prolongator then smooth it
         block_dim = A.data.shape[-1]
         self.T, self.Bc = tentative_prolongator_bsr(self.B, aggregate_ind, bc_flags, vpn=block_dim)
-        self.P = smooth_prolongator_bsr(self.T, A, self.Bc, bc_flags, omega=omega, near_kernel=near_kernel) # single damped jacobi step, so only one step of fillin
+        # self.P = smooth_prolongator_bsr(self.T, A, self.Bc, bc_flags, omega=omega, near_kernel=near_kernel) # single damped jacobi step, so only one step of fillin
+        self.P = smooth_prolongator_bsr_iterative(self.T, A, self.Bc, bc_flags, omega=omega, near_kernel=near_kernel, niter=1) # single damped jacobi step, so only one step of fillin
         # self.P = self.T # DEBUG
         self.R = self.P.T # sym matrix so restriction is transpose prolong
 
