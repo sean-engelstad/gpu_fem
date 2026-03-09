@@ -4,19 +4,16 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 
-class FETIDP_PlateAssembler(SubdomainPlateAssembler):
+class BDDC_PlateAssembler(SubdomainPlateAssembler):
     """
-    FETI-DP demo with:
+    BDDC-DP demo with:
       - primal DOF = vertex DOFs
       - dual DOF   = edge/interface DOFs (shared by exactly 2 subdomains)
-      - lambda space indexed one-to-one with unique global edge DOFs
 
     Assumptions
     -----------
     * Every non-primal edge/interface DOF belongs to exactly 2 subdomains.
     * Vertex primal variables are assembled globally.
-    * Local dual edge variables remain subdomain-local and are tied by
-      Lagrange multipliers.
     """
 
     def __init__(
@@ -78,10 +75,9 @@ class FETIDP_PlateAssembler(SubdomainPlateAssembler):
         self.sd_R_Ei = {}
         self.sd_R_Vi = {}
 
-        # true jump/scaled-jump operators:
-        # B_i, B_D_i : (n_lambda, nE_i)
-        self.sd_B_delta = {}
-        self.sd_BD_delta = {}
+        # scaled averaging operator for BDDC:
+        # u_Ei = R_DGamma^(i) u_E
+        self.sd_R_DGamma = {}
 
         # local lambda sign info / maps
         self.sd_edge_global_dofs = {}
@@ -209,6 +205,31 @@ class FETIDP_PlateAssembler(SubdomainPlateAssembler):
             self.sd_vertex_nodes[i_sd] = np.array(vertex_nodes, dtype=int)
             self.sd_edge_nodes[i_sd] = np.array(edge_nodes, dtype=int)
 
+    def _build_scaled_averaging_operators(self):
+        """
+        Build scaled averaging / restriction operators for BDDC:
+            u_Ei = R_DGamma^(i) u_E
+
+        Since each edge dof is shared by exactly 2 subdomains in this demo,
+        the standard scaling is 1/2 on each owner when enabled.
+        """
+        self.sd_R_DGamma = {}
+        scale = 0.5 if self.scale_R_GE else 1.0
+
+        for i_sd in range(self.num_subdomains):
+            E_nodes_local = self.sd_edge_nodes[i_sd]
+            E_nodes_global = np.array(
+                [self.sd_node_inv_map[i_sd][int(lnode)] for lnode in E_nodes_local],
+                dtype=int,
+            )
+
+            E_dofs_global = self._node_list_to_dofs(E_nodes_global)
+            self.sd_R_DGamma[i_sd] = self._make_subset_restriction(
+                E_dofs_global,
+                self.edge_interface_dof_global,
+                scale=scale,
+            )
+
     def _build_global_interface_restrictions(self):
         # keep these as plain subset restrictions; scaling belongs on B_D now
         self.R_GE = self._make_subset_restriction(
@@ -277,78 +298,6 @@ class FETIDP_PlateAssembler(SubdomainPlateAssembler):
             # V -> V_i
             self.sd_R_Vi[i_sd] = self._make_subset_restriction(
                 V_dofs_global, self.vertex_dof_global, scale=1.0
-            )
-
-    def _build_jump_operators(self):
-        """
-        Build true signed jump operators B_delta^(i) and scaled versions B_D^(i).
-
-        lambda space is indexed by unique global edge dofs. For each global edge
-        dof there are exactly two owning subdomains (ilo, ihi). The row has:
-            +1 on ilo's local edge dof
-            -1 on ihi's local edge dof
-
-        If scaling is enabled, use +/- 1/2.
-        """
-        self.lambda_dof_global = np.array(self.edge_interface_dof_global, dtype=int, copy=True)
-        lambda_pos = {int(d): k for k, d in enumerate(self.lambda_dof_global)}
-        nlam = len(self.lambda_dof_global)
-
-        # figure out the two-owner pair for each global edge dof
-        self.global_edge_owner_pair = {}
-        for gdof in self.lambda_dof_global:
-            gnode = int(gdof // self.dof_per_node)
-            owners = sorted(self.node_to_subdomains[gnode])
-            if len(owners) != 2:
-                raise ValueError(
-                    f"Global edge DOF {gdof} belongs to node {gnode} with owners {owners}, "
-                    "but this simplified demo expects exactly 2 subdomains per edge node."
-                )
-            self.global_edge_owner_pair[int(gdof)] = (owners[0], owners[1])
-
-        self.sd_B_delta = {}
-        self.sd_BD_delta = {}
-
-        row_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
-        col_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
-        val_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
-        valD_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
-
-        scale = 0.5 if self.scale_R_GE else 1.0
-
-        for i_sd in range(self.num_subdomains):
-            local_edge_global = self.sd_edge_global_dofs[i_sd]
-            g2l = {int(gd): j for j, gd in enumerate(local_edge_global)}
-
-            for gd in local_edge_global:
-                gd = int(gd)
-                k = lambda_pos[gd]
-                ilo, ihi = self.global_edge_owner_pair[gd]
-
-                if i_sd == ilo:
-                    sgn = +1.0
-                elif i_sd == ihi:
-                    sgn = -1.0
-                else:
-                    continue
-
-                j = g2l[gd]
-
-                row_lists[i_sd].append(k)
-                col_lists[i_sd].append(j)
-                val_lists[i_sd].append(sgn)
-                valD_lists[i_sd].append(scale * sgn)
-
-            nEi = len(local_edge_global)
-            self.sd_B_delta[i_sd] = sp.csr_matrix(
-                (np.array(val_lists[i_sd], dtype=np.double),
-                 (np.array(row_lists[i_sd], dtype=int), np.array(col_lists[i_sd], dtype=int))),
-                shape=(nlam, nEi),
-            )
-            self.sd_BD_delta[i_sd] = sp.csr_matrix(
-                (np.array(valD_lists[i_sd], dtype=np.double),
-                 (np.array(row_lists[i_sd], dtype=int), np.array(col_lists[i_sd], dtype=int))),
-                shape=(nlam, nEi),
             )
 
     def _build_local_factored_blocks(self):
@@ -591,14 +540,12 @@ class FETIDP_PlateAssembler(SubdomainPlateAssembler):
             self.sd_A_VV[i_sd] = self._extract_bsr_block(A_csr, V_dofs, V_dofs)
 
         self._build_local_factored_blocks()
-        self._build_jump_operators()
+        self._build_scaled_averaging_operators()
         self._build_coarse_operator()
 
     def get_interface_rhs(self):
         """
-        FETI-DP rhs in lambda-space:
-            rhs = -( d_Lambda - B_{Lambda,Pi} S_VV^{-1} g_V )
-                = (+ fine load term) - (coarse correction term)
+        BDDC right hand side space (g_E reduced from g_Gam)
         """
         nlam = len(self.lambda_dof_global)
         rhs = np.zeros(nlam, dtype=np.double)
@@ -617,17 +564,9 @@ class FETIDP_PlateAssembler(SubdomainPlateAssembler):
             fE = sd_rhs[E]
             fV = sd_rhs[V]
 
-            uI_f, uE_f = self._solve_local_IE(i_sd, fI, fE)
-
-            # + fine term
-            rhs += self.sd_B_delta[i_sd].dot(uE_f)
-
-            # local contribution to g_V
-            if len(V) > 0:
-                gi = fV.copy()
-                gi -= self.sd_A_VI[i_sd].dot(uI_f)
-                gi -= self.sd_A_VE[i_sd].dot(uE_f)
-                gV += self.sd_R_Vi[i_sd].T.dot(gi)
+            # compute edge-reduced RHS g_gam
+            gE = fE.copy()
+            gE -= self.sd_A_EV[i_sd].dot(fV)
 
         # coarse correction term
         if len(self.vertex_dof_global) > 0:

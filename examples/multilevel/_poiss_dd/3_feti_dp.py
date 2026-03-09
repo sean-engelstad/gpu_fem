@@ -9,11 +9,12 @@ import numpy as np, scipy.sparse as sp
 from src import PoissonPlateElement, FETIDP_PlateAssembler
 from src import right_pcg_matfree
 
-nxe = 32
-# nxe = 64
+# nxe = 32
+nxe = 64
 # nxs = 3
-nxs = 4
-# nxs = 8
+# nxs = 4
+nxs = 8
+# nxs = 16
 
 ELEMENT = PoissonPlateElement()
 assembler = FETIDP_PlateAssembler(
@@ -22,11 +23,15 @@ assembler = FETIDP_PlateAssembler(
     # nxe=4, nxs=2, nys=2, # DEBUG inputs
     # nxe=6, nxs=3, nys=3,
     clamped=False,
-    load_fcn=lambda x, y : np.sin(5 * np.pi * x) * np.sin(np.pi * (y**2 + x**2))
+    load_fcn=lambda x, y : np.sin(5 * np.pi * x) * np.sin(np.pi * (y**2 + x**2)),
+    # would be nice if coarse space could be solved local (but that doesn't seem to work well, need to assemble it with sum of local Schur complements)
+    coarse_mode="assembled", 
+    # coarse_mode="local",
 )
 
 assembler.assemble_all()
 interface_rhs = assembler.get_interface_rhs() # g_G rhs 
+print(f"{np.linalg.norm(interface_rhs)=:.4e}")
 
 # assembler.neumann_solve(rhs)
 norm_hist = []
