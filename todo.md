@@ -2,9 +2,44 @@
 
 ## Current Task
 
-- [ ] demo below BDDC preconditioner for plate + shell elements (first for python)
+BDDC preconditioners
+1. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
+   - [ ] demo below BDDC preconditioner for plate + shell elements (first for python)
    - [ ] then for GPU-acceleration
    - [ ] demo for plates, cylinders, and then wings.
+   Papers needed for this:
+   - [ ] [FETI–DP, BDDC, and Block Cholesky Method](https://cs.nyu.edu/~widlund/li_widlund_041211.pdf)
+   - [ ] [Preconditioning Schur complement matrices based on an aggregation multigrid method for shell structures](https://www.sciencedirect.com/science/article/pii/S0045794906002252g)
+g  - [ ] [Domain Decomposition Methods - Algorithms and Theory](https://link.springer.com/book/10.1007/b137868)
+   - [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
+
+   - [ ] [Multilevel Schwarz methods](https://link.springer.com/article/10.1007/BF01385873)
+   - [ ] [Multilevel Schwarz methods for the biharmonic dirichlet problem]()
+   - [ ] [Multilevel Schwarz methods for elliptic partial differential equations](https://www.sciencedirect.com/science/article/pii/S0045782511001307)
+   - [ ] [Multilevel Optimized Schwarz Methods](https://epubs.siam.org/doi/10.1137/19M1259389)
+   - [ ] [Generalized Aggregation Multilevel Solver](https://www.columbia.edu/cu/civileng/fish/Publications_files/aggregation97.pdf)
+
+
+
+
+BPX preconditioners for shells
+2. [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
+   - [ ] implement all results from this paper including MDS-BPX preconditioner, non-conforming elements to avoid mem locking, demo iter counts.. etc.
+   - [ ] try to combine DRIG trv shear stuff (to extend to RM case), then demo on curved shell problems
+   - [ ] try to use BDDC or Neumann^2 splitting of separate wing components (skin, ribs, spars) to solve with new method?
+
+
+3. also read these theses on BPX for shells..,
+   * still good + want to implement but having to use BFS shell elements may be limiting.. C1-continuous
+   - [ ] thesis on BPX preconditioners for cylindrical shells [Die nicht¨uberlappende gebietszerlegungsmethode zur parallelisierung und
+vorkonditionierung iterativer verfahren zur l¨osung von platten- und schalenproblemen](https://onlinelibrary.wiley.com/doi/epdf/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7?saml_referrer)
+   - [ ] another thesis on domain decomp multilevel methods and biharmonic Dirichlet (Zhang) [Studies in domain decomposition: multilevel methods and the biharmonic Dirichlet
+problem](https://onlinelibrary.wiley.com/doi/epdf/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7?saml_referrer)
+
+
+
+## Secondary / Next Tasks
+
 
 * put in my thesis that the BDDC may be much stronger and general preconditioner than AMG for thin shells (similar idea to thick-ind ASW)
 * can give thickness-ind and h-independent performance for shells
@@ -18,22 +53,6 @@
 * cite FETI in thesis it's similar to BDDC
 * here's the reading list (in order)
 
-
-1. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
-   Papers needed for this:
-   - [ ] [FETI–DP, BDDC, and Block Cholesky Method](https://cs.nyu.edu/~widlund/li_widlund_041211.pdf)
-   - [ ] [Preconditioning Schur complement matrices based on an aggregation multigrid method for shell structures](https://www.sciencedirect.com/science/article/pii/S0045794906002252g)
-g  - [ ] [Domain Decomposition Methods - Algorithms and Theory](https://link.springer.com/book/10.1007/b137868)
-   - [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
-   - [ ] thesis on BPX preconditioners for cylindrical shells [Die nicht¨uberlappende gebietszerlegungsmethode zur parallelisierung und
-vorkonditionierung iterativer verfahren zur l¨osung von platten- und schalenproblemen](https://onlinelibrary.wiley.com/doi/epdf/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7?saml_referrer)
-   - [ ] another thesis on domain decomp multilevel methods and biharmonic Dirichlet (Zhang) [Studies in domain decomposition: multilevel methods and the biharmonic Dirichlet
-problem](https://onlinelibrary.wiley.com/doi/epdf/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7?saml_referrer)
-   - [ ] [Multilevel Schwarz methods](https://link.springer.com/article/10.1007/BF01385873)
-   - [ ] [Multilevel Schwarz methods for the biharmonic dirichlet problem]()
-   - [ ] [Multilevel Schwarz methods for elliptic partial differential equations](https://www.sciencedirect.com/science/article/pii/S0045782511001307)
-   - [ ] [Multilevel Optimized Schwarz Methods](https://epubs.siam.org/doi/10.1137/19M1259389)
-   - [ ] [Generalized Aggregation Multilevel Solver](https://www.columbia.edu/cu/civileng/fish/Publications_files/aggregation97.pdf)
 
 2. [ ] [Robust BDDC preconditioners for Reissner–Mindlin plate bending problems and MITC elements](https://epubs.siam.org/doi/10.1137/080717729)
 3. [ ] BDDC method, [A Preconditioner for Substructuring Based on Constrained Energy Minimization](https://epubs.siam.org/doi/abs/10.1137/S1064827502412887)
