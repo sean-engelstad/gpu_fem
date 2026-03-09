@@ -564,6 +564,8 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             fE = sd_rhs[E]
             fV = sd_rhs[V]
 
+            IV = 
+
             # compute edge-reduced RHS g_gam
             gE = fE.copy()
             gE -= self.sd_A_EV[i_sd].dot(fV)
