@@ -1,28 +1,31 @@
-from .assembler import SubdomainPlateAssembler
+from ._assembler import Subdomain2DAssembler
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 
-class BDDC_PlateAssembler(SubdomainPlateAssembler):
+class FETIDP_Assembler(Subdomain2DAssembler):
     """
-    Reduced-edge BDDC demo:
+    FETI-DP demo with:
       - primal DOF = vertex DOFs
-      - interface Krylov unknown = unique global edge DOFs
-
-    This is a clean demo of the BDDC-style preconditioner/action using the same
-    I/E/V split as the FETI-DP demo.
+      - dual DOF   = edge/interface DOFs (shared by exactly 2 subdomains)
+      - lambda space indexed one-to-one with unique global edge DOFs
 
     Assumptions
     -----------
     * Every non-primal edge/interface DOF belongs to exactly 2 subdomains.
     * Vertex primal variables are assembled globally.
+    * Local dual edge variables remain subdomain-local and are tied by
+      Lagrange multipliers.
     """
 
     def __init__(
         self,
         ELEMENT,
         nxe: int,
+        E: float = 70e9,
+        nu: float = 0.3,
+        thick: float = 1.0e-2,
         length: float = 1.0,
         width: float = 1.0,
         load_fcn=lambda x, y: 1.0,
@@ -31,9 +34,11 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
         nys: int = 1,
         scale_R_GE: bool = True,
         coarse_mode: str = "assembled",  # "assembled" or "local"
+        geometry='plate',
+        radius:float=1.0, # ignored if plate case
     ):
-        SubdomainPlateAssembler.__init__(
-            self, ELEMENT, nxe, length, width, load_fcn, clamped, nxs, nys
+        Subdomain2DAssembler.__init__(
+            self, ELEMENT, nxe, E, nu, thick, length, width, load_fcn, clamped, nxs, nys, geometry, radius
         )
 
         self.scale_R_GE = bool(scale_R_GE)
@@ -78,12 +83,15 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
         self.sd_R_Ei = {}
         self.sd_R_Vi = {}
 
-        # scaled averaging operator for BDDC:
-        # u_Ei = R_DGamma^(i) u_E
-        self.sd_R_DGamma = {}
+        # true jump/scaled-jump operators:
+        # B_i, B_D_i : (n_lambda, nE_i)
+        self.sd_B_delta = {}
+        self.sd_BD_delta = {}
 
-        # local edge-global maps
+        # local lambda sign info / maps
         self.sd_edge_global_dofs = {}
+        self.lambda_dof_global = np.array([], dtype=int)
+        self.global_edge_owner_pair = {}   # gdof -> (ilo, ihi)
 
         # 3x3 local blocks
         self.sd_A_II = {}
@@ -98,7 +106,7 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
         self.sd_A_VE = {}
         self.sd_A_VV = {}
 
-        # cached local assembled blocks
+        # cached local assembled blocks/factors
         self.sd_A_IE2 = {}
         self.sd_A_IEV = {}
 
@@ -106,6 +114,13 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
         self.sd_S_VV = {}
         self.S_VV = None
         self.S_VV_solver = None
+
+    def _nodes_to_dof(self, node_arr: np.ndarray):
+        dpn = self.dof_per_node
+        return np.array(
+            [dpn * inode + idof for inode in node_arr for idof in range(dpn)],
+            dtype=int,
+        )
 
     def _extract_bsr_block(
         self, A_csr: sp.csr_matrix, row_dofs: np.ndarray, col_dofs: np.ndarray
@@ -148,7 +163,7 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
         vals = np.full(m, float(scale), dtype=np.double)
         return sp.csr_matrix((vals, (rows, cols)), shape=(m, n))
 
-    def _classify_bddc_nodes(self):
+    def _classify_fetidp_nodes(self):
         """
         Split full global interface G into:
           - vertex nodes: interface nodes belonging to 3+ subdomains
@@ -172,6 +187,7 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             self.edge_interface_nodes_global
         )
 
+        # keep full interface G in original ordering
         self.interface_nodes_global = np.array(
             self.full_interface_nodes_global, dtype=int, copy=True
         )
@@ -199,6 +215,7 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             self.sd_edge_nodes[i_sd] = np.array(edge_nodes, dtype=int)
 
     def _build_global_interface_restrictions(self):
+        # keep these as plain subset restrictions; scaling belongs on B_D now
         self.R_GE = self._make_subset_restriction(
             self.edge_interface_dof_global,
             self.interface_dof_global,
@@ -252,39 +269,91 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             self.sd_vertex_dofs[i_sd] = V_dofs_local
             self.sd_edge_global_dofs[i_sd] = E_dofs_global
 
+            # G -> G_i
             self.sd_R_Gi[i_sd] = self._make_subset_restriction(
                 G_dofs_global, self.interface_dof_global, scale=1.0
             )
+
+            # E -> E_i
             self.sd_R_Ei[i_sd] = self._make_subset_restriction(
                 E_dofs_global, self.edge_interface_dof_global, scale=1.0
             )
+
+            # V -> V_i
             self.sd_R_Vi[i_sd] = self._make_subset_restriction(
                 V_dofs_global, self.vertex_dof_global, scale=1.0
             )
 
-    def _build_scaled_averaging_operators(self):
+    def _build_jump_operators(self):
         """
-        Build scaled averaging / restriction operators for BDDC:
-            u_Ei = R_DGamma^(i) u_E
+        Build true signed jump operators B_delta^(i) and scaled versions B_D^(i).
 
-        Since each edge dof is shared by exactly 2 subdomains in this demo,
-        the standard scaling is 1/2 on each owner when enabled.
+        lambda space is indexed by unique global edge dofs. For each global edge
+        dof there are exactly two owning subdomains (ilo, ihi). The row has:
+            +1 on ilo's local edge dof
+            -1 on ihi's local edge dof
+
+        If scaling is enabled, use +/- 1/2.
         """
-        self.sd_R_DGamma = {}
+        self.lambda_dof_global = np.array(self.edge_interface_dof_global, dtype=int, copy=True)
+        lambda_pos = {int(d): k for k, d in enumerate(self.lambda_dof_global)}
+        nlam = len(self.lambda_dof_global)
+
+        # figure out the two-owner pair for each global edge dof
+        self.global_edge_owner_pair = {}
+        for gdof in self.lambda_dof_global:
+            gnode = int(gdof // self.dof_per_node)
+            owners = sorted(self.node_to_subdomains[gnode])
+            if len(owners) != 2:
+                raise ValueError(
+                    f"Global edge DOF {gdof} belongs to node {gnode} with owners {owners}, "
+                    "but this simplified demo expects exactly 2 subdomains per edge node."
+                )
+            self.global_edge_owner_pair[int(gdof)] = (owners[0], owners[1])
+
+        self.sd_B_delta = {}
+        self.sd_BD_delta = {}
+
+        row_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
+        col_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
+        val_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
+        valD_lists = {i_sd: [] for i_sd in range(self.num_subdomains)}
+
         scale = 0.5 if self.scale_R_GE else 1.0
 
         for i_sd in range(self.num_subdomains):
-            E_nodes_local = self.sd_edge_nodes[i_sd]
-            E_nodes_global = np.array(
-                [self.sd_node_inv_map[i_sd][int(lnode)] for lnode in E_nodes_local],
-                dtype=int,
-            )
+            local_edge_global = self.sd_edge_global_dofs[i_sd]
+            g2l = {int(gd): j for j, gd in enumerate(local_edge_global)}
 
-            E_dofs_global = self._node_list_to_dofs(E_nodes_global)
-            self.sd_R_DGamma[i_sd] = self._make_subset_restriction(
-                E_dofs_global,
-                self.edge_interface_dof_global,
-                scale=scale,
+            for gd in local_edge_global:
+                gd = int(gd)
+                k = lambda_pos[gd]
+                ilo, ihi = self.global_edge_owner_pair[gd]
+
+                if i_sd == ilo:
+                    sgn = +1.0
+                elif i_sd == ihi:
+                    sgn = -1.0
+                else:
+                    continue
+
+                j = g2l[gd]
+
+                row_lists[i_sd].append(k)
+                col_lists[i_sd].append(j)
+                val_lists[i_sd].append(sgn)
+                valD_lists[i_sd].append(scale * sgn)
+
+            nEi = len(local_edge_global)
+            self.sd_B_delta[i_sd] = sp.csr_matrix(
+                (np.array(val_lists[i_sd], dtype=np.double),
+                 (np.array(row_lists[i_sd], dtype=int), np.array(col_lists[i_sd], dtype=int))),
+                shape=(nlam, nEi),
+            )
+            self.sd_BD_delta[i_sd] = sp.csr_matrix(
+                (np.array(valD_lists[i_sd], dtype=np.double),
+                 (np.array(row_lists[i_sd], dtype=int), np.array(col_lists[i_sd], dtype=int))),
+                shape=(nlam, nEi),
             )
 
     def _build_local_factored_blocks(self):
@@ -311,8 +380,7 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
 
     def _build_coarse_operator(self):
         """
-        Build local S_VV^(i) and assembled global S_VV = sum R_Vi^T S_VV^(i) R_Vi
-        using elimination of (I,E).
+        Build local S_VV^(i) and assembled global S_VV = sum R_Vi^T S_VV^(i) R_Vi.
         """
         self.sd_S_VV = {}
         nVg = len(self.vertex_dof_global)
@@ -328,14 +396,15 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
                 continue
 
             rhs = np.zeros((nI + nE, nV), dtype=np.double)
+
             if nI > 0:
                 rhs[:nI, :] = self.sd_A_IV[i_sd].toarray()
             if nE > 0:
                 rhs[nI:, :] = self.sd_A_EV[i_sd].toarray()
 
             X = spla.spsolve(self.sd_A_IE2[i_sd], rhs) if (nI + nE) > 0 else np.zeros((0, nV))
-            X = np.asarray(X)
-            if X.ndim == 1:
+            X = np.atleast_2d(X)
+            if X.shape[0] != (nI + nE):
                 X = X.reshape((nI + nE, nV), order="F")
 
             X_I = X[:nI, :] if nI > 0 else np.zeros((0, nV))
@@ -350,11 +419,15 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             Sii = sp.csc_matrix(Sii)
             self.sd_S_VV[i_sd] = Sii
 
-            RVi = self.sd_R_Vi[i_sd]
+            RVi = self.sd_R_Vi[i_sd]   # V_global -> V_i
             Sglob = Sglob + (RVi.T @ Sii @ RVi)
 
         self.S_VV = Sglob.tocsc()
-        self.S_VV_solver = spla.factorized(self.S_VV) if self.S_VV.shape[0] > 0 else None
+
+        if self.S_VV.shape[0] > 0:
+            self.S_VV_solver = spla.factorized(self.S_VV)
+        else:
+            self.S_VV_solver = None
 
     def _solve_local_IE(self, i_sd: int, rhs_I: np.ndarray, rhs_E: np.ndarray):
         """
@@ -372,32 +445,13 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             rhs[nI:] = rhs_E
 
         sol = spla.spsolve(self.sd_A_IE2[i_sd], rhs)
-        return sol[:nI], sol[nI:]
-
-    def _solve_local_IEV(self, i_sd: int, rhs_I: np.ndarray, rhs_E: np.ndarray, rhs_V: np.ndarray):
-        """
-        Solve full local 3x3 system.
-        """
-        nI = self.sd_A_II[i_sd].shape[0]
-        nE = self.sd_A_EE[i_sd].shape[0]
-        nV = self.sd_A_VV[i_sd].shape[0]
-        if nI + nE + nV == 0:
-            return np.zeros(0), np.zeros(0), np.zeros(0)
-
-        rhs = np.zeros(nI + nE + nV, dtype=np.double)
-        if nI > 0:
-            rhs[:nI] = rhs_I
-        if nE > 0:
-            rhs[nI:nI + nE] = rhs_E
-        if nV > 0:
-            rhs[nI + nE:] = rhs_V
-
-        sol = spla.spsolve(self.sd_A_IEV[i_sd], rhs)
-        return sol[:nI], sol[nI:nI + nE], sol[nI + nE:]
+        uI = sol[:nI]
+        uE = sol[nI:]
+        return uI, uE
 
     def _apply_local_Schur_E(self, i_sd: int, wE: np.ndarray):
         """
-        Apply local Schur complement on edge space with primal part fixed to zero:
+        Apply local Dirichlet Schur complement on edge space with primal part fixed to zero:
             S_EE wE = A_EE wE - A_EI A_II^{-1} A_IE wE
         """
         nI = self.sd_A_II[i_sd].shape[0]
@@ -418,10 +472,12 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
         Build global coarse rhs:
             g_V = sum_i R_Vi^T (fV_i - [A_VI A_VE] K_IE^{-1} [fI_i; fE_i])
         """
-        gV = np.zeros(len(self.vertex_dof_global), dtype=np.double)
+        nVg = len(self.vertex_dof_global)
+        gV = np.zeros(nVg, dtype=np.double)
 
         for i_sd in range(self.num_subdomains):
-            if self.sd_A_VV[i_sd].shape[0] == 0:
+            nV = self.sd_A_VV[i_sd].shape[0]
+            if nV == 0:
                 continue
 
             sd_rhs = self.sd_force[i_sd]
@@ -460,7 +516,8 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
         if self.coarse_mode == "local":
             out = np.zeros(nVg, dtype=np.double)
             for i_sd in range(self.num_subdomains):
-                if self.sd_A_VV[i_sd].shape[0] == 0:
+                nV = self.sd_A_VV[i_sd].shape[0]
+                if nV == 0:
                     continue
                 rhs_i = self.sd_R_Vi[i_sd].dot(rhs_global_V)
                 ui = spla.spsolve(self.sd_S_VV[i_sd], rhs_i)
@@ -471,12 +528,12 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
 
     def build_subdomain_interface_blocks(self):
         """
-        Build local I/E/V blocks and BDDC averaging/coarse operators.
+        Build local I/E/V blocks, true jump operators, and coarse operator.
         """
         if len(self.sd_kmat) != self.num_subdomains:
             self._assemble_subdomain_systems(bcs=True)
 
-        self._classify_bddc_nodes()
+        self._classify_fetidp_nodes()
         self._build_global_interface_restrictions()
         self._build_subdomain_interface_restrictions()
 
@@ -539,62 +596,21 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             self.sd_A_VV[i_sd] = self._extract_bsr_block(A_csr, V_dofs, V_dofs)
 
         self._build_local_factored_blocks()
-        self._build_scaled_averaging_operators()
+        self._build_jump_operators()
         self._build_coarse_operator()
 
-    def _solve_local_I(self, i_sd: int, rhs_I: np.ndarray):
-        nI = self.sd_A_II[i_sd].shape[0]
-        if nI == 0:
-            return np.zeros(0, dtype=np.double)
-        return np.asarray(
-            spla.spsolve(self.sd_A_II[i_sd].tocsc(), rhs_I),
-            dtype=np.double,
-        )
-
-    def _apply_local_S_EV(self, i_sd: int, wV: np.ndarray):
-        """
-        Apply
-            S_EV wV = A_EV wV - A_EI A_II^{-1} A_IV wV
-        """
-        nE = self.sd_A_EE[i_sd].shape[0]
-        nV = self.sd_A_VV[i_sd].shape[0]
-        if nE == 0 or nV == 0:
-            return np.zeros(nE, dtype=np.double)
-
-        nI = self.sd_A_II[i_sd].shape[0]
-        if nI > 0:
-            yI = self._solve_local_I(i_sd, -self.sd_A_IV[i_sd].dot(wV))
-            return self.sd_A_EI[i_sd].dot(yI) + self.sd_A_EV[i_sd].dot(wV)
-
-        return self.sd_A_EV[i_sd].dot(wV)
-
-    def _apply_local_S_VE(self, i_sd: int, wE: np.ndarray):
-        """
-        Apply
-            S_VE wE = A_VE wE - A_VI A_II^{-1} A_IE wE
-        """
-        nV = self.sd_A_VV[i_sd].shape[0]
-        nE = self.sd_A_EE[i_sd].shape[0]
-        if nV == 0 or nE == 0:
-            return np.zeros(nV, dtype=np.double)
-
-        nI = self.sd_A_II[i_sd].shape[0]
-        if nI > 0:
-            yI = self._solve_local_I(i_sd, -self.sd_A_IE[i_sd].dot(wE))
-            return self.sd_A_VI[i_sd].dot(yI) + self.sd_A_VE[i_sd].dot(wE)
-
-        return self.sd_A_VE[i_sd].dot(wE)
-    
     def get_interface_rhs(self):
         """
-        Reduced edge rhs:
-            g_E^red = g_E - S_EV S_VV^{-1} g_V
+        FETI-DP rhs in lambda-space:
+            rhs = -( d_Lambda - B_{Lambda,Pi} S_VV^{-1} g_V )
+                = (+ fine load term) - (coarse correction term)
         """
-        nEglob = len(self.edge_interface_dof_global)
-        rhs = np.zeros(nEglob, dtype=np.double)
+        nlam = len(self.lambda_dof_global)
+        rhs = np.zeros(nlam, dtype=np.double)
+
+        # fine load term: -d_Lambda
         gV = np.zeros(len(self.vertex_dof_global), dtype=np.double)
 
-        # Step 1: form Schur loads after eliminating only I
         for i_sd in range(self.num_subdomains):
             sd_rhs = self.sd_force[i_sd]
 
@@ -606,127 +622,131 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             fE = sd_rhs[E]
             fV = sd_rhs[V]
 
-            yI = self._solve_local_I(i_sd, fI)
+            uI_f, uE_f = self._solve_local_IE(i_sd, fI, fE)
 
-            gEi = fE.copy()
-            gVi = fV.copy()
+            # + fine term
+            rhs += self.sd_B_delta[i_sd].dot(uE_f)
 
-            if len(yI) > 0:
-                gEi -= self.sd_A_EI[i_sd].dot(yI)
-                gVi -= self.sd_A_VI[i_sd].dot(yI)
-
-            rhs += self.sd_R_Ei[i_sd].T.dot(gEi)
-
+            # local contribution to g_V
             if len(V) > 0:
-                gV += self.sd_R_Vi[i_sd].T.dot(gVi)
+                gi = fV.copy()
+                gi -= self.sd_A_VI[i_sd].dot(uI_f)
+                gi -= self.sd_A_VE[i_sd].dot(uE_f)
+                gV += self.sd_R_Vi[i_sd].T.dot(gi)
 
-        # Step 2: eliminate global primal block
+        # coarse correction term
         if len(self.vertex_dof_global) > 0:
             uV = self._solve_coarse(gV)
 
             for i_sd in range(self.num_subdomains):
-                if len(self.sd_vertex_dofs[i_sd]) == 0:
+                nV = len(self.sd_vertex_dofs[i_sd])
+                if nV == 0:
                     continue
 
                 uVi = self.sd_R_Vi[i_sd].dot(uV)
-                rhs -= self.sd_R_Ei[i_sd].T.dot(self._apply_local_S_EV(i_sd, uVi))
+
+                rhsI = self.sd_A_IV[i_sd].dot(uVi)
+                rhsE = self.sd_A_EV[i_sd].dot(uVi)
+
+                _, corrE = self._solve_local_IE(i_sd, rhsI, rhsE)
+
+                # subtract coarse term
+                rhs -= self.sd_B_delta[i_sd].dot(corrE)
 
         return rhs
 
-    def mat_vec(self, edge_in: np.ndarray):
+    def mat_vec(self, lam: np.ndarray):
         """
-        Reduced edge operator:
-            S_red = S_EE - S_EV S_VV^{-1} S_VE
+        Apply FETI-DP operator in lambda-space:
+            F lam = B S_tilde^{-1} B^T lam
         """
-        edge_in = np.asarray(edge_in, dtype=np.double)
-        nEglob = len(self.edge_interface_dof_global)
-        if edge_in.shape[0] != nEglob:
-            raise ValueError(f"edge_in has size {edge_in.shape[0]}, expected {nEglob}")
+        lam = np.asarray(lam, dtype=np.double)
+        nlam = len(self.lambda_dof_global)
+        if lam.shape[0] != nlam:
+            raise ValueError(f"lambda has size {lam.shape[0]}, expected {nlam}")
 
-        out = np.zeros(nEglob, dtype=np.double)
+        out = np.zeros(nlam, dtype=np.double)
+
+        # first local fine solve pieces
         cV = np.zeros(len(self.vertex_dof_global), dtype=np.double)
-
-        # S_EE * uE and S_VE * uE
-        for i_sd in range(self.num_subdomains):
-            uEi = self.sd_R_Ei[i_sd].dot(edge_in)
-            out += self.sd_R_Ei[i_sd].T.dot(self._apply_local_Schur_E(i_sd, uEi))
-
-            if len(self.sd_vertex_dofs[i_sd]) > 0:
-                cV += self.sd_R_Vi[i_sd].T.dot(self._apply_local_S_VE(i_sd, uEi))
-
-        # subtract S_EV S_VV^{-1} S_VE * uE
-        if len(self.vertex_dof_global) > 0:
-            uV = self._solve_coarse(cV)
-
-            for i_sd in range(self.num_subdomains):
-                if len(self.sd_vertex_dofs[i_sd]) == 0:
-                    continue
-
-                uVi = self.sd_R_Vi[i_sd].dot(uV)
-                out -= self.sd_R_Ei[i_sd].T.dot(self._apply_local_S_EV(i_sd, uVi))
-
-        return out
-
-    def precond_solve(self, edge_rhs: np.ndarray):
-        """
-        BDDC preconditioner action:
-            M^{-1} r = R_D^T \tilde S^{-1} R_D r
-
-        Implemented with the same local IE solves + global vertex coarse solve
-        pattern as the working FETI-DP inverse-side operator, but with scaled
-        averaging instead of the jump operator.
-        """
-        edge_rhs = np.asarray(edge_rhs, dtype=np.double)
-        nEglob = len(self.edge_interface_dof_global)
-        if edge_rhs.shape[0] != nEglob:
-            raise ValueError(f"edge_rhs has size {edge_rhs.shape[0]}, expected {nEglob}")
-
-        out = np.zeros(nEglob, dtype=np.double)
-        cV = np.zeros(len(self.vertex_dof_global), dtype=np.double)
+        local_z = {}
 
         for i_sd in range(self.num_subdomains):
-            qE = self.sd_R_DGamma[i_sd].dot(edge_rhs)
+            qE = self.sd_B_delta[i_sd].T.dot(lam)  # local dual forcing = B_i^T lambda
             uI, uE = self._solve_local_IE(
                 i_sd,
-                np.zeros(len(self.sd_interior_dofs[i_sd]), dtype=np.double),
+                np.zeros_like(self.sd_interior_dofs[i_sd], dtype=np.double),
                 qE,
             )
+            local_z[i_sd] = (uI, uE)
 
-            out += self.sd_R_DGamma[i_sd].T.dot(uE)
+            out += self.sd_B_delta[i_sd].dot(uE)
 
             if len(self.sd_vertex_dofs[i_sd]) > 0:
                 ci = self.sd_A_VI[i_sd].dot(uI) + self.sd_A_VE[i_sd].dot(uE)
                 cV += self.sd_R_Vi[i_sd].T.dot(ci)
 
+        # assembled coarse correction
         if len(self.vertex_dof_global) > 0:
             uV = self._solve_coarse(cV)
 
             for i_sd in range(self.num_subdomains):
-                if len(self.sd_vertex_dofs[i_sd]) == 0:
+                nV = len(self.sd_vertex_dofs[i_sd])
+                if nV == 0:
                     continue
 
                 uVi = self.sd_R_Vi[i_sd].dot(uV)
+
                 rhsI = self.sd_A_IV[i_sd].dot(uVi)
                 rhsE = self.sd_A_EV[i_sd].dot(uVi)
 
                 _, corrE = self._solve_local_IE(i_sd, rhsI, rhsE)
-                out += self.sd_R_DGamma[i_sd].T.dot(corrE)
+                out += self.sd_B_delta[i_sd].dot(corrE)
 
         return out
 
-    def get_global_solution(self, edge_disp: np.ndarray):
+    def precond_solve(self, lam_rhs: np.ndarray):
         """
-        Recover physical global displacement from solved global edge displacement.
+        Dirichlet preconditioner action:
+            M^{-1} r = sum_i B_D^{(i)} S_EE^{(i)} B_D^{(i)T} r
+
+        Here S_EE^{(i)} is the local Dirichlet Schur complement with primal
+        variables fixed to zero.
         """
-        edge_disp = np.asarray(edge_disp, dtype=np.double)
-        nEglob = len(self.edge_interface_dof_global)
-        if edge_disp.shape[0] != nEglob:
-            raise ValueError(f"edge_disp has size {edge_disp.shape[0]}, expected {nEglob}")
+        lam_rhs = np.asarray(lam_rhs, dtype=np.double)
+        nlam = len(self.lambda_dof_global)
+        if lam_rhs.shape[0] != nlam:
+            raise ValueError(f"preconditioner rhs has size {lam_rhs.shape[0]}, expected {nlam}")
+
+        out = np.zeros(nlam, dtype=np.double)
+
+        for i_sd in range(self.num_subdomains):
+            wE = self.sd_BD_delta[i_sd].T.dot(lam_rhs)
+            zE = self._apply_local_Schur_E(i_sd, wE)
+            out += self.sd_BD_delta[i_sd].dot(zE)
+
+        return out
+
+    def get_global_solution(self, lam: np.ndarray):
+        """
+        Recover physical global displacement from lambda.
+
+        Recovery:
+          1) build global coarse rhs
+               gV(lambda) = gV(load) + sum_i R_i^T [A_VI A_VE] K_IE^{-1} [0; B_i^T lam]
+          2) solve uV
+          3) for each subdomain solve
+               K_IE [uI; uE] = [fI; fE] - [A_IV; A_EV] uVi - [0; B_i^T lam]
+          4) assemble global I,V directly; average E over subdomains
+        """
+        lam = np.asarray(lam, dtype=np.double)
+        nlam = len(self.lambda_dof_global)
+        if lam.shape[0] != nlam:
+            raise ValueError(f"lambda has size {lam.shape[0]}, expected {nlam}")
 
         global_soln = np.zeros(self.N, dtype=np.double)
-        global_soln[self.edge_interface_dof_global] = edge_disp.copy()
 
-        # build coarse rhs from loads and edge contribution
+        # First compute load-only coarse rhs gV
         gV = np.zeros(len(self.vertex_dof_global), dtype=np.double)
 
         for i_sd in range(self.num_subdomains):
@@ -740,8 +760,7 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             fE = sd_rhs[E]
             fV = sd_rhs[V]
 
-            uEi = self.sd_R_Ei[i_sd].dot(edge_disp)
-            uI_f, uE_f = self._solve_local_IE(i_sd, fI, fE - uEi)
+            uI_f, uE_f = self._solve_local_IE(i_sd, fI, fE)
 
             if len(V) > 0:
                 gi = fV.copy()
@@ -749,10 +768,27 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
                 gi -= self.sd_A_VE[i_sd].dot(uE_f)
                 gV += self.sd_R_Vi[i_sd].T.dot(gi)
 
+        # Add lambda-dependent coarse rhs piece: -B_{Lambda,Pi}^T lam
+        for i_sd in range(self.num_subdomains):
+            qE = self.sd_B_delta[i_sd].T.dot(lam)
+            uI_l, uE_l = self._solve_local_IE(
+                i_sd,
+                np.zeros(len(self.sd_interior_dofs[i_sd]), dtype=np.double),
+                qE,
+            )
+
+            if len(self.sd_vertex_dofs[i_sd]) > 0:
+                ci = self.sd_A_VI[i_sd].dot(uI_l) + self.sd_A_VE[i_sd].dot(uE_l)
+                gV += self.sd_R_Vi[i_sd].T.dot(ci)
+
+        # Solve coarse problem
         uV_global = self._solve_coarse(gV) if len(self.vertex_dof_global) > 0 else np.zeros(0)
 
-        if len(self.vertex_dof_global) > 0:
-            global_soln[self.vertex_dof_global] = uV_global
+        # Average edge values into global physical solution
+        edge_accum = np.zeros(len(self.edge_interface_dof_global), dtype=np.double)
+        edge_count = np.zeros(len(self.edge_interface_dof_global), dtype=np.double)
+
+        edge_pos = {int(d): j for j, d in enumerate(self.edge_interface_dof_global)}
 
         for i_sd in range(self.num_subdomains):
             sd_rhs = self.sd_force[i_sd]
@@ -762,28 +798,38 @@ class BDDC_PlateAssembler(SubdomainPlateAssembler):
             V = self.sd_vertex_dofs[i_sd]
 
             fI = sd_rhs[I].copy()
-            uEi = self.sd_R_Ei[i_sd].dot(edge_disp)
+            fE = sd_rhs[E].copy()
+
+            qE = self.sd_B_delta[i_sd].T.dot(lam)
             uVi = self.sd_R_Vi[i_sd].dot(uV_global) if len(V) > 0 else np.zeros(0)
 
             rhsI = fI.copy()
-            if len(E) > 0:
-                rhsI -= self.sd_A_IE[i_sd].dot(uEi)
+            rhsE = fE.copy() - qE
+
             if len(V) > 0:
                 rhsI -= self.sd_A_IV[i_sd].dot(uVi)
+                rhsE -= self.sd_A_EV[i_sd].dot(uVi)
 
-            if len(I) > 0:
-                uI = spla.spsolve(self.sd_A_II[i_sd].tocsc(), rhsI)
-            else:
-                uI = np.zeros(0, dtype=np.double)
+            uI, uE = self._solve_local_IE(i_sd, rhsI, rhsE)
 
+            # interior directly
             sd_global_dofs = self.get_subdomain_global_dofs(i_sd)
+            global_I_dofs = sd_global_dofs[I]
+            global_soln[global_I_dofs] = uI
 
-            if len(I) > 0:
-                global_I_dofs = sd_global_dofs[I]
-                global_soln[global_I_dofs] = uI
-
+            # vertices directly (assembled/global primal values)
             if len(V) > 0:
                 global_V_dofs = sd_global_dofs[V]
                 global_soln[global_V_dofs] = uVi
+
+            # average recovered edge values
+            E_global = self.sd_edge_global_dofs[i_sd]
+            for a, gdof in enumerate(E_global):
+                j = edge_pos[int(gdof)]
+                edge_accum[j] += uE[a]
+                edge_count[j] += 1.0
+
+        mask = edge_count > 0
+        global_soln[self.edge_interface_dof_global[mask]] = edge_accum[mask] / edge_count[mask]
 
         return global_soln
