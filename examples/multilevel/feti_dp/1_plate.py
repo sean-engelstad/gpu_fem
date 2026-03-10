@@ -16,12 +16,13 @@ from krylov import right_pcg_matfree
 # only thing is would maybe need true multi-level BDDC or multi-level FETI
 # to get fully h-independent convergence I bet.. iter count is going up a bit more for higher DOF 
 
-# nxe, nxs = 256, 32
+# nxe, nxs = 256, 64
+nxe, nxs = 128, 32
 # nxe, nxs = 128, 16
 # nxe, nxs = 128, 8
-# nxe, nxs = 64, 8
+# nxe, nxs = 64, 16
 # nxe, nxs = 32, 4
-nxe, nxs = 32, 8
+# nxe, nxs = 32, 8
 # nxe, nxs = 4, 2
 
 # thick = 1e-1
@@ -66,6 +67,8 @@ assembler = FETIDP_Assembler(
     #     # precond_cls=ExactSparseSolver, nsteps=1, omega=1.0,
     # ),
 )
+
+print(f"{assembler.num_subdomains=}")
 
 assembler.assemble_all()
 lam_rhs = assembler.get_lam_rhs() # g_G rhs 
