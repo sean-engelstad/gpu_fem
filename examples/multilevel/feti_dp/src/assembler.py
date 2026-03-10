@@ -2,6 +2,7 @@ from ._assembler import Subdomain2DAssembler
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+from .inexact import *
 
 
 class FETIDP_Assembler(Subdomain2DAssembler):
@@ -33,13 +34,37 @@ class FETIDP_Assembler(Subdomain2DAssembler):
         nxs: int = 1,
         nys: int = 1,
         scale_R_GE: bool = True,
-        coarse_mode: str = "assembled",  # "assembled" or "local"
+        coarse_mode: str = "assembled",
         geometry='plate',
-        radius:float=1.0, # ignored if plate case
+        radius: float = 1.0,
+        nye:int=None,
+
+        # NEW options
+        subdomain_solver_cls=ExactSparseSolver,
+        subdomain_solver_kwargs=None,
+
+        coarse_solver_cls=ExactSparseSolver,
+        coarse_solver_kwargs=None,
     ):
+        print("WARNING: FETI-DP doesn't support general BCs yet, only all DOF clamped on Dirichlet nodes..")
+        print("\tit can support in future, but then some DOF per node are on interface and some on interior (more tricky and probably will need duplicate nodes with Identity blocks)")
+        assert clamped
+
         Subdomain2DAssembler.__init__(
-            self, ELEMENT, nxe, E, nu, thick, length, width, load_fcn, clamped, nxs, nys, geometry, radius
+            self, ELEMENT, nxe, E, nu, thick, length, width, load_fcn, clamped, nxs, nys, geometry, radius, nye
         )
+
+        self.subdomain_solver_cls = subdomain_solver_cls
+        self.subdomain_solver_kwargs = dict(subdomain_solver_kwargs or {})
+
+        self.coarse_solver_cls = coarse_solver_cls
+        self.coarse_solver_kwargs = dict(coarse_solver_kwargs or {})
+
+        self.sd_solver_IE = {}
+        self.sd_solver_II = {}
+        self.sd_solver_SVV = {}
+
+        self.S_VV_solver = None
 
         self.scale_R_GE = bool(scale_R_GE)
         self.coarse_mode = coarse_mode
@@ -355,13 +380,15 @@ class FETIDP_Assembler(Subdomain2DAssembler):
                  (np.array(row_lists[i_sd], dtype=int), np.array(col_lists[i_sd], dtype=int))),
                 shape=(nlam, nEi),
             )
+            # print(f"{self.sd_B_delta[i_sd].toarray()=}")
 
     def _build_local_factored_blocks(self):
         self.sd_A_IE2 = {}
         self.sd_A_IEV = {}
 
         for i_sd in range(self.num_subdomains):
-            self.sd_A_IE2[i_sd] = sp.bmat(
+
+            A_IE2 = sp.bmat(
                 [
                     [self.sd_A_II[i_sd], self.sd_A_IE[i_sd]],
                     [self.sd_A_EI[i_sd], self.sd_A_EE[i_sd]],
@@ -369,7 +396,7 @@ class FETIDP_Assembler(Subdomain2DAssembler):
                 format="csc",
             )
 
-            self.sd_A_IEV[i_sd] = sp.bmat(
+            A_IEV = sp.bmat(
                 [
                     [self.sd_A_II[i_sd], self.sd_A_IE[i_sd], self.sd_A_IV[i_sd]],
                     [self.sd_A_EI[i_sd], self.sd_A_EE[i_sd], self.sd_A_EV[i_sd]],
@@ -377,6 +404,24 @@ class FETIDP_Assembler(Subdomain2DAssembler):
                 ],
                 format="csc",
             )
+
+            self.sd_A_IE2[i_sd] = A_IE2
+            self.sd_A_IEV[i_sd] = A_IEV
+
+            # build subdomain solver for IE block
+            self.sd_solver_IE[i_sd] = self.subdomain_solver_cls(
+                A_IE2,
+                **self.subdomain_solver_kwargs,
+            )
+
+            # solver for A_II
+            if self.sd_A_II[i_sd].shape[0] > 0:
+                self.sd_solver_II[i_sd] = self.subdomain_solver_cls(
+                    self.sd_A_II[i_sd].tocsc(),
+                    **self.subdomain_solver_kwargs,
+                )
+            else:
+                self.sd_solver_II[i_sd] = None
 
     def _build_coarse_operator(self):
         """
@@ -424,8 +469,15 @@ class FETIDP_Assembler(Subdomain2DAssembler):
 
         self.S_VV = Sglob.tocsc()
 
+        # if self.S_VV.shape[0] > 0:
+        #     self.S_VV_solver = spla.factorized(self.S_VV)
+        # else:
+        #     self.S_VV_solver = None
         if self.S_VV.shape[0] > 0:
-            self.S_VV_solver = spla.factorized(self.S_VV)
+            self.S_VV_solver = self.coarse_solver_cls(
+                self.S_VV,
+                **self.coarse_solver_kwargs,
+            )
         else:
             self.S_VV_solver = None
 
@@ -444,7 +496,8 @@ class FETIDP_Assembler(Subdomain2DAssembler):
         if nE > 0:
             rhs[nI:] = rhs_E
 
-        sol = spla.spsolve(self.sd_A_IE2[i_sd], rhs)
+        # sol = spla.spsolve(self.sd_A_IE2[i_sd], rhs)
+        sol = self.sd_solver_IE[i_sd].solve(rhs)
         uI = sol[:nI]
         uE = sol[nI:]
         return uI, uE
@@ -462,7 +515,8 @@ class FETIDP_Assembler(Subdomain2DAssembler):
 
         if nI > 0:
             rhsI = -self.sd_A_IE[i_sd].dot(wE)
-            yI = spla.spsolve(self.sd_A_II[i_sd].tocsc(), rhsI)
+            # yI = spla.spsolve(self.sd_A_II[i_sd].tocsc(), rhsI)
+            yI = self.sd_solver_II[i_sd].solve(rhsI)
             return self.sd_A_EI[i_sd].dot(yI) + self.sd_A_EE[i_sd].dot(wE)
 
         return self.sd_A_EE[i_sd].dot(wE)
@@ -511,7 +565,11 @@ class FETIDP_Assembler(Subdomain2DAssembler):
             return np.zeros(0, dtype=np.double)
 
         if self.coarse_mode == "assembled":
-            return np.asarray(self.S_VV_solver(rhs_global_V), dtype=np.double)
+            # return np.asarray(self.S_VV_solver(rhs_global_V), dtype=np.double)
+            return np.asarray(
+                self.S_VV_solver.solve(rhs_global_V),
+                dtype=np.double,
+            )
 
         if self.coarse_mode == "local":
             out = np.zeros(nVg, dtype=np.double)
@@ -599,7 +657,7 @@ class FETIDP_Assembler(Subdomain2DAssembler):
         self._build_jump_operators()
         self._build_coarse_operator()
 
-    def get_interface_rhs(self):
+    def get_lam_rhs(self):
         """
         FETI-DP rhs in lambda-space:
             rhs = -( d_Lambda - B_{Lambda,Pi} S_VV^{-1} g_V )
@@ -833,3 +891,305 @@ class FETIDP_Assembler(Subdomain2DAssembler):
         global_soln[self.edge_interface_dof_global[mask]] = edge_accum[mask] / edge_count[mask]
 
         return global_soln
+    
+
+    # ======================================
+    # DEBUG ROUTINES
+    # =======================================
+
+    def _stack_local_vector(self, vec_dict, keys=None):
+        """
+        Stack local vectors in subdomain order into one global unassembled vector.
+        """
+        if keys is None:
+            keys = range(self.num_subdomains)
+        parts = [np.asarray(vec_dict[i], dtype=np.double) for i in keys]
+        if len(parts) == 0:
+            return np.zeros(0, dtype=np.double)
+        return np.concatenate(parts) if any(p.size > 0 for p in parts) else np.zeros(0, dtype=np.double)
+
+
+    def assemble_global_fetidp_blocks(self):
+        """
+        Assemble the global 4x4 partially assembled FETI-DP saddle matrix blocks
+        in variables (U_I, U_E, U_V, lambda), where
+
+        U_I = [u_I^(1); ...; u_I^(N)]
+        U_E = [u_E^(1); ...; u_E^(N)]
+        U_V = global primal/vertex unknown
+        lambda = global multiplier
+
+        Returns
+        -------
+        blocks : dict
+            Dictionary with matrices:
+            AII, AIE, AIV, AEI, AEE, AEV, AVI, AVE, AVV, B
+            and rhs assembly helpers:
+            FI_lens, FE_lens
+        """
+        AII_blocks = []
+        AIE_blocks = []
+        AEI_blocks = []
+        AEE_blocks = []
+
+        AIV_blocks = []
+        AEV_blocks = []
+
+        FI_lens = []
+        FE_lens = []
+
+        nVg = len(self.vertex_dof_global)
+        nlam = len(self.lambda_dof_global)
+
+        # For B = [B1 B2 ... BN]
+        B_blocks = []
+
+        for i_sd in range(self.num_subdomains):
+            AII_blocks.append(self.sd_A_II[i_sd].tocsc())
+            AIE_blocks.append(self.sd_A_IE[i_sd].tocsc())
+            AEI_blocks.append(self.sd_A_EI[i_sd].tocsc())
+            AEE_blocks.append(self.sd_A_EE[i_sd].tocsc())
+
+            RVi = self.sd_R_Vi[i_sd].tocsc()  # V_global -> V_i
+
+            AIV_blocks.append((self.sd_A_IV[i_sd] @ RVi).tocsc())
+            AEV_blocks.append((self.sd_A_EV[i_sd] @ RVi).tocsc())
+
+            FI_lens.append(self.sd_A_II[i_sd].shape[0])
+            FE_lens.append(self.sd_A_EE[i_sd].shape[0])
+
+            B_blocks.append(self.sd_B_delta[i_sd].tocsc())
+
+        AII = sp.block_diag(AII_blocks, format="csc") if len(AII_blocks) else sp.csc_matrix((0, 0))
+        AIE = sp.block_diag(AIE_blocks, format="csc") if len(AIE_blocks) else sp.csc_matrix((0, 0))
+        AEI = sp.block_diag(AEI_blocks, format="csc") if len(AEI_blocks) else sp.csc_matrix((0, 0))
+        AEE = sp.block_diag(AEE_blocks, format="csc") if len(AEE_blocks) else sp.csc_matrix((0, 0))
+
+        AIV = sp.vstack(AIV_blocks, format="csc") if len(AIV_blocks) else sp.csc_matrix((0, nVg))
+        AEV = sp.vstack(AEV_blocks, format="csc") if len(AEV_blocks) else sp.csc_matrix((0, nVg))
+
+        AVI = AIV.T.tocsc()
+        AVE = AEV.T.tocsc()
+
+        AVV = sp.csc_matrix((nVg, nVg))
+        for i_sd in range(self.num_subdomains):
+            RVi = self.sd_R_Vi[i_sd].tocsc()
+            AVV = AVV + RVi.T @ self.sd_A_VV[i_sd].tocsc() @ RVi
+        AVV = AVV.tocsc()
+
+        # Horizontal concatenation of local jump matrices
+        # B has shape (nlam, sum_i nE_i)
+        B = sp.hstack(B_blocks, format="csc") if len(B_blocks) else sp.csc_matrix((nlam, 0))
+
+        return {
+            "AII": AII,
+            "AIE": AIE,
+            "AIV": AIV,
+            "AEI": AEI,
+            "AEE": AEE,
+            "AEV": AEV,
+            "AVI": AVI,
+            "AVE": AVE,
+            "AVV": AVV,
+            "B": B,
+            "FI_lens": FI_lens,
+            "FE_lens": FE_lens,
+        }
+
+
+    def assemble_global_fetidp_matrix(self):
+        """
+        Assemble the full global 4x4 saddle matrix in partially assembled variables:
+            [ U_I ; U_E ; U_V ; lambda ].
+        """
+        blk = self.assemble_global_fetidp_blocks()
+
+        AII = blk["AII"]
+        AIE = blk["AIE"]
+        AIV = blk["AIV"]
+        AEI = blk["AEI"]
+        AEE = blk["AEE"]
+        AEV = blk["AEV"]
+        AVI = blk["AVI"]
+        AVE = blk["AVE"]
+        AVV = blk["AVV"]
+        B   = blk["B"]
+
+        ZI_L = sp.csc_matrix((AII.shape[0], B.shape[0]))   # nI x nlam
+        ZV_L = sp.csc_matrix((AVV.shape[0], B.shape[0]))   # nV x nlam
+        ZL_I = sp.csc_matrix((B.shape[0], AII.shape[0]))   # nlam x nI
+        ZL_V = sp.csc_matrix((B.shape[0], AVV.shape[0]))   # nlam x nV
+        ZL_L = sp.csc_matrix((B.shape[0], B.shape[0]))     # nlam x nlam
+
+        K = sp.bmat([
+            [AII, AEI*0 + AIE, AIV, ZI_L],
+            [AEI, AEE,         AEV, B.T ],
+            [AVI, AVE,         AVV, ZV_L],
+            [ZL_I, B,          ZL_V, ZL_L],
+        ], format="csc")
+
+        return K
+
+
+    def assemble_global_fetidp_rhs(self):
+        """
+        Assemble rhs for the global partially assembled saddle system:
+            [F_I ; F_E ; F_V ; 0]
+        """
+        FI_parts = []
+        FE_parts = []
+        nVg = len(self.vertex_dof_global)
+        FV = np.zeros(nVg, dtype=np.double)
+
+        for i_sd in range(self.num_subdomains):
+            sd_rhs = self.sd_force[i_sd]
+
+            I = self.sd_interior_dofs[i_sd]
+            E = self.sd_edge_dofs[i_sd]
+            V = self.sd_vertex_dofs[i_sd]
+
+            FI_parts.append(np.asarray(sd_rhs[I], dtype=np.double))
+            FE_parts.append(np.asarray(sd_rhs[E], dtype=np.double))
+
+            if len(V) > 0:
+                FV += self.sd_R_Vi[i_sd].T.dot(np.asarray(sd_rhs[V], dtype=np.double))
+
+        FI = np.concatenate(FI_parts) if len(FI_parts) else np.zeros(0, dtype=np.double)
+        FE = np.concatenate(FE_parts) if len(FE_parts) else np.zeros(0, dtype=np.double)
+        FL = np.zeros(len(self.lambda_dof_global), dtype=np.double)
+
+        return np.concatenate([FI, FE, FV, FL])
+
+
+    def recover_all_fetidp_unknowns(self, lam: np.ndarray):
+        """
+        Recover the partially assembled unknowns (U_I, U_E, U_V, lam)
+        corresponding to the FETI-DP saddle system.
+
+        Important:
+        U_E is the stacked local edge vector, NOT the averaged physical edge field.
+        """
+        lam = np.asarray(lam, dtype=np.double)
+
+        # Build coarse rhs gV = load-part + lambda-part
+        gV = np.zeros(len(self.vertex_dof_global), dtype=np.double)
+
+        for i_sd in range(self.num_subdomains):
+            sd_rhs = self.sd_force[i_sd]
+            I = self.sd_interior_dofs[i_sd]
+            E = self.sd_edge_dofs[i_sd]
+            V = self.sd_vertex_dofs[i_sd]
+
+            fI = sd_rhs[I]
+            fE = sd_rhs[E]
+            fV = sd_rhs[V]
+
+            uI_f, uE_f = self._solve_local_IE(i_sd, fI, fE)
+
+            if len(V) > 0:
+                gi = fV.copy()
+                gi -= self.sd_A_VI[i_sd].dot(uI_f)
+                gi -= self.sd_A_VE[i_sd].dot(uE_f)
+                gV += self.sd_R_Vi[i_sd].T.dot(gi)
+
+        for i_sd in range(self.num_subdomains):
+            qE = self.sd_B_delta[i_sd].T.dot(lam)
+            uI_l, uE_l = self._solve_local_IE(
+                i_sd,
+                np.zeros(len(self.sd_interior_dofs[i_sd]), dtype=np.double),
+                qE,
+            )
+
+            if len(self.sd_vertex_dofs[i_sd]) > 0:
+                ci = self.sd_A_VI[i_sd].dot(uI_l) + self.sd_A_VE[i_sd].dot(uE_l)
+                gV += self.sd_R_Vi[i_sd].T.dot(ci)
+
+        uV = self._solve_coarse(gV) if len(self.vertex_dof_global) > 0 else np.zeros(0, dtype=np.double)
+
+        uI_dict = {}
+        uE_dict = {}
+
+        for i_sd in range(self.num_subdomains):
+            sd_rhs = self.sd_force[i_sd]
+
+            I = self.sd_interior_dofs[i_sd]
+            E = self.sd_edge_dofs[i_sd]
+            V = self.sd_vertex_dofs[i_sd]
+
+            fI = np.asarray(sd_rhs[I], dtype=np.double).copy()
+            fE = np.asarray(sd_rhs[E], dtype=np.double).copy()
+
+            qE = self.sd_B_delta[i_sd].T.dot(lam)
+            uVi = self.sd_R_Vi[i_sd].dot(uV) if len(V) > 0 else np.zeros(0, dtype=np.double)
+
+            rhsI = fI.copy()
+            rhsE = fE.copy() - qE
+
+            if len(V) > 0:
+                rhsI -= self.sd_A_IV[i_sd].dot(uVi)
+                rhsE -= self.sd_A_EV[i_sd].dot(uVi)
+
+            uI, uE = self._solve_local_IE(i_sd, rhsI, rhsE)
+            uI_dict[i_sd] = uI
+            uE_dict[i_sd] = uE
+
+        UI = self._stack_local_vector(uI_dict)
+        UE = self._stack_local_vector(uE_dict)
+
+        return UI, UE, uV, lam.copy()
+
+
+    def compute_fetidp_block_residual(self, lam: np.ndarray):
+        """
+        Compute the residual of the global partially assembled FETI-DP saddle system.
+
+        Returns
+        -------
+        out : dict
+            Contains rI, rE, rV, rL, r, norms, and recovered unknowns.
+        """
+        lam = np.asarray(lam, dtype=np.double)
+        UI, UE, UV, LAM = self.recover_all_fetidp_unknowns(lam)
+        blk = self.assemble_global_fetidp_blocks()
+
+        FI_parts = []
+        FE_parts = []
+        FV = np.zeros(len(self.vertex_dof_global), dtype=np.double)
+
+        for i_sd in range(self.num_subdomains):
+            sd_rhs = self.sd_force[i_sd]
+            I = self.sd_interior_dofs[i_sd]
+            E = self.sd_edge_dofs[i_sd]
+            V = self.sd_vertex_dofs[i_sd]
+
+            FI_parts.append(np.asarray(sd_rhs[I], dtype=np.double))
+            FE_parts.append(np.asarray(sd_rhs[E], dtype=np.double))
+            if len(V) > 0:
+                FV += self.sd_R_Vi[i_sd].T.dot(np.asarray(sd_rhs[V], dtype=np.double))
+
+        FI = np.concatenate(FI_parts) if len(FI_parts) else np.zeros(0, dtype=np.double)
+        FE = np.concatenate(FE_parts) if len(FE_parts) else np.zeros(0, dtype=np.double)
+
+        rI = blk["AII"].dot(UI) + blk["AIE"].dot(UE) + blk["AIV"].dot(UV) - FI
+        rE = blk["AEI"].dot(UI) + blk["AEE"].dot(UE) + blk["AEV"].dot(UV) + blk["B"].T.dot(LAM) - FE
+        rV = blk["AVI"].dot(UI) + blk["AVE"].dot(UE) + blk["AVV"].dot(UV) - FV
+        rL = blk["B"].dot(UE)
+
+        r = np.concatenate([rI, rE, rV, rL])
+
+        return {
+            "UI": UI,
+            "UE": UE,
+            "UV": UV,
+            "LAM": LAM,
+            "rI": rI,
+            "rE": rE,
+            "rV": rV,
+            "rL": rL,
+            "r": r,
+            "norm_rI": np.linalg.norm(rI),
+            "norm_rE": np.linalg.norm(rE),
+            "norm_rV": np.linalg.norm(rV),
+            "norm_rL": np.linalg.norm(rL),
+            "norm_r": np.linalg.norm(r),
+        }

@@ -18,13 +18,17 @@ from krylov import right_pcg_matfree
 # nxe, nxs = 128, 8
 # nxe, nxs = 64, 8
 # nxe, nxs = 32, 4
-nxe, nxs = 16, 2
+# nxe, nxs = 16, 2
+# nxe, nxs = 16, 4
+nxe, nxs = 32, 8
 
 # thick = 1e-1
-# thick = 1e-2
-thick = 1e-3
+thick = 1e-2
+# thick = 1e-3
 
-m, n = 2, 3
+
+m, n = 2, 2
+# m, n = 2, 3
 
 radius = 1.0
 xs_load_fcn = lambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
@@ -53,13 +57,18 @@ assembler = FETIDP_Assembler(
 
 
 assembler.assemble_all()
-interface_rhs = assembler.get_interface_rhs() # g_G rhs 
-print(f"{np.linalg.norm(interface_rhs)=:.4e}")
+
+# plot direct solve first
+direct_soln = assembler.direct_solve(assembly=False) # cause already assembled
+assembler.plot_disp()
+
+lam_rhs = assembler.get_lam_rhs() # g_G rhs 
+print(f"{np.linalg.norm(lam_rhs)=:.4e}")
 
 # assembler.neumann_solve(rhs)
 norm_hist = []
-interface_soln, nsteps = right_pcg_matfree(
-    assembler, b=interface_rhs,
+lam_soln, nsteps = right_pcg_matfree(
+    assembler, b=lam_rhs,
     rtol=1e-6, atol=1e-20,
     max_iter=200,
     print_freq=3,
@@ -67,15 +76,16 @@ interface_soln, nsteps = right_pcg_matfree(
 )
 
 # reconstruct global solution
-global_soln = assembler.get_global_solution(interface_soln)
+global_soln = assembler.get_global_solution(lam_soln)
 
-# compare to direct solve
-direct_soln = assembler.direct_solve(assembly=False) # cause already assembled
+
 
 # compute solution error..
 diff = global_soln - direct_soln
-err_nrm = np.linalg.norm(diff)
-print(f"{err_nrm=:.4e}")
+err_nrm = np.max(np.abs(diff))
+orig_nrm = np.max(np.abs(direct_soln))
+rel_nrm = err_nrm / orig_nrm
+print(f"{err_nrm=:.4e} {orig_nrm=:.4e} {rel_nrm=:.4e}")
 
 # then plot the solution
 assembler.u = global_soln.copy() # store in assembler for plot

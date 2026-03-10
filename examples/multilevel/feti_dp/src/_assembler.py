@@ -88,9 +88,14 @@ class Subdomain2DAssembler:
         nys: int = 1,   # num subdomains in y-dir
         geometry:str='plate',
         radius:float=1.0,
+        nye:int=None,
     ):
         self.element = ELEMENT
         self.nxe = int(nxe)
+        if nye is None:
+            self.nye = int(nxe)
+        else:
+            self.nye = int(nye)
         self.length = float(length)
         self.width = float(width)
         self.load_fcn = load_fcn
@@ -390,7 +395,7 @@ class Subdomain2DAssembler:
     def _get_bc_dofs_per_node(self):
         """Return constrained dof ids within a node."""
         if self.clamped:
-            return [0, 1, 2]
+            return [_ for _ in range(self.dof_per_node)]
         return [0]
 
     # =================================================================
