@@ -119,7 +119,11 @@ int main(int argc, char **argv) {
     // factor each solver
     ie_solver->factor();
     i_solver->factor();
+
+    // then assemble coarse problem (as it uses IE solver) before factoring v_solver
+    fetidp->assemble_coarse_problem();
     v_solver->factor();
+    
 
     // lambda rhs
     VecType<T> lam_rhs(fetidp->getLambdaSize());

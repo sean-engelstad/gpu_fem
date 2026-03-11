@@ -925,22 +925,26 @@ class FetidpSolver : public BaseSolver {
         kmat_IEV->zeroValues();
 
         // int cols_per_elem = (Quadrature::num_quad_pts <= 4) ? 24 : 9;
+        const int elems_per_block = 1;
         int cols_per_elem = (Basis::order == 1 ? 24 : Basis::order == 2 ? 9 : 4);
         dim3 block(num_quad_pts, cols_per_elem, 1);
-        int elem_cols_per_block = cols_per_elem * 1;
+        int elem_cols_per_block = cols_per_elem * elems_per_block;
         int nblocks = (num_elements * dof_per_elem + elem_cols_per_block - 1) / elem_cols_per_block;
         dim3 grid(nblocks);
 
-        k_add_jacobian_fast<T, 1, ShellAssembler, Data, Vec_, Mat_><<<grid, block>>>(
-            IEV_nnodes, num_elements, cols_per_elem, d_elem_components, d_IEV_elem_conn,
-            d_IEV_elem_conn, d_IEV_xpts, d_IEV_vars, d_compData, kmat_IEV);
+        k_add_jacobian_fast<T, elems_per_block, ShellAssembler, Data, Vec_, BsrMatType>
+            <<<grid, block>>>(IEV_nnodes, num_elements, cols_per_elem, d_elem_components,
+                              d_IEV_elem_conn, d_IEV_elem_conn, d_IEV_xpts, d_IEV_vars, d_compData,
+                              *kmat_IEV);
 
         // copy entries from kmat_IEV to kmat_IE, kmat_I and S_VV matrices
         copyKmat_IEVtoIE();
         copyKmat_IEVtoI();
-        copyKmat_IEVtoSvv();
+    }
 
+    void assemble_coarse_problem() {
         // now also compute the Schur complement inverse term in S_VV
+        copyKmat_IEVtoSvv();
         computeSvvInverseTerm();
     }
 
@@ -1134,7 +1138,8 @@ class FetidpSolver : public BaseSolver {
         int n_IE_vals = IE_nofill_nnzb * block_dim2;
         dim3 block(32), grid((n_IE_vals + 31) / 32);
         k_copyMatToMat_restrict<T><<<grid, block>>>(IE_nofill_nnzb, block_dim, d_kmat_IEtoIEV_map,
-                                                    d_kmat_IEnofill_map, d_IEV_vals, d_IE_vals);
+                                                    d_kmat_IEnofill_map, d_IEV_vals.getPtr(),
+                                                    d_IE_vals.getPtr());
     }
 
     void copyKmat_IEVtoI() {
@@ -1143,7 +1148,8 @@ class FetidpSolver : public BaseSolver {
         int n_I_vals = I_nofill_nnzb * block_dim2;
         dim3 block(32), grid((n_I_vals + 31) / 32);
         k_copyMatToMat_restrict<T><<<grid, block>>>(I_nofill_nnzb, block_dim, d_kmat_ItoIEV_map,
-                                                    d_kmat_Inofill_map, d_IEV_vals, d_I_vals);
+                                                    d_kmat_Inofill_map, d_IEV_vals.getPtr(),
+                                                    d_I_vals.getPtr());
     }
 
     void copyKmat_IEVtoSvv() {
@@ -1154,7 +1160,7 @@ class FetidpSolver : public BaseSolver {
         dim3 block(32), grid((n_Svv_vals + 31) / 32);
         k_copyMatToMat_restrict<T, true><<<grid, block>>>(Svv_copy_nnzb, block_dim,
                                                           d_Svv_IEV_copyBlocks, d_Svv_Vc_copyBlocks,
-                                                          d_IEV_vals, d_Svv_vals);
+                                                          d_IEV_vals.getPtr(), d_Svv_vals.getPtr());
     }
 
     void computeSvvInverseTerm() {
@@ -1297,6 +1303,16 @@ class FetidpSolver : public BaseSolver {
         addVecIEVtoIE(temp_IEV, y, 1.0, b);
     }
 
+    void addVecIEtoI(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // scatter interior part from I into IE
+        // map(a * x) + b * y => y
+
+        // reuse previous routines instead of adding a new map..
+        // don't worry this routine is only called once in main solve so not too much extra overhead
+        addVecIEtoIEV(x, temp_IEV, a, 0.0);
+        addVecIEVtoI(temp_IEV, y, 1.0, b);
+    }
+
     void zeroInteriorIE(DeviceVec<T> &x) {
         // keep edge part, zero interior part
         int nvals = IE_nnodes * block_dim;
@@ -1304,7 +1320,7 @@ class FetidpSolver : public BaseSolver {
         k_zeroInterior<T><<<grid, block>>>(IE_nnodes, block_dim, d_IE_interior, x.getPtr());
     }
 
-    void addVecLamtoIE(DeviceVec<T> &lam, DeviceVec<T> &vec_IE, T a, T b) {
+    void addVecLamtoIE(const DeviceVec<T> &lam, DeviceVec<T> &vec_IE, T a, T b) {
         // map(a * x) + b * y => y
         CHECK_CUBLAS(cublasDscal(cublasHandle, vec_IE.getSize(), &b, vec_IE.getPtr(), 1));
         int nvals = IE_nnodes * block_dim;
@@ -1313,7 +1329,7 @@ class FetidpSolver : public BaseSolver {
                                             lam.getPtr(), vec_IE.getPtr(), a);
     }
 
-    void addVecIEtoLam(DeviceVec<T> &vec_IE, DeviceVec<T> &lam, T a, T b) {
+    void addVecIEtoLam(const DeviceVec<T> &vec_IE, DeviceVec<T> &lam, T a, T b) {
         // map(a * x) + b * y => y
         CHECK_CUBLAS(cublasDscal(cublasHandle, lam.getSize(), &b, lam.getPtr(), 1));
         int nvals = IE_nnodes * block_dim;
