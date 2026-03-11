@@ -1,0 +1,1460 @@
+#include <cstdio>
+#include <cstring>
+#include <unordered_set>
+#include <vector>
+
+#include "_fetidp.cuh"
+#include "cuda_utils.h"
+#include "linalg/bsr_data.h"
+#include "multigrid/solvers/solve_utils.h"
+
+enum NodeClass { INTERIOR = 0, DIRICHLET_EDGE = 1, EDGE = 2, VERTEX = 3 };
+
+template <typename T, class ShellAssembler_, template <typename> class Vec_,
+          template <typename> class Mat_>
+class FetidpSolver {
+   public:
+    using ShellAssembler = ShellAssembler_;
+    using Director = typename ShellAssembler::Director;
+    using Basis = typename ShellAssembler::Basis;
+    using Geo = typename Basis::Geo;
+    using Phys = typename ShellAssembler::Phys;
+    using Data = typename Phys::Data;
+    using Quadrature = typename Basis::Quadrature;
+    using FADType = typename A2D::ADScalar<T, 1>;
+    using Vec = Vec_<T>;
+    using Mat = Mat_<Vec_<T>>;
+    using BsrMatType = BsrMat<DeviceVec<T>>;
+
+    static constexpr int32_t nodes_per_elem = Basis::num_nodes;
+    static constexpr int32_t vars_per_node = Phys::vars_per_node;
+    static constexpr int32_t xpts_per_elem = Geo::spatial_dim * nodes_per_elem;
+    static constexpr int32_t dof_per_elem = vars_per_node * nodes_per_elem;
+    static constexpr int32_t num_quad_pts = Quadrature::num_quad_pts;
+
+    FetidpSolver() = default;
+
+    FetidpSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
+                 ShellAssembler &assembler_, BsrMatType &kmat_)
+        : cublasHandle(cublasHandle_),
+          cusparseHandle(cusparseHandle_),
+          assembler(assembler_),
+          subdomainISolver(nullptr),
+          subdomainIESolver(nullptr),
+          coarseSolver(nullptr),
+          elem_sd_ind(nullptr),
+          elem_conn(nullptr),
+          node_sd_cols(nullptr),
+          node_elem_ct(nullptr),
+          node_elem_rowp(nullptr),
+          kmat(&kmat_),
+          node_class_ind(nullptr) {
+        num_elements = assembler.get_num_elements();
+        num_nodes = assembler.get_num_nodes();
+        N = num_nodes * vars_per_node;
+
+        elem_conn = assembler.getConn().createHostVec().getPtr();
+
+        auto kmat_bsr_data = kmat->getBsrData();
+        kmat_nnzb = kmat_bsr_data.nnzb;
+        block_dim = kmat_bsr_data.block_dim;
+        block_dim2 = block_dim * block_dim;
+
+        d_xpts = assembler.getXpts();
+        d_vars = assembler.getVars();
+        d_elem_components = assembler.getElemComponents();
+        d_compData = assembler.getCompData();
+
+        descrK = 0;
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrK));
+        CHECK_CUSPARSE(cusparseSetMatType(descrK, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrK, CUSPARSE_INDEX_BASE_ZERO));
+    }
+
+    ~FetidpSolver() { clear_host_data(); }
+
+    void setup_structured_subdomains(int nxe_, int nye_, int nxs_, int nys_,
+                                     bool close_hoop = false) {
+        clear_structured_host_data();
+
+        nxe = nxe_;
+        nye = nye_;
+        nxs = nxs_;
+        nys = nys_;
+
+        nx = nxe + 1;
+        ny = close_hoop ? nye : (nye + 1);
+
+        num_subdomains = nxs * nys;
+
+        const int nxse = (nxe + nxs - 1) / nxs;
+        const int nyse = (nye + nys - 1) / nys;
+
+        // -----------------------------------------
+        // classify elements into subdomains
+        // -----------------------------------------
+        elem_sd_ind = new int[num_elements];
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int ixe = ielem % nxe;
+            int iye = ielem / nxe;
+            int ixs = ixe / nxse;
+            int iys = iye / nyse;
+
+            if (ixs >= nxs) ixs = nxs - 1;
+            if (iys >= nys) iys = nys - 1;
+
+            elem_sd_ind[ielem] = ixs + iys * nxs;
+        }
+
+        // -----------------------------------------
+        // node -> subdomain incidence
+        // -----------------------------------------
+        node_elem_nnz = 0;
+        node_elem_rowp = new int[num_nodes + 1];
+        node_elem_ct = new int[num_nodes];
+        std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+        std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                node_elem_ct[gnode]++;
+                node_elem_nnz++;
+            }
+        }
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+        }
+
+        int *temp_node_elem = new int[num_nodes];
+        node_sd_cols = new int[node_elem_nnz];
+        std::memset(temp_node_elem, 0, num_nodes * sizeof(int));
+        std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int subdomain_ind = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int offset = node_elem_rowp[gnode] + temp_node_elem[gnode];
+                node_sd_cols[offset] = subdomain_ind;
+                temp_node_elem[gnode]++;
+            }
+        }
+        delete[] temp_node_elem;
+
+        // -----------------------------------------
+        // classify nodes
+        // -----------------------------------------
+        node_class_ind = new int[num_nodes];
+        std::memset(node_class_ind, 0, num_nodes * sizeof(int));
+
+        nnodes_interior = 0;
+        nnodes_edge = 0;
+        nnodes_vertex = 0;
+        nnodes_dirichlet_edge = 0;
+
+        printf(
+            "WARNING: for unstructured meshes, this node classification may fail at junctions.\n");
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            std::unordered_set<int> node_sds;
+            for (int jp = node_elem_rowp[inode]; jp < node_elem_rowp[inode + 1]; jp++) {
+                node_sds.insert(node_sd_cols[jp]);
+            }
+
+            int ix = inode % nx;
+            int iy = inode / nx;
+            bool on_x = (ix == 0) || (ix == nx - 1);
+            bool on_y = ((iy == 0) || (iy == ny - 1)) && !close_hoop;
+            bool on_bndry = on_x || on_y;
+
+            int nsd = static_cast<int>(node_sds.size());
+
+            if (nsd < 2) {
+                node_class_ind[inode] = INTERIOR;
+                nnodes_interior++;
+            } else if (nsd == 2) {
+                if (on_bndry) {
+                    node_class_ind[inode] = DIRICHLET_EDGE;
+                    nnodes_dirichlet_edge++;
+                } else {
+                    node_class_ind[inode] = EDGE;
+                    nnodes_edge++;
+                }
+            } else {
+                node_class_ind[inode] = VERTEX;
+                nnodes_vertex++;
+            }
+        }
+
+        // TODO:
+        // This count assumes structured duplication counts:
+        //   interior            -> 1 copy
+        //   dirichlet-edge      -> 2 copies
+        //   edge                -> 2 copies
+        //   vertex              -> 4 copies
+        // Revisit for more general cases.
+        I_nnodes = nnodes_interior + 2 * nnodes_dirichlet_edge;
+        IE_nnodes = I_nnodes + 2 * nnodes_edge;
+        IEV_nnodes = IE_nnodes + 4 * nnodes_vertex;
+        Vc_nnodes = nnodes_vertex;     // vertex non-repeated (here for coarse system)
+        V_nnodes = 4 * nnodes_vertex;  // vertex repeated
+        lam_nnodes = nnodes_edge;      // FETI lagrange multipliers
+
+        // -----------------------------------------
+        // build duplicated IEV nodal layout
+        // -----------------------------------------
+        IEV_sd_ptr = new int[num_subdomains + 1];
+        IEV_sd_ind = new int[IEV_nnodes];
+        IEV_nodes = new int[IEV_nnodes];
+
+        std::memset(IEV_sd_ptr, 0, (num_subdomains + 1) * sizeof(int));
+
+        int IEV_ind = 0;
+        int *temp_completion = new int[num_nodes];
+
+        for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+            std::memset(temp_completion, 0, num_nodes * sizeof(int));
+            IEV_sd_ptr[i_subdomain + 1] = IEV_sd_ptr[i_subdomain];
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                if (elem_sd_ind[ielem] != i_subdomain) continue;
+
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    if (temp_completion[gnode]) continue;
+
+                    IEV_nodes[IEV_ind] = gnode;
+                    IEV_sd_ind[IEV_ind] = i_subdomain;
+                    IEV_sd_ptr[i_subdomain + 1]++;
+                    IEV_ind++;
+                    temp_completion[gnode] = 1;
+                }
+            }
+        }
+        delete[] temp_completion;
+
+        printf("IEV_sd_ptr: ");
+        printVec<int>(num_subdomains + 1, IEV_sd_ptr);
+        printf("IEV_sd_ind: ");
+        printVec<int>(IEV_nnodes, IEV_sd_ind);
+
+        // -----------------------------------------
+        // build IEV element connectivity
+        // -----------------------------------------
+        IEV_elem_conn = new int[num_elements * nodes_per_elem];
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int i_subdomain = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int local_ind = -1;
+
+                for (int jp = IEV_sd_ptr[i_subdomain]; jp < IEV_sd_ptr[i_subdomain + 1]; jp++) {
+                    if (IEV_nodes[jp] == gnode) {
+                        local_ind = jp;
+                        break;
+                    }
+                }
+
+                if (local_ind < 0) {
+                    printf("ERROR: failed to find duplicated IEV node for elem %d node %d\n", ielem,
+                           gnode);
+                }
+                IEV_elem_conn[nodes_per_elem * ielem + lnode] = local_ind;
+            }
+        }
+
+        printf("IEV_ind %d\n", IEV_ind);
+        printf("IEV_nodes %d: ", IEV_nnodes);
+        printVec<int>(IEV_nnodes, IEV_nodes);
+        printf("IEV_conn: ");
+        printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+
+        // -----------------------------------------
+        // IE and I nodal lists
+        // -----------------------------------------
+        IE_nodes = new int[IE_nnodes];
+        I_nodes = new int[I_nnodes];
+        std::memset(IE_nodes, 0, IE_nnodes * sizeof(int));
+        std::memset(I_nodes, 0, I_nnodes * sizeof(int));
+        IE_interior = new bool[IE_nnodes];
+        IE_general_edge = new bool[IE_nnodes];
+
+        int IE_ind = 0;
+        int I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IE_interior[IE_ind] = node_class == INTERIOR || node_class == DIRICHLET_EDGE;
+                IE_general_edge[IE_ind] = node_class == DIRICHLET_EDGE || node_class == EDGE;
+                IE_nodes[IE_ind++] = gnode;
+            }
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                I_nodes[I_ind++] = gnode;
+            }
+        }
+        d_IE_interior = HostVec<bool>(IE_nnodes, IE_interior).createDeviceVec().getPtr();
+        d_IE_general_edge = HostVec<bool>(IE_nnodes, IE_general_edge).createDeviceVec().getPtr();
+        d_IE_nodes = HostVec<int>(IE_nnodes, IE_nodes).createDeviceVec().getPtr();
+
+        printf("IE_nodes %d: ", IE_nnodes);
+        printVec<int>(IE_nnodes, IE_nodes);
+        printf("I_nodes %d: ", I_nnodes);
+        printVec<int>(I_nnodes, I_nodes);
+
+        // -----------------------------------------
+        // build IEV sparsity from duplicated connectivity
+        // -----------------------------------------
+        IEV_bsr_data = BsrData(num_elements, IEV_nnodes, nodes_per_elem, block_dim, IEV_elem_conn);
+        IEV_rowp = IEV_bsr_data.rowp;
+        IEV_cols = IEV_bsr_data.cols;
+        IEV_nnzb = IEV_bsr_data.nnzb;
+        IEV_rows = new int[IEV_nnzb];
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            for (int jp = IEV_rowp[inode]; jp < IEV_rowp[inode + 1]; jp++) {
+                IEV_rows[jp] = inode;
+            }
+        }
+        printf("IEV_rowp with nnzb %d: ", IEV_nnzb);
+        printVec<int>(IEV_nnodes + 1, IEV_rowp);
+        printf("IEV_cols: ");
+        printVec<int>(IEV_nnzb, IEV_cols);
+
+        // -----------------------------------------
+        // reduced rowp arrays
+        // -----------------------------------------
+        IE_rowp = new int[IE_nnodes + 1];
+        I_rowp = new int[I_nnodes + 1];
+        std::memset(IE_rowp, 0, (IE_nnodes + 1) * sizeof(int));
+        std::memset(I_rowp, 0, (I_nnodes + 1) * sizeof(int));
+
+        int IE_row = 0;
+        int I_row = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            if (typeI_row) I_rowp[I_row + 1] = I_rowp[I_row];
+            if (typeIE_row) IE_rowp[IE_row + 1] = IE_rowp[IE_row];
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) I_rowp[I_row + 1]++;
+                if (typeIE_row && typeIE_col) IE_rowp[IE_row + 1]++;
+            }
+
+            if (typeI_row) I_row++;
+            if (typeIE_row) IE_row++;
+        }
+
+        I_nnzb = I_rowp[I_nnodes];
+        IE_nnzb = IE_rowp[IE_nnodes];
+
+        printf("I_rowp nnzb %d: ", I_nnzb);
+        printVec<int>(I_nnodes + 1, I_rowp);
+        printf("IE_rowp nnzb %d: ", IE_nnzb);
+        printVec<int>(IE_nnodes + 1, IE_rowp);
+
+        IE_rows = new int[IE_nnzb];
+        for (int inode = 0; inode < IE_nnodes; inode++) {
+            for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+                IE_rows[jp] = inode;
+            }
+        }
+        I_rows = new int[I_nnzb];
+        for (int inode = 0; inode < I_nnodes; inode++) {
+            for (int jp = I_rowp[inode]; jp < I_rowp[inode + 1]; jp++) {
+                I_rows[jp] = inode;
+            }
+        }
+
+        // -----------------------------------------
+        // IEV -> IE map
+        // -----------------------------------------
+        IEVtoIE_map = new int[IEV_nnodes];
+        std::memset(IEVtoIE_map, -1, IEV_nnodes * sizeof(int));
+        IEVtoIE_imap = new int[IE_nnodes];
+
+        IE_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IEVtoIE_imap[IE_ind] = inode;
+                IEVtoIE_map[inode] = IE_ind++;
+            }
+        }
+
+        printf("IEVtoIE_map: ");
+        printVec<int>(IEV_nnodes, IEVtoIE_map);
+
+        // put on device
+        d_IEVtoIE_imap = HostVec<int>(IE_nnodes, IEVtoIE_imap).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // IEV -> I map
+        // -----------------------------------------
+        IEVtoI_map = new int[IEV_nnodes];
+        IEVtoI_imap = new int[I_nnodes];
+        std::memset(IEVtoI_map, -1, IEV_nnodes * sizeof(int));
+
+        I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                IEVtoI_imap[I_ind] = inode;
+                IEVtoI_map[inode] = I_ind++;
+            }
+        }
+
+        printf("IEVtoI_map: ");
+        printVec<int>(IEV_nnodes, IEVtoI_map);
+
+        // put on device
+        d_IEVtoI_imap = HostVec<int>(I_nnodes, IEVtoI_imap).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // reduced column arrays
+        // -----------------------------------------
+        IE_cols = new int[IE_nnzb];
+        I_cols = new int[I_nnzb];
+
+        I_ind = 0;
+        IE_ind = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) {
+                    I_cols[I_ind++] = IEVtoI_map[col];
+                }
+                if (typeIE_row && typeIE_col) {
+                    IE_cols[IE_ind++] = IEVtoIE_map[col];
+                }
+            }
+        }
+
+        printf("I_cols: ");
+        printVec<int>(I_nnzb, I_cols);
+        printf("IE_cols: ");
+        printVec<int>(IE_nnzb, IE_cols);
+        d_IEV_elem_conn =
+            HostVec<int>(num_elements * nodes_per_elem, IEV_elem_conn).createDeviceVec();
+
+        // -----------------------------------------
+        // IEV -> Vc map (coarse non-repeated vertices)
+        // -----------------------------------------
+
+        // make a list of the reduced Vc_ind (takes global node and figures out it's Vc_ind)
+        std::unordered_set<int> Vc_nodeset;
+        for (int i = 0; i < IEV_nnodes; i++) {
+            int gnode = IEV_nodes[i];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                Vc_nodeset.insert(gnode);
+            }
+        }
+        std::vector<int> Vc_nodes_vec(Vc_nodeset.begin(), Vc_nodeset.end());
+        printf("Vc_nodes %d: ", Vc_nodes_vec.size());
+        printVec<int>(Vc_nodes_vec.size(), Vc_nodes_vec.data());
+        int *Vc_inodes = new int[num_nodes];  // takes Vc global node => Vc red node
+        memset(Vc_inodes, -1, num_nodes * sizeof(int));
+        for (int i = 0; i < Vc_nodes_vec.size(); i++) {
+            int j = Vc_nodes_vec[i];
+            Vc_inodes[j] = i;
+        }
+        printf("Vc_inodes: ");
+        printVec<int>(num_nodes, Vc_inodes);
+        d_Vc_nodes = HostVec<int>(Vc_nnodes, Vc_nodes_vec.data()).createDeviceVec().getPtr();
+        Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
+
+        // set VcToV_imap and IEVtoV_imap now
+        VctoV_imap = new int[V_nnodes];
+        std::memset(VctoV_imap, -1, V_nnodes * sizeof(int));
+        IEVtoV_imap = new int[V_nnodes];
+        std::memset(IEVtoV_imap, -1, V_nnodes * sizeof(int));
+
+        int V_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                int Vc_ind = Vc_inodes[gnode];
+                VctoV_imap[V_ind] = Vc_ind;
+                IEVtoV_imap[V_ind] = Vc_ind;
+                V_ind++;
+            }
+        }
+
+        printf("IEVtoV_imap %d: ", V_nnodes);
+        printVec<int>(V_nnodes, IEVtoV_imap);
+
+        // put on device
+        d_IEVtoV_imap = HostVec<int>(V_nnodes, IEVtoV_imap).createDeviceVec().getPtr();
+        d_VctoV_imap = HostVec<int>(V_nnodes, VctoV_imap).createDeviceVec().getPtr();
+
+        // Build all remaining maps/permutations:
+        //  - jump operator ownership/sign maps
+
+        _compute_jump_operators();
+    }
+
+    void setup_matrix_sparsity() {
+        // USER must call this routine..
+        printf(
+            "NOTE : FETI-DP doesn't support permutations yet on subdomains.. TBD later on that\n");
+        printf("\tJust does full fillin currently of each matrix used for inner linear solves\n");
+
+        // do fillin of IE and I matrices (later also do coarse matrix)
+        IE_bsr_data = BsrData(IE_nnodes, block_dim, IE_nnzb, IE_rowp, IE_cols);
+        IE_bsr_data.rows = IE_rows;
+        IE_nofill_nnzb = IE_nnzb;
+        IE_bsr_data.compute_full_LU_pattern(10.0);
+        IE_rowp = IE_bsr_data.rowp, IE_cols = IE_bsr_data.cols, IE_nnzb = IE_bsr_data.nnzb;
+
+        I_bsr_data = BsrData(I_nnodes, block_dim, I_nnzb, I_rowp, I_cols);
+        I_bsr_data.rows = I_rows;
+        I_nofill_nnzb = I_nnzb;
+        I_bsr_data.compute_full_LU_pattern(10.0);
+        I_rowp = I_bsr_data.rowp, I_cols = I_bsr_data.cols, I_nnzb = I_bsr_data.nnzb;
+
+        // now move sparsity to the device
+        // and no fillin for IEV matrix cause it isn't used for linear solves
+        IEV_bsr_data.rows = IEV_rows;
+        d_IEV_bsr_data = IEV_bsr_data.createDeviceBsrData();
+        d_IEV_vals = DeviceVec<T>(block_dim2 * IEV_nnzb);
+        kmat_IEV = new BsrMatType(d_IEV_bsr_data, d_IEV_vals);
+
+        d_IE_bsr_data = IE_bsr_data.createDeviceBsrData();
+        d_IE_vals = DeviceVec<T>(block_dim2 * IE_nnzb);
+        kmat_IE = new BsrMatType(d_IE_bsr_data, d_IE_vals);
+
+        d_I_bsr_data = I_bsr_data.createDeviceBsrData();
+        d_I_vals = DeviceVec<T>(block_dim2 * I_nnzb);
+        kmat_I = new BsrMatType(d_I_bsr_data, d_I_vals);
+
+        // -----------------------------------------
+        // IEV => IE kmat block copy map
+        // -----------------------------------------
+
+        kmat_IEnofill_map = new int[IE_nofill_nnzb];
+        kmat_IEtoIEV_map = new int[IE_nofill_nnzb];
+        memset(kmat_IEnofill_map, -1, IE_nofill_nnzb * sizeof(int));
+        memset(kmat_IEtoIEV_map, -1, IE_nofill_nnzb * sizeof(int));
+        int nofill_ind = 0;
+        for (int i = 0; i < IE_nnodes; i++) {
+            for (int jp = IE_rowp[i]; jp < IE_rowp[i + 1]; jp++) {
+                int j = IE_cols[jp];
+                // find equivalent nz block of IEV rowp
+                int i_IEV = IEVtoIE_imap[i];
+                int j_IEV = IEVtoIE_imap[j];
+                bool found = false;
+                for (int kp = IEV_rowp[i_IEV]; kp < IEV_rowp[i_IEV + 1]; kp++) {
+                    int k = IEV_cols[kp];
+                    if (k == j_IEV) {
+                        kmat_IEnofill_map[nofill_ind] = jp;
+                        kmat_IEtoIEV_map[nofill_ind] = kp;
+                        nofill_ind++;
+                        found = true;
+                    }
+                }
+                // would need more advanced check here since fillin means some blocks in IE
+                // won't exist in IEV
+                // if (!found) {
+                //     printf("IE block %d not found in IEV matrix\n", jp);
+                // }
+            }
+        }
+        d_kmat_IEtoIEV_map =
+            HostVec<int>(IE_nofill_nnzb, kmat_IEtoIEV_map).createDeviceVec().getPtr();
+        d_kmat_IEnofill_map =
+            HostVec<int>(IE_nofill_nnzb, kmat_IEnofill_map).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // IEV => I kmat block copy map
+        // -----------------------------------------
+
+        kmat_Inofill_map = new int[I_nofill_nnzb];
+        kmat_ItoIEV_map = new int[I_nofill_nnzb];
+        memset(kmat_Inofill_map, -1, I_nofill_nnzb * sizeof(int));
+        memset(kmat_ItoIEV_map, -1, I_nofill_nnzb * sizeof(int));
+        nofill_ind = 0;
+        for (int i = 0; i < I_nnodes; i++) {
+            for (int jp = I_rowp[i]; jp < I_rowp[i + 1]; jp++) {
+                int j = I_cols[jp];
+                // find equivalent nz block of IEV rowp
+                int i_IEV = IEVtoI_imap[i];
+                int j_IEV = IEVtoI_imap[j];
+                bool found = false;
+                for (int kp = IEV_rowp[i_IEV]; kp < IEV_rowp[i_IEV + 1]; kp++) {
+                    int k = IEV_cols[kp];
+                    if (k == j_IEV) {
+                        kmat_Inofill_map[nofill_ind] = jp;
+                        kmat_ItoIEV_map[nofill_ind] = kp;
+                        nofill_ind++;
+                        found = true;
+                    }
+                }
+                // would need more advanced check here since fillin means some blocks in IE
+                // won't exist in IEV
+                // if (!found) {
+                //     printf("IE block %d not found in IEV matrix\n", jp);
+                // }
+            }
+        }
+        d_kmat_ItoIEV_map = HostVec<int>(I_nofill_nnzb, kmat_ItoIEV_map).createDeviceVec().getPtr();
+        d_kmat_Inofill_map =
+            HostVec<int>(I_nofill_nnzb, kmat_Inofill_map).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // get S_VV matrix sparsity / nonzero pattern (nofill first)
+        // -----------------------------------------
+
+        // reverse map of global => reduced Vc nodes
+        int *Vc_node_imap = new int[num_nodes];
+        memset(Vc_node_imap, -1, num_nodes * sizeof(int));
+        for (int vnode = 0; vnode < Vc_nnodes; vnode++) {
+            int glob_node = Vc_nodes[vnode];
+            Vc_node_imap[glob_node] = vnode;
+        }
+        printf("Vc_node_imap: ");
+        printVec<int>(Vc_nnodes, Vc_node_imap);
+
+        // first need to get the unique global nodes of
+        int *Svv_rowcts = new int[Vc_nnodes];
+        memset(Svv_rowcts, 0, Vc_nnodes * sizeof(int));
+        for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+            std::unordered_set<int> sd_Vc_nodeset;
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_nodes = &elem_conn[nodes_per_elem * ielem];
+                int j_subdomain = elem_sd_ind[ielem];
+                if (i_subdomain != j_subdomain) continue;
+
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_nodes[lnode];
+                    int node_class = node_class_ind[gnode];
+                    if (node_class == VERTEX) {
+                        int vnode = Vc_node_imap[gnode];
+                        sd_Vc_nodeset.insert(vnode);
+                    }
+                }
+            }
+
+            // convert to vector
+            std::vector<int> sd_Vc_nodes(sd_Vc_nodeset.begin(), sd_Vc_nodeset.end());
+            // now treat this as the nodes of a super-element on Vc subdomain..
+            // NOTE : for some subdomains less than four Vc nodes (like corner subdomains,
+            // non-floating) now use this element to update Vc_rowp, Vc_cols (matrix-sparsity) all
+            // super-elements (or subdomains) are fully coupled cause of inverse matrix densifies
+            // but no sparsity / connectivity between super-elements (with vertex-based, see book on
+            // Domain Decomp methods)
+            for (int i : sd_Vc_nodes) {
+                for (int j : sd_Vc_nodes) {
+                    Svv_rowcts[i]++;
+                }
+            }
+        }
+
+        // now fill rowp using row_cts
+        Svv_rowp = new int[Vc_nnodes + 1];
+        memset(Svv_rowp, 0, (Vc_nnodes + 1) * sizeof(int));
+        for (int i = 0; i < Vc_nnodes; i++) {
+            Svv_rowp[i + 1] = Svv_rowp[i] + Svv_rowcts[i];
+        }
+        Svv_nnzb = Svv_rowp[Vc_nnodes];
+
+        // now go back through and put cols in
+        // use temp_Svv_fill to help keep track of putting nonzero entries in the Svv sparsity
+        int *temp_Svv_fill = new int[Vc_nnodes];
+        memset(temp_Svv_fill, 0, Vc_nnodes * sizeof(int));
+        Svv_cols = new int[Svv_nnzb];
+        memset(Svv_cols, 0, Svv_nnzb * sizeof(int));
+        for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+            std::unordered_set<int> sd_Vc_nodeset;
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_nodes = &elem_conn[nodes_per_elem * ielem];
+                int j_subdomain = elem_sd_ind[ielem];
+                if (i_subdomain != j_subdomain) continue;
+
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_nodes[lnode];
+                    int node_class = node_class_ind[gnode];
+                    if (node_class == VERTEX) {
+                        int vnode = Vc_node_imap[gnode];
+                        sd_Vc_nodeset.insert(vnode);
+                    }
+                }
+            }
+
+            // convert to vector
+            std::vector<int> sd_Vc_nodes(sd_Vc_nodeset.begin(), sd_Vc_nodeset.end());
+            // see prevoius block on why each subdomain "macro-element" is fully dense in macro-elem
+            // but no connections outside macro-elems
+            for (int i : sd_Vc_nodes) {
+                for (int j : sd_Vc_nodes) {
+                    Svv_cols[temp_Svv_fill[i]++] = j;
+                }
+            }
+        }
+        printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
+        printVec<int>(Vc_nnodes + 1, Svv_rowp);
+        printf("Svv_cols: ");
+        printVec<int>(Svv_nnzb, Svv_cols);
+
+        // -----------------------------------------
+        // build Svv matrix sparsity and do fillin
+        // -----------------------------------------
+        // small matrix typically
+
+        Svv_bsr_data = BsrData(Svv_nodes, block_dim, Vc_nnzb, Svv_rowp, Svv_cols);
+        Svv_bsr_data.rows = I_rows;
+        Svv_nofill_nnzb = Svv_nnzb;
+        Svv_bsr_data.compute_full_LU_pattern(10.0);
+        Svv_rowp = Svv_bsr_data.rowp, Svv_cols = Svv_bsr_data.cols, Svv_nnzb = Svv_bsr_data.nnzb;
+
+        d_Svv_bsr_data = Svv_bsr_data.createDeviceBsrData();
+        d_Svv_vals = DeviceVec<T>(block_dim2 * Svv_nnzb);
+        S_VV = new BsrMatType(d_Svv_bsr_data, d_Svv_vals);
+
+        // -----------------------------------------
+        // IEV => V kmat block copy map (for A_{VV} copy in S_{VV})
+        // -----------------------------------------
+
+        Svv_copy_nnzb = 0;
+        std::vector<int> Svv_IEV_copyBlocks;
+        std::vector<int> Svv_Vc_copyBlocks;
+        for (int IEV_row = 0; IEV_row < IEV_nnodes; IEV_row++) {
+            int glob_row = IEV_nodes[IEV_row];
+            int row_class = node_class_ind[glob_row];
+            if (row_class != VERTEX) continue;
+            int Vc_row = Vc_node_imap[glob_row];
+
+            for (int jp = IEV_rowp[IEV_row]; jp < IEV_rowp[IEV_row + 1]; jp++) {
+                int IEV_col = IEV_cols[jp];
+                int glob_col = IEV_nodes[IEV_col];
+                int col_class = node_class_ind[glob_col];
+                if (col_class == VERTEX) {
+                    int Vc_col = Vc_node_imap[glob_col];
+                    // find matching Vc block ind (will exist)
+                    for (int kp = Svv_rowp[Vc_row]; kp < Svv_rowp[Vc_row + 1]; kp++) {
+                        int k = Svv_cols[kp];
+                        if (k == Vc_col) {
+                            Svv_IEV_copyBlocks.push_back(jp);
+                            Svv_Vc_copyBlocks.push_back(kp);
+                            Svv_copy_nnzb++;
+                        }
+                    }
+                }
+            }
+        }
+        d_Svv_IEV_copyBlocks =
+            HostVec<int>(Svv_copy_nnzb, Svv_IEV_copyBlocks.data()).createDeviceVec().getPtr();
+        d_Svv_Vc_copyBlocks =
+            HostVec<int>(Svv_copy_nnzb, Svv_Vc_copyBlocks.data()).createDeviceVec().getPtr();
+    }
+
+    void assemble_subdomains(const DeviceVec<T> &force_IEV) {
+        // TODO:
+        // build workspace vectors / allocate reduced matrices if needed
+
+        addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
+        addVec_globalToIEV(d_vars, d_IEV_vars, block_dim, 1.0, 0.0);
+
+        // TODO: kmat_IEV must be allocated before this
+        kmat_IEV->zeroValues();
+
+        // int cols_per_elem = (Quadrature::num_quad_pts <= 4) ? 24 : 9;
+        int cols_per_elem = (Basis::order == 1 ? 24 : Basis::order == 2 ? 9 : 4);
+        dim3 block(num_quad_pts, cols_per_elem, 1);
+        int elem_cols_per_block = cols_per_elem * 1;
+        int nblocks = (num_elements * dof_per_elem + elem_cols_per_block - 1) / elem_cols_per_block;
+        dim3 grid(nblocks);
+
+        k_add_jacobian_fast<T, 1, ShellAssembler, Data, Vec_, Mat_><<<grid, block>>>(
+            IEV_nnodes, num_elements, cols_per_elem, d_elem_components, d_IEV_elem_conn,
+            d_IEV_elem_conn, d_IEV_xpts, d_IEV_vars, d_compData, kmat_IEV);
+
+        // copy entries from kmat_IEV to kmat_IE, kmat_I and S_VV matrices
+        copyKmat_IEVtoIE();
+        copyKmat_IEVtoI();
+        copyKmat_IEVtoSvv();
+
+        // now also compute the Schur complement inverse term in S_VV
+        computeSvvInverseTerm();
+
+        // assemble force_IEV from internal loads
+        (void)force_IEV;
+    }
+
+    void set_inner_solvers(BaseSolver *subdomainIESolver_, BaseSolver *subdomainISolver_,
+                           BaseSolver *coarseSolver_) {
+        subdomainIESolver = subdomainIESolver_;
+        subdomainISolver = subdomainISolver_;
+        coarseSolver = coarseSolver_;
+    }
+
+    void assemble_jump_operator() {
+        // TODO:
+        // Build:
+        //   B_delta   : true signed jump
+        //   B_Ddelta  : scaled jump for preconditioner
+    }
+
+    void assemble_coarse_system() {
+        // TODO:
+        // Build assembled coarse Schur complement S_VV
+    }
+
+    void get_lam_rhs(const DeviceVec<T> &force_IEV, DeviceVec<T> &lam_rhs) {
+        lam_rhs.zeroValues();
+
+        addVecIEVtoIE(force_IEV, f_IE, 1.0, 0.0);
+        solveSubdomainIE(f_IE, u_IE);
+
+        u_IEV.zeroValues();
+        addVecIEtoIEV(u_IE, u_IEV, 1.0, 1.0);
+        zeroInteriorIE(u_IE);
+        addVecIEtoLam(u_IE, lam_rhs, 1.0, 0.0);
+
+        addVecIEVtoVc(force_IEV, f_V, 1.0, 0.0);
+        sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
+        addVecIEVtoVc(f_IEV, f_V, 1.0, 1.0);
+
+        solveCoarse(f_V, u_V);
+
+        u_IEV.zeroValues();
+        addVecVctoIEV(u_V, u_IEV, 1.0, 1.0);
+        sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
+        addVecIEVtoIE(f_IEV, f_IE, 1.0, 0.0);
+        solveSubdomainIE(f_IE, u_IE);
+        zeroInteriorIE(u_IE);
+        addVecIEtoLam(u_IE, lam_rhs, -1.0, 1.0);
+    }
+
+    void mat_vec(const DeviceVec<T> &lam_in, DeviceVec<T> &lam_out) {
+        lam_out.zeroValues();
+
+        addVecLamtoIE(lam_in, f_IE, 1.0, 0.0);
+        solveSubdomainIE(f_IE, u_IE);
+
+        u_IEV.zeroValues();
+        addVecIEtoIEV(u_IE, u_IEV, 1.0, 1.0);
+        zeroInteriorIE(u_IE);
+        addVecIEtoLam(u_IE, lam_out, 1.0, 0.0);
+
+        sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
+        addVecIEVtoVc(f_IEV, f_V, 1.0, 0.0);
+
+        solveCoarse(f_V, u_V);
+
+        u_IEV.zeroValues();
+        addVecVctoIEV(u_V, u_IEV, 1.0, 1.0);
+        sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
+        addVecIEVtoIE(f_IEV, f_IE, 1.0, 0.0);
+        solveSubdomainIE(f_IE, u_IE);
+        zeroInteriorIE(u_IE);
+        addVecIEtoLam(u_IE, lam_out, 1.0, 1.0);
+    }
+
+    void solve(const DeviceVec<T> &lam_rhs, DeviceVec<T> &lam) {
+        lam.zeroValues();
+
+        addVecLamtoIE(lam_rhs, u_IE, 0.5, 0.0);  // 1/2 cause B_Ddelta scaled operators
+        zeroInteriorIE(u_IE);
+        sparseMatVec(*kmat_IE, u_IE, -1.0, 0.0, f_IE);
+
+        addVecIEtoI(f_IE, f_I, 1.0, 0.0);
+        solveSubdomainI(f_I, u_I);
+
+        addVecItoIE(u_I, u_IE, 1.0, 1.0);
+
+        sparseMatVec(*kmat_IE, u_IE, 1.0, 0.0, f_IE);
+        zeroInteriorIE(f_IE);
+
+        addVecIEtoLam(f_IE, lam, 0.5, 0.0);  // 1/2 cause B_Ddelta scaled operators
+    }
+
+    void get_global_soln(const DeviceVec<T> &force_IEV, const DeviceVec<T> &lam,
+                         DeviceVec<T> &soln) {
+        addVecIEVtoIE(force_IEV, f_IE, 1.0, 0.0);
+        solveSubdomainIE(f_IE, u_IE);
+
+        u_IEV.zeroValues();
+        addVecIEtoIEV(u_IE, u_IEV, 1.0, 1.0);
+
+        addVecIEVtoVc(force_IEV, f_V, 1.0, 0.0);
+        sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
+        addVecIEVtoVc(f_IEV, f_V, 1.0, 1.0);
+
+        addVecLamtoIE(lam, f_IE, 1.0, 0.0);
+        solveSubdomainIE(f_IE, u_IE);
+
+        u_IEV.zeroValues();
+        addVecIEtoIEV(u_IE, u_IEV, 1.0, 1.0);
+        sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
+        addVecIEVtoVc(f_IEV, f_V, 1.0, 1.0);
+
+        solveCoarse(f_V, u_V);
+
+        u_IEV.zeroValues();
+        addVecVctoIEV(u_V, u_IEV, 1.0, 1.0);
+
+        addVecIEVtoIE(force_IEV, f_IE, 1.0, 0.0);
+        addVecLamtoIE(lam, f_IE, -1.0, 0.0);
+
+        sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
+        addVecIEVtoIE(f_IEV, f_IE, 1.0, 1.0);
+
+        solveSubdomainIE(f_IE, u_IE);
+
+        soln.zeroValues();
+        addGlobalSoln(u_IE, u_V, soln);
+    }
+
+   private:
+    void clear_host_data() { clear_structured_host_data(); }
+
+    void clear_structured_host_data() {
+        delete[] elem_sd_ind;
+        delete[] node_sd_cols;
+        delete[] node_elem_ct;
+        delete[] node_elem_rowp;
+        delete[] node_class_ind;
+
+        delete[] IEV_nodes;
+        delete[] IE_nodes;
+        delete[] I_nodes;
+        delete[] IE_rowp;
+        delete[] I_rowp;
+        delete[] IE_cols;
+        delete[] I_cols;
+        delete[] IEV_elem_conn;
+        delete[] IEV_sd_ptr;
+        delete[] IEV_sd_ind;
+        delete[] IEVtoIE_map;
+        delete[] IEVtoI_map;
+
+        elem_sd_ind = nullptr;
+        node_sd_cols = nullptr;
+        node_elem_ct = nullptr;
+        node_elem_rowp = nullptr;
+        node_class_ind = nullptr;
+
+        IEV_nodes = nullptr;
+        IE_nodes = nullptr;
+        I_nodes = nullptr;
+        IE_rowp = nullptr;
+        I_rowp = nullptr;
+        IE_cols = nullptr;
+        I_cols = nullptr;
+        IEV_elem_conn = nullptr;
+        IEV_sd_ptr = nullptr;
+        IEV_sd_ind = nullptr;
+        IEVtoIE_map = nullptr;
+        IEVtoI_map = nullptr;
+    }
+
+    void copyKmat_IEVtoIE() {
+        // Copy / restrict kmat_IEV to kmat_IE using:
+        //   IEVtoIE_map, IE_rowp, IE_cols
+        int n_IE_vals = IE_nnzb * block_dim2;
+        dim3 block(32), grid((n_IE_vals + 31) / 32);
+        k_copyMatToMat_restrict<T><<<grid, block>>>(IE_nnzb, block_dim, d_kmat_IEtoIEV_map,
+                                                    d_kmat_IEnofill_map, d_IEV_vals, d_IE_vals);
+    }
+
+    void copyKmat_IEVtoI() {
+        // Copy / restrict kmat_IEV to kmat_I using:
+        //   IEVtoI_map, I_rowp, I_cols
+        int n_I_vals = I_nnzb * block_dim2;
+        dim3 block(32), grid((n_I_vals + 31) / 32);
+        k_copyMatToMat_restrict<T><<<grid, block>>>(I_nnzb, block_dim, d_kmat_ItoIEV_map,
+                                                    d_kmat_Inofill_map, d_IEV_vals, d_I_vals);
+    }
+
+    void copyKmat_IEVtoSvv() {
+        // copy Avv part from kmat_IEV to Svv
+        // note need Svv_copy_nnzb (not Svv_nnzb) cause Vc are duplicate nodes in IEV
+        // multiple blocks copied into the same node in S_VV
+        int n_Svv_vals = Svv_copy_nnzb * block_dim2;
+        dim3 block(32), grid((n_Svv_vals + 31) / 32);
+        k_copyMatToMat_restrict<T><<<grid, block>>>(Svv_copy_nnzb, block_dim, d_Svv_IEV_copyBlocks,
+                                                    d_Svv_Vc_copyBlocks, d_IEV_vals, d_Svv_vals);
+    }
+
+    void computeSvvInverseTerm() {
+        // need 24 IE subdomain solves (tops) for quad-macro elements of struct mesh
+        // to compute the -A_{V,IE} * A_{IE,IE}^{-1} * A_{IE,V} += > S_{VV} second Schur complement
+        // inverse term as part of coarse matrix assembly for vertices
+
+        // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per Krylov
+        // step so this is similar expense to like 8 Krylov steps (not too bad, but not trivial)
+        // TODO : maybe I can find faster way to do sparse mat-mat triangular solves instead later?
+        for (int icol = 0; icol < 24; icol++) {
+            u_IEV.zeroValues();
+            setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else 0
+            sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
+            addVecIEVtoIE(f_IEV, f_IE, 1.0, 0.0);
+            solveSubdomainIE(f_IE, u_IE);
+            addVecIEtoIEV(u_IE, u_IEV, 1.0, 0.0);
+            sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
+            addMat_IEVtoV_vals(icol, f_IEV);
+        }
+    }
+
+    void setVec_IEVtoV_vals(DeviceVec<T> &vec_IEV, int irow, T val) {
+        // gives col on inner matrix (row on pert right-vec, like hess-vec products in A2D)
+        // sets 0-24 potential Vc values in each subdomain
+
+        int block_row = irow / block_dim;  // block_row 0,1,2, or 3 in each subdomain
+        int set_nnzb, *d_IEVtoV_blocks;
+        // TODO : get these nnzb and blocks0 arrays below
+        // because I use which nnz spots to
+        if (block_row == 0) {
+            set_nnzb = IEVtoV_nnzb0;
+            d_IEVtoV_blocks = d_IEVtoV_blocks0;
+        } else if (block_row == 1) {
+            set_nnzb = IEVtoV_nnzb1;
+            d_IEVtoV_blocks = d_IEVtoV_blocks1;
+        } else if (block_row == 2) {
+            set_nnzb = IEVtoV_nnzb2;
+            d_IEVtoV_blocks = d_IEVtoV_blocks2;
+        } else if (block_row == 3) {
+            set_nnzb = IEVtoV_nnzb3;
+            d_IEVtoV_blocks = d_IEVtoV_blocks3;
+        }
+        dim3 block(32);
+        dim3 grid((set_nnzb + 31) / 32);
+        k_setVec_IEVtoV_vals<T>
+            <<<grid, block>>>(set_nnzb, block_dim, irow, d_IEVtoV_blocks, vec_IEV.getPtr(), val);
+    }
+
+    void addMat_IEVtoV_vals(const int icol, DeviceVec<T> hvec) {
+        // while it was set_row (of vec) in previous method, corresponds to set block col in inner
+        // S_VV matrix. This is similar to hess-vec products in A2D here..
+        int block_col = icol / block_dim;  // block_row 0,1,2, or 3 in each subdomain
+        int set_nnzb, *d_IEVtoSVV_blocks, *d_IEVtoV_blocks;
+        // TODO : get these nnzb and blocks0 arrays below
+        // because I use which nnz spots to
+        if (block_row == 0) {
+            set_nnzb = IEVtoSVV_nnzb0;
+            d_IEVtoSVV_blocks = d_IEVtoSVV_blocks0;
+        } else if (block_row == 1) {
+            set_nnzb = IEVtoSVV_nnzb1;
+            d_IEVtoSVV_blocks = d_IEVtoSVV_blocks1;
+        } else if (block_row == 2) {
+            set_nnzb = IEVtoSVV_nnzb2;
+            d_IEVtoSVV_blocks = d_IEVtoSVV_blocks2;
+        } else if (block_row == 3) {
+            set_nnzb = IEVtoSVV_nnzb3;
+            d_IEVtoSVV_blocks = d_IEVtoSVV_blocks3;
+            d_IEVtoV_blocks = d_IEVtoV_blocks3;
+        }
+        dim3 block(32);
+        dim3 grid((set_nnzb * block_dim + 31) / 32);
+        k_addMat_IEVtoV_vals<T><<<grid, block>>>(set_nnzb, block_dim, icol, d_IEVtoV_blocks,
+                                                 d_IEVtoSVV_blocks, hvec.getPtr(),
+                                                 d_Svv_vals.getPtr());
+    }
+
+    void addVec_globalToIEV(const Vec &x_global, Vec &y_iev, int vars_per_node_in, T a, T b) {
+        // Scatter a global nodal vector into duplicated IEV layout.
+        // Likely based on IEV_nodes and vars_per_node_in.
+
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y_iev.getSize(), &b, y_iev.getPtr(), 1));
+
+        int nvals = IE_nnodes * vars_per_node_in;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVec_GlobalToIE<T><<<grid, block>>>(IE_nnodes, vars_per_node_in, d_IE_nodes,
+                                                d_IE_general_edge, x_global.getPtr(), u_IE.getPtr(),
+                                                a);
+
+        int nvals2 = Vc_nnodes * vars_per_node_in;
+        dim3 grid2((nvals2 + 31) / 32);
+        k_addVec_GlobaltoVc<T><<<grid2, block>>>(Vc_nnodes, vars_per_node_in, d_Vc_nodes,
+                                                 x_global.getPtr(), u_V.getPtr(), a);
+        CHECK_CUBLAS(cublasDscal(cublasHandle, u_IE.getSize(), &a, u_IE.getPtr(), 1));
+
+        // helper routines
+        addVecIEtoIEV(u_IE, y_iev, 1.0, 0.0);
+        addVecVctoIEV(u_V, y_iev, 1.0, 0.0);
+    }
+
+    void addVecIEVtoIE(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // restrict I/E entries from IEV into IE
+        // map(a * x) + b * y => y
+
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
+        int nvals = IE_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVecSmallerOut<T>
+            <<<grid, block>>>(IE_nnodes, block_dim, d_IEVtoIE_imap, x.getPtr(), y.getPtr(), a);
+    }
+
+    void addVecItoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // restrict interior part from IE into I
+        // map(a * x) + b * y => y
+
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
+        int nvals = I_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVecSmallerIn<T>
+            <<<grid, block>>>(I_nnodes, block_dim, d_IEVtoI_imap, x.getPtr(), y.getPtr(), a);
+    }
+
+    void addVecIEVtoI(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // restrict interior part from IE into I
+        // map(a * x) + b * y => y
+
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
+        int nvals = I_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVecSmallerOut<T>
+            <<<grid, block>>>(I_nnodes, block_dim, d_IEVtoI_imap, x.getPtr(), y.getPtr(), a);
+    }
+
+    void addVecIEVtoVc(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // gather/scatter assembled primal V entries from IEV into Vc (coarse vertex, non-repeated)
+        // map(a * x) + b * y => y
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
+        int nvals = V_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVec_IEVtoVc<T><<<grid, block>>>(V_nnodes, block_dim, d_IEVtoV_imap, d_VctoV_imap,
+                                             x.getPtr(), y.getPtr(), a);
+    }
+
+    void addVecIEtoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // scatter IE entries into IEV slots
+        // map(a * x) + b * y => y
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
+        int nvals = IE_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVecSmallerIn<T>
+            <<<grid, block>>>(IE_nnodes, block_dim, d_IEVtoIE_imap, x.getPtr(), y.getPtr(), a);
+    }
+
+    void addVecVctoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // inject coarse/global V entries into local IEV primal slots
+        // map(a * x) + b * y => y
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
+        int nvals = V_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVec_VctoIEV<T><<<grid, block>>>(V_nnodes, block_dim, d_IEVtoV_imap, d_VctoV_imap,
+                                             x.getPtr(), y.getPtr(), a);
+    }
+
+    void addVecItoIE(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+        // scatter interior part from I into IE
+        // map(a * x) + b * y => y
+
+        // reuse previous routines instead of adding a new map..
+        // don't worry this routine is only called once in main solve so not too much extra overhead
+        addVecItoIEV(x, temp_IEV, a, 0.0);
+        addVecIEVtoIE(temp_IEV, y, 1.0, b);
+    }
+
+    void zeroInteriorIE(DeviceVec<T> &x) {
+        // keep edge part, zero interior part
+        int nvals = IE_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_zeroInterior<T><<<grid, block>>>(IE_nnodes, block_dim, d_IE_interior, x.getPtr());
+    }
+
+    void addVecLamtoIE(DeviceVec<T> &lam, DeviceVec<T> &vec_IE, T a, T b) {
+        // map(a * x) + b * y => y
+        CHECK_CUBLAS(cublasDscal(cublasHandle, vec_IE.getSize(), &b, vec_IE.getPtr(), 1));
+        int nvals = IE_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVecLamtoIE<T><<<grid, block>>>(IE_nnodes, block_dim, d_IE_to_lam_map, d_IE_to_lam_vec,
+                                            lam.getPtr(), vec_IE.getPtr(), a);
+    }
+
+    void addVecIEtoLam(DeviceVec<T> &vec_IE, DeviceVec<T> &lam, T a, T b) {
+        // map(a * x) + b * y => y
+        CHECK_CUBLAS(cublasDscal(cublasHandle, lam.getSize(), &b, lam.getPtr(), 1));
+        int nvals = IE_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVecIEtoLam<T><<<grid, block>>>(IE_nnodes, block_dim, d_IE_to_lam_map, d_IE_to_lam_vec,
+                                            vec_IE.getPtr(), lam.getPtr(), a);
+    }
+
+    void addGlobalSoln(const DeviceVec<T> &u_IE, const DeviceVec<T> &u_V, DeviceVec<T> &soln) {
+        //  - scatter interior directly to global
+        //  - average duplicated edge values into global edge dofs
+        //  - inject global primal values
+
+        int nvals = IE_nnodes * block_dim;
+        dim3 block(32), grid((nvals + 31) / 32);
+        k_addVec_IEtoGlobal<T><<<grid, block>>>(IE_nnodes, block_dim, d_IE_nodes, d_IE_general_edge,
+                                                u_IE.getPtr(), soln.getPtr(), 1.0);
+
+        int nvals2 = Vc_nnodes * block_dim;
+        dim3 grid2((nvals2 + 31) / 32);
+        k_addVec_VctoGlobal<T>
+            <<<grid2, block>>>(Vc_nnodes, block_dim, d_Vc_nodes, u_V.getPtr(), soln.getPtr(), 1.0);
+    }
+
+    void sparseMatVec(const BsrMatType &A, const Vec &x, T alpha, T beta, Vec &y) {
+        //     y <- alpha * A * x + beta * y
+        auto bsr_data = A.getBsrData();
+        int mb = bsr_data.mb;
+        int nb = bsr_data.nb;
+        int nnzb = bsr_data.nnzb;
+        T *d_vals = A.getVec().getPtr();
+        int *d_rowp = bsr_data.rowp;
+        int *d_cols = bsr_data.cols;
+
+        CHECK_CUSPARSE(cusparseDbsrmv(
+            cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, nb, nnzb,
+            &alpha, descrK, d_vals, d_rowp, d_cols, block_dim, x.getPtr(), &beta, y.getPtr()));
+    }
+
+    void sparseTransposeMatVec(const BsrMatType &A, const Vec &x, T alpha, T beta, Vec &y) {
+        // BSR mat-vec operation
+        //     y <- alpha * A^T * x + beta * y
+
+        auto bsr_data = A.getBsrData();
+        int mb = bsr_data.mb;
+        int nb = bsr_data.nb;
+        int nnzb = bsr_data.nnzb;
+        T *d_vals = A.getVec().getPtr();
+        int *d_rows = bsr_data.rows;
+        int *d_rowp = bsr_data.rowp;
+        int *d_cols = bsr_data.cols;
+
+        CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &beta, y.getPtr(), 1));
+        const int nprods = nnzb * block_dim * block_dim;
+        dim3 block(32), grid((nprods + 31) / 32);
+        k_bsrmv_transpose_ax<T><<<grid, block>>>(nnzb, block_dim, d_rows, d_cols, d_vals,
+                                                 x.getPtr(), alpha, y.getPtr());
+    }
+
+    void solveSubdomainIE(const Vec &rhs_in, Vec &sol_out) {
+        if (!subdomainIESolver) {
+            printf("ERROR: subdomain IE solver is null\n");
+            return;
+        }
+
+        auto _bsr_data = kmat_IE->getBsrData();
+        int *d_perm = _bsr_data.perm, *d_iperm = _bsr_data.iperm;
+
+        rhs_in.copyValuesTo(rhs_IE_perm);
+        rhs_IE_perm.permuteData(block_dim, d_iperm);
+
+        subdomainIESolver->solve(rhs_IE_perm, sol_IE_perm);
+
+        sol_IE_perm.copyValuesTo(sol_out);
+        sol_out.permuteData(block_dim, d_perm);
+    }
+
+    void solveSubdomainI(const Vec &rhs_in, Vec &sol_out) {
+        if (!subdomainISolver) {
+            printf("ERROR: subdomain I solver is null\n");
+            return;
+        }
+
+        auto _bsr_data = kmat_I->getBsrData();
+        int *d_perm = _bsr_data.perm, *d_iperm = _bsr_data.iperm;
+        rhs_in.copyValuesTo(rhs_I_perm);
+        rhs_I_perm.permuteData(block_dim, d_iperm);
+
+        subdomainISolver->solve(rhs_I_perm, sol_I_perm);
+
+        sol_I_perm.copyValuesTo(sol_out);
+        sol_out.permuteData(block_dim, d_perm);
+    }
+
+    void solveCoarse(const Vec &rhs_in, Vec &sol_out) {
+        if (!coarseSolver) {
+            printf("ERROR: coarse solver is null\n");
+            return;
+        }
+
+        auto _bsr_data = S_VV->getBsrData();
+        int *d_perm = _bsr_data.perm, *d_iperm = _bsr_data.iperm;
+        rhs_in.copyValuesTo(rhs_Vc_perm);
+        rhs_Vc_perm.permuteData(block_dim, d_iperm);
+
+        coarseSolver->solve(rhs_Vc_perm, sol_Vc_perm);
+
+        sol_Vc_perm.copyValuesTo(sol_out);
+        sol_out.permuteData(block_dim, d_perm);
+    }
+
+    void _compute_jump_operators() {
+        // compute +1/0/-1 coefficients from u_IE to lam (with 0 for I and +1/-1 for E edges)
+
+        // compute IE to lam map
+        IE_to_lam_map = new int[IE_nnodes];
+        // NOTE : turn the -1 on to ensure the map is correct (nz parts basically)
+        // memset(IE_to_lam_map, -1, IE_nnodes * sizeof(int));
+        memset(IE_to_lam_map, 0, IE_nnodes * sizeof(int));
+        int *temp_glob_node_tracker = new int[num_nodes];
+        memset(temp_glob_node_tracker, -1, num_nodes * sizeof(int));
+        int *temp_lam_ind = new int[num_nodes];
+        memset(temp_lam_ind, -1, num_nodes * sizeof(int));
+        int lam_ind = 0;
+        for (int i = 0; i < IE_nnodes; i++) {
+            int glob_node = IE_nodes[i];
+            int node_class = node_class_ind[glob_node];
+
+            if (node_class == EDGE) {
+                if (temp_glob_node_tracker[glob_node] != -1) {
+                    // then this edge node has been reached by previous subdomain
+                    IE_to_lam_map[i] = temp_lam_ind[glob_node];
+                } else {
+                    // has not been reached by previous subomdain, fill it
+                    temp_lam_ind[glob_node] = lam_ind++;
+                    temp_glob_node_tracker[glob_node] = 0;
+                    IE_to_lam_map[i] = temp_lam_ind[glob_node];
+                }
+            }
+            //  else {
+            //     IE_to_lam_map[i] = -1;
+            // }
+        }
+        printf("IE_to_lam_map: ");
+        printVec<int>(IE_nnodes, IE_to_lam_map);
+
+        IE_to_lam_vec = new T[IE_nnodes];
+        for (int inode = 0; inode < IE_nnodes; inode++) {
+            int glob_node = IE_nodes[inode];
+            int IEV_node = IEVtoIE_imap[inode];
+            int node_class = node_class_ind[glob_node];
+            int sd_ind = IEV_sd_ind[IEV_node];
+            int isx = sd_ind % nxs, isy = sd_ind / nxs;
+            // use red-black coloring to determine even/odd parity and signs of edge fluxes
+            int rb_color = isx + isy;
+            // printf("IE_node %d, IEV_node %d, glob_node %d, node_class %d, sd_ind %d\n", inode,
+            //        IEV_node, glob_node, node_class, sd_ind);
+            // printf("sd_ind %d, sd (%d,%d), rb_color %d\n", sd_ind, isx, isy, rb_color);
+
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                IE_to_lam_vec[inode] = 0.0;
+            } else if (node_class == EDGE) {
+                IE_to_lam_vec[inode] = (rb_color % 2 == 0) ? 1.0 : -1.0;
+            }
+        }
+        printf("IE_nodes: ");
+        printVec<int>(IE_nnodes, IE_nodes);
+        printf("IE_to_lam_vec: ");
+        printVec<T>(IE_nnodes, IE_to_lam_vec);
+
+        d_IE_to_lam_vec = HostVec<T>(IE_nnodes, IE_to_lam_vec).createDeviceVec().getPtr();
+        d_IE_to_lam_map = HostVec<int>(IE_nnodes, IE_to_lam_map).createDeviceVec().getPtr();
+    }
+
+   public:
+    int nxe, nye, nxs, nys;
+    int nx, ny;
+    int num_nodes, num_elements, N;
+    int nnxs, nnys, num_subdomains;
+
+    BsrMatType *kmat, *kmat_IEV, *kmat_IE, *kmat_I, *B_delta, *B_Ddelta, *S_VV;
+    Vec f_IEV, f_IE, f_I, f_V;
+    Vec u_IEV, u_IE, u_I, u_V;
+    Vec temp_IEV;
+
+   private:
+    ShellAssembler assembler;
+    cublasHandle_t &cublasHandle;
+    cusparseHandle_t &cusparseHandle;
+
+    BaseSolver *subdomainISolver, *subdomainIESolver, *coarseSolver;
+
+    int *elem_sd_ind, *elem_conn;
+    int node_elem_nnz;
+    int *node_sd_cols, *node_elem_ct, *node_elem_rowp, *node_class_ind;
+    int nnodes_interior, nnodes_edge, nnodes_vertex, nnodes_dirichlet_edge;
+
+    int *IEV_nodes, *IE_nodes, *I_nodes;
+    int *Vc_nodes;
+    int *d_IE_nodes, *d_Vc_nodes;
+    int *IEV_rowp, *IE_rowp, *I_rowp;
+    int *IEV_rows, *IE_rows, *I_rows;
+    int *IEV_cols, *IE_cols, *I_cols;
+    int IEV_nnzb, IE_nnzb, I_nnzb;
+    int IEV_nnodes, IE_nnodes, I_nnodes;
+    int *IEV_elem_conn;
+    int *IEV_sd_ptr, *IEV_sd_ind;
+    int *IEVtoIE_map, *IEVtoI_map;
+    int *IEVtoIE_imap, *IEVtoI_imap;
+    int *d_IEVtoIE_imap, *d_IEVtoI_imap;
+    int Vc_nnodes, V_nnodes;
+    int *VctoV_imap, *d_VctoV_imap;
+    int *IEVtoV_imap, *d_IEVtoV_imap;
+    bool *IE_interior, *d_IE_interior;
+    bool *IE_general_edge, *d_IE_general_edge;
+
+    int *kmat_ItoIEV_map, *d_kmat_ItoIEV_map;
+    int *kmat_IEtoIEV_map, *d_kmat_IEtoIEV_map;
+    int IE_nofill_nnzb, I_nofill_nnzb;
+    int *kmat_Inofill_map, *d_kmat_Inofill_map;
+    int *kmat_IEnofill_map, *d_kmat_IEnofill_map;
+    int lam_nnodes;
+    T *IE_to_lam_vec, *d_IE_to_lam_vec;
+    int *IE_to_lam_map, *d_IE_to_lam_map;
+
+    int Svv_nnzb, Svv_nofill_nnzb, Svv_nodes;
+    int *Svv_rowp, *Svv_rows, *Svv_cols;
+    int *d_Svv_rowp, *d_Svv_rows, *d_Svv_cols;
+    BsrData Svv_bsr_data, d_Svv_bsr_data;
+    Vec d_Svv_vals;
+    int Svv_copy_nnzb;
+    int *d_Svv_Vc_copyBlocks, *d_Svv_IEV_copyBlocks;
+    int IEVtoV_nnzb0, IEVtoV_nnzb1, IEVtoV_nnzb2, IEVtoV_nnzb3;
+    int *d_IEVtoV_blocks0, *d_IEVtoV_blocks1, *d_IEVtoV_blocks2, *d_IEVtoV_blocks3;
+    int IEVtoSVV_nnzb0, IEVtoSVV_nnzb1, IEVtoSVV_nnzb2, IEVtoSVV_nnzb3;
+    int *d_IEVtoSVV_blocks0, d_IEVtoSVV_blocks1, d_IEVtoSVV_blocks2, d_IEVtoSVV_blocks3;
+
+    int block_dim, block_dim2;
+    BsrData IEV_bsr_data, IE_bsr_data, I_bsr_data;
+    BsrData d_IEV_bsr_data, d_IE_bsr_data, d_I_bsr_data;
+    Vec d_IEV_vals, d_IE_vals, d_I_vals;
+    int kmat_nnzb;
+    Vec d_xpts, d_vars;
+    Vec d_IEV_xpts, d_IEV_vars;
+    DeviceVec<int> d_IEV_elem_conn;
+    DeviceVec<int> d_elem_components;
+    DeviceVec<Data> d_compData;
+    Vec rhs_IE_perm, sol_IE_perm;
+    Vec rhs_I_perm, sol_I_perm;
+    Vec rhs_Vc_perm, sol_Vc_perm;
+
+    cusparseMatDescr_t descrK;
+
+    // TODO:
+    // These are assumed to exist in your codebase / future implementation:
+    // int *d_IEV_elem_conn;
+    // int *elem_components;
+    // int *d_compData;
+    // static constexpr int elems_per_block = ...;
+};

@@ -68,7 +68,7 @@ class MITCShellAssembler
             this->num_vars_nodes, this->num_elements, cols_per_elem, this->elem_components,
             this->geo_conn, this->vars_conn, this->xpts, this->vars, this->compData, mat);
 
-        CHECK_CUDA(cudaDeviceSynchronize());
+        // CHECK_CUDA(cudaDeviceSynchronize());
         // #endif
     }
 

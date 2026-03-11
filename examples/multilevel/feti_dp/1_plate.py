@@ -17,7 +17,8 @@ from krylov import right_pcg_matfree
 # to get fully h-independent convergence I bet.. iter count is going up a bit more for higher DOF 
 
 # nxe, nxs = 256, 64
-nxe, nxs = 128, 32
+# nxe, nxs = 128, 64 # even works pretty well with small 2x2 subdomains for higher DOF problems! 4x4 fine too..
+nxe, nxs = 128, 32 # 4x4 works well also
 # nxe, nxs = 128, 16
 # nxe, nxs = 128, 8
 # nxe, nxs = 64, 16

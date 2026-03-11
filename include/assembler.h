@@ -97,6 +97,7 @@ class ElementAssembler {
     Vec<T> getVars() { return vars; }
     Vec<int> getBCs() { return bcs; }
     Vec<int> getConn() { return vars_conn; }
+    Vec<Data> getCompData() { return compData; }
     int get_num_xpts() { return num_geo_nodes * spatial_dim; }
     int get_num_vars() { return num_vars_nodes * vars_per_node; }
     int get_num_dvs() { return num_components * Data::ndvs_per_comp; }
