@@ -19,11 +19,11 @@ class CusparseMGDirectLU : public BaseSolver {
         omega = omega_;
 
         BsrData bsr_data = kmat.getBsrData();
-        N = assembler.get_num_vars();
         mb = bsr_data.nnodes;
         nnzb = bsr_data.nnzb;
         nnz = kmat.get_nnz();
         block_dim = bsr_data.block_dim;
+        N = mb * block_dim;
         d_rowp = bsr_data.rowp;
         d_cols = bsr_data.cols;
         d_vals = kmat.getVec().getPtr();

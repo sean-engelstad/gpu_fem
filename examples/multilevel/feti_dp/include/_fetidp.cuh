@@ -115,7 +115,7 @@ __global__ static void k_zeroInterior(const int nnodes, const int block_dim, con
 
 template <typename T>
 __global__ static void k_addVec_IEtoGlobal(const int IE_nnodes, const int block_dim, const int *IE_globalMap, 
-    const bool *d_general_edge,  const T *x, T *y) {
+    const bool *d_general_edge,  const T *x, T *y, T a) {
     int N_IE = IE_nnodes * block_dim;
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     if (tid >= N_IE) return;
@@ -129,12 +129,12 @@ __global__ static void k_addVec_IEtoGlobal(const int IE_nnodes, const int block_
     T alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
     // this edge map includes edge + dirichlet edge (which also add 0.5 weight into global, a bit tricky)
 
-    atomicAdd(&y[dof_glob], alpha * x[dof_IE]);
+    atomicAdd(&y[dof_glob], a * alpha * x[dof_IE]);
 }
 
 template <typename T>
 __global__ static void k_addVec_GlobalToIE(const int IE_nnodes, const int block_dim, const int *IE_globalMap, 
-    const bool *d_general_edge,  const T *x, T *y) {
+    const bool *d_general_edge,  const T *x, T *y, T a) {
     int N_IE = IE_nnodes * block_dim;
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     if (tid >= N_IE) return;
@@ -145,14 +145,17 @@ __global__ static void k_addVec_GlobalToIE(const int IE_nnodes, const int block_
     int idof = tid % block_dim;
     int dof_IE = block_dim * IE_node + idof;
     int dof_glob = block_dim * glob_node + idof;
+    // don't want half-weight for scattering global solution to edge nodes (it's more of a copy)
+    // T alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
+    T alpha = 1.0;
     // this edge map includes edge + dirichlet edge (which also add 0.5 weight into global, a bit tricky)
 
-    atomicAdd(&y[dof_IE], x[dof_glob]);
+    atomicAdd(&y[dof_IE], a * alpha * x[dof_glob]);
 }
 
 template <typename T>
 __global__ static void k_addVec_VctoGlobal(const int Vc_nnodes, const int block_dim, const int *Vc_globalMap, 
-    const T *x, T *y) {
+    const T *x, T *y, T a) {
     int N_Vc = Vc_nnodes * block_dim;
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     if (tid >= N_Vc) return;
@@ -164,12 +167,12 @@ __global__ static void k_addVec_VctoGlobal(const int Vc_nnodes, const int block_
     int dof_glob = block_dim * glob_node + idof;
 
     // no rescale cause Vc coarse node DOF are not repeated
-    atomicAdd(&y[dof_glob], x[dof_Vc]);
+    atomicAdd(&y[dof_glob], a * x[dof_Vc]);
 }
 
 template <typename T>
 __global__ static void k_addVec_GlobaltoVc(const int Vc_nnodes, const int block_dim, const int *Vc_globalMap, 
-    const T *x, T *y) {
+    const T *x, T *y, T a) {
     int N_Vc = Vc_nnodes * block_dim;
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     if (tid >= N_Vc) return;
@@ -181,10 +184,10 @@ __global__ static void k_addVec_GlobaltoVc(const int Vc_nnodes, const int block_
     int dof_glob = block_dim * glob_node + idof;
 
     // no rescale cause Vc coarse node DOF are not repeated
-    atomicAdd(&y[dof_Vc], x[dof_glob]);
+    atomicAdd(&y[dof_Vc], a * x[dof_glob]);
 }
 
-template <typename T>
+template <typename T, bool add = false>
 __global__ static void k_copyMatToMat_restrict(const int nnzb, const int block_dim, 
     const int *in_map, const int *out_map, const T *d_in_vals, T *d_out_vals) {
     // restrict values from in to out matrix (out matrix is smaller size and thus uses restrBlockMap)
@@ -200,7 +203,11 @@ __global__ static void k_copyMatToMat_restrict(const int nnzb, const int block_d
     int inn_ind = block_dim2 * in_block + inner_dof;
     int out_ind = block_dim2 * out_block + inner_dof;
     // simple copy, no add..
-    d_out_vals[out_ind] = d_in_vals[inn_ind];
+    if constexpr (add) {
+        atomicAdd(&d_out_vals[out_ind], d_in_vals[inn_ind]);
+    } else {
+        d_out_vals[out_ind] = d_in_vals[inn_ind];
+    }
 }
 
 template <typename T>
@@ -212,11 +219,14 @@ __global__ static void k_addVecIEtoLam(const int IE_nnodes, const int block_dim,
 
     int IE_node = tid / block_dim;
     int lam_node = IE_to_lam_map[IE_node];
+    if (lam_node < 0) return;
     int idof = tid % block_dim;
     int IE_dof = block_dim * IE_node + idof;
     int lam_dof = block_dim * lam_node + idof;
+    T s = IE_to_lam_vec[IE_node];
+    T as = a * s;
 
-    atomicAdd(&vec_lam[lam_dof], a * vec_IE[IE_dof]);   
+    atomicAdd(&vec_lam[lam_dof], as * vec_IE[IE_dof]);   
 }
 
 template <typename T>
@@ -228,37 +238,47 @@ __global__ static void k_addVecLamtoIE(const int IE_nnodes, const int block_dim,
 
     int IE_node = tid / block_dim;
     int lam_node = IE_to_lam_map[IE_node];
+    if (lam_node < 0) return;
     int idof = tid % block_dim;
     int IE_dof = block_dim * IE_node + idof;
     int lam_dof = block_dim * lam_node + idof;
+    T s = IE_to_lam_vec[IE_node];
+    T as = a * s;
 
-    atomicAdd(&vec_IE[IE_dof], a * vec_lam[lam_dof]);   
+    atomicAdd(&vec_IE[IE_dof], as * vec_lam[lam_dof]);   
 }
 
 template <typename T>
-__global__ static void k_setVec_IEVtoV_vals(const int set_nnzb, const int block_dim, 
-    const int irow, const int *d_blocks, const T *vec_IEV, T *val) {
+__global__ static void k_setVec_IEVtoV_vals(const int set_nnodes, const int block_dim,
+                                            const int irow, const int *d_blocks,
+                                            T *vec_IEV, const T val) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    if (tid >= set_nnzb) return;
-    int idof = irow % block_dim; // which 0-6 exclusive DOF to set to the given value
+    if (tid >= set_nnodes) return;
 
-    int block = d_blocks[tid];
-    vec_IEV[block_dim * block + idof] = val;
+    int idof = irow % block_dim;
+    int iev_node = d_blocks[tid];
+
+    vec_IEV[block_dim * iev_node + idof] = val;
 }
 
 template <typename T>
-__global__ static void k_addMat_IEVtoV_vals(const int set_nnzb, const int block_dim, 
-    const int icol, const int *d_vecBlocks, const int *d_matBlocks, 
-    const T *hvec, T *mat_vals) {
+__global__ static void k_addMat_IEVtoV_vals(const int set_nnzb, const int block_dim,
+                                            const int icol, const int *d_vecBlocks,
+                                            const int *d_matBlocks, const T *hvec,
+                                            T *mat_vals) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    int nvals = set_nnzb * block_dim; // we're setting one col vec in
+    int nvals = set_nnzb * block_dim;
     if (tid >= nvals) return;
-    int block = tid / block_dim;
-    int inn_row = tid % block_dim;
-    int inn_col = icol % block_dim; // which 0-6 exclusive DOF to set to the given value
 
-    int mat_block = d_matBlocks[block];
-    int vec_block = d_vecBlocks[block];
-    atomicAdd(&mat_vals[block_dim2 * mat_block + block_dim * inn_row + inn_col], 
-        hvec[block_dim * vec_block + inn_row]);
+    const int block_dim2 = block_dim * block_dim;
+
+    int iblock = tid / block_dim;
+    int inn_row = tid % block_dim;
+    int inn_col = icol % block_dim;
+
+    int mat_block = d_matBlocks[iblock];
+    int vec_block = d_vecBlocks[iblock];
+
+    atomicAdd(&mat_vals[block_dim2 * mat_block + block_dim * inn_row + inn_col],
+              hvec[block_dim * vec_block + inn_row]);
 }

@@ -294,7 +294,111 @@ __GLOBAL__ static void k_add_residual_fast(int32_t vars_num_nodes, int32_t num_e
     
 }  // end of add_residual_fast
 
+template <typename T, int elems_per_block, class ElemGroup, class Data,
+          class LoadMagnitude, template <typename> class Vec>
+__GLOBAL__ static void k_add_fext_fast(int32_t num_elements, LoadMagnitude mag,
+                                       Vec<int32_t> elem_comp, Vec<int32_t> geo_conn,
+                                       Vec<int32_t> vars_conn, Vec<T> xpts,
+                                       Vec<Data> compData, Vec<T> fext) {
 
+    using Geo = typename ElemGroup::Geo;
+    using Basis = typename ElemGroup::Basis;
+    using Phys = typename ElemGroup::Phys;
+    using Quadrature = typename Basis::Quadrature;
+
+    constexpr int vars_per_elem = Basis::num_nodes * Phys::vars_per_node;
+    constexpr int xpts_per_elem = Geo::num_nodes * Geo::spatial_dim;
+
+    int local_elem = threadIdx.y;
+    int global_elem = local_elem + elems_per_block * blockIdx.x;
+    bool active_thread = global_elem < num_elements;
+    if (!active_thread) return;
+
+    int iquad = threadIdx.x;
+
+    const int32_t *_geo_conn = geo_conn.getPtr();
+    const int32_t *_vars_conn = vars_conn.getPtr();
+    const Data *_comp_data = compData.getPtr();
+
+    __SHARED__ T block_xpts[elems_per_block][xpts_per_elem];
+    __SHARED__ Data block_data[elems_per_block];
+
+    const int32_t *geo_elem_conn = &_geo_conn[global_elem * Geo::num_nodes];
+    xpts.copyElemValuesToShared(active_thread, threadIdx.x, Quadrature::num_quad_pts,
+                                Geo::spatial_dim, Geo::num_nodes, geo_elem_conn,
+                                block_xpts[local_elem]);
+    __syncthreads();
+
+    const int32_t *vars_elem_conn = &_vars_conn[global_elem * Basis::num_nodes];
+
+    if (threadIdx.x == 0) {
+        int icomp = elem_comp[global_elem];
+        block_data[local_elem] = _comp_data[icomp];
+    }
+    __syncthreads();
+
+    T local_fext[vars_per_elem];
+    for (int i = 0; i < vars_per_elem; i++) local_fext[i] = T(0);
+
+    T pt[2];
+    T wt = Quadrature::getQuadraturePoint(iquad, pt);
+
+    // nodal normals
+    T fn[xpts_per_elem];
+    ShellComputeNodeNormals<T, Basis>(block_xpts[local_elem], fn);
+    __syncthreads();
+
+    T detXd = getDetXd<T, Basis>(pt, block_xpts[local_elem], fn);
+    T scale = fabs(detXd) * wt;
+
+    // basis values
+    T N[Basis::num_nodes];
+    Basis::getBasis(pt, N);
+
+    // interpolate geometry at quadrature point
+    T xq[3] = {0};
+    Basis::template interpFields<3, 3>(pt, block_xpts[local_elem], xq);
+
+    // evaluate load magnitude
+    T q = mag(xq[0], xq[1], xq[2]);
+
+    // interpolate shell normal
+    T n0[3] = {0};
+    Basis::template interpFields<3, 3>(pt, fn, n0);
+
+    T coeff = scale * q;
+
+    // assemble element force vector
+    for (int inode = 0; inode < Basis::num_nodes; inode++) {
+        local_fext[Phys::vars_per_node * inode + 0] += n0[0] * coeff * N[inode];
+        local_fext[Phys::vars_per_node * inode + 1] += n0[1] * coeff * N[inode];
+        local_fext[Phys::vars_per_node * inode + 2] += n0[2] * coeff * N[inode];
+    }
+
+    // reduction across quadrature points (same warp trick as your residual kernel)
+    if constexpr (Quadrature::num_quad_pts == 4) {
+        int tid = blockDim.x * threadIdx.y + threadIdx.x;
+        int lane = tid % 32;
+        int group_start = (lane / 4) * 4;
+
+        for (int idof = 0; idof < vars_per_elem; idof++) {
+            T lane_val = local_fext[idof];
+            lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 2);
+            lane_val += __shfl_down_sync(0xFFFFFFFF, lane_val, 1);
+            lane_val = __shfl_sync(0xFFFFFFFF, lane_val, group_start);
+            local_fext[idof] = lane_val;
+        }
+        __syncthreads();
+
+        fext.addElementValuesFromShared(true, threadIdx.x, blockDim.x,
+                                        Phys::vars_per_node, Basis::num_nodes,
+                                        vars_elem_conn, local_fext);
+    } else {
+        fext.addElementValuesFromShared(true, 0, 1,
+                                        Phys::vars_per_node, Basis::num_nodes,
+                                        vars_elem_conn, local_fext);
+    }
+}
 
 template <typename T, int elems_per_block, class ElemGroup, class Data, template <typename> class Vec, class Mat>
 __GLOBAL__ static void k_add_lockstrain_jacobian_fast(int32_t vars_num_nodes, int32_t num_elements, int cols_per_elem, Vec<int32_t> elem_comp, 
