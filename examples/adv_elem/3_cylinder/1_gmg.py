@@ -389,7 +389,7 @@ def _normhist_key(extra: dict) -> str:
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16], payload
 
 
-def save_norm_hist(norm_hist, cache_dir=".mg_cache/norm_hist", extra: dict | None = None):
+def save_norm_hist(norm_hist, cache_dir=".mg_cache/norm_hist", extra: dict = None):
     extra = {} if extra is None else dict(extra)
     key, meta = _normhist_key(extra)
     os.makedirs(cache_dir, exist_ok=True)

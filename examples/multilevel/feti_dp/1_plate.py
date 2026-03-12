@@ -18,20 +18,20 @@ from krylov import right_pcg_matfree
 
 # nxe, nxs = 256, 64
 # nxe, nxs = 128, 64 # even works pretty well with small 2x2 subdomains for higher DOF problems! 4x4 fine too..
-nxe, nxs = 128, 32 # 4x4 works well also
+# nxe, nxs = 128, 32 # 4x4 works well also
 # nxe, nxs = 128, 16
 # nxe, nxs = 128, 8
 # nxe, nxs = 64, 16
 # nxe, nxs = 32, 4
 # nxe, nxs = 32, 8
-# nxe, nxs = 4, 2
+nxe, nxs = 4, 2
 
 # thick = 1e-1
 # thick = 1e-2
 thick = 1e-3
 
 
-m, n = 2, 2
+# m, n = 2, 2
 # m, n = 2, 3
 def load_fcn(_x,_y):
     import math
@@ -69,11 +69,21 @@ assembler = FETIDP_Assembler(
     # ),
 )
 
+
 print(f"{assembler.num_subdomains=}")
 
 assembler.assemble_all()
 lam_rhs = assembler.get_lam_rhs() # g_G rhs 
 print(f"{np.linalg.norm(lam_rhs)=:.4e}")
+
+
+# DEBUG
+# import matplotlib.pyplot as plt
+# for i_sd in range(assembler.num_subdomains):
+#     sd_kmat = assembler.sd_kmat[i_sd].toarray()
+#     print(f"{i_sd=} {sd_kmat=}")
+# print(f"{assembler.S_VV.toarray()=}")
+
 
 def norm(x): 
     # return np.max(np.abs(x))

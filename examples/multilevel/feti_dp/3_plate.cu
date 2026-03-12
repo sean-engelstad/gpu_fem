@@ -65,10 +65,26 @@ int main(int argc, char **argv) {
     using InnerSolver = CusparseMGDirectLU<T, Assembler>;
     using LamPCG = MatrixFreePCGSolver<T, FETIDP>; // FETIDP is the operator and preconditioner
 
-    int nxe = 4;
+    // =====================
+    // INPUTS
+    // =====================
+
+    // options for problem size and SD sizes
+
+    // int nxe = 4, nxe_subdomain_size = 2;
+    // int nxe = 16, nxe_subdomain_size = 4;
+    // int nxe = 32, nxe_subdomain_size = 4;
+    // int nxe = 64, nxe_subdomain_size = 4;
+    int nxe = 64, nxe_subdomain_size = 8;
+    // int nxe = 128, nxe_subdomain_size = 4;
+    // int nxe = 128, nxe_subdomain_size = 8;
+    // int nxe = 256, nxe_subdomain_size = 4;
+
+    // =================
+
     int nye = nxe;
-    int nxs = 2;
-    int nys = 2;
+    int nxs = nxe / nxe_subdomain_size;
+    int nys = nxe / nxe_subdomain_size;
 
     double SR = 1e3;
     double Lx = 1.0, Ly = 1.0;
@@ -116,6 +132,45 @@ int main(int argc, char **argv) {
     
     fetidp->set_inner_solvers(ie_solver, i_solver, v_solver);
 
+    // // check matrices
+    // auto kmat_IEV = fetidp->kmat_IEV;
+    // auto kmat_IEV_vec = kmat_IEV->getVec().createHostVec();
+    // T *h_kmat_IEV = kmat_IEV_vec.getPtr();
+    // int IEV_nvals = kmat_IEV_vec.getSize();
+    // int IEV_nnodes = IEV_nvals / 36;
+    // printf("\n\nh_kmat_IEV %d\n", IEV_nvals);
+    // for (int iblock = 0; iblock < IEV_nnodes; iblock++) {
+    //     T *IEV_block = &h_kmat_IEV[36 * iblock];
+    //     printf("block %d\n", iblock);
+    //     for (int i = 0; i < 9; i++) {
+    //         int ix = 2 + i % 3;
+    //         int iy = 2 + i / 3;
+    //         T val = IEV_block[6 * ix + iy];
+    //         printf("%.4e,", val);
+    //         if (i % 3 == 2) printf("\n");
+    //     }
+    //     printf("\n");
+    // }
+
+    // auto kmat_IE = fetidp->kmat_IE;
+    // auto kmat_IE_vec = kmat_IE->getVec().createHostVec();
+    // T *h_kmat_IE = kmat_IE_vec.getPtr();
+    // int IE_nvals = kmat_IE_vec.getSize();
+    // int IE_nnodes = IE_nvals / 36;
+    // printf("\n\nh_kmat_IE %d\n", IE_nvals);
+    // for (int iblock = 0; iblock < IE_nnodes; iblock++) {
+    //     T *IE_block = &h_kmat_IE[36 * iblock];
+    //     printf("block %d\n", iblock);
+    //     for (int i = 0; i < 9; i++) {
+    //         int ix = 2 + i % 3;
+    //         int iy = 2 + i / 3;
+    //         T val = IE_block[6 * ix + iy];
+    //         printf("%.4e,", val);
+    //         if (i % 3 == 2) printf("\n");
+    //     }
+    //     printf("\n");
+    // }
+
     // factor each solver
     ie_solver->factor();
     i_solver->factor();
@@ -123,6 +178,25 @@ int main(int argc, char **argv) {
     // then assemble coarse problem (as it uses IE solver) before factoring v_solver
     fetidp->assemble_coarse_problem();
     v_solver->factor();
+
+    // auto S_VV = fetidp->S_VV;
+    // auto S_VV_vec = S_VV->getVec().createHostVec();
+    // T *h_S_VV = S_VV_vec.getPtr();
+    // int SVV_nvals = S_VV_vec.getSize();
+    // int SVV_nnodes = SVV_nvals / 36;
+    // printf("\n\nh_S_VV %d\n", SVV_nvals);
+    // for (int iblock = 0; iblock < SVV_nnodes; iblock++) {
+    //     T *SVV_block = &h_S_VV[36 * iblock];
+    //     printf("block %d\n", iblock);
+    //     for (int i = 0; i < 9; i++) {
+    //         int ix = 2 + i % 3;
+    //         int iy = 2 + i / 3;
+    //         T val = SVV_block[6 * ix + iy];
+    //         printf("%.4e,", val);
+    //         if (i % 3 == 2) printf("\n");
+    //     }
+    //     printf("\n");
+    // }
     
 
     // lambda rhs
@@ -132,9 +206,10 @@ int main(int argc, char **argv) {
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
+    // opts.ncycles = 20;
     opts.ncycles = 500;
     opts.print = true;
-    opts.print_freq = 1;
+    opts.print_freq = 5;
     opts.debug = true;
     opts.rtol = 1e-6;
     opts.atol = 1e-30;
@@ -147,10 +222,17 @@ int main(int argc, char **argv) {
     T init_lam_resid = lam_solver->getResidualNorm(lam_rhs, lam);
     printf("initial lambda residual = %.8e\n", init_lam_resid);
 
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start = std::chrono::high_resolution_clock::now();
+
     bool lam_fail = lam_solver->solve(lam_rhs, lam, true);
 
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> solve_time = end - start;
+
     T final_lam_resid = lam_solver->getResidualNorm(lam_rhs, lam);
-    printf("final lambda residual = %.8e\n", final_lam_resid);
+    printf("final lambda residual = %.8e in %.4e sec\n", final_lam_resid, solve_time.count());
 
     if (lam_fail) {
         printf("FETI-DP lambda PCG failed\n");

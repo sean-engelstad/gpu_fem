@@ -254,10 +254,10 @@ class FetidpSolver : public BaseSolver {
         }
         delete[] temp_completion;
 
-        printf("IEV_sd_ptr: ");
-        printVec<int>(num_subdomains + 1, IEV_sd_ptr);
-        printf("IEV_sd_ind: ");
-        printVec<int>(IEV_nnodes, IEV_sd_ind);
+        // printf("IEV_sd_ptr: ");
+        // printVec<int>(num_subdomains + 1, IEV_sd_ptr);
+        // printf("IEV_sd_ind: ");
+        // printVec<int>(IEV_nnodes, IEV_sd_ind);
 
         // -----------------------------------------
         // build IEV element connectivity
@@ -286,11 +286,11 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
-        printf("IEV_ind %d\n", IEV_ind);
-        printf("IEV_nodes %d: ", IEV_nnodes);
-        printVec<int>(IEV_nnodes, IEV_nodes);
-        printf("IEV_conn: ");
-        printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+        // printf("IEV_ind %d\n", IEV_ind);
+        // printf("IEV_nodes %d: ", IEV_nnodes);
+        // printVec<int>(IEV_nnodes, IEV_nodes);
+        // printf("IEV_conn: ");
+        // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
 
         // -----------------------------------------
         // IE and I nodal lists
@@ -321,10 +321,10 @@ class FetidpSolver : public BaseSolver {
         d_IE_general_edge = HostVec<bool>(IE_nnodes, IE_general_edge).createDeviceVec().getPtr();
         d_IE_nodes = HostVec<int>(IE_nnodes, IE_nodes).createDeviceVec().getPtr();
 
-        printf("IE_nodes %d: ", IE_nnodes);
-        printVec<int>(IE_nnodes, IE_nodes);
-        printf("I_nodes %d: ", I_nnodes);
-        printVec<int>(I_nnodes, I_nodes);
+        // printf("IE_nodes %d: ", IE_nnodes);
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("I_nodes %d: ", I_nnodes);
+        // printVec<int>(I_nnodes, I_nodes);
 
         // -----------------------------------------
         // build IEV sparsity from duplicated connectivity
@@ -339,10 +339,10 @@ class FetidpSolver : public BaseSolver {
                 IEV_rows[jp] = inode;
             }
         }
-        printf("IEV_rowp with nnzb %d: ", IEV_nnzb);
-        printVec<int>(IEV_nnodes + 1, IEV_rowp);
-        printf("IEV_cols: ");
-        printVec<int>(IEV_nnzb, IEV_cols);
+        // printf("IEV_rowp with nnzb %d: ", IEV_nnzb);
+        // printVec<int>(IEV_nnodes + 1, IEV_rowp);
+        // printf("IEV_cols: ");
+        // printVec<int>(IEV_nnzb, IEV_cols);
 
         // -----------------------------------------
         // reduced rowp arrays
@@ -381,10 +381,10 @@ class FetidpSolver : public BaseSolver {
         I_nnzb = I_rowp[I_nnodes];
         IE_nnzb = IE_rowp[IE_nnodes];
 
-        printf("I_rowp nnzb %d: ", I_nnzb);
-        printVec<int>(I_nnodes + 1, I_rowp);
-        printf("IE_rowp nnzb %d: ", IE_nnzb);
-        printVec<int>(IE_nnodes + 1, IE_rowp);
+        // printf("I_rowp nnzb %d: ", I_nnzb);
+        // printVec<int>(I_nnodes + 1, I_rowp);
+        // printf("IE_rowp nnzb %d: ", IE_nnzb);
+        // printVec<int>(IE_nnodes + 1, IE_rowp);
 
         IE_rows = new int[IE_nnzb];
         for (int inode = 0; inode < IE_nnodes; inode++) {
@@ -416,8 +416,8 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
-        printf("IEVtoIE_map: ");
-        printVec<int>(IEV_nnodes, IEVtoIE_map);
+        // printf("IEVtoIE_map: ");
+        // printVec<int>(IEV_nnodes, IEVtoIE_map);
 
         // put on device
         d_IEVtoIE_imap = HostVec<int>(IE_nnodes, IEVtoIE_imap).createDeviceVec().getPtr();
@@ -439,8 +439,8 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
-        printf("IEVtoI_map: ");
-        printVec<int>(IEV_nnodes, IEVtoI_map);
+        // printf("IEVtoI_map: ");
+        // printVec<int>(IEV_nnodes, IEVtoI_map);
 
         // put on device
         d_IEVtoI_imap = HostVec<int>(I_nnodes, IEVtoI_imap).createDeviceVec().getPtr();
@@ -475,10 +475,11 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
-        printf("I_cols: ");
-        printVec<int>(I_nnzb, I_cols);
-        printf("IE_cols: ");
-        printVec<int>(IE_nnzb, IE_cols);
+        // printf("I_cols: ");
+        // printVec<int>(I_nnzb, I_cols);
+        // printf("IE_cols: ");
+        // printVec<int>(IE_nnzb, IE_cols);
+
         d_IEV_elem_conn =
             HostVec<int>(num_elements * nodes_per_elem, IEV_elem_conn).createDeviceVec();
 
@@ -496,16 +497,19 @@ class FetidpSolver : public BaseSolver {
             }
         }
         std::vector<int> Vc_nodes_vec(Vc_nodeset.begin(), Vc_nodeset.end());
-        printf("Vc_nodes %d: ", Vc_nodes_vec.size());
-        printVec<int>(Vc_nodes_vec.size(), Vc_nodes_vec.data());
+        // printf("Vc_nodes %d: ", Vc_nodes_vec.size());
+        // printVec<int>(Vc_nodes_vec.size(), Vc_nodes_vec.data());
+
         int *Vc_inodes = new int[num_nodes];  // takes Vc global node => Vc red node
         memset(Vc_inodes, -1, num_nodes * sizeof(int));
         for (int i = 0; i < Vc_nodes_vec.size(); i++) {
             int j = Vc_nodes_vec[i];
             Vc_inodes[j] = i;
         }
-        printf("Vc_inodes: ");
-        printVec<int>(num_nodes, Vc_inodes);
+
+        // printf("Vc_inodes: ");
+        // printVec<int>(num_nodes, Vc_inodes);
+
         d_Vc_nodes = HostVec<int>(Vc_nnodes, Vc_nodes_vec.data()).createDeviceVec().getPtr();
         Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
 
@@ -522,13 +526,13 @@ class FetidpSolver : public BaseSolver {
             if (node_class == VERTEX) {
                 int Vc_ind = Vc_inodes[gnode];
                 VctoV_imap[V_ind] = Vc_ind;
-                IEVtoV_imap[V_ind] = Vc_ind;
+                IEVtoV_imap[V_ind] = inode;
                 V_ind++;
             }
         }
 
-        printf("IEVtoV_imap %d: ", V_nnodes);
-        printVec<int>(V_nnodes, IEVtoV_imap);
+        // printf("IEVtoV_imap %d: ", V_nnodes);
+        // printVec<int>(V_nnodes, IEVtoV_imap);
 
         // put on device
         d_IEVtoV_imap = HostVec<int>(V_nnodes, IEVtoV_imap).createDeviceVec().getPtr();
@@ -652,6 +656,10 @@ class FetidpSolver : public BaseSolver {
         // get S_VV matrix sparsity / nonzero pattern (nofill first)
         // -----------------------------------------
 
+        // -----------------------------------------
+        // get S_VV matrix sparsity / nonzero pattern (unique structure only)
+        // -----------------------------------------
+
         // reverse map of global => reduced Vc nodes
         int *Vc_node_imap = new int[num_nodes];
         memset(Vc_node_imap, -1, num_nodes * sizeof(int));
@@ -659,12 +667,13 @@ class FetidpSolver : public BaseSolver {
             int glob_node = Vc_nodes[vnode];
             Vc_node_imap[glob_node] = vnode;
         }
-        printf("Vc_node_imap: ");
-        printVec<int>(num_nodes, Vc_node_imap);
 
-        // first need to get the unique global nodes of
-        int *Svv_rowcts = new int[Vc_nnodes];
-        memset(Svv_rowcts, 0, Vc_nnodes * sizeof(int));
+        // printf("Vc_node_imap: ");
+        // printVec<int>(num_nodes, Vc_node_imap);
+
+        // build unique adjacency per coarse row
+        std::vector<std::unordered_set<int>> Svv_adj(Vc_nnodes);
+
         for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
             std::unordered_set<int> sd_Vc_nodeset;
 
@@ -678,27 +687,31 @@ class FetidpSolver : public BaseSolver {
                     int node_class = node_class_ind[gnode];
                     if (node_class == VERTEX) {
                         int vnode = Vc_node_imap[gnode];
-                        sd_Vc_nodeset.insert(vnode);
+                        if (vnode >= 0) {
+                            sd_Vc_nodeset.insert(vnode);
+                        }
                     }
                 }
             }
 
-            // convert to vector
             std::vector<int> sd_Vc_nodes(sd_Vc_nodeset.begin(), sd_Vc_nodeset.end());
-            // now treat this as the nodes of a super-element on Vc subdomain..
-            // NOTE : for some subdomains less than four Vc nodes (like corner subdomains,
-            // non-floating) now use this element to update Vc_rowp, Vc_cols (matrix-sparsity) all
-            // super-elements (or subdomains) are fully coupled cause of inverse matrix densifies
-            // but no sparsity / connectivity between super-elements (with vertex-based, see book on
-            // Domain Decomp methods)
+
+            // add unique couplings for this subdomain
             for (int i : sd_Vc_nodes) {
                 for (int j : sd_Vc_nodes) {
-                    Svv_rowcts[i]++;
+                    Svv_adj[i].insert(j);
                 }
             }
         }
 
-        // now fill rowp using row_cts
+        // row counts from unique adjacency
+        int *Svv_rowcts = new int[Vc_nnodes];
+        memset(Svv_rowcts, 0, Vc_nnodes * sizeof(int));
+        for (int i = 0; i < Vc_nnodes; i++) {
+            Svv_rowcts[i] = static_cast<int>(Svv_adj[i].size());
+        }
+
+        // fill rowp
         Svv_rowp = new int[Vc_nnodes + 1];
         memset(Svv_rowp, 0, (Vc_nnodes + 1) * sizeof(int));
         for (int i = 0; i < Vc_nnodes; i++) {
@@ -706,44 +719,65 @@ class FetidpSolver : public BaseSolver {
         }
         Svv_nnzb = Svv_rowp[Vc_nnodes];
 
-        // now go back through and put cols in
-        // use temp_Svv_fill to help keep track of putting nonzero entries in the Svv sparsity
-        int *temp_Svv_fill = new int[Vc_nnodes];
-        memset(temp_Svv_fill, 0, Vc_nnodes * sizeof(int));
+        // fill cols
         Svv_cols = new int[Svv_nnzb];
         memset(Svv_cols, 0, Svv_nnzb * sizeof(int));
-        for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
-            std::unordered_set<int> sd_Vc_nodeset;
 
-            for (int ielem = 0; ielem < num_elements; ielem++) {
-                int *local_nodes = &elem_conn[nodes_per_elem * ielem];
-                int j_subdomain = elem_sd_ind[ielem];
-                if (i_subdomain != j_subdomain) continue;
-
-                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
-                    int gnode = local_nodes[lnode];
-                    int node_class = node_class_ind[gnode];
-                    if (node_class == VERTEX) {
-                        int vnode = Vc_node_imap[gnode];
-                        sd_Vc_nodeset.insert(vnode);
-                    }
-                }
+        for (int i = 0; i < Vc_nnodes; i++) {
+            int jp = Svv_rowp[i];
+            for (int j : Svv_adj[i]) {
+                Svv_cols[jp++] = j;
             }
 
-            // convert to vector
-            std::vector<int> sd_Vc_nodes(sd_Vc_nodeset.begin(), sd_Vc_nodeset.end());
-            // see prevoius block on why each subdomain "macro-element" is fully dense in macro-elem
-            // but no connections outside macro-elems
-            for (int i : sd_Vc_nodes) {
-                for (int j : sd_Vc_nodes) {
-                    Svv_cols[temp_Svv_fill[i]++] = j;
-                }
-            }
+            // optional but recommended: sort each row
+            std::sort(&Svv_cols[Svv_rowp[i]], &Svv_cols[Svv_rowp[i + 1]]);
         }
-        printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
-        printVec<int>(Vc_nnodes + 1, Svv_rowp);
-        printf("Svv_cols: ");
-        printVec<int>(Svv_nnzb, Svv_cols);
+
+        // printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
+        // printVec<int>(Vc_nnodes + 1, Svv_rowp);
+        // printf("Svv_cols: ");
+        // printVec<int>(Svv_nnzb, Svv_cols);
+
+        // now go back through and put cols in
+        // use temp_Svv_fill to help keep track of putting nonzero entries in the Svv sparsity
+        // int *temp_Svv_fill = new int[Vc_nnodes];
+        // memset(temp_Svv_fill, 0, Vc_nnodes * sizeof(int));
+        // Svv_cols = new int[Svv_nnzb];
+        // memset(Svv_cols, 0, Svv_nnzb * sizeof(int));
+        // for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+        //     std::unordered_set<int> sd_Vc_nodeset;
+
+        //     for (int ielem = 0; ielem < num_elements; ielem++) {
+        //         int *local_nodes = &elem_conn[nodes_per_elem * ielem];
+        //         int j_subdomain = elem_sd_ind[ielem];
+        //         if (i_subdomain != j_subdomain) continue;
+
+        //         for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //             int gnode = local_nodes[lnode];
+        //             int node_class = node_class_ind[gnode];
+        //             if (node_class == VERTEX) {
+        //                 int vnode = Vc_node_imap[gnode];
+        //                 sd_Vc_nodeset.insert(vnode);
+        //             }
+        //         }
+        //     }
+
+        //     // convert to vector
+        //     std::vector<int> sd_Vc_nodes(sd_Vc_nodeset.begin(), sd_Vc_nodeset.end());
+        //     // see prevoius block on why each subdomain "macro-element" is fully dense in
+        //     macro-elem
+        //     // but no connections outside macro-elems
+        //     for (int i : sd_Vc_nodes) {
+        //         for (int j : sd_Vc_nodes) {
+        //             Svv_cols[temp_Svv_fill[i]++] = j;
+        //         }
+        //     }
+        // }
+
+        // printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
+        // printVec<int>(Vc_nnodes + 1, Svv_rowp);
+        // printf("Svv_cols: ");
+        // printVec<int>(Svv_nnzb, Svv_cols);
 
         Svv_rows = new int[Svv_nnzb];
         for (int i = 0; i < Vc_nnodes; i++) {
@@ -902,16 +936,50 @@ class FetidpSolver : public BaseSolver {
                         .getPtr();
             }
 
-            printf("IEVtoV_nnzb[%d] = %d\n", k, IEVtoV_nnzb[k]);
-            if (IEVtoV_nnzb[k] > 0) {
-                printVec<int>(IEVtoV_nnzb[k], IEVtoV_blocks_host[k].data());
-            }
+            // printf("IEVtoV_nnzb[%d] = %d\n", k, IEVtoV_nnzb[k]);
+            // if (IEVtoV_nnzb[k] > 0) {
+            //     printVec<int>(IEVtoV_nnzb[k], IEVtoV_blocks_host[k].data());
+            // }
 
-            printf("IEVtoSVV_nnzb[%d] = %d\n", k, IEVtoSVV_nnzb[k]);
-            if (IEVtoSVV_nnzb[k] > 0) {
-                printVec<int>(IEVtoSVV_nnzb[k], IEVtoSVV_blocks_host[k].data());
+            // printf("IEVtoSVV_nnzb[%d] = %d\n", k, IEVtoSVV_nnzb[k]);
+            // if (IEVtoSVV_nnzb[k] > 0) {
+            //     printVec<int>(IEVtoSVV_nnzb[k], IEVtoSVV_blocks_host[k].data());
+            // }
+        }
+
+        // compute the BC indices needed for kmat_IEV
+        auto d_bcs = assembler.getBCs();
+        int n_orig_bcs = d_bcs.getSize();
+        int *h_bcs = d_bcs.createHostVec().getPtr();
+        // printf("h_bcs: ");
+        // printVec<int>(n_orig_bcs, h_bcs);
+
+        std::vector<int> IEV_bcs_vec;
+        // get new num bcs
+        for (int IEV_node = 0; IEV_node < IEV_nnodes; IEV_node++) {
+            int gnode = IEV_nodes[IEV_node];
+            for (int ibc = 0; ibc < n_orig_bcs; ibc++) {
+                int bc = h_bcs[ibc];
+                int bc_node = bc / block_dim;
+                int bc_dof = bc % block_dim;
+                if (bc_node == gnode) {
+                    int IEV_dof = block_dim * IEV_node + bc_dof;
+                    IEV_bcs_vec.push_back(IEV_dof);
+                }
             }
         }
+
+        // printf("IEV_bcs_vec:\n");
+        // printVec<int>(IEV_bcs_vec.size(), IEV_bcs_vec.data());
+        // for (int ibc = 0; ibc < IEV_bcs_vec.size(); ibc++) {
+        //     int bc = IEV_bcs_vec[ibc];
+        //     if (ibc % 6 == 0) {
+        //         int bc_node = bc / 6;
+        //         int glob_node = IEV_nodes[bc_node];
+        //         printf("IEV bc node %d, glob node %d\n", bc_node, glob_node);
+        //     }
+        // }
+        d_IEV_bcs = HostVec<int>(IEV_bcs_vec.size(), IEV_bcs_vec.data()).createDeviceVec();
     }
 
     void assemble_subdomains() {
@@ -920,6 +988,19 @@ class FetidpSolver : public BaseSolver {
 
         addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
         addVec_globalToIEV(d_vars, d_IEV_vars, block_dim, 1.0, 0.0);
+
+        // // DEBUG
+        // T *h_xpts = d_xpts.createHostVec().getPtr();
+        // printf("orig_xpts: ");
+        // printVec<T>(3 * num_nodes, h_xpts);
+        // T *h_IEV_xpts = d_IEV_xpts.createHostVec().getPtr();
+        // // printf("IEV_xpts: ");
+        // // printVec<T>(3 * IEV_nnodes, h_IEV_xpts);
+        // printf("\nIEV_xpts\n");
+        // for (int inode = 0; inode < IEV_nnodes; inode++) {
+        //     printf("IEV %d, gnode %d, ", inode, IEV_nodes[inode]);
+        //     printVec<T>(3, &h_IEV_xpts[3 * inode]);
+        // }
 
         // TODO: kmat_IEV must be allocated before this
         kmat_IEV->zeroValues();
@@ -936,6 +1017,9 @@ class FetidpSolver : public BaseSolver {
             <<<grid, block>>>(IEV_nnodes, num_elements, cols_per_elem, d_elem_components,
                               d_IEV_elem_conn, d_IEV_elem_conn, d_IEV_xpts, d_IEV_vars, d_compData,
                               *kmat_IEV);
+
+        // apply bcs to the kmat_IEV (before copying to IE and I subdomain matrices)
+        kmat_IEV->apply_bcs(d_IEV_bcs);
 
         // copy entries from kmat_IEV to kmat_IE, kmat_I and S_VV matrices
         copyKmat_IEVtoIE();
@@ -969,18 +1053,6 @@ class FetidpSolver : public BaseSolver {
         subdomainIESolver = subdomainIESolver_;
         subdomainISolver = subdomainISolver_;
         coarseSolver = coarseSolver_;
-    }
-
-    void assemble_jump_operator() {
-        // TODO:
-        // Build:
-        //   B_delta   : true signed jump
-        //   B_Ddelta  : scaled jump for preconditioner
-    }
-
-    void assemble_coarse_system() {
-        // TODO:
-        // Build assembled coarse Schur complement S_VV
     }
 
     void get_lam_rhs(DeviceVec<T> &lam_rhs) {
@@ -1140,6 +1212,14 @@ class FetidpSolver : public BaseSolver {
         k_copyMatToMat_restrict<T><<<grid, block>>>(IE_nofill_nnzb, block_dim, d_kmat_IEtoIEV_map,
                                                     d_kmat_IEnofill_map, d_IEV_vals.getPtr(),
                                                     d_IE_vals.getPtr());
+
+        // printf("IEV_nnzb %d, IE_nnzb %d, IE_nofill_nnzb %d\n", IEV_nnzb, IE_nnzb,
+        // IE_nofill_nnzb);
+
+        // printf("h_kmat_IEtoIEV_map: ");
+        // printVec<int>(IE_nofill_nnzb, IEVtoIE_imap);
+        // printf("kmat_IEnofill_map: ");
+        // printVec<int>(IE_nofill_nnzb, kmat_IEnofill_map);
     }
 
     void copyKmat_IEVtoI() {
@@ -1207,17 +1287,32 @@ class FetidpSolver : public BaseSolver {
                                                  d_svv_blocks, hvec.getPtr(), d_Svv_vals.getPtr());
     }
 
-    void addVec_globalToIEV(const Vec &x_global, Vec &y_iev, int vars_per_node_in, T a, T b) {
+    template <bool scaled = false>
+    void addVec_globalToIEV(Vec &x_global, Vec &y_iev, int vars_per_node_in, T a, T b) {
         // Scatter a global nodal vector into duplicated IEV layout.
         // Likely based on IEV_nodes and vars_per_node_in.
 
         CHECK_CUBLAS(cublasDscal(cublasHandle, y_iev.getSize(), &b, y_iev.getPtr(), 1));
 
+        // // DEBUG:
+        // int *h_IE_nodes = DeviceVec<int>(IE_nnodes, d_IE_nodes).createHostVec().getPtr();
+        // printf("h_IE_nodes: ");
+        // printVec<int>(IE_nnodes, h_IE_nodes);
+        // int *h_Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
+        // printf("h_Vc_nodes: ");
+        // printVec<int>(Vc_nnodes, h_Vc_nodes);
+        // T *h_x_glob = x_global.createHostVec().getPtr();
+        // printf("h_x_glob: ");
+        // printVec<T>(x_global.getSize(), h_x_glob);
+
+        u_IE.zeroValues();
+        u_V.zeroValues();
+
         int nvals = IE_nnodes * vars_per_node_in;
         dim3 block(32), grid((nvals + 31) / 32);
-        k_addVec_GlobalToIE<T><<<grid, block>>>(IE_nnodes, vars_per_node_in, d_IE_nodes,
-                                                d_IE_general_edge, x_global.getPtr(), u_IE.getPtr(),
-                                                a);
+        k_addVec_GlobalToIE<T, scaled><<<grid, block>>>(IE_nnodes, vars_per_node_in, d_IE_nodes,
+                                                        d_IE_general_edge, x_global.getPtr(),
+                                                        u_IE.getPtr(), a);
 
         int nvals2 = Vc_nnodes * vars_per_node_in;
         dim3 grid2((nvals2 + 31) / 32);
@@ -1225,9 +1320,23 @@ class FetidpSolver : public BaseSolver {
                                                  x_global.getPtr(), u_V.getPtr(), a);
         // CHECK_CUBLAS(cublasDscal(cublasHandle, u_IE.getSize(), &a, u_IE.getPtr(), 1));
 
+        // T *h_u_IE = u_IE.createHostVec().getPtr();
+        // printf("\nh_u_IE\n");
+        // for (int inode = 0; inode < IE_nnodes; inode++) {
+        //     printf("IE %d, gnode %d, ", inode, IE_nodes[inode]);
+        //     printVec<T>(3, &h_u_IE[3 * inode]);
+        // }
+
+        // T *h_u_V = u_V.createHostVec().getPtr();
+        // printf("\nh_u_V\n");
+        // for (int inode = 0; inode < Vc_nnodes; inode++) {
+        //     printf("IE %d, gnode %d, ", inode, Vc_nodes[inode]);
+        //     printVec<T>(3, &h_u_V[3 * inode]);
+        // }
+
         // helper routines
-        addVecIEtoIEV(u_IE, y_iev, 1.0, 0.0);
-        addVecVctoIEV(u_V, y_iev, 1.0, 0.0);
+        addVecIEtoIEV(u_IE, y_iev, 1.0, 0.0, vars_per_node_in);
+        addVecVctoIEV(u_V, y_iev, 1.0, 1.0, vars_per_node_in);
     }
 
     void addVecIEVtoIE(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
@@ -1273,24 +1382,45 @@ class FetidpSolver : public BaseSolver {
                                              x.getPtr(), y.getPtr(), a);
     }
 
-    void addVecIEtoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+    void addVecIEtoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b, int vars_per_node = -1) {
         // scatter IE entries into IEV slots
         // map(a * x) + b * y => y
+        if (vars_per_node == -1) vars_per_node = block_dim;
         CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
-        int nvals = IE_nnodes * block_dim;
+        int nvals = IE_nnodes * vars_per_node;
         dim3 block(32), grid((nvals + 31) / 32);
         k_addVecSmallerIn<T>
-            <<<grid, block>>>(IE_nnodes, block_dim, d_IEVtoIE_imap, x.getPtr(), y.getPtr(), a);
+            <<<grid, block>>>(IE_nnodes, vars_per_node, d_IEVtoIE_imap, x.getPtr(), y.getPtr(), a);
+
+        // int *h_IEVtoIE_imap = DeviceVec<int>(IE_nnodes, d_IEVtoIE_imap).createHostVec().getPtr();
+        // printf("h_IEVtoIE_imap: ");
+        // printVec<int>(IE_nnodes, h_IEVtoIE_imap);
+        // printf("Check global nodes match\n");
+        // for (int IE_node = 0; IE_node < IE_nnodes; IE_node++) {
+        //     int gnode1 = IE_nodes[IE_node];
+        //     int IEV_node = h_IEVtoIE_imap[IE_node];
+        //     int gnode2 = IEV_nodes[IEV_node];
+        //     printf("ind %d, IEV_node %d, gnode1 %d, gnode2 %d\n", IE_node, IEV_node, gnode1,
+        //            gnode2);
+        // }
     }
 
-    void addVecVctoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
+    void addVecVctoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b, int vars_per_node = -1) {
         // inject coarse/global V entries into local IEV primal slots
         // map(a * x) + b * y => y
+        if (vars_per_node == -1) vars_per_node = block_dim;
         CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
-        int nvals = V_nnodes * block_dim;
+        int nvals = V_nnodes * vars_per_node;
         dim3 block(32), grid((nvals + 31) / 32);
-        k_addVec_VctoIEV<T><<<grid, block>>>(V_nnodes, block_dim, d_IEVtoV_imap, d_VctoV_imap,
+        k_addVec_VctoIEV<T><<<grid, block>>>(V_nnodes, vars_per_node, d_IEVtoV_imap, d_VctoV_imap,
                                              x.getPtr(), y.getPtr(), a);
+
+        // int *h_IEVtoV_imap = DeviceVec<int>(V_nnodes, d_IEVtoV_imap).createHostVec().getPtr();
+        // printf("h_IEVtoV_imap: ");
+        // printVec<int>(V_nnodes, h_IEVtoV_imap);
+        // int *h_VctoV_imap = DeviceVec<int>(V_nnodes, d_VctoV_imap).createHostVec().getPtr();
+        // printf("h_VctoV_imap: ");
+        // printVec<int>(V_nnodes, h_VctoV_imap);
     }
 
     void addVecItoIE(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
@@ -1473,8 +1603,8 @@ class FetidpSolver : public BaseSolver {
             //     IE_to_lam_map[i] = -1;
             // }
         }
-        printf("IE_to_lam_map: ");
-        printVec<int>(IE_nnodes, IE_to_lam_map);
+        // printf("IE_to_lam_map: ");
+        // printVec<int>(IE_nnodes, IE_to_lam_map);
 
         IE_to_lam_vec = new T[IE_nnodes];
         for (int inode = 0; inode < IE_nnodes; inode++) {
@@ -1495,10 +1625,10 @@ class FetidpSolver : public BaseSolver {
                 IE_to_lam_vec[inode] = (rb_color % 2 == 0) ? 1.0 : -1.0;
             }
         }
-        printf("IE_nodes: ");
-        printVec<int>(IE_nnodes, IE_nodes);
-        printf("IE_to_lam_vec: ");
-        printVec<T>(IE_nnodes, IE_to_lam_vec);
+        // printf("IE_nodes: ");
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("IE_to_lam_vec: ");
+        // printVec<T>(IE_nnodes, IE_to_lam_vec);
 
         d_IE_to_lam_vec = HostVec<T>(IE_nnodes, IE_to_lam_vec).createDeviceVec().getPtr();
         d_IE_to_lam_map = HostVec<int>(IE_nnodes, IE_to_lam_map).createDeviceVec().getPtr();
@@ -1612,6 +1742,7 @@ class FetidpSolver : public BaseSolver {
     Vec rhs_I_perm, sol_I_perm;
     Vec rhs_Vc_perm, sol_Vc_perm;
     Vec fext_IEV;  // external loads
+    DeviceVec<int> d_IEV_bcs;
 
     cusparseMatDescr_t descrK;
 

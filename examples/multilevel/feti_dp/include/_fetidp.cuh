@@ -132,7 +132,7 @@ __global__ static void k_addVec_IEtoGlobal(const int IE_nnodes, const int block_
     atomicAdd(&y[dof_glob], a * alpha * x[dof_IE]);
 }
 
-template <typename T>
+template <typename T, bool scaled = false>
 __global__ static void k_addVec_GlobalToIE(const int IE_nnodes, const int block_dim, const int *IE_globalMap, 
     const bool *d_general_edge,  const T *x, T *y, T a) {
     int N_IE = IE_nnodes * block_dim;
@@ -146,8 +146,12 @@ __global__ static void k_addVec_GlobalToIE(const int IE_nnodes, const int block_
     int dof_IE = block_dim * IE_node + idof;
     int dof_glob = block_dim * glob_node + idof;
     // don't want half-weight for scattering global solution to edge nodes (it's more of a copy)
-    // T alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
-    T alpha = 1.0;
+    T alpha;
+    if constexpr (scaled) {
+        alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
+    } else {
+        alpha = 1.0;
+    }
     // this edge map includes edge + dirichlet edge (which also add 0.5 weight into global, a bit tricky)
 
     atomicAdd(&y[dof_IE], a * alpha * x[dof_glob]);
