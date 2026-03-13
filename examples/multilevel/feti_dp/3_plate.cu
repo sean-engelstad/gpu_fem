@@ -81,8 +81,9 @@ int main(int argc, char **argv) {
     // int nxe = 128, nxe_subdomain_size = 4;
     // int nxe = 128, nxe_subdomain_size = 8;
     // int nxe = 128, nxe_subdomain_size = 16;
-    int nxe = 256, nxe_subdomain_size = 4;
+    int nxe = 256, nxe_subdomain_size = 4; // solves in only 1 second!
     // int nxe = 256, nxe_subdomain_size = 8;
+    // int nxe = 512, nxe_subdomain_size = 8; // too large for local computer
 
     // =================
 
@@ -150,8 +151,8 @@ int main(int argc, char **argv) {
     auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_IE);
     auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_I);
     // note assembler not really used in S_VV here or above classes either.. (and def not for size)
-    // auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
-    auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
+    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
+    // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
     
     fetidp->set_inner_solvers(ie_solver, i_solver, v_solver);
 
