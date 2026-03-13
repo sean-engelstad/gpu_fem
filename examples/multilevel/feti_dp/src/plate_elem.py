@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as sp
 
-from .basis import second_order_quadrature
+from .basis import second_order_quadrature, first_order_quadrature
 from .basis import get_lagrange_basis_2d_all
 # from _utils import debug_print_bsr_matrix
 
@@ -117,7 +117,7 @@ class MITCPlateElement:
 
         # gamma_xz = w_x + thy
         bx[0::3] = Nx
-        bx[2::3] = +N
+        bx[2::3] = N
 
         # gamma_yz = w_y - thx
         by[0::3] = Ny
@@ -164,7 +164,8 @@ class MITCPlateElement:
 
         Note: BENDING curvatures are formed consistently with director = (thy, -thx).
         """
-        pts, wts = second_order_quadrature()
+        # pts, wts = second_order_quadrature()
+        pts, wts = first_order_quadrature()
 
         kelem = np.zeros((self.ndof, self.ndof))
 
@@ -184,9 +185,9 @@ class MITCPlateElement:
 
         # ---- BENDING: consistent with director = (thy, -thx) ----
         # Let (rx, ry) = (thy, -thx). Curvatures:
-        #   kappa_x  = d(rx)/dx  =  d(thy)/dx
-        #   kappa_y  = d(ry)/dy  = -d(thx)/dy
-        #   kappa_xy = d(rx)/dy + d(ry)/dx = d(thy)/dy - d(thx)/dx
+        #   kappa_x  = d(rx)/dx  =  -d(thy)/dx
+        #   kappa_y  = d(ry)/dy  = +d(thx)/dy
+        #   kappa_xy = d(rx)/dy + d(ry)/dx = -d(thy)/dy + d(thx)/dx
         for ii, xi in enumerate(pts):
             for jj, eta in enumerate(pts):
                 wt = wts[ii] * wts[jj]
@@ -220,13 +221,14 @@ class MITCPlateElement:
     def get_felem(self, mag, elem_xpts:np.ndarray):
         """get element load vector"""
 
-        pts, wts = second_order_quadrature()
+        # pts, wts = second_order_quadrature()
+        pts, wts = first_order_quadrature()
         felem = np.zeros(self.ndof)
         x = elem_xpts[0::3]
         y = elem_xpts[1::3]
 
-        for ipt in range(9):
-            ii, jj = ipt % 3, ipt // 3
+        for ipt in range(4):
+            ii, jj = ipt % 2, ipt // 2
             xi = pts[ii]; eta = pts[jj]
             wt = wts[ii] * wts[jj]
             # basis (need N to map load; Nxi/Neta to get geometry jacobian)

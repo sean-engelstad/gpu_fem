@@ -63,6 +63,7 @@ int main(int argc, char **argv) {
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
     using FETIDP = FetidpSolver<T, Assembler, VecType, BsrMat>;
     using InnerSolver = CusparseMGDirectLU<T, Assembler>;
+    using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, false, true>;
     using LamPCG = MatrixFreePCGSolver<T, FETIDP>; // FETIDP is the operator and preconditioner
 
     // =====================
@@ -71,14 +72,17 @@ int main(int argc, char **argv) {
 
     // options for problem size and SD sizes
 
-    // int nxe = 4, nxe_subdomain_size = 2;
+    // int nxe = 4, nxe_subdomain_size = 2; // verified against python now
+    // int nxe = 6, nxe_subdomain_size = 2; // verified against python now
     // int nxe = 16, nxe_subdomain_size = 4;
     // int nxe = 32, nxe_subdomain_size = 4;
     // int nxe = 64, nxe_subdomain_size = 4;
-    int nxe = 64, nxe_subdomain_size = 8;
+    // int nxe = 64, nxe_subdomain_size = 8;
     // int nxe = 128, nxe_subdomain_size = 4;
     // int nxe = 128, nxe_subdomain_size = 8;
-    // int nxe = 256, nxe_subdomain_size = 4;
+    // int nxe = 128, nxe_subdomain_size = 16;
+    int nxe = 256, nxe_subdomain_size = 4;
+    // int nxe = 256, nxe_subdomain_size = 8;
 
     // =================
 
@@ -86,6 +90,7 @@ int main(int argc, char **argv) {
     int nxs = nxe / nxe_subdomain_size;
     int nys = nxe / nxe_subdomain_size;
 
+    // double SR = 1e1;
     double SR = 1e3;
     double Lx = 1.0, Ly = 1.0;
     double E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
@@ -110,7 +115,23 @@ int main(int argc, char **argv) {
 
     bool close_hoop = false;
     fetidp->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
+
+    // perform LU fillin and reordering (optional)
+    auto &I_bsr_data = fetidp->I_bsr_data;
+    auto &IE_bsr_data = fetidp->IE_bsr_data;
+    I_bsr_data.compute_full_LU_pattern(10.0);
+    // I_bsr_data.AMD_reordering();
+    IE_bsr_data.compute_full_LU_pattern(10.0);
+    // IE_bsr_data.AMD_reordering(); 
+
+    // now compute matrix sparsity, copy maps
     fetidp->setup_matrix_sparsity();
+
+    // then perform coarse matrix fillin and compute sparsity
+    auto &Svv_bsr_data = fetidp->Svv_bsr_data;
+    Svv_bsr_data.compute_full_LU_pattern(10.0);
+    // Svv_bsr_data.AMD_reordering();
+    fetidp->setup_coarse_matrix_sparsity();
 
     // assemble local FETI-DP blocks
     fetidp->assemble_subdomains();
@@ -125,50 +146,21 @@ int main(int argc, char **argv) {
     //
     // Example sketch only; replace with your actual solver classes:
     
+    // just LU allowed for IE and I solvers to reduce mem footprint (1/2 as much memory for them)
     auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_IE);
-    auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_I);
+    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_I);
     // note assembler not really used in S_VV here or above classes either.. (and def not for size)
+    // auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
     auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
     
     fetidp->set_inner_solvers(ie_solver, i_solver, v_solver);
 
-    // // check matrices
-    // auto kmat_IEV = fetidp->kmat_IEV;
-    // auto kmat_IEV_vec = kmat_IEV->getVec().createHostVec();
-    // T *h_kmat_IEV = kmat_IEV_vec.getPtr();
-    // int IEV_nvals = kmat_IEV_vec.getSize();
-    // int IEV_nnodes = IEV_nvals / 36;
-    // printf("\n\nh_kmat_IEV %d\n", IEV_nvals);
-    // for (int iblock = 0; iblock < IEV_nnodes; iblock++) {
-    //     T *IEV_block = &h_kmat_IEV[36 * iblock];
-    //     printf("block %d\n", iblock);
-    //     for (int i = 0; i < 9; i++) {
-    //         int ix = 2 + i % 3;
-    //         int iy = 2 + i / 3;
-    //         T val = IEV_block[6 * ix + iy];
-    //         printf("%.4e,", val);
-    //         if (i % 3 == 2) printf("\n");
-    //     }
-    //     printf("\n");
-    // }
-
-    // auto kmat_IE = fetidp->kmat_IE;
-    // auto kmat_IE_vec = kmat_IE->getVec().createHostVec();
-    // T *h_kmat_IE = kmat_IE_vec.getPtr();
-    // int IE_nvals = kmat_IE_vec.getSize();
-    // int IE_nnodes = IE_nvals / 36;
-    // printf("\n\nh_kmat_IE %d\n", IE_nvals);
-    // for (int iblock = 0; iblock < IE_nnodes; iblock++) {
-    //     T *IE_block = &h_kmat_IE[36 * iblock];
-    //     printf("block %d\n", iblock);
-    //     for (int i = 0; i < 9; i++) {
-    //         int ix = 2 + i % 3;
-    //         int iy = 2 + i / 3;
-    //         T val = IE_block[6 * ix + iy];
-    //         printf("%.4e,", val);
-    //         if (i % 3 == 2) printf("\n");
-    //     }
-    //     printf("\n");
+    // if (nxe < 10) {
+    //     // DEBUG small matrices
+    //     bool print_IEV = true; // already verified
+    //     bool print_IE = false; // already verified 
+    //     bool print_I = false; // already verified now
+    //     fetidp->debug_IEV_matrices(print_IEV, print_IE, print_I);
     // }
 
     // factor each solver
@@ -177,27 +169,9 @@ int main(int argc, char **argv) {
 
     // then assemble coarse problem (as it uses IE solver) before factoring v_solver
     fetidp->assemble_coarse_problem();
-    v_solver->factor();
+    // fetidp->debug_SVV_matrix();
 
-    // auto S_VV = fetidp->S_VV;
-    // auto S_VV_vec = S_VV->getVec().createHostVec();
-    // T *h_S_VV = S_VV_vec.getPtr();
-    // int SVV_nvals = S_VV_vec.getSize();
-    // int SVV_nnodes = SVV_nvals / 36;
-    // printf("\n\nh_S_VV %d\n", SVV_nvals);
-    // for (int iblock = 0; iblock < SVV_nnodes; iblock++) {
-    //     T *SVV_block = &h_S_VV[36 * iblock];
-    //     printf("block %d\n", iblock);
-    //     for (int i = 0; i < 9; i++) {
-    //         int ix = 2 + i % 3;
-    //         int iy = 2 + i / 3;
-    //         T val = SVV_block[6 * ix + iy];
-    //         printf("%.4e,", val);
-    //         if (i % 3 == 2) printf("\n");
-    //     }
-    //     printf("\n");
-    // }
-    
+    v_solver->factor();    
 
     // lambda rhs
     VecType<T> lam_rhs(fetidp->getLambdaSize());
@@ -206,8 +180,8 @@ int main(int argc, char **argv) {
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
-    // opts.ncycles = 20;
-    opts.ncycles = 500;
+    opts.ncycles = 50;
+    // opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
     opts.debug = true;
@@ -216,6 +190,18 @@ int main(int argc, char **argv) {
 
     auto *lam_solver =
         new LamPCG(cublasHandle, fetidp, fetidp, opts, fetidp->getLambdaSize(), 0);
+
+    // DEBUG:
+    // lam.zeroValues();
+    // fetidp->solve(lam_rhs, lam);
+    // T *h_lam_debug = lam.createHostVec().getPtr();
+    // for (int inode = 0; inode < lam.getSize() / 6; inode++) {
+    //     printf("h_lam_debug\n");
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         printf("%.6e,", h_lam_debug[6 * inode + idof]);
+    //     }
+    //     printf("\n");
+    // }
 
     // optional: true initial residual before solve
     lam.zeroValues();
@@ -237,11 +223,30 @@ int main(int argc, char **argv) {
     if (lam_fail) {
         printf("FETI-DP lambda PCG failed\n");
     }
+
+    // T *h_lam_soln = lam.createHostVec().getPtr();
+    // for (int inode = 0; inode < lam.getSize() / 6; inode++) {
+    //     printf("h_lam_soln\n");
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         printf("%.6e,", h_lam_soln[6 * inode + idof]);
+    //     }
+    //     printf("\n");
+    // }
     
     // done with Krylov solution, now report back
 
     auto soln = assembler.createVarsVec();
     fetidp->get_global_soln(lam, soln);
+
+    // T *h_soln0 = soln.createHostVec().getPtr();
+    // printf("\nh_glob_soln\n");
+    // for (int inode = 0; inode < soln.getSize() / 6; inode++) {
+    //     printf("glob soln node %d: ", inode);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         printf("%.6e,", h_soln0[6 * inode + idof]);
+    //     }
+    //     printf("\n");
+    // }
 
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_fetidp.vtk");

@@ -4,7 +4,7 @@
 // cusparse directLU solves with multigrid (V-cycle style preconditioner for two levels)
 // only works from coarsest grid to next level
 
-template <typename T, class Assembler, bool MULTI_SMOOTH = false>
+template <typename T, class Assembler, bool MULTI_SMOOTH = false, bool JUST_LU_DATA = false>
 class CusparseMGDirectLU : public BaseSolver {
    public:
     CusparseMGDirectLU(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
@@ -30,7 +30,11 @@ class CusparseMGDirectLU : public BaseSolver {
         temp_vec = DeviceVec<T>(N);
         d_temp = temp_vec.getPtr();
         d_vals = kmat.getVec().getPtr();
-        d_vals_ILU0 = DeviceVec<T>(nnz).getPtr();
+        if constexpr (JUST_LU_DATA) {
+            d_vals_ILU0 = d_vals;  // same data
+        } else {
+            d_vals_ILU0 = DeviceVec<T>(nnz).getPtr();
+        }
 
         // for smoothing
         d_rhs_vec = DeviceVec<T>(N);
@@ -139,7 +143,9 @@ class CusparseMGDirectLU : public BaseSolver {
 
     void factor() {
         // copy the data from the original matrix to new place for factor
-        CHECK_CUDA(cudaMemcpy(d_vals_ILU0, d_vals, nnz * sizeof(T), cudaMemcpyDeviceToDevice));
+        if constexpr (!JUST_LU_DATA) {
+            CHECK_CUDA(cudaMemcpy(d_vals_ILU0, d_vals, nnz * sizeof(T), cudaMemcpyDeviceToDevice));
+        }
 
         // do factor (without object recreation here)
 
@@ -229,6 +235,11 @@ class CusparseMGDirectLU : public BaseSolver {
         /* compute the residual of the direct solve */
 
         // maybe just for debugging here
+        if (JUST_LU_DATA) {
+            printf(
+                "WARNING: shouldn't be computing mat-vec product with CuSparseDirectLU and "
+                "JUST_LU_DATA is on\n");
+        }
 
         cudaMemcpy(d_temp, rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
         T init_norm;

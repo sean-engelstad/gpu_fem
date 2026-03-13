@@ -16,15 +16,19 @@ from krylov import right_pcg_matfree
 # only thing is would maybe need true multi-level BDDC or multi-level FETI
 # to get fully h-independent convergence I bet.. iter count is going up a bit more for higher DOF 
 
+# here nxs represents # subdomains not subdomain size
 # nxe, nxs = 256, 64
 # nxe, nxs = 128, 64 # even works pretty well with small 2x2 subdomains for higher DOF problems! 4x4 fine too..
 # nxe, nxs = 128, 32 # 4x4 works well also
 # nxe, nxs = 128, 16
 # nxe, nxs = 128, 8
 # nxe, nxs = 64, 16
+# nxe, nxs = 64, 8
 # nxe, nxs = 32, 4
 # nxe, nxs = 32, 8
-nxe, nxs = 4, 2
+# nxe, nxs = 16, 4
+nxe, nxs = 6, 3
+# nxe, nxs = 4, 2
 
 # thick = 1e-1
 # thick = 1e-2
@@ -37,6 +41,7 @@ def load_fcn(_x,_y):
     import math
     theta = math.atan2(_y, _x)
     r = np.sqrt(_x**2 + _y**2)
+
     return 100.0 * np.sin(5.0  * np.pi * r) * np.cos(4*theta)
 
 ELEMENT = MITCPlateElement(
@@ -75,15 +80,49 @@ print(f"{assembler.num_subdomains=}")
 assembler.assemble_all()
 lam_rhs = assembler.get_lam_rhs() # g_G rhs 
 print(f"{np.linalg.norm(lam_rhs)=:.4e}")
+# print(f"{lam_rhs=}")
 
+# for i in range(lam_rhs.shape[0] // 3):
+#     sub_vec = lam_rhs[3*i:(3*i+3)]
+#     print(f"lam_rhs, {i=} {sub_vec=}")
 
 # DEBUG
 # import matplotlib.pyplot as plt
 # for i_sd in range(assembler.num_subdomains):
-#     sd_kmat = assembler.sd_kmat[i_sd].toarray()
-#     print(f"{i_sd=} {sd_kmat=}")
-# print(f"{assembler.S_VV.toarray()=}")
+#     print(f"{i_sd=}/{assembler.num_subdomains=}")
+#     sd_kmat = assembler.sd_kmat[i_sd].copy().tobsr(blocksize=(3,3))
+#     imap = assembler.sd_node_inv_map[i_sd].copy()
+#     for i in range(sd_kmat.indptr.shape[0]-1):
+#         for jp in range(sd_kmat.indptr[i], sd_kmat.indptr[i+1]):
+#             j = sd_kmat.indices[jp]
+#             gi, gj = imap[i], imap[j]
+#             print(f"{i_sd=} ({gi},{gj}) {jp=}:")
+#             print(sd_kmat.data[jp])
 
+# Svv_bsr = assembler.S_VV.tobsr(blocksize=(3,3))
+# print(f"Svv_bsr: \n")
+# for i in range(Svv_bsr.indptr.shape[0] - 1):
+#     for jp in range(Svv_bsr.indptr[i], Svv_bsr.indptr[i+1]):
+#         j = Svv_bsr.indices[jp]
+#         gr = assembler.vertex_nodes_global[i]
+#         gc = assembler.vertex_nodes_global[j]
+#         block = Svv_bsr.data[jp]
+#         print(f"Svv_block {jp} ({gr},{gc}) :\n{block}")
+# # print(f"{Svv_bsr.data=}")
+
+# for i_sd in range(assembler.num_subdomains):
+#     print(f"{i_sd=}/{assembler.num_subdomains=}")
+#     sd_force = assembler.sd_force[i_sd].copy()
+#     imap = assembler.sd_node_inv_map[i_sd].copy()
+#     for inode in range(assembler.sd_nnodes[i_sd]):
+#         gnode = imap[inode]
+#         sub_vec = sd_force[3*inode:(3*inode+3)]
+#         print(f"force {inode=} {gnode=} {sub_vec=}")
+
+# soln1 = assembler.precond_solve(lam_rhs)
+# for i in range(soln1.shape[0] // 3):
+#     sub_vec = soln1[3*i:(3*i+3)]
+#     print(f"pc-solve0, {i=} {sub_vec=}")
 
 def norm(x): 
     # return np.max(np.abs(x))
@@ -100,6 +139,16 @@ lam_soln, nsteps = right_pcg_matfree(
     norm_hist=norm_hist,
 )
 
+# for i_sd in range(assembler.num_subdomains):
+#     print(f"{i_sd=} {assembler.sd_B_delta[i_sd].toarray()=}")
+#     print(f"\t{assembler.sd_edge_dofs[i_sd]=}")
+            
+
+# for i in range(lam_soln.shape[0] // 3):
+#     sub_vec = lam_soln[3*i:(3*i+3)]
+#     print(f"lam_soln, {i=} {sub_vec=}")
+
+
 # check lambda linear system is solved
 interface_res = lam_rhs - assembler.mat_vec(lam_soln)
 res_nrm = norm(interface_res)
@@ -109,6 +158,10 @@ print(f"{rel_solve_nrm=:.4e}")
 
 # reconstruct global solution
 global_soln = assembler.get_global_solution(lam_soln)
+
+# for i in range(global_soln.shape[0] // 3):
+#     sub_vec = global_soln[3*i:(3*i+3)]
+#     print(f"global_soln, {i=} {sub_vec=}")
 
 # compare to direct solve
 direct_soln = assembler.direct_solve(assembly=False)

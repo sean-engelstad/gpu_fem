@@ -413,11 +413,20 @@ class Subdomain2DAssembler:
 
         for node in self.bcs:
             for idof in bc_dofs:
+
+                # --- zero column ---
+                for rnode in range(self.nnodes):
+                    for colp in range(self.rowp[rnode], self.rowp[rnode + 1]):
+                        if self.cols[colp] == node:
+                            self.data[colp, :, idof] = 0.0
+
+                # --- zero row ---
                 for colp in range(self.rowp[node], self.rowp[node + 1]):
                     bc = self.cols[colp]
                     self.data[colp, idof, :] = 0.0
                     if bc == node:
                         self.data[colp, idof, idof] = 1.0
+
                 self.force[dpn * node + idof] = 0.0
 
     def _apply_bcs_subdomain(self, i_sd: int):
@@ -429,19 +438,31 @@ class Subdomain2DAssembler:
         cols = self.sd_cols[i_sd]
         data = self.sd_data[i_sd]
         force = self.sd_force[i_sd]
-        node_map = self.sd_node_map[i_sd]   # global -> local
+        node_map = self.sd_node_map[i_sd]
+
+        nnodes_sd = len(rowp) - 1
 
         for gnode in self.bcs:
             if int(gnode) not in node_map:
                 continue
 
             lnode = node_map[int(gnode)]
+
             for idof in bc_dofs:
+
+                # --- zero column ---
+                for rnode in range(nnodes_sd):
+                    for colp in range(rowp[rnode], rowp[rnode + 1]):
+                        if cols[colp] == lnode:
+                            data[colp, :, idof] = 0.0
+
+                # --- zero row ---
                 for colp in range(rowp[lnode], rowp[lnode + 1]):
                     bc = cols[colp]
                     data[colp, idof, :] = 0.0
                     if bc == lnode:
                         data[colp, idof, idof] = 1.0
+
                 force[dpn * lnode + idof] = 0.0
 
     # =================================================================

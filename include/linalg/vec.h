@@ -25,11 +25,12 @@ class BaseVec {
     using type = T;
 
     BaseVec() = default;  // default constructor
-    __HOST_DEVICE__ BaseVec(int N, T *data) : N(N), data(data) {}
+    __HOST_DEVICE__ BaseVec(int N, T *data) : N(N), data(data) { temp = nullptr; }
     __HOST_DEVICE__ BaseVec(const BaseVec &vec) {
         // copy constructor
         this->N = vec.N;
         this->data = vec.data;
+        temp = nullptr;
     }
     __HOST_DEVICE__ void getData(T *myData) { myData = data; }
     __HOST_DEVICE__ T *getPtr() { return data; }
@@ -92,9 +93,9 @@ class BaseVec {
 
     __HOST__ void permuteData(int block_dim, int *perm) {
         // apply this permutation to our data
-        T *temp;
 #ifndef USE_GPU
-        temp = new T[N];
+        // only initializes once if not set yet
+        if (!temp) temp = new T[N];
         int nnodes = N / block_dim;
         // store permutation of myData in temp
         for (int inode = 0; inode < nnodes; inode++) {
@@ -105,10 +106,11 @@ class BaseVec {
         }
         // copy data back from temp to myData
         memcpy(this->data, temp, this->N * sizeof(T));
-        delete[] temp;
+        // delete[] temp;
 #endif
 #ifdef USE_GPU
-        cudaMalloc((void **)&temp, N * sizeof(T));
+        // only initializes once if not set yet
+        if (!temp) cudaMalloc((void **)&temp, N * sizeof(T));
         // launch kernel to permute vec
         // create temp still? or just use shared memory to do it?
         dim3 block(128, 1, 1);
@@ -123,7 +125,6 @@ class BaseVec {
 
         // then use cudaMemcpy back from temp to data
         cudaMemcpy(this->data, temp, this->N * sizeof(T), cudaMemcpyDeviceToDevice);
-        cudaFree(temp);
 #endif
     }
 
@@ -159,6 +160,7 @@ class BaseVec {
    protected:
     int N;
     T *data;
+    T *temp;
 };
 
 template <typename T>
@@ -196,7 +198,7 @@ class DeviceVec : public BaseVec<T> {
 
         apply_vec_bcs_kernel<T, DeviceVec><<<grid, block>>>(bcs, this->data);
 
-        CHECK_CUDA(cudaDeviceSynchronize());
+        // CHECK_CUDA(cudaDeviceSynchronize());
 #else  // NOT USE_GPU
         BaseVec<T>::apply_bcs(bcs);
 #endif
@@ -225,7 +227,7 @@ class DeviceVec : public BaseVec<T> {
         int nblocks = (vec1.getSize() + block1.x - 1) / block1.x;
         dim3 grid1(nblocks);
         vec_add_kernel<T><<<grid1, block1>>>(vec1, vec2, vec3);
-        CHECK_CUDA(cudaDeviceSynchronize());
+        // CHECK_CUDA(cudaDeviceSynchronize());
 #else
         printf("add vector code only written for GPU now\n");
 #endif
@@ -416,7 +418,8 @@ class DeviceVec : public BaseVec<T> {
 
    private:
     bool is_free = false;
-};  // end of DeviceVec
+    T *temp;  // optional data storage for doing perm (not triggered unless perm is called once)
+};            // end of DeviceVec
 
 template <typename T>
 class HostVec : public BaseVec<T> {

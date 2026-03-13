@@ -283,6 +283,8 @@ __global__ static void k_addMat_IEVtoV_vals(const int set_nnzb, const int block_
     int mat_block = d_matBlocks[iblock];
     int vec_block = d_vecBlocks[iblock];
 
-    atomicAdd(&mat_vals[block_dim2 * mat_block + block_dim * inn_row + inn_col],
-              hvec[block_dim * vec_block + inn_row]);
+    // atomicAdd(&mat_vals[block_dim2 * mat_block + block_dim * inn_row + inn_col],
+    //           hvec[block_dim * vec_block + inn_row]);
+    atomicAdd(&mat_vals[block_dim2 * mat_block + block_dim * inn_col + inn_row],
+              hvec[block_dim * vec_block + inn_row]); // this was flipped before somehow (the mat row,col)
 }

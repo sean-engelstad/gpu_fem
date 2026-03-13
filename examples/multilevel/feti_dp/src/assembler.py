@@ -350,15 +350,21 @@ class FETIDP_Assembler(Subdomain2DAssembler):
             local_edge_global = self.sd_edge_global_dofs[i_sd]
             g2l = {int(gd): j for j, gd in enumerate(local_edge_global)}
 
+            isx = i_sd % self.nxs
+            isy = i_sd // self.nxs
+            rb_color = isx + isy
+
             for gd in local_edge_global:
                 gd = int(gd)
                 k = lambda_pos[gd]
                 ilo, ihi = self.global_edge_owner_pair[gd]
+                even_sd = rb_color % 2 == 0
 
-                if i_sd == ilo:
-                    sgn = +1.0
-                elif i_sd == ihi:
-                    sgn = -1.0
+                if i_sd in [ilo, ihi]:
+                    if even_sd:
+                        sgn = +1.0
+                    else:
+                        sgn = -1.0
                 else:
                     continue
 
@@ -475,7 +481,7 @@ class FETIDP_Assembler(Subdomain2DAssembler):
         #     self.S_VV_solver = None
         if self.S_VV.shape[0] > 0:
             self.S_VV_solver = self.coarse_solver_cls(
-                self.S_VV,
+                self.S_VV.copy(),
                 **self.coarse_solver_kwargs,
             )
         else:
@@ -671,6 +677,7 @@ class FETIDP_Assembler(Subdomain2DAssembler):
 
         for i_sd in range(self.num_subdomains):
             sd_rhs = self.sd_force[i_sd]
+            # print(f"{i_sd=} {sd_rhs=}")
 
             I = self.sd_interior_dofs[i_sd]
             E = self.sd_edge_dofs[i_sd]
@@ -692,9 +699,31 @@ class FETIDP_Assembler(Subdomain2DAssembler):
                 gi -= self.sd_A_VE[i_sd].dot(uE_f)
                 gV += self.sd_R_Vi[i_sd].T.dot(gi)
 
+        # for i in range(gV.shape[0] // 3):
+        #     sub_vec = gV[3*i:(3*i+3)]
+        #     iglob = self.vertex_nodes_global[i]
+        #     print(f"gV, {i=} {iglob=} {sub_vec=}")
+
+        # gV *= 0.0
+        # gV[0] = 1.0
+        # print(f"{gV=}")  
+        # print(f"{self.S_VV.data=}")
+
+        # temp_rV = self.S_VV.dot(gV)
+        # print(f"{temp_rV=}")
+
         # coarse correction term
         if len(self.vertex_dof_global) > 0:
             uV = self._solve_coarse(gV)
+
+            # # now check the residual
+            # gV_res = gV - self.S_VV.dot(uV)
+            # print(f"{gV_res=}")
+
+            # for i in range(uV.shape[0] // 3):
+            #     sub_vec = uV[3*i:(3*i+3)]
+            #     iglob = self.vertex_nodes_global[i]
+            #     print(f"uV {i=} {iglob=} {sub_vec=}") 
 
             for i_sd in range(self.num_subdomains):
                 nV = len(self.sd_vertex_dofs[i_sd])
@@ -710,6 +739,12 @@ class FETIDP_Assembler(Subdomain2DAssembler):
 
                 # subtract coarse term
                 rhs -= self.sd_B_delta[i_sd].dot(corrE)
+
+
+        # for i in range(rhs.shape[0] // 3):
+        #     sub_vec = rhs[3*i:(3*i+3)]
+        #     iglob = self.edge_interface_nodes_global[i]
+        #     print(f"lam_rhs, {i=} {iglob=} {sub_vec=}")  
 
         return rhs
 
