@@ -24,6 +24,33 @@ void to_lowercase(char *str) {
     }
 }
 
+template <typename T>
+T get_max_disp(DeviceVec<T> &d_soln, int idof = 2) {
+    T *h_soln = d_soln.createHostVec().getPtr();
+    int nvars = d_soln.getSize();
+    int nnodes = nvars / 6;
+    T my_max = 0.0;
+    for (int inode = 0; inode < nnodes; inode++) {
+        T val = abs(h_soln[6 * inode + idof]);
+        if (val > my_max) my_max = val;
+    }
+    return my_max;
+}
+
+template <typename T>
+T get_max_disp(HostVec<T> h_soln, int idof = 2) {
+    T *h_soln_ptr = h_soln.getPtr();
+    int nvars = h_soln.getSize();
+    int nnodes = nvars / 6;
+    T my_max = 0.0;
+    for (int inode = 0; inode < nnodes; inode++) {
+        T val = abs(h_soln_ptr[6 * inode + idof]);
+        if (val > my_max) my_max = val;
+    }
+    return my_max;
+}
+
+
 // declare a couple different types of loads..
 template <typename T>
 struct UniformPressure {
@@ -62,39 +89,111 @@ int main(int argc, char **argv) {
     using Basis = LagrangeQuadBasis<T, Quad, 1>;
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
     using FETIDP = FetidpSolver<T, Assembler, VecType, BsrMat>;
-    using InnerSolver = CusparseMGDirectLU<T, Assembler>;
-    using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, false, true>;
+    // const bool MULTI_SMOOTH = true;
+    const bool MULTI_SMOOTH = false; // often not MULTI_SMOOTH is better..
+    using InnerSolver = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH>;
+    using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH, true>;
     using LamPCG = MatrixFreePCGSolver<T, FETIDP>; // FETIDP is the operator and preconditioner
 
-    // =====================
-    // INPUTS
-    // =====================
 
-    // options for problem size and SD sizes
+    // int nxe = 6, nxe_subdomain_size = 2;
+    int nxe = 256, nxe_subdomain_size = 4;
+    // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
+    // for the coarse problem..
+    T omega;
+    int nsmooth, fill_level;
+    T thick = 1e-3;
+    bool print_mem = false;
+    T mag = 1.0;
+    
+    // optional smoothing
+    // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
+    // omega = 0.5, nsmooth = 2, fill_level = 2;
+    // or single-level (no multiple smoothing) and ILU(k)
+    // omega = 1.0, nsmooth = 1, fill_level = 2;
+    // 2) or if full LU fillin
+    // think I actually need to run with full direct fillin (cause otherwise solution recovery is wrong)
+    omega = 1.0, nsmooth = 1, fill_level = -1; // -1 indicates full LU fillin
 
-    // int nxe = 4, nxe_subdomain_size = 2; // verified against python now
-    // int nxe = 6, nxe_subdomain_size = 2; // verified against python now
-    // int nxe = 16, nxe_subdomain_size = 4;
-    // int nxe = 32, nxe_subdomain_size = 4;
-    // int nxe = 64, nxe_subdomain_size = 4;
-    // int nxe = 64, nxe_subdomain_size = 8;
-    // int nxe = 128, nxe_subdomain_size = 4;
-    // int nxe = 128, nxe_subdomain_size = 8;
-    // int nxe = 128, nxe_subdomain_size = 16;
-    int nxe = 256, nxe_subdomain_size = 4; // solves in only 1 second!
-    // int nxe = 256, nxe_subdomain_size = 8;
-    // int nxe = 512, nxe_subdomain_size = 8; // too large for local computer
+    if (!MULTI_SMOOTH) {
+        printf("NOTE: MULTI_SMOOTH is false, so omega, nsmooth inputs are ignored.\n");
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        char* arg = argv[i];
+        to_lowercase(arg);
+
+        if (strcmp(arg, "--nxe") == 0) {
+            if (i + 1 < argc) {
+                nxe = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nxe\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--thick") == 0) {
+            if (i + 1 < argc) {
+                thick = std::atof(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --thick\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--mag") == 0) {
+            if (i + 1 < argc) {
+                mag = std::atof(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --mag\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--omega") == 0) {
+            if (i + 1 < argc) {
+                omega = std::atof(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --omega\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--subdomain") == 0) {
+            if (i + 1 < argc) {
+                nxe_subdomain_size = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --subdomain\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--fill") == 0) {
+            if (i + 1 < argc) {
+                fill_level = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --fill\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--print_mem") == 0) {
+            if (i + 1 < argc) {
+                print_mem = (bool)std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --print_mem\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--nsmooth") == 0) {
+            if (i + 1 < argc) {
+                nsmooth = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nsmooth\n";
+                return 1;
+            }
+        } else {
+            std::cerr << "Unknown argument: " << argv[i] << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [direct/krylov] [--nxe value] [--SR value] [--nsmooth int]" << std::endl;
+            return 1;
+        }
+    }
+
 
     // =================
 
     int nye = nxe;
     int nxs = nxe / nxe_subdomain_size;
     int nys = nxe / nxe_subdomain_size;
-
-    // double SR = 1e1;
-    double SR = 1e3;
     double Lx = 1.0, Ly = 1.0;
-    double E = 70e9, nu = 0.3, thick = 1.0 / SR, rho = 2500, ys = 350e6;
+    double E = 70e9, nu = 0.3, rho = 2500, ys = 350e6;
     int nxe_per_comp = nxe, nye_per_comp = nye;
 
     auto assembler = createPlateClampedAssembler<Assembler>(
@@ -105,6 +204,19 @@ int main(int argc, char **argv) {
     assembler.moveBsrDataToDevice();
 
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto soln = assembler.createVarsVec();
+    auto soln2 = assembler.createVarsVec();
+    auto vars = assembler.createVarsVec();
+    auto res = assembler.createVarsVec();
+
+    // kmat assembly (not actually needed here, but is needed for the nonlinear problem))
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start_assembly = std::chrono::high_resolution_clock::now();
+    assembler.add_jacobian_fast(kmat);
+    assembler.apply_bcs(kmat);
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto end_assembly = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> assembly_time = end_assembly - start_assembly;
 
     cublasHandle_t cublasHandle = nullptr;
     CHECK_CUBLAS(cublasCreate(&cublasHandle));
@@ -112,34 +224,60 @@ int main(int argc, char **argv) {
     cusparseHandle_t cusparseHandle = nullptr;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    auto fetidp = new FETIDP(cublasHandle, cusparseHandle, assembler, kmat);
+    bool print_timing = true; // profiling
+    auto fetidp = new FETIDP(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
-    bool close_hoop = false;
+    bool close_hoop = true; // true for cylinder case (not cylindrical panel)
     fetidp->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = fetidp->I_bsr_data;
     auto &IE_bsr_data = fetidp->IE_bsr_data;
-    I_bsr_data.compute_full_LU_pattern(10.0);
-    // I_bsr_data.AMD_reordering();
-    IE_bsr_data.compute_full_LU_pattern(10.0);
-    // IE_bsr_data.AMD_reordering(); 
+    I_bsr_data.AMD_reordering(); 
+    if (fill_level != -1) { 
+        I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
+    } else {
+        I_bsr_data.compute_full_LU_pattern(10.0);
+    }
+
+    IE_bsr_data.AMD_reordering(); 
+    if (fill_level != -1) { 
+        IE_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
+    } else {
+        IE_bsr_data.compute_full_LU_pattern(10.0);
+    }
 
     // now compute matrix sparsity, copy maps
     fetidp->setup_matrix_sparsity();
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = fetidp->Svv_bsr_data;
-    Svv_bsr_data.compute_full_LU_pattern(10.0);
-    // Svv_bsr_data.AMD_reordering();
+    Svv_bsr_data.AMD_reordering();
+    if (fill_level != -1) { 
+        Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
+    } else {
+        Svv_bsr_data.compute_full_LU_pattern(10.0);
+    }
+
     fetidp->setup_coarse_matrix_sparsity();
 
     // assemble local FETI-DP blocks
     fetidp->assemble_subdomains();
 
-    // external load
+    // external load (can add internally)
     ObliqueShearSineLoad<T> load;
-    fetidp->add_subdomain_fext(load);
+    fetidp->add_subdomain_fext(load, mag);
+
+    fetidp->set_IEV_residual(1.0, 0.0, vars);
+
+    // get loads (alternative way.. set from global rhs instead of element load assembly)
+    // double Q = 1.0; // load magnitude
+    // T *my_loads = getPlateLoads<T, Basis, Physics>(nxe, nxe, Lx, Ly, Q);
+    // auto loads = assembler.createVarsVec(my_loads);
+    // assembler.apply_bcs(loads);
+    // fetidp->set_global_rhs(loads);
+    // ACTUALLY : not sure this set_global_rhs method is going to give equiv system
+    // you do need element-level assembly
 
     // ----------------------------------------
     // you still need actual solver objects here
@@ -148,11 +286,13 @@ int main(int argc, char **argv) {
     // Example sketch only; replace with your actual solver classes:
     
     // just LU allowed for IE and I solvers to reduce mem footprint (1/2 as much memory for them)
-    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_IE);
-    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_I);
+    //   means only the LU factor is stored, not original matrix as well
+    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_IE, omega, nsmooth);
+    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_I, omega, nsmooth);
     // note assembler not really used in S_VV here or above classes either.. (and def not for size)
-    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
+    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV, omega, nsmooth);
     // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
+    
     
     fetidp->set_inner_solvers(ie_solver, i_solver, v_solver);
 
@@ -209,17 +349,129 @@ int main(int argc, char **argv) {
     T init_lam_resid = lam_solver->getResidualNorm(lam_rhs, lam);
     printf("initial lambda residual = %.8e\n", init_lam_resid);
 
+    // ==============================================
+    // SOLVE (TIMING)
+    // ==============================================
+
     CHECK_CUDA(cudaDeviceSynchronize());
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start0 = std::chrono::high_resolution_clock::now();
+
+    // run the assembly and factor (call from krylov solver, that also calls for preconditioner)
+    lam_solver->update_after_assembly(vars);
+        
+    // end timing of the factor + assembly part
+    CHECK_CUDA(cudaDeviceSynchronize());
+    auto start1 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> IEV_factor_time = start1 - start0;
+
 
     bool lam_fail = lam_solver->solve(lam_rhs, lam, true);
+    fetidp->get_global_soln(lam, soln);
 
     CHECK_CUDA(cudaDeviceSynchronize());
     auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> solve_time = end - start;
+    std::chrono::duration<double> solve_time = end - start1;
+    std::chrono::duration<double> total_time = end - start0;
 
     T final_lam_resid = lam_solver->getResidualNorm(lam_rhs, lam);
-    printf("final lambda residual = %.8e in %.4e sec\n", final_lam_resid, solve_time.count());
+    // printf("final lambda residual = %.8e in %.4e sec\n", final_lam_resid, solve_time.count());
+    // printf("\nassembly in %.4e sec, IEV-assembly+factor in %.4e sec, PCG-solve in %.4e sec\n", assembly_time.count(), IEV_factor_time.count(), solve_time.count());
+    // printf("\ttotal IEV-setup and PCG in %.4e sec\n", total_time.count());
+
+    printf("\nFETI-DP solve summary:\n");
+    printf("  final lambda residual : %.8e\n\n", final_lam_resid);
+
+    printf("Timing breakdown:\n");
+    printf("  assembly              : %.4e s\n", assembly_time.count());
+    printf("  IEV assembly+factor   : %.4e s\n", IEV_factor_time.count());
+    printf("  PCG solve             : %.4e s\n", solve_time.count());
+    printf("  --------------------------------\n");
+    printf("  total setup + solve   : %.4e s\n\n", total_time.count());
+
+    printf("\nFETI-DP solve summary:\n");
+    printf("  final lambda residual : %.8e\n\n", final_lam_resid);
+
+    printf("Timing breakdown:\n");
+    printf("  assembly              : %.4e s\n", assembly_time.count());
+    printf("  IEV assembly+factor   : %.4e s\n", IEV_factor_time.count());
+    printf("  PCG solve             : %.4e s\n", solve_time.count());
+    printf("  --------------------------------\n");
+    printf("  total setup + solve   : %.4e s\n\n", total_time.count());
+
+    if (print_mem) {
+        // get memory usage
+        size_t bytes_per_double = sizeof(double);
+        double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
+
+        // nnzb counts
+        int kmat_nnzb   = kmat.getBsrData().nnzb;
+        int IEV_nnzb    = fetidp->kmat_IEV->getBsrData().nnzb;
+        int IE_nnzb     = IE_bsr_data.nnzb;
+        int I_nnzb      = I_bsr_data.nnzb;
+        int coarse_nnzb = Svv_bsr_data.nnzb;
+
+        // no-fill counts (must already exist in your code)
+        int IE_nofill_nnzb     = fetidp->IE_nofill_nnzb;
+        int I_nofill_nnzb      = fetidp->I_nofill_nnzb;
+        int coarse_nofill_nnzb = fetidp->Svv_nofill_nnzb;   // or whatever your variable is called
+
+        // memory in MB
+        double kmat_mem_mb   = bytes_per_block * static_cast<double>(kmat_nnzb)   / 1024.0 / 1024.0;
+        double IEV_mem_mb    = bytes_per_block * static_cast<double>(IEV_nnzb)    / 1024.0 / 1024.0;
+        double IE_mem_mb     = bytes_per_block * static_cast<double>(IE_nnzb)     / 1024.0 / 1024.0;
+        double I_mem_mb      = bytes_per_block * static_cast<double>(I_nnzb)      / 1024.0 / 1024.0;
+        double coarse_mem_mb = bytes_per_block * static_cast<double>(coarse_nnzb) / 1024.0 / 1024.0;
+
+        // total stored blocks:
+        //   kmat * 1
+        //   IEV  * 1
+        //   IE   * 2
+        //   I    * 1
+        //   coarse * 1
+        long long total_stored_nnzb =
+            static_cast<long long>(kmat_nnzb) +
+            static_cast<long long>(IEV_nnzb) +
+            2LL * static_cast<long long>(IE_nnzb) +
+            static_cast<long long>(I_nnzb) +
+            static_cast<long long>(coarse_nnzb);
+
+        double total_mem_mb =
+            bytes_per_block * static_cast<double>(total_stored_nnzb) / 1024.0 / 1024.0;
+
+        // fill ratios
+        double IE_fill_ratio =
+            (IE_nofill_nnzb > 0) ? static_cast<double>(IE_nnzb) / static_cast<double>(IE_nofill_nnzb) : 0.0;
+        double I_fill_ratio =
+            (I_nofill_nnzb > 0) ? static_cast<double>(I_nnzb) / static_cast<double>(I_nofill_nnzb) : 0.0;
+        double coarse_fill_ratio =
+            (coarse_nofill_nnzb > 0) ? static_cast<double>(coarse_nnzb) / static_cast<double>(coarse_nofill_nnzb) : 0.0;
+
+        // optional: added fill blocks
+        int IE_fill_added     = IE_nnzb - IE_nofill_nnzb;
+        int I_fill_added      = I_nnzb - I_nofill_nnzb;
+        int coarse_fill_added = coarse_nnzb - coarse_nofill_nnzb;
+
+        printf("\nFETI-DP memory breakdown:\n");
+        printf("  kmat                 : nnzb = %d, mem = %.4f MB\n", kmat_nnzb, kmat_mem_mb);
+        printf("  IEV                  : nnzb = %d, mem = %.4f MB\n", IEV_nnzb, IEV_mem_mb);
+        printf("  IE                   : nnzb = %d, mem = %.4f MB\n", IE_nnzb, IE_mem_mb);
+        printf("    nofill             : %d\n", IE_nofill_nnzb);
+        printf("    fill added         : %d\n", IE_fill_added);
+        printf("    fill ratio         : %.4f\n", IE_fill_ratio);
+        printf("  I                    : nnzb = %d, mem = %.4f MB\n", I_nnzb, I_mem_mb);
+        printf("    nofill             : %d\n", I_nofill_nnzb);
+        printf("    fill added         : %d\n", I_fill_added);
+        printf("    fill ratio         : %.4f\n", I_fill_ratio);
+        printf("  coarse S_VV          : nnzb = %d, mem = %.4f MB\n", coarse_nnzb, coarse_mem_mb);
+        printf("    nofill             : %d\n", coarse_nofill_nnzb);
+        printf("    fill added         : %d\n", coarse_fill_added);
+        printf("    fill ratio         : %.4f\n", coarse_fill_ratio);
+        printf("  --------------------------------\n");
+        printf("  total stored nnzb    : %lld\n", total_stored_nnzb);
+        printf("  total memory         : %.4f MB\n\n", total_mem_mb);
+
+    }
+
 
     if (lam_fail) {
         printf("FETI-DP lambda PCG failed\n");
@@ -236,8 +488,6 @@ int main(int argc, char **argv) {
     
     // done with Krylov solution, now report back
 
-    auto soln = assembler.createVarsVec();
-    fetidp->get_global_soln(lam, soln);
 
     // T *h_soln0 = soln.createHostVec().getPtr();
     // printf("\nh_glob_soln\n");
@@ -252,11 +502,93 @@ int main(int argc, char **argv) {
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_fetidp.vtk");
 
+    // compare to direct solver (the solution)
+    bool compare_direct = true;
+    // bool compare_direct = false;
+    if (compare_direct) {
+        // and need it globally too..
+        auto loads = assembler.createVarsVec();
+        assembler.add_fext_fast(load, mag, loads);
+        assembler.apply_bcs(loads);
+
+        auto assembler2 = createPlateClampedAssembler<Assembler>(
+            nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+
+        // BSR factorization (need to change it to )
+        auto& bsr_data = assembler2.getBsrData();
+        double fillin = 10.0;  // 10.0
+        bool print = true;
+        bsr_data.AMD_reordering();
+        bsr_data.compute_full_LU_pattern(fillin, print);
+        assembler2.moveBsrDataToDevice();
+
+
+        auto kmat2 = createBsrMat<Assembler, VecType<T>>(assembler2);
+        assembler2.add_jacobian_fast(kmat2);
+        assembler2.apply_bcs(kmat2);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto start3 = std::chrono::high_resolution_clock::now();
+
+        CUSPARSE::direct_LU_solve(kmat2, loads, soln2);
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+        auto end3 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> solve_time_dir = end3 - start3;
+
+        printf("FETI-DP solve time in %.4e sec, direct in %.4e sec\n", solve_time.count(), solve_time_dir.count());
+
+        // T lin_max_disp = get_max_disp(soln2);
+        auto h_soln3 = soln2.createHostVec();
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/plate_lin.vtk");
+
+        // now also compute solution error on host and print to VTK
+        auto h_err = HostVec<T>(h_soln3.getSize());
+        for (int i = 0; i < h_soln3.getSize(); i++) {
+            h_err[i] = h_soln3[i] - h_soln[i];
+        }
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/plate_err.vtk");
+
+        for (int idof = 0; idof < 6; idof++) {
+            T orig_nrm = get_max_disp(h_soln, idof);
+            T err_nrm = get_max_disp(h_err, idof);
+            T rel_nrm = err_nrm / (orig_nrm + 1e-30);
+            printf("\tidof %d, orig |u|=%.4e, err nrm %.4e, rel err nrm %.4e to direct solve\n", idof, orig_nrm, err_nrm, rel_nrm);
+        }
+        
+        // now compute the residuals of each..
+        int nvars = assembler2.get_num_vars();
+        assembler2.set_variables(soln2);
+        assembler2.add_residual_fast(res);
+        T a = -1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, loads.getPtr(), 1, res.getPtr(), 1));
+        assembler2.apply_bcs(res);
+        T load_nrm;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, loads.getPtr(), 1, &load_nrm));
+        T res_norm_direct;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, res.getPtr(), 1, &res_norm_direct));
+        T res_rel_nrm_direct = res_norm_direct / load_nrm;
+        printf("\tres_nrm_direct %.4e, rel_nrm %.4e\n", res_norm_direct, res_rel_nrm_direct);
+
+        assembler2.set_variables(soln);
+        res.zeroValues();
+        assembler2.add_residual_fast(res);
+        a = -1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, nvars, &a, loads.getPtr(), 1, res.getPtr(), 1));
+        assembler2.apply_bcs(res);
+        T res_norm_feti;
+        CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, res.getPtr(), 1, &res_norm_feti));
+        T res_rel_nrm_feti = res_norm_feti / load_nrm;
+        printf("\tres_nrm_feti %.4e, rel_nrm %.4e\n", res_norm_feti, res_rel_nrm_feti);
+        
+    }
+
     delete lam_solver;
     delete ie_solver;
     delete i_solver;
     delete v_solver;
     delete fetidp;
+
 
     CHECK_CUSPARSE(cusparseDestroy(cusparseHandle));
     CHECK_CUBLAS(cublasDestroy(cublasHandle));

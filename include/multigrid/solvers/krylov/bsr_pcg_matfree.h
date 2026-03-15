@@ -195,6 +195,7 @@ class MatrixFreePCGSolver : public BaseSolver {
         x_vec.free();
         rhs_vec.free();
     }
+    int get_num_dof() { return N; }
 
    private:
     Operator *op;

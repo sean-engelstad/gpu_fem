@@ -19,7 +19,7 @@ from krylov import right_pcg_matfree
 # here nxs represents # subdomains not subdomain size
 # nxe, nxs = 256, 64
 # nxe, nxs = 128, 64 # even works pretty well with small 2x2 subdomains for higher DOF problems! 4x4 fine too..
-# nxe, nxs = 128, 32 # 4x4 works well also
+nxe, nxs = 128, 32 # 4x4 works well also
 # nxe, nxs = 128, 16
 # nxe, nxs = 128, 8
 # nxe, nxs = 64, 16
@@ -27,7 +27,7 @@ from krylov import right_pcg_matfree
 # nxe, nxs = 32, 4
 # nxe, nxs = 32, 8
 # nxe, nxs = 16, 4
-nxe, nxs = 6, 3
+# nxe, nxs = 6, 3
 # nxe, nxs = 4, 2
 
 # thick = 1e-1
@@ -132,7 +132,8 @@ def norm(x):
 norm_hist = []
 lam_soln, nsteps = right_pcg_matfree(
     assembler, b=lam_rhs,
-    rtol=1e-6, 
+    # rtol=1e-6, 
+    rtol=1e-9,
     atol=1e-20,
     max_iter=200,
     print_freq=3,
@@ -173,14 +174,19 @@ orig_nrm = np.max(np.abs(direct_soln))
 rel_nrm = err_nrm / orig_nrm
 print(f"{err_nrm=:.4e} {orig_nrm=:.4e} {rel_nrm=:.4e}")
 
+# compute residual norms
+load_nrm = np.linalg.norm(assembler.force.copy())
+res_nrm_direct = np.linalg.norm(assembler.force - assembler.kmat.dot(direct_soln))
+res_nrm_feti = np.linalg.norm(assembler.force - assembler.kmat.dot(global_soln))
+print(f"{load_nrm=:.4e} {res_nrm_direct=:.4e} {res_nrm_feti=:.4e}")
 
 # then plot the solution
-assembler.u = global_soln.copy() # store in assembler for plot
-assembler.plot_disp()
+# assembler.u = global_soln.copy() # store in assembler for plot
+# assembler.plot_disp()
 
 # DEBUG the FETI-DP system
 # ========================================
 
-# # DEBUG
-# assembler.u = diff
-# assembler.plot_disp()
+# DEBUG
+assembler.u = diff
+assembler.plot_disp()

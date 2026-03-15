@@ -91,7 +91,7 @@ class MITCShellAssembler
     }
 
     template <class LoadMagnitude, int elems_per_block = 8>
-    void add_fext_fast(const LoadMagnitude &load, Vec_<T> &fext) {
+    void add_fext_fast(const LoadMagnitude &load, T load_mag, Vec_<T> &fext) {
         fext.zeroValues();
 
         dim3 block(num_quad_pts, elems_per_block);
@@ -100,7 +100,7 @@ class MITCShellAssembler
 
         k_add_fext_fast<T, elems_per_block, Assembler, Data, LoadMagnitude, Vec_>
             <<<grid, block>>>(this->num_elements, load, this->elem_components, this->geo_conn,
-                              this->vars_conn, this->xpts, this->compData, fext);
+                              this->vars_conn, this->xpts, this->compData, load_mag, fext);
 
         // CHECK_CUDA(cudaDeviceSynchronize());
     }

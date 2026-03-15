@@ -1,3 +1,6 @@
+#pragma once
+
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <unordered_set>
@@ -36,7 +39,7 @@ class FetidpSolver : public BaseSolver {
     FetidpSolver() = default;
 
     FetidpSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
-                 ShellAssembler &assembler_, BsrMatType &kmat_)
+                 ShellAssembler &assembler_, BsrMatType &kmat_, bool print_timing_ = false)
         : cublasHandle(cublasHandle_),
           cusparseHandle(cusparseHandle_),
           assembler(assembler_),
@@ -53,6 +56,7 @@ class FetidpSolver : public BaseSolver {
         num_elements = assembler.get_num_elements();
         num_nodes = assembler.get_num_nodes();
         N = num_nodes * vars_per_node;
+        print_timing = print_timing_;
 
         elem_conn = assembler.getConn().createHostVec().getPtr();
 
@@ -72,10 +76,129 @@ class FetidpSolver : public BaseSolver {
         CHECK_CUSPARSE(cusparseSetMatIndexBase(descrK, CUSPARSE_INDEX_BASE_ZERO));
     }
 
-    // required routines to be a BaseSolver (needed to be preconditioner)
-    void update_after_assembly(DeviceVec<T> &vars) {  // TODO
+    void update_after_assembly(DeviceVec<T> &vars) {
+        using clock = std::chrono::high_resolution_clock;
+        using sec = std::chrono::duration<double>;
+
+        std::chrono::time_point<clock> t_begin, t0, t1, t_end;
+
+        double t_assemble_subdomains = 0.0;
+        double t_factor_IE = 0.0;
+        double t_factor_I = 0.0;
+        double t_assemble_coarse = 0.0;
+        double t_factor_coarse = 0.0;
+        double t_total = 0.0;
+
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t_begin = clock::now();
+        }
+
+        // copy vars to d_vars (NL update)
+        vars.copyValuesTo(d_vars);
+
+        // -----------------------------------------
+        // 1. Assemble subdomain matrices
+        // -----------------------------------------
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t0 = clock::now();
+        }
+
+        assemble_subdomains();
+
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t1 = clock::now();
+            t_assemble_subdomains = sec(t1 - t0).count();
+        }
+
+        // -----------------------------------------
+        // 2. Factor IE matrix
+        // -----------------------------------------
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t0 = clock::now();
+        }
+
+        subdomainIESolver->factor();
+
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t1 = clock::now();
+            t_factor_IE = sec(t1 - t0).count();
+        }
+
+        // -----------------------------------------
+        // 3. Factor I matrix
+        // -----------------------------------------
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t0 = clock::now();
+        }
+
+        subdomainISolver->factor();
+
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t1 = clock::now();
+            t_factor_I = sec(t1 - t0).count();
+        }
+
+        // -----------------------------------------
+        // 4. Assemble coarse problem
+        // -----------------------------------------
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t0 = clock::now();
+        }
+
+        assemble_coarse_problem();
+
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t1 = clock::now();
+            t_assemble_coarse = sec(t1 - t0).count();
+        }
+
+        // -----------------------------------------
+        // 5. Factor coarse solver
+        // -----------------------------------------
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t0 = clock::now();
+        }
+
+        coarseSolver->factor();
+
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t1 = clock::now();
+            t_factor_coarse = sec(t1 - t0).count();
+        }
+
+        if (print_timing) {
+            CHECK_CUDA(cudaDeviceSynchronize());
+            t_end = clock::now();
+            t_total = sec(t_end - t_begin).count();
+
+            printf("\nupdate_after_assembly timing breakdown:\n");
+            printf("  assemble_subdomains   : %.6e s\n", t_assemble_subdomains);
+            printf("  factor IE             : %.6e s\n", t_factor_IE);
+            printf("  factor I              : %.6e s\n", t_factor_I);
+            printf("  assemble coarse       : %.6e s\n", t_assemble_coarse);
+            printf("  factor coarse         : %.6e s\n", t_factor_coarse);
+            printf("  total                 : %.6e s\n", t_total);
+
+            double tracked = t_assemble_subdomains + t_factor_IE + t_factor_I + t_assemble_coarse +
+                             t_factor_coarse;
+
+            printf("  tracked subtotal      : %.6e s\n", tracked);
+            printf("  untracked overhead    : %.6e s\n\n", t_total - tracked);
+        }
     }
-    void factor() override {  // TODO
+    void factor()
+        override {  // needs to be called in the update_after_assembly.. cause several factor steps
     }
     void set_print(bool print) {}
     void set_rel_tol(T rtol) {}
@@ -554,6 +677,30 @@ class FetidpSolver : public BaseSolver {
         IE_bsr_data = BsrData(IE_nnodes, block_dim, IE_nnzb, IE_rowp, IE_cols);
         IE_bsr_data.rows = IE_rows;
         IE_nofill_nnzb = IE_nnzb;
+        IE_perm = IE_bsr_data.perm, IE_iperm = IE_bsr_data.iperm;
+
+        // sparsity before the permutation
+        // printf("\nIE SPARSITY BEFORE PERMUTATION\n");
+        // for (int inode = 0; inode < IE_nnodes; inode++) {
+        //     printf("(");
+        //     int grow = IE_nodes[IE_perm[inode]];
+        //     printf("%d, ", grow);
+        //     for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+        //         int j = IE_cols[jp];
+        //         int gcol = IE_nodes[IE_perm[j]];
+        //         printf("%d ", gcol);
+        //     }
+        //     printf(")\n");
+        // }
+        // printf("\n\n");
+
+        // printf("pre-perm IE_rowp: ");
+        // printVec<int>(IE_nnodes + 1, IE_rowp);
+        // printf("IE_cols: ");
+        // printVec<int>(IE_nnzb, IE_cols);
+        // printf("IE_nodes: ");
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("\n");
 
         I_bsr_data = BsrData(I_nnodes, block_dim, I_nnzb, I_rowp, I_cols);
         I_bsr_data.rows = I_rows;
@@ -573,6 +720,30 @@ class FetidpSolver : public BaseSolver {
         // host
         I_rowp = I_bsr_data.rowp, I_cols = I_bsr_data.cols, I_nnzb = I_bsr_data.nnzb;
         I_perm = I_bsr_data.perm, I_iperm = I_bsr_data.iperm;
+
+        // printf("post-perm IE_rowp: ");
+        // printVec<int>(IE_nnodes + 1, IE_rowp);
+        // printf("IE_perm: ");
+        // printVec<int>(IE_nnodes, IE_perm);
+        // printf("IE_iperm: ");
+        // printVec<int>(IE_nnodes, IE_iperm);
+        // printf("IE_cols: ");
+        // printVec<int>(IE_nnzb, IE_cols);
+
+        // sparsity after the permutation
+        // printf("\nIE SPARSITY AFTER PERMUTATION\n");
+        // for (int inode = 0; inode < IE_nnodes; inode++) {
+        //     printf("(");
+        //     int grow = IE_nodes[IE_perm[inode]];
+        //     printf("%d, ", grow);
+        //     for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+        //         int j = IE_cols[jp];
+        //         int gcol = IE_nodes[IE_perm[j]];
+        //         printf("%d ", gcol);
+        //     }
+        //     printf(")\n");
+        // }
+        // printf("\n\n");
 
         // recompute rows after potential fillin
         delete[] IE_rows, I_rows;
@@ -693,10 +864,6 @@ class FetidpSolver : public BaseSolver {
 
         // -----------------------------------------
         // get S_VV matrix sparsity / nonzero pattern (nofill first)
-        // -----------------------------------------
-
-        // -----------------------------------------
-        // get S_VV matrix sparsity / nonzero pattern (unique structure only)
         // -----------------------------------------
 
         // reverse map of global => reduced Vc nodes
@@ -834,6 +1001,22 @@ class FetidpSolver : public BaseSolver {
         Svv_bsr_data = BsrData(Vc_nnodes, block_dim, Svv_nnzb, Svv_rowp, Svv_cols);
         Svv_bsr_data.rows = Svv_rows;
         Svv_nofill_nnzb = Svv_nnzb;
+        SVV_perm = Svv_bsr_data.perm, SVV_iperm = Svv_bsr_data.iperm;
+
+        // sparsity before the permutation
+        // printf("\nSvv SPARSITY BEFORE PERMUTATION\n");
+        // for (int inode = 0; inode < Vc_nnodes; inode++) {
+        //     printf("(");
+        //     int grow = Vc_nodes[SVV_perm[inode]];
+        //     printf("%d, ", grow);
+        //     for (int jp = Svv_rowp[inode]; jp < Svv_rowp[inode + 1]; jp++) {
+        //         int j = Svv_cols[jp];
+        //         int gcol = Vc_nodes[SVV_perm[j]];
+        //         printf("%d ", gcol);
+        //     }
+        //     printf(")\n");
+        // }
+        // printf("\n\n");
     }
 
     void setup_coarse_matrix_sparsity() {
@@ -849,6 +1032,21 @@ class FetidpSolver : public BaseSolver {
             }
         }
         Svv_bsr_data.rows = Svv_rows;
+
+        // sparsity before the permutation
+        // printf("\nSvv SPARSITY AFTER PERMUTATION\n");
+        // for (int inode = 0; inode < Vc_nnodes; inode++) {
+        //     printf("(");
+        //     int grow = Vc_nodes[SVV_perm[inode]];
+        //     printf("%d, ", grow);
+        //     for (int jp = Svv_rowp[inode]; jp < Svv_rowp[inode + 1]; jp++) {
+        //         int j = Svv_cols[jp];
+        //         int gcol = Vc_nodes[SVV_perm[j]];
+        //         printf("%d ", gcol);
+        //     }
+        //     printf(")\n");
+        // }
+        // printf("\n\n");
 
         d_Svv_bsr_data = Svv_bsr_data.createDeviceBsrData();
         d_Svv_vals = DeviceVec<T>(block_dim2 * Svv_nnzb);
@@ -1127,14 +1325,54 @@ class FetidpSolver : public BaseSolver {
         copyKmat_IEVtoI();
     }
 
+    // void assemble_coarse_problem() {
+    //     // now also compute the Schur complement inverse term in S_VV
+    //     S_VV->zeroValues();
+    //     copyKmat_IEVtoSvv();
+    //     computeSvvInverseTerm();
+    // }
     void assemble_coarse_problem() {
+        cudaEvent_t s1, e1, s2, e2;
+        float t1 = 0.0f, t2 = 0.0f;
+
+        if (print_timing) {
+            cudaEventCreate(&s1);
+            cudaEventCreate(&e1);
+            cudaEventCreate(&s2);
+            cudaEventCreate(&e2);
+        }
+
         // now also compute the Schur complement inverse term in S_VV
+        S_VV->zeroValues();
+
+        if (print_timing) cudaEventRecord(s1);
         copyKmat_IEVtoSvv();
+        if (print_timing) {
+            cudaEventRecord(e1);
+            cudaEventSynchronize(e1);
+            cudaEventElapsedTime(&t1, s1, e1);
+        }
+
+        if (print_timing) cudaEventRecord(s2);
         computeSvvInverseTerm();
+        if (print_timing) {
+            cudaEventRecord(e2);
+            cudaEventSynchronize(e2);
+            cudaEventElapsedTime(&t2, s2, e2);
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            printf("\tcopyKmat_IEVtoSvv: %.6f ms\n", t1);
+            printf("\tcomputeSvvInverseTerm: %.6f ms\n", t2);
+
+            cudaEventDestroy(s1);
+            cudaEventDestroy(e1);
+            cudaEventDestroy(s2);
+            cudaEventDestroy(e2);
+        }
     }
 
     template <class LoadMagnitude, int elems_per_block = 8>
-    void add_subdomain_fext(const LoadMagnitude &load) {
+    void add_subdomain_fext(const LoadMagnitude &load, T load_mag) {
         fext_IEV.zeroValues();
 
         addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
@@ -1144,11 +1382,12 @@ class FetidpSolver : public BaseSolver {
 
         k_add_fext_fast<T, elems_per_block, ShellAssembler, Data, LoadMagnitude, Vec_>
             <<<grid, block>>>(num_elements, load, d_elem_components, d_IEV_elem_conn,
-                              d_IEV_elem_conn, d_IEV_xpts, d_compData, fext_IEV);
+                              d_IEV_elem_conn, d_IEV_xpts, d_compData, load_mag, fext_IEV);
 
         // CHECK_CUDA(cudaDeviceSynchronize());
 
         fext_IEV.apply_bcs(d_IEV_bcs);
+        fext_IEV.copyValuesTo(res_IEV);  // for linear problems
 
         // T *h_fext_IEV = fext_IEV.createHostVec().getPtr();
         // printf("h_fext_IEV: \n");
@@ -1170,18 +1409,68 @@ class FetidpSolver : public BaseSolver {
         coarseSolver = coarseSolver_;
     }
 
+    void set_global_rhs(DeviceVec<T> &rhs) {
+        const bool scaled = true;
+        addVec_globalToIEV<scaled>(rhs, fext_IEV, block_dim, 1.0, 0.0);
+        fext_IEV.apply_bcs(d_IEV_bcs);
+    }
+
+    // void set_IEV_residual(T lambdaE, T lambdaI, DeviceVec<T> vars) {
+    //     // set into res_IEV = lambdaE * fext_IEV - lambdaI * kmat_IEV(u_IEV) * u_IEV
+    //     res_IEV.zeroValues();
+    //     T a = lambdaE;
+    //     CHECK_CUBLAS(cublasDaxpy(cublasHandle, block_dim * IEV_nnodes, &a, fext_IEV.getPtr(), 1,
+    //                              res_IEV.getPtr(), 1));
+
+    //     // add global vars into d_IEV_vars
+    //     vars.copyValuesTo(d_vars);
+    //     addVec_globalToIEV(d_vars, d_IEV_vars, block_dim, 1.0, 0.0);
+
+    //     // assume kmat_IEV already updated w/ assembly (from updateJacobian nonlinear)
+    //     // compute kmat_IEV * d_IEV_vars and add appropriately into res_IEV
+    //     sparseMatVec(*kmat_IEV, d_IEV_vars, -lambdaI, 1.0, res_IEV);
+    // }
+
+    template <int elems_per_block = 8>
+    void set_IEV_residual(T lambdaE, T lambdaI, DeviceVec<T> vars) {
+        // res_IEV(u_IEV) = lambdaE * fext_IEV - lambdaI * fint_IEV
+
+        addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
+        addVec_globalToIEV(vars, d_IEV_vars, block_dim, 1.0, 0.0);
+
+        fint_IEV.zeroValues();
+
+        dim3 block(num_quad_pts, elems_per_block);
+        dim3 grid(num_elements);
+
+        k_add_residual_fast<T, elems_per_block, ShellAssembler, Data, Vec_>
+            <<<grid, block>>>(IEV_nnodes, num_elements, d_elem_components, d_IEV_elem_conn,
+                              d_IEV_elem_conn, d_IEV_xpts, d_IEV_vars, d_compData, fint_IEV);
+        fint_IEV.apply_bcs(d_IEV_bcs);
+
+        T a = -lambdaI;
+        CHECK_CUBLAS(cublasDscal(cublasHandle, block_dim * IEV_nnodes, &a, fint_IEV.getPtr(), 1));
+
+        fint_IEV.copyValuesTo(res_IEV);
+        a = lambdaE;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, block_dim * IEV_nnodes, &a, fext_IEV.getPtr(), 1,
+                                 res_IEV.getPtr(), 1));
+    }
+
     void get_lam_rhs(DeviceVec<T> &lam_rhs) {
         // rhs = + fine term - coarse correction
         lam_rhs.zeroValues();
 
+        // this is the standard RHS for linear systems global to IEV
+
         // ---------------------------------
         // fine term:
-        //   f_IE = restricted external load on IE
+        //   f_IE = restricted external load on IE (or residual)
         //   u_IE = A_IE^{-1} f_IE
         //   lam_rhs += B * u_E
         //   also build repeated IEV copy of u_IE for coarse rhs
         // ---------------------------------
-        addVecIEVtoIE(fext_IEV, f_IE, 1.0, 0.0);
+        addVecIEVtoIE(res_IEV, f_IE, 1.0, 0.0);
         solveSubdomainIE(f_IE, u_IE);
 
         // build repeated IE/V representation from full IE solution
@@ -1196,7 +1485,7 @@ class FetidpSolver : public BaseSolver {
         //   g_V = f_V - A_{V,IE} u_IE
         // using repeated IEV representation
         // ---------------------------------
-        addVecIEVtoVc(fext_IEV, f_V, 1.0, 0.0);
+        addVecIEVtoVc(res_IEV, f_V, 1.0, 0.0);
         sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
         addVecIEVtoVc(f_IEV, f_V, 1.0, 1.0);
 
@@ -1350,12 +1639,12 @@ class FetidpSolver : public BaseSolver {
 
     void get_global_soln(const DeviceVec<T> &lam, DeviceVec<T> &soln) {
         // 1) compute coarse grid rhs g_V
-        addVecIEVtoIE(fext_IEV, f_IE, 1.0, 0.0);
+        addVecIEVtoIE(res_IEV, f_IE, 1.0, 0.0);
         solveSubdomainIE(f_IE, u_IE);
 
         addVecIEtoIEV(u_IE, u_IEV, 1.0, 0.0);
 
-        addVecIEVtoVc(fext_IEV, f_V, 1.0, 0.0);
+        addVecIEVtoVc(res_IEV, f_V, 1.0, 0.0);
         sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
         addVecIEVtoVc(f_IEV, f_V, 1.0, 1.0);
 
@@ -1370,7 +1659,7 @@ class FetidpSolver : public BaseSolver {
         solveCoarse(f_V, u_V);
 
         // 3) solve interior problems
-        addVecIEVtoIE(fext_IEV, f_IE, 1.0, 0.0);
+        addVecIEVtoIE(res_IEV, f_IE, 1.0, 0.0);
 
         addVecVctoIEV(u_V, u_IEV, 1.0, 0.0);
         sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
@@ -1402,7 +1691,7 @@ class FetidpSolver : public BaseSolver {
                 for (int i = 0; i < 9; i++) {
                     int ix = 2 + i % 3;
                     int iy = 2 + i / 3;
-                    T val = IEV_block[6 * ix + iy];
+                    T val = IEV_block[6 * iy + ix];
                     printf("%.6e,", val);
                     if (i % 3 == 2) printf("\n");
                 }
@@ -1412,13 +1701,13 @@ class FetidpSolver : public BaseSolver {
 
         if (print_IE) {
             // prelim check, assumes not perm here
-            for (int i = 0; i < IE_nnodes; i++) {
-                for (int jp = IE_rowp[i]; jp < IE_rowp[i + 1]; jp++) {
-                    int j = IE_cols[jp];
-                    int gr = IE_nodes[i], gc = IE_nodes[j];
-                    printf("IE block %d, glob (%d,%d)\n", jp, gr, gc);
-                }
-            }
+            // for (int i = 0; i < IE_nnodes; i++) {
+            //     for (int jp = IE_rowp[i]; jp < IE_rowp[i + 1]; jp++) {
+            //         int j = IE_cols[jp];
+            //         int gr = IE_nodes[i], gc = IE_nodes[j];
+            //         printf("IE block %d, glob (%d,%d)\n", jp, gr, gc);
+            //     }
+            // }
 
             auto kmat_IE_vec = kmat_IE->getVec().createHostVec();
             T *h_kmat_IE = kmat_IE_vec.getPtr();
@@ -1429,14 +1718,15 @@ class FetidpSolver : public BaseSolver {
             printf("\n\nh_kmat_IE %d\n", IE_nvals);
             for (int iblock = 0; iblock < IE_nnzb; iblock++) {
                 T *IE_block = &h_kmat_IE[36 * iblock];
-                int row = h_IE_rows[iblock], col = h_IE_cols[iblock];
+                int row_perm = h_IE_rows[iblock], col_perm = h_IE_cols[iblock];
+                int row = IE_perm[row_perm], col = IE_perm[col_perm];
                 int grow = IE_nodes[row], gcol = IE_nodes[col];
                 // printf("row %d, col %d\n", row, col);
                 printf("block %d (%d,%d)\n", iblock, grow, gcol);
                 for (int i = 0; i < 9; i++) {
                     int ix = 2 + i % 3;
                     int iy = 2 + i / 3;
-                    T val = IE_block[6 * ix + iy];
+                    T val = IE_block[6 * iy + ix];
                     printf("%.6e,", val);
                     if (i % 3 == 2) printf("\n");
                 }
@@ -1470,7 +1760,7 @@ class FetidpSolver : public BaseSolver {
                 for (int i = 0; i < 9; i++) {
                     int ix = 2 + i % 3;
                     int iy = 2 + i / 3;
-                    T val = I_block[6 * ix + iy];
+                    T val = I_block[6 * iy + ix];
                     printf("%.6e,", val);
                     if (i % 3 == 2) printf("\n");
                 }
@@ -1597,12 +1887,11 @@ class FetidpSolver : public BaseSolver {
 
     void computeSvvInverseTerm() {
         // need 24 IE subdomain solves (tops) for quad-macro elements of struct mesh
-        // to compute the -A_{V,IE} * A_{IE,IE}^{-1} * A_{IE,V} += > S_{VV} second Schur complement
-        // inverse term as part of coarse matrix assembly for vertices
-
+        // to compute the -A_{V,IE} * A_{IE,IE}^{-1} * A_{IE,V} += > S_{VV} second Schur
+        // complement inverse term as part of coarse matrix assembly for vertices
         // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per Krylov
-        // step so this is similar expense to like 8 Krylov steps (not too bad, but not trivial)
-        // TODO : maybe I can find faster way to do sparse mat-mat triangular solves instead later?
+        // step so this is similar expense to like 8 Krylov steps (not too bad, but not
+        // trivial)
         int ncols = 4 * block_dim;
         for (int icol = 0; icol < ncols; icol++) {
             u_IEV.zeroValues();
@@ -1617,6 +1906,92 @@ class FetidpSolver : public BaseSolver {
             addMat_IEVtoV_vals(icol, f_IEV);
         }
     }
+
+    // void computeSvvInverseTerm() {
+    //     // need 24 IE subdomain solves (tops) for quad-macro elements of struct mesh
+    //     // to compute the -A_{V,IE} * A_{IE,IE}^{-1} * A_{IE,V} += > S_{VV} second Schur
+    //     complement
+    //     // inverse term as part of coarse matrix assembly for vertices
+
+    //     // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
+    //     Krylov
+    //     // step so this is similar expense to like 8 Krylov steps (not too bad, but not trivial)
+    //     // TODO : maybe I can find faster way to do sparse mat-mat triangular solves instead
+    //     later?
+
+    //     cudaEvent_t start, stop, e1, e2, e3, e4;
+    //     float total_ms = 0.0f, spmv_ms = 0.0f, solve_ms = 0.0f;
+    //     float t = 0.0f;
+
+    //     if (print_timing) {
+    //         CHECK_CUDA(cudaEventCreate(&start));
+    //         CHECK_CUDA(cudaEventCreate(&stop));
+    //         CHECK_CUDA(cudaEventCreate(&e1));
+    //         CHECK_CUDA(cudaEventCreate(&e2));
+    //         CHECK_CUDA(cudaEventCreate(&e3));
+    //         CHECK_CUDA(cudaEventCreate(&e4));
+    //         CHECK_CUDA(cudaEventRecord(start));
+    //     }
+
+    //     int ncols = 4 * block_dim;
+    //     for (int icol = 0; icol < ncols; icol++) {
+    //         u_IEV.zeroValues();
+    //         setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else 0
+
+    //         if (print_timing) CHECK_CUDA(cudaEventRecord(e1));
+    //         sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
+    //         if (print_timing) {
+    //             CHECK_CUDA(cudaEventRecord(e2));
+    //             CHECK_CUDA(cudaEventSynchronize(e2));
+    //             CHECK_CUDA(cudaEventElapsedTime(&t, e1, e2));
+    //             spmv_ms += t;
+    //         }
+
+    //         addVecIEVtoIE(f_IEV, f_IE, 1.0, 0.0);
+
+    //         if (print_timing) CHECK_CUDA(cudaEventRecord(e2));
+    //         solveSubdomainIE(f_IE, u_IE);
+    //         if (print_timing) {
+    //             CHECK_CUDA(cudaEventRecord(e3));
+    //             CHECK_CUDA(cudaEventSynchronize(e3));
+    //             CHECK_CUDA(cudaEventElapsedTime(&t, e2, e3));
+    //             solve_ms += t;
+    //         }
+
+    //         addVecIEtoIEV(u_IE, u_IEV, 1.0, 0.0);
+
+    //         if (print_timing) CHECK_CUDA(cudaEventRecord(e3));
+    //         sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
+    //         if (print_timing) {
+    //             CHECK_CUDA(cudaEventRecord(e4));
+    //             CHECK_CUDA(cudaEventSynchronize(e4));
+    //             CHECK_CUDA(cudaEventElapsedTime(&t, e3, e4));
+    //             spmv_ms += t;
+    //         }
+
+    //         addMat_IEVtoV_vals(icol, f_IEV);
+    //     }
+
+    //     if (print_timing) {
+    //         CHECK_CUDA(cudaEventRecord(stop));
+    //         CHECK_CUDA(cudaEventSynchronize(stop));
+    //         CHECK_CUDA(cudaEventElapsedTime(&total_ms, start, stop));
+    //         CHECK_CUDA(cudaDeviceSynchronize());
+
+    //         printf("\tcomputeSvvInverseTerm: %.6f ms\n", total_ms);
+    //         printf("\t\t2 sparseMatVec total : %.6f ms\n", spmv_ms);
+    //         printf("\t\tsolveSubdomainIE total: %.6f ms\n", solve_ms);
+    //         printf("\t\tother total          : %.6f ms\n", total_ms - spmv_ms - solve_ms);
+    //         printf("\t\tacross %d cols or steps here\n", ncols);
+
+    //         CHECK_CUDA(cudaEventDestroy(start));
+    //         CHECK_CUDA(cudaEventDestroy(stop));
+    //         CHECK_CUDA(cudaEventDestroy(e1));
+    //         CHECK_CUDA(cudaEventDestroy(e2));
+    //         CHECK_CUDA(cudaEventDestroy(e3));
+    //         CHECK_CUDA(cudaEventDestroy(e4));
+    //     }
+    // }
 
     void setVec_IEVtoV_vals(DeviceVec<T> &vec_IEV, int irow, T val) {
         int block_row = irow / block_dim;
@@ -1670,8 +2045,9 @@ class FetidpSolver : public BaseSolver {
 
         int nvals2 = Vc_nnodes * vars_per_node_in;
         dim3 grid2((nvals2 + 31) / 32);
-        k_addVec_GlobaltoVc<T><<<grid2, block>>>(Vc_nnodes, vars_per_node_in, d_Vc_nodes,
-                                                 x_global.getPtr(), u_V.getPtr(), a);
+        // scales by 0.25x like for load distribution
+        k_addVec_GlobaltoVc<T, scaled><<<grid2, block>>>(Vc_nnodes, vars_per_node_in, d_Vc_nodes,
+                                                         x_global.getPtr(), u_V.getPtr(), a);
         // CHECK_CUBLAS(cublasDscal(cublasHandle, u_IE.getSize(), &a, u_IE.getPtr(), 1));
 
         // T *h_u_IE = u_IE.createHostVec().getPtr();
@@ -1841,7 +2217,7 @@ class FetidpSolver : public BaseSolver {
     }
 
     void sparseMatVec(BsrMatType &A, Vec &x, T alpha, T beta, Vec &y) {
-        //     y <- alpha * A * x + beta * y
+        // y <- alpha * A * x + beta * y
         auto bsr_data = A.getBsrData();
         int mb = bsr_data.mb;
         int nb = bsr_data.nb;
@@ -1850,6 +2226,14 @@ class FetidpSolver : public BaseSolver {
         int *d_rowp = bsr_data.rowp;
         int *d_cols = bsr_data.cols;
         int *perm = bsr_data.perm, *iperm = bsr_data.iperm;
+
+        // cudaEvent_t start, stop;
+        // float elapsed_ms = 0.0f;
+        // if (print_timing) {
+        //     CHECK_CUDA(cudaEventCreate(&start));
+        //     CHECK_CUDA(cudaEventCreate(&stop));
+        //     CHECK_CUDA(cudaEventRecord(start));
+        // }
 
         // permute x input vec from VIS to solve order
         x.permuteData(block_dim, iperm);
@@ -1862,11 +2246,24 @@ class FetidpSolver : public BaseSolver {
         // permute y output vec from solve to VIS order
         x.permuteData(block_dim, perm);
         y.permuteData(block_dim, perm);
+
+        // if (print_timing) {
+        //     CHECK_CUDA(cudaEventRecord(stop));
+        //     CHECK_CUDA(cudaEventSynchronize(stop));
+        //     CHECK_CUDA(cudaEventElapsedTime(&elapsed_ms, start, stop));
+        //     CHECK_CUDA(cudaDeviceSynchronize());
+
+        //     printf("\t sparseMatVec time: %.6f ms\n", elapsed_ms);
+
+        //     CHECK_CUDA(cudaEventDestroy(start));
+        //     CHECK_CUDA(cudaEventDestroy(stop));
+        // }
     }
 
     void sparseTransposeMatVec(BsrMatType &A, Vec &x, T alpha, T beta, Vec &y) {
         // BSR mat-vec operation
-        //     y <- alpha * A^T * x + beta * y
+        // y <- alpha * A^T * x + beta * y
+        // NOTE : this method is currently unused
 
         auto bsr_data = A.getBsrData();
         int mb = bsr_data.mb;
@@ -1878,6 +2275,14 @@ class FetidpSolver : public BaseSolver {
         int *d_cols = bsr_data.cols;
         int *perm = bsr_data.perm, *iperm = bsr_data.iperm;
 
+        cudaEvent_t start, stop;
+        float elapsed_ms = 0.0f;
+        if (print_timing) {
+            CHECK_CUDA(cudaEventCreate(&start));
+            CHECK_CUDA(cudaEventCreate(&stop));
+            CHECK_CUDA(cudaEventRecord(start));
+        }
+
         // permute x input vec from VIS to solve order
         x.permuteData(block_dim, iperm);
         y.permuteData(block_dim, iperm);
@@ -1887,10 +2292,23 @@ class FetidpSolver : public BaseSolver {
         dim3 block(32), grid((nprods + 31) / 32);
         k_bsrmv_transpose_ax<T><<<grid, block>>>(nnzb, block_dim, d_rows, d_cols, d_vals,
                                                  x.getPtr(), alpha, y.getPtr());
+        CHECK_CUDA(cudaGetLastError());
 
         // permute y output vec from solve to VIS order
         x.permuteData(block_dim, perm);
         y.permuteData(block_dim, perm);
+
+        if (print_timing) {
+            CHECK_CUDA(cudaEventRecord(stop));
+            CHECK_CUDA(cudaEventSynchronize(stop));
+            CHECK_CUDA(cudaEventElapsedTime(&elapsed_ms, start, stop));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            printf("\t sparseTransposeMatVec time: %.6f ms\n", elapsed_ms);
+
+            CHECK_CUDA(cudaEventDestroy(start));
+            CHECK_CUDA(cudaEventDestroy(stop));
+        }
     }
 
     void solveSubdomainIE(Vec &rhs_in, Vec &sol_out) {
@@ -2029,6 +2447,8 @@ class FetidpSolver : public BaseSolver {
         d_IEV_vars = Vec(IEV_nnodes * block_dim);
 
         fext_IEV = Vec(IEV_nnodes * block_dim);
+        res_IEV = Vec(IEV_nnodes * block_dim);
+        fint_IEV = Vec(IEV_nnodes * block_dim);
         f_IEV = Vec(IEV_nnodes * block_dim);
         u_IEV = Vec(IEV_nnodes * block_dim);
         temp_IEV = Vec(IEV_nnodes * block_dim);
@@ -2065,6 +2485,9 @@ class FetidpSolver : public BaseSolver {
     BsrData IEV_bsr_data, IE_bsr_data, I_bsr_data;
     BsrData d_IEV_bsr_data, d_IE_bsr_data, d_I_bsr_data;
     BsrData Svv_bsr_data, d_Svv_bsr_data;
+    int Svv_nofill_nnzb;
+    int IE_nofill_nnzb, I_nofill_nnzb;
+    int IEV_nnzb, IE_nnzb, I_nnzb;
 
    private:
     ShellAssembler assembler;
@@ -2084,7 +2507,6 @@ class FetidpSolver : public BaseSolver {
     int *IEV_rowp, *IE_rowp, *I_rowp;
     int *IEV_rows, *IE_rows, *I_rows;
     int *IEV_cols, *IE_cols, *I_cols;
-    int IEV_nnzb, IE_nnzb, I_nnzb;
     int IEV_nnodes, IE_nnodes, I_nnodes;
     int *IEV_elem_conn;
     int *IEV_sd_ptr, *IEV_sd_ind;
@@ -2097,6 +2519,7 @@ class FetidpSolver : public BaseSolver {
     bool *IE_interior, *d_IE_interior;
     bool *IE_general_edge, *d_IE_general_edge;
     int *Vc_node_imap;
+    bool print_timing;
 
     // optional cleanup of saved host-side nofill patterns
     int *IE_rowp_nofill, *IE_cols_nofill;
@@ -2113,7 +2536,6 @@ class FetidpSolver : public BaseSolver {
 
     int *kmat_ItoIEV_map, *d_kmat_ItoIEV_map;
     int *kmat_IEtoIEV_map, *d_kmat_IEtoIEV_map;
-    int IE_nofill_nnzb, I_nofill_nnzb;
     int *kmat_Inofill_map, *d_kmat_Inofill_map;
     int *kmat_IEnofill_map, *d_kmat_IEnofill_map;
     int lam_nnodes;
@@ -2121,7 +2543,7 @@ class FetidpSolver : public BaseSolver {
     int *IE_to_lam_map, *d_IE_to_lam_map;
     int *lam_nodes;
 
-    int Svv_nnzb, Svv_nofill_nnzb, Svv_nodes;
+    int Svv_nnzb, Svv_nodes;
     int *Svv_rowp, *Svv_rows, *Svv_cols;
     int *d_Svv_rowp, *d_Svv_rows, *d_Svv_cols;
     Vec d_Svv_vals;
@@ -2154,6 +2576,7 @@ class FetidpSolver : public BaseSolver {
     Vec rhs_Vc_perm, sol_Vc_perm;
     Vec fext_IEV;  // external loads
     DeviceVec<int> d_IEV_bcs;
+    DeviceVec<T> res_IEV, fint_IEV;
 
     cusparseMatDescr_t descrK;
 

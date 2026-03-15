@@ -174,7 +174,7 @@ __global__ static void k_addVec_VctoGlobal(const int Vc_nnodes, const int block_
     atomicAdd(&y[dof_glob], a * x[dof_Vc]);
 }
 
-template <typename T>
+template <typename T, bool scaled = false>
 __global__ static void k_addVec_GlobaltoVc(const int Vc_nnodes, const int block_dim, const int *Vc_globalMap, 
     const T *x, T *y, T a) {
     int N_Vc = Vc_nnodes * block_dim;
@@ -186,6 +186,11 @@ __global__ static void k_addVec_GlobaltoVc(const int Vc_nnodes, const int block_
     int idof = tid % block_dim;
     int dof_Vc = block_dim * Vc_node + idof;
     int dof_glob = block_dim * glob_node + idof;
+    T weight = 1.0;
+    if constexpr (scaled) {
+        weight *= 0.25;
+    }
+    a *= weight;
 
     // no rescale cause Vc coarse node DOF are not repeated
     atomicAdd(&y[dof_Vc], a * x[dof_glob]);

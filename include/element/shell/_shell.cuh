@@ -299,7 +299,7 @@ template <typename T, int elems_per_block, class ElemGroup, class Data,
 __GLOBAL__ static void k_add_fext_fast(int32_t num_elements, LoadMagnitude mag,
                                        Vec<int32_t> elem_comp, Vec<int32_t> geo_conn,
                                        Vec<int32_t> vars_conn, Vec<T> xpts,
-                                       Vec<Data> compData, Vec<T> fext) {
+                                       Vec<Data> compData, T load_mag, Vec<T> fext) {
 
     using Geo = typename ElemGroup::Geo;
     using Basis = typename ElemGroup::Basis;
@@ -366,7 +366,7 @@ __GLOBAL__ static void k_add_fext_fast(int32_t num_elements, LoadMagnitude mag,
     T n0[3] = {0};
     Basis::template interpFields<3, 3>(pt, fn, n0);
 
-    T coeff = scale * q;
+    T coeff = scale * q * load_mag;
 
     // assemble element force vector
     for (int inode = 0; inode < Basis::num_nodes; inode++) {

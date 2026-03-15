@@ -48,6 +48,7 @@ class ElementAssembler {
                      HostVec<int> &bcs, HostVec<Data> &compData, int32_t num_components_ = 1,
                      HostVec<int> elem_component = HostVec<int>(1));
     void moveBsrDataToDevice();
+    void moveBsrDataToHost();
     static DerivedAssembler createFromBDF(TACSMeshLoader &mesh_loader, Data single_data);
     static DerivedAssembler createFromBDFComponent(TACSMeshLoader &mesh_loader,
                                                    HostVec<Data> comp_data_);
@@ -278,6 +279,14 @@ template <typename ElemGroup, typename T, typename Basis, typename Phys,
 void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::moveBsrDataToDevice() {
 #ifdef USE_GPU
     this->bsr_data = bsr_data.createDeviceBsrData();
+#endif
+}
+
+template <typename ElemGroup, typename T, typename Basis, typename Phys,
+          template <typename> class Vec, template <typename> class Mat>
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::moveBsrDataToHost() {
+#ifdef USE_GPU
+    this->bsr_data = bsr_data.createHostBsrData();
 #endif
 }
 
