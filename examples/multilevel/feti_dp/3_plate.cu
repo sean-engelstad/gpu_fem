@@ -85,8 +85,15 @@ int main(int argc, char **argv) {
     constexpr bool is_nonlinear = false;
     using Data = ShellIsotropicData<T, has_ref_axis>;
     using Physics = IsotropicShell<T, Data, is_nonlinear>;
+
+    // MITC4
     using Quad = QuadLinearQuadrature<T>;
     using Basis = LagrangeQuadBasis<T, Quad, 1>;
+
+    // MITC9, doesn't help the global solution recovery be more accurate
+    // using Quad = QuadQuadraticQuadrature<T>;
+    // using Basis = LagrangeQuadBasis<T, Quad, 2>;
+
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
     using FETIDP = FetidpSolver<T, Assembler, VecType, BsrMat>;
     // const bool MULTI_SMOOTH = true;
@@ -198,6 +205,8 @@ int main(int argc, char **argv) {
 
     auto assembler = createPlateClampedAssembler<Assembler>(
         nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+
+    // auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
     auto &bsr_data = assembler.getBsrData();
     bsr_data.compute_nofill_pattern();

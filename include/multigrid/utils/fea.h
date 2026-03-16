@@ -420,33 +420,40 @@ Assembler createPlateClampedAssembler(int nxe, int nye, double Lx, double Ly, do
     HostVec<T> xpts(num_xpts);
     T dx = Lx / (nnx - 1);
     T dy = Ly / (nny - 1);
-    if constexpr (swap_xy) {
+    for (int iy = 0; iy < nny; iy++) {
         for (int ix = 0; ix < nnx; ix++) {
-            for (int iy = 0; iy < nny; iy++) {
-                int inode = nny * ix + iy;
-                T *xpt_node = &xpts[Geo::spatial_dim * inode];
-                if constexpr (Basis::order == 1 || Basis::ISOGEOM) {
-                    xpt_node[0] = dx * ix;
-                    xpt_node[1] = dy * iy;
-                    xpt_node[2] = 0.0;
-                } else {
-                    // pass
-                }
-            }
-        }
-    } else {
-        // not swap xy
-        for (int iy = 0; iy < nny; iy++) {
-            for (int ix = 0; ix < nnx; ix++) {
-                int inode = nny * iy + ix;
-                T *xpt_node = &xpts[Geo::spatial_dim * inode];
-                if constexpr (Basis::order == 1 || Basis::ISOGEOM) {
-                    xpt_node[0] = dx * ix;
-                    xpt_node[1] = dy * iy;
-                    xpt_node[2] = 0.0;
-                } else {
-                    // pass
-                }
+            int inode = nnx * iy + ix;
+            T *xpt_node = &xpts[Geo::spatial_dim * inode];
+            if constexpr (Basis::order == 1 || Basis::ISOGEOM) {
+                xpt_node[0] = dx * ix;
+                xpt_node[1] = dy * iy;
+                xpt_node[2] = 0.0;
+            } else {
+                // higher-order nodes
+                int ix_corner = (ix / order) * order;
+                int iy_corner = (iy / order) * order;
+
+                // local node index inside element
+                int ix_local = ix % order;
+                int iy_local = iy % order;
+
+                // get reference Gauss point [-1,1]
+                T xi = Basis::getGaussPoint(ix_local);
+                T eta = Basis::getGaussPoint(iy_local);
+
+                // physical element corners
+                T x0 = dx * ix_corner;
+                T x1 = dx * (ix_corner + (n - 1));  // last node in this element
+                T y0 = dy * iy_corner;
+                T y1 = dy * (iy_corner + (n - 1));
+
+                // map reference [-1,1] → [x0,x1] and [y0,y1]
+                xpt_node[0] = 0.5 * (1.0 - xi) * x0 + 0.5 * (1.0 + xi) * x1;
+                xpt_node[1] = 0.5 * (1.0 - eta) * y0 + 0.5 * (1.0 + eta) * y1;
+                xpt_node[2] = 0.0;
+
+                // printf("xi %.4e, eta %.4e with (x %.4e, y %.4e, z %.4e)\n", xi, eta, xpt_node[0],
+                // xpt_node[1], xpt_node[2]);
             }
         }
     }
@@ -655,7 +662,8 @@ T *getPlateLoads(int nxe, int nye, double Lx, double Ly, double load_mag, double
 
                 my_loads[vpn * inode + offset + 2] += nodal_load;
 
-                my_loads[vpn * inode + offset + 0] += axial_frac * nodal_load; // add axial component to load
+                my_loads[vpn * inode + offset + 0] +=
+                    axial_frac * nodal_load;  // add axial component to load
             }
         }
     }

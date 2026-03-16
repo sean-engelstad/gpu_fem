@@ -99,11 +99,12 @@ class InexactNewtonSolver {
                 linSolveRtol =
                     std::clamp(linSolveRtol, minLinSolveTol, maxLinSolveTol);  // clip the rtol
 
-                if (USE_FETI_IEV) {
-                    linSolveRtol *=
-                        1e-3;  // need to solve a little deeper than normal cause not solving kmat
-                               // directly (extra numerical error in thin shell)
-                }
+                // if (USE_FETI_IEV) {
+                //     linSolveRtol *=
+                //         1e-3;  // need to solve a little deeper than normal cause not solving
+                //         kmat
+                //                // directly (extra numerical error in thin shell)
+                // }
             }
             linear_solver->set_rel_tol(linSolveRtol);
 

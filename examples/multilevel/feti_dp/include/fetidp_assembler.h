@@ -220,8 +220,9 @@ class FetidpSolver : public BaseSolver {
         nxs = nxs_;
         nys = nys_;
 
-        nx = nxe + 1;
-        ny = close_hoop ? nye : (nye + 1);
+        int order = Basis::order;
+        nx = order * nxe + 1;
+        ny = close_hoop ? order * nye : (order * nye + 1);
 
         num_subdomains = nxs * nys;
 

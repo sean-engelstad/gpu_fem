@@ -5,7 +5,11 @@ two-subdomain neumann neumann preconditioner (example from section 3.1 of [FETIâ
 """
 
 import numpy as np, scipy.sparse as sp
-from src import FETIDP_Assembler, MITCPlateElement
+
+import sys
+
+sys.path.append("../feti_dp/")
+from src import MITCPlateElement, BDDC_Assembler
 from src import RichardsonSolver, ILU0Preconditioner, ExactSparseSolver, ILUTPreconditioner
 
 import sys
@@ -30,8 +34,8 @@ nxe, nxs = 128, 32 # 4x4 works well also
 # nxe, nxs = 6, 3
 # nxe, nxs = 4, 2
 
-thick = 1e-1
-# thick = 1e-2
+# thick = 1e-1
+thick = 1e-2
 # thick = 1e-3
 
 
@@ -47,7 +51,7 @@ def load_fcn(_x,_y):
 ELEMENT = MITCPlateElement(
     prolong_mode='standard',
 )
-assembler = FETIDP_Assembler(
+assembler = BDDC_Assembler(
     ELEMENT=ELEMENT,
     thick=thick,
     nxe=nxe, nxs=nxs, nys=nxs,
@@ -177,8 +181,8 @@ print(f"{err_nrm=:.4e} {orig_nrm=:.4e} {rel_nrm=:.4e}")
 # compute residual norms
 load_nrm = np.linalg.norm(assembler.force.copy())
 res_nrm_direct = np.linalg.norm(assembler.force - assembler.kmat.dot(direct_soln))
-res_nrm_feti = np.linalg.norm(assembler.force - assembler.kmat.dot(global_soln))
-print(f"{load_nrm=:.4e} {res_nrm_direct=:.4e} {res_nrm_feti=:.4e}")
+res_nrm_bddc = np.linalg.norm(assembler.force - assembler.kmat.dot(global_soln))
+print(f"{load_nrm=:.4e} {res_nrm_direct=:.4e} {res_nrm_bddc=:.4e}")
 
 # then plot the solution
 assembler.u = global_soln.copy() # store in assembler for plot

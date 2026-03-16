@@ -2,6 +2,12 @@
 
 ## Current Task
 
+BPX preconditioners on shells or surface meshes?
+- [ ] [Multilevel solvers for unstructured surface meshes, SIAM J. Sci. Comput., 26 (2005), pp. 1146–1165.]
+- [ ] [Bernstein–Bézier polynomials on spheres and sphere‐like surfaces, Comput. Aided Geom. Design, 13 (1996), pp. 333–349.]
+- [ ] [𝐶1‐hierarchical bases, J]
+- [ ] [Multilevel Preconditioning, Phd thesis]
+
 BDDC preconditioners
 1. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
    - [ ] demo below BDDC preconditioner for plate + shell elements (first for python)

@@ -1,4 +1,4 @@
-from ._assembler import Subdomain2DAssembler
+# from ._assembler import Subdomain2DAssembler
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla

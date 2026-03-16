@@ -50,6 +50,8 @@ class FETIDP_Assembler(Subdomain2DAssembler):
         print("\tit can support in future, but then some DOF per node are on interface and some on interior (more tricky and probably will need duplicate nodes with Identity blocks)")
         assert clamped
 
+        print(f"{thick=:.4e}")
+
         Subdomain2DAssembler.__init__(
             self, ELEMENT, nxe, E, nu, thick, length, width, load_fcn, clamped, nxs, nys, geometry, radius, nye
         )
