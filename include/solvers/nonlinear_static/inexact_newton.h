@@ -7,7 +7,7 @@
 #include <string>
 
 #include "mesh/vtk_writer.h"
-#include "newton.h"
+//#include "newton.h"
 #include "solvers/linear_static/_utils.h"
 
 template <typename T, class Mat, class Vec, class Assembler, class Solver,
