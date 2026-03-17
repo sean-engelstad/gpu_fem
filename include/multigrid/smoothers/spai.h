@@ -8,18 +8,16 @@
 #include "multigrid/solvers/solve_utils.h"
 #include "spai.cuh"
 
-template <typename T, class Assembler>
+template <typename T>
 class SPAI : public BaseSolver {
    public:
     // Constructor: fill specifies how many fill iterations to perform.
-    SPAI(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_, Assembler &assembler_,
+    SPAI(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
          BsrMat<DeviceVec<T>> kmat_, int fill = 3, int optim_ = 2)
-        : cublasHandle(cublasHandle_),
-          cusparseHandle(cusparseHandle_),
-          assembler(assembler_),
-          kmat(kmat_) {
-        block_dim = assembler_.getBsrData().block_dim;
-        N = assembler_.get_num_vars();
+        : cublasHandle(cublasHandle_), cusparseHandle(cusparseHandle_), kmat(kmat_) {
+        auto _bsr_data = kmat_.getBsrData();
+        block_dim = _bsr_data.block_dim;
+        N = _bsr_data.mb * block_dim;
         nnodes = N / block_dim;
         temp = DeviceVec<T>(N);
 
@@ -476,7 +474,6 @@ class SPAI : public BaseSolver {
     int optim;  // num SPAI optimization steps
 
     // TACS assembler
-    Assembler assembler;
     int N, block_dim, nnodes, block_dim2;
 
     // temp vecs

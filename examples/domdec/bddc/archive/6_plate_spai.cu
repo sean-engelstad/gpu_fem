@@ -20,6 +20,8 @@
 #include "multigrid/solvers/krylov/bsr_pcg.h"
 #include "multigrid/solvers/krylov/bsr_pcg_matfree.h"
 
+#include "multigrid/smoothers/spai.h"
+
 void to_lowercase(char *str) {
     for (; *str; ++str) {
         *str = std::tolower(*str);
@@ -103,6 +105,7 @@ int main(int argc, char **argv) {
     using BDDC = BddcSolver<T, Assembler, VecType, BsrMat>;
     const bool MULTI_SMOOTH = true;
     // const bool MULTI_SMOOTH = false; // often not MULTI_SMOOTH is better..
+    using SpaiSolver = SPAI<T>;
     using InnerSolver = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH>;
     using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH, true>;
     using DUMMY = InnerSolver;
@@ -118,7 +121,6 @@ int main(int argc, char **argv) {
     // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
     // for the coarse problem..
     T omega;
-    int nsmooth, fill_level;
     // T thick = 1e-3;
     T thick = 1e-2;
     bool print_mem = false;
@@ -127,11 +129,12 @@ int main(int argc, char **argv) {
     // somewhat works (but sometimes soln recovery isn't as good despite Krylov solve in the multi-smooth case?)
     // direct solve FETI seems much better..
     // also thickness independence gets worse for ILU(k) instead of LU fillin (LU fillin in 3_plate.cu)
-    // may be that assembly of the coarse system also breaks down for thin shell (multiple points of potential failure)
+
+    int optim = 2, fill = 1;
 
     // optional smoothing
     // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
-    omega = 0.5, nsmooth = 2, fill_level = 3;
+    // omega = 0.5, nsmooth = 2, fill_level = 3;
     // or single-level (no multiple smoothing) and ILU(k)
     // omega = 1.0, nsmooth = 1, fill_level = 2;
     // 2) or if full LU fillin
@@ -167,13 +170,13 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --mag\n";
                 return 1;
             }
-        } else if (strcmp(arg, "--omega") == 0) {
-            if (i + 1 < argc) {
-                omega = std::atof(argv[++i]);
-            } else {
-                std::cerr << "Missing value for --omega\n";
-                return 1;
-            }
+        // } else if (strcmp(arg, "--omega") == 0) {
+        //     if (i + 1 < argc) {
+        //         omega = std::atof(argv[++i]);
+        //     } else {
+        //         std::cerr << "Missing value for --omega\n";
+        //         return 1;
+        //     }
         } else if (strcmp(arg, "--subdomain") == 0) {
             if (i + 1 < argc) {
                 nxe_subdomain_size = std::atoi(argv[++i]);
@@ -183,7 +186,7 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(arg, "--fill") == 0) {
             if (i + 1 < argc) {
-                fill_level = std::atoi(argv[++i]);
+                fill = std::atoi(argv[++i]);
             } else {
                 std::cerr << "Missing value for --fill\n";
                 return 1;
@@ -195,11 +198,11 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --print_mem\n";
                 return 1;
             }
-        } else if (strcmp(arg, "--nsmooth") == 0) {
+        } else if (strcmp(arg, "--optim") == 0) {
             if (i + 1 < argc) {
-                nsmooth = std::atoi(argv[++i]);
+                optim = std::atoi(argv[++i]);
             } else {
-                std::cerr << "Missing value for --nsmooth\n";
+                std::cerr << "Missing value for --optim\n";
                 return 1;
             }
         } else {
@@ -258,26 +261,29 @@ int main(int argc, char **argv) {
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
-    if (fill_level != -1) { 
-        I_bsr_data.RCM_reordering();
-        I_bsr_data.qorder_reordering(0.5);
-        I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        I_bsr_data.AMD_reordering(); 
-        I_bsr_data.compute_full_LU_pattern(10.0);
-    }
+    int fill_level = fill;
+    I_bsr_data.compute_nofill_pattern();
+    // if (fill_level != -1) { 
+    //     I_bsr_data.RCM_reordering();
+    //     I_bsr_data.qorder_reordering(0.5);
+    //     I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
+    // } else {
+    //     I_bsr_data.AMD_reordering(); 
+    //     I_bsr_data.compute_full_LU_pattern(10.0);
+    // }
     // I_bsr_data.AMD_reordering(); 
     // I_bsr_data.compute_full_LU_pattern(10.0);
 
     auto &IE_bsr_data = bddc->IE_bsr_data;
-    if (fill_level != -1) { 
-        IE_bsr_data.RCM_reordering();
-        IE_bsr_data.qorder_reordering(0.5);
-        IE_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        IE_bsr_data.AMD_reordering(); 
-        IE_bsr_data.compute_full_LU_pattern(10.0);
-    }
+    IE_bsr_data.compute_nofill_pattern();
+    // if (fill_level != -1) { 
+    //     IE_bsr_data.RCM_reordering();
+    //     IE_bsr_data.qorder_reordering(0.5);
+    //     IE_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
+    // } else {
+    //     IE_bsr_data.AMD_reordering(); 
+    //     IE_bsr_data.compute_full_LU_pattern(10.0);
+    // }
     // IE_bsr_data.AMD_reordering(); 
     // IE_bsr_data.compute_full_LU_pattern(10.0);
 
@@ -286,14 +292,15 @@ int main(int argc, char **argv) {
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
-    if (fill_level != -1) { 
-        Svv_bsr_data.RCM_reordering();
-        Svv_bsr_data.qorder_reordering(0.5);
-        Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        Svv_bsr_data.AMD_reordering();
-        Svv_bsr_data.compute_full_LU_pattern(10.0);
-    }
+    Svv_bsr_data.compute_nofill_pattern();
+    // if (fill_level != -1) { 
+    //     Svv_bsr_data.RCM_reordering();
+    //     Svv_bsr_data.qorder_reordering(0.5);
+    //     Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
+    // } else {
+    //     Svv_bsr_data.AMD_reordering();
+    //     Svv_bsr_data.compute_full_LU_pattern(10.0);
+    // }
     // Svv_bsr_data.AMD_reordering();
     // Svv_bsr_data.compute_full_LU_pattern(10.0);
 
@@ -316,9 +323,17 @@ int main(int argc, char **argv) {
     
     // just LU allowed for IE and I solvers to reduce mem footprint (1/2 as much memory for them)
     //   means only the LU factor is stored, not original matrix as well
-    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
-    auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-    // auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+    // auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+    // auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
+    // // auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+    // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
+
+    // int fill_level = 1;
+    // int optim = 2; // num optimization steps
+
+    auto ie_solver = new SpaiSolver(cublasHandle, cusparseHandle, *bddc->kmat_IE, fill, optim);
+    auto i_solver = new SpaiSolver(cublasHandle, cusparseHandle, *bddc->kmat_I, fill, optim);
+    // auto v_solver = new SpaiSolver(cublasHandle, cusparseHandle, *bddc->S_VV, fill, optim);
     auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
 
     // if (nxe < 10) {
@@ -330,7 +345,11 @@ int main(int argc, char **argv) {
     // }
 
     // factor each solver
+    CHECK_CUDA(cudaDeviceSynchronize());
+    printf("IE solver factor\n");
     ie_solver->factor();
+    CHECK_CUDA(cudaDeviceSynchronize());
+    printf("I solver factor\n");
     i_solver->factor();
 
     // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
