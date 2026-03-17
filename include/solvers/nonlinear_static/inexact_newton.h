@@ -134,7 +134,7 @@ class InexactNewtonSolver {
                 continue;
             }
 
-            // // FETI-DP debug
+            // FETI-DP debug
             // char filename[256];
             // std::snprintf(filename, sizeof(filename), "out/plate_debug_%d.vtk", inewton);
             // auto h_soln = update.createHostVec();

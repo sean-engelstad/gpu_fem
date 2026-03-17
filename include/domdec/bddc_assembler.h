@@ -40,9 +40,12 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     BddcSolver() = default;
 
     BddcSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
-               ShellAssembler &assembler_, BsrMatType &kmat_, bool print_timing_ = false)
+               ShellAssembler &assembler_, BsrMatType &kmat_, bool print_timing_ = false,
+               bool warnings_ = true)
         : FetidpSolver<T, ShellAssembler_, Vec_, Mat_>(cublasHandle_, cusparseHandle_, assembler_,
-                                                       kmat_, print_timing_) {}
+                                                       kmat_, print_timing_) {
+        warnings = warnings_;
+    }
 
     ~BddcSolver() { this->clear_host_data(); }
 
@@ -74,6 +77,46 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->temp_lam2 = Vec(this->lam_nnodes * this->block_dim);
     }
 
+    void update_after_assembly(DeviceVec<T> &vars) {
+        // copy vars to d_vars (NL update)
+        vars.copyValuesTo(this->d_vars);
+        this->assemble_subdomains();
+        this->subdomainIESolver->factor();
+        this->subdomainISolver->factor();
+        this->assemble_coarse_problem();
+        this->coarseSolver->factor();
+    }
+
+    template <int elems_per_block = 8>
+    void set_IEV_residual(T lambdaE, T lambdaI, DeviceVec<T> vars) {
+        // res_IEV(u_IEV) = lambdaE * fext_IEV - lambdaI * fint_IEV
+
+        // printf("set_IEV_residual\n");
+
+        this->addVec_globalToIEV(this->d_xpts, this->d_IEV_xpts, 3, 1.0, 0.0);
+        this->addVec_globalToIEV(vars, this->d_IEV_vars, this->block_dim, 1.0, 0.0);
+
+        this->fint_IEV.zeroValues();
+
+        dim3 block(num_quad_pts, elems_per_block);
+        dim3 grid(this->num_elements);
+
+        k_add_residual_fast<T, elems_per_block, ShellAssembler, Data, Vec_>
+            <<<grid, block>>>(this->IEV_nnodes, this->num_elements, this->d_elem_components,
+                              this->d_IEV_elem_conn, this->d_IEV_elem_conn, this->d_IEV_xpts,
+                              this->d_IEV_vars, this->d_compData, this->fint_IEV);
+        this->fint_IEV.apply_bcs(this->d_IEV_bcs);
+
+        T a = -lambdaI;
+        CHECK_CUBLAS(cublasDscal(this->cublasHandle, this->block_dim * this->IEV_nnodes, &a,
+                                 this->fint_IEV.getPtr(), 1));
+
+        this->fint_IEV.copyValuesTo(this->res_IEV);
+        a = lambdaE;
+        CHECK_CUBLAS(cublasDaxpy(this->cublasHandle, this->block_dim * this->IEV_nnodes, &a,
+                                 this->fext_IEV.getPtr(), 1, this->res_IEV.getPtr(), 1));
+    }
+
     void set_inner_solvers(BaseSolver *subdomainIESolver_, BaseSolver *subdomainISolver_,
                            BaseSolver *coarseSolver_, BaseSolver *subdomainIKrylov = nullptr) {
         // subdomainIKrylov matrix can be avoided only if use full fillin on K_II
@@ -83,7 +126,7 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->subdomainIKrylov = subdomainIKrylov;
     }
 
-    void get_lambda_rhs(DeviceVec<T> &gam_rhs) {
+    void get_lam_rhs(DeviceVec<T> &gam_rhs) {
         gam_rhs.zeroValues();
         this->res_IEV.copyValuesTo(this->f_IEV);
         this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
@@ -153,6 +196,18 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         // does edge averaging (not vertex averaging since that's primal S_VV)
         const bool SCALED = true;
 
+        // const T *h_gam_rhs = gam_rhs.createHostVec().getPtr();
+        // printf("h_gam_rhs-pc:\n");
+        // for (int ilam = 0; ilam < ngam; ilam++) {
+        //     int iglob = gam_nodes[ilam];
+        //     printf("igam %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_gam_rhs[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
+
         // similar to FETI-DP mat_vec (flipped), but a bit different
         this->addVecGamtoIEV<SCALED>(gam_rhs, this->f_IEV, 1.0, 0.0);
 
@@ -189,6 +244,18 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
 
         // now IEV to gam with averaging
         this->addVecIEVtoGam<SCALED>(this->u_IEV, gam, 1.0, 0.0);
+
+        // const T *h_gam = gam.createHostVec().getPtr();
+        // printf("h_gam-pc:\n");
+        // for (int ilam = 0; ilam < ngam; ilam++) {
+        //     int iglob = gam_nodes[ilam];
+        //     printf("igam %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_gam[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
 
         return false;  // fail = false
     }
@@ -254,10 +321,11 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->rhs_I_perm.permuteData(this->block_dim, d_iperm);
 
         if (subdomainIKrylov == nullptr) {
-            printf(
-                "WARNING : must have full fillin if using non-Krylov solver for full K_II^-1 "
-                "solve\n\tIf want ILU(k) fillin, use set_inner_solvers to set subdomainIKrylov "
-                "solver.\n");
+            if (warnings)
+                printf(
+                    "WARNING : must have full fillin if using non-Krylov solver for full K_II^-1 "
+                    "solve\n\tIf want ILU(k) fillin, use set_inner_solvers to set subdomainIKrylov "
+                    "solver.\n");
             this->subdomainISolver->solve(this->rhs_I_perm, this->sol_I_perm);
         } else {
             // do want to check convergence for this one
@@ -337,6 +405,7 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     }
 
    private:
+    bool warnings;
     int ngam, n_edge;
     int gam_offset;
     DeviceVec<T> temp_lam, temp_lam2;

@@ -357,7 +357,7 @@ int main(int argc, char **argv) {
     // lambda rhs
     VecType<T> gam_rhs(bddc->getLambdaSize());
     VecType<T> gam(bddc->getLambdaSize());
-    bddc->get_lambda_rhs(gam_rhs);
+    bddc->get_lam_rhs(gam_rhs);
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;

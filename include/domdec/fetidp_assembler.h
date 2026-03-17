@@ -80,7 +80,7 @@ class FetidpSolver : public BaseSolver {
         using clock = std::chrono::high_resolution_clock;
         using sec = std::chrono::duration<double>;
 
-        printf("update after assembly\n");
+        // printf("update after assembly\n");
 
         std::chrono::time_point<clock> t_begin, t0, t1, t_end;
 
@@ -1418,27 +1418,11 @@ class FetidpSolver : public BaseSolver {
         fext_IEV.apply_bcs(d_IEV_bcs);
     }
 
-    // void set_IEV_residual(T lambdaE, T lambdaI, DeviceVec<T> vars) {
-    //     // set into res_IEV = lambdaE * fext_IEV - lambdaI * kmat_IEV(u_IEV) * u_IEV
-    //     res_IEV.zeroValues();
-    //     T a = lambdaE;
-    //     CHECK_CUBLAS(cublasDaxpy(cublasHandle, block_dim * IEV_nnodes, &a, fext_IEV.getPtr(), 1,
-    //                              res_IEV.getPtr(), 1));
-
-    //     // add global vars into d_IEV_vars
-    //     vars.copyValuesTo(d_vars);
-    //     addVec_globalToIEV(d_vars, d_IEV_vars, block_dim, 1.0, 0.0);
-
-    //     // assume kmat_IEV already updated w/ assembly (from updateJacobian nonlinear)
-    //     // compute kmat_IEV * d_IEV_vars and add appropriately into res_IEV
-    //     sparseMatVec(*kmat_IEV, d_IEV_vars, -lambdaI, 1.0, res_IEV);
-    // }
-
     template <int elems_per_block = 8>
     void set_IEV_residual(T lambdaE, T lambdaI, DeviceVec<T> vars) {
         // res_IEV(u_IEV) = lambdaE * fext_IEV - lambdaI * fint_IEV
 
-        printf("set_IEV_residual\n");
+        // printf("set_IEV_residual\n");
 
         addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
         addVec_globalToIEV(vars, d_IEV_vars, block_dim, 1.0, 0.0);

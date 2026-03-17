@@ -26,7 +26,6 @@ class MatrixFreePCGSolver : public BaseSolver {
           rhs_vec(N_) {}
 
     void update_after_assembly(DeviceVec<T> &vars) override {
-        (void)vars;
         // matrix-free operator usually does not need anything here
         // unless the preconditioner does
         if (pc) {

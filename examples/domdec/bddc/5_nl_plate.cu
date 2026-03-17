@@ -65,6 +65,19 @@ T get_max_disp(DeviceVec<T> &d_soln, int idof = 2) {
     return my_max;
 }
 
+template <typename T>
+T get_max_disp(HostVec<T> h_soln, int idof = 2) {
+    T *h_soln_ptr = h_soln.getPtr();
+    int nvars = h_soln.getSize();
+    int nnodes = nvars / 6;
+    T my_max = 0.0;
+    for (int inode = 0; inode < nnodes; inode++) {
+        T val = abs(h_soln_ptr[6 * inode + idof]);
+        if (val > my_max) my_max = val;
+    }
+    return my_max;
+}
+
 
 void to_lowercase(char *str) {
     for (; *str; ++str) {
@@ -98,6 +111,8 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
         printf("NOTE: MULTI_SMOOTH is false, so omega, nsmooth inputs are ignored.\n");
     }
 
+    // =================
+
     int nye = nxe;
     int nxs = nxe / nxe_subdomain_size;
     int nys = nxe / nxe_subdomain_size;
@@ -108,15 +123,18 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     auto assembler = createPlateClampedAssembler<Assembler>(
         nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
+    // auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+
     auto &bsr_data = assembler.getBsrData();
-    // can use nofill pattern in original kmat for FETI-DP
     bsr_data.compute_nofill_pattern();
     assembler.moveBsrDataToDevice();
 
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
     auto soln = assembler.createVarsVec();
+    auto soln2 = assembler.createVarsVec();
     auto vars = assembler.createVarsVec();
     auto fine_vars = assembler.createVarsVec();
+    auto res = assembler.createVarsVec();
 
     // kmat assembly (not actually needed here, but is needed for the nonlinear problem))
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -135,9 +153,10 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
 
     // bool print_timing = true; // profiling
     bool print_timing = false;
-    auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
+    bool warnings = false; // suppresses warnings when false
+    auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing, warnings);
 
-    bool close_hoop = true; // true for cylinder case (not cylindrical panel)
+    bool close_hoop = false; // true for cylinder case (not cylindrical panel)
     bddc->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
 
     // perform LU fillin and reordering (optional)
@@ -171,17 +190,14 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
 
     bddc->setup_coarse_matrix_sparsity();
 
-    // // assemble local FETI-DP blocks
-    // bddc->assemble_subdomains();
+    // assemble local FETI-DP blocks
+    bddc->assemble_subdomains();
 
-    // external load
+    // external load (can add internally)
     ObliqueShearSineLoad<T> load;
     bddc->add_subdomain_fext(load, mag);
 
-    // and need it globally too..
-    auto loads = assembler.createVarsVec();
-    assembler.add_fext_fast(load, mag, loads);
-    assembler.apply_bcs(loads);
+    bddc->set_IEV_residual(1.0, 0.0, vars);
 
     // ----------------------------------------
     // you still need actual solver objects here
@@ -197,11 +213,26 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
     // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
     
+    
     bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
+
+    // factor each solver
+    // ie_solver->factor();
+    // i_solver->factor();
+    // bddc->assemble_coarse_problem();
+    // v_solver->factor();    
+
+    // bddc->
+    bddc->update_after_assembly(vars);
+
+    // lambda rhs
+    VecType<T> lam_rhs(bddc->getLambdaSize());
+    VecType<T> lam(bddc->getLambdaSize());
+    bddc->get_lam_rhs(lam_rhs);
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
-    opts.ncycles = 100;
+    opts.ncycles = 50;
     // opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
@@ -213,21 +244,13 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     auto *lam_solver =
         new PCG(cublasHandle, bddc, bddc, opts, bddc->getLambdaSize(), 0);
 
-    // run the assembly and factor (call from krylov solver, that also calls for preconditioner)
-    lam_solver->update_after_assembly(vars);
-
-    // lambda rhs
-    VecType<T> lam_rhs(bddc->getLambdaSize());
-    VecType<T> lam(bddc->getLambdaSize());
-    bddc->get_lam_rhs(lam_rhs);
-
     // optional: true initial residual before solve
     lam.zeroValues();
-    T init_lam_resid = lam_solver->getResidualNorm(lam_rhs, lam);
-    printf("initial lambda residual = %.8e\n", init_lam_resid);
+    T init_gam_resid = lam_solver->getResidualNorm(lam_rhs, lam);
+    printf("initial gamma residual = %.8e\n", init_gam_resid);
 
     // prelim linear solve
-    lam_solver->solve(lam_rhs, lam, true);
+    // lam_solver->solve(lam_rhs, lam, true);
 
     bddc->get_global_soln(lam, soln);
 
@@ -238,7 +261,9 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     auto wrapper = new BDDC_WRAPPER(bddc, lam_solver); 
 
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc_lin.vtk");
+
+    // return;
 
     // -----------------------------------------------------------
     // 2) actually try Newton-mg solve here (this is just V1, later versions may use FMG cycle so less extra work needs to be done on fine grids)
@@ -257,18 +282,27 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     using NL = NonlinearContinuationSolver<T, Vec, Assembler, INK>;
 
     // need a bit lower base rtol for FETI-DP because some loss in error due to global solution recovery
-    T base_rtol = 1e-4;
+    // T base_rtol = 1e-4;
+    // T base_rtol = 1e-6;
     // T base_rtol = 1e-10;
     // T base_rtol = 1e-8; // not enough for thinner shell.. (worse rtol requirements for FETI-DP)
+
+    // and need it globally too..
+    auto loads = assembler.createVarsVec();
+    assembler.add_fext_fast(load, mag, loads);
+    assembler.apply_bcs(loads);
 
     // T initLinSolveRtol = 1e-2;
     // T initLinSolveRtol = 1e-4;
     // T initLinSolveRtol = 1e-6;
-    T initLinSolveRtol = base_rtol;
-    T linSolveAtol = 1e-30;
-    T minLinSolveTol = base_rtol * 1e-3;
-    T maxLinSolveTol = base_rtol * 1;
-    INK *inner_solver = new INK(cublasHandle, assembler, kmat, loads, wrapper, initLinSolveRtol, linSolveAtol, minLinSolveTol, maxLinSolveTol);
+    // T initLinSolveRtol = base_rtol;
+    // T linSolveAtol = 1e-30;
+    // T minLinSolveTol = base_rtol * 1e-3;
+    // T maxLinSolveTol = base_rtol * 1;
+    // INK *inner_solver = new INK(cublasHandle, assembler, kmat, loads, wrapper, initLinSolveRtol, linSolveAtol, minLinSolveTol, maxLinSolveTol);
+
+    T initLinSolveRtol = 1e-2;
+    INK *inner_solver = new INK(cublasHandle, assembler, kmat, loads, wrapper, initLinSolveRtol);
 
     // yeah fine to use predictor in FETI-DP, more robust / stable I think
     bool use_predictor = true, debug = false;
@@ -277,6 +311,7 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
 
     // now try calling it
     T lambda0 = 0.2;
+    // T lambda0 = 1.0; // temp debug
     T inner_atol = 1e-6;
 
     lam_solver->set_print(false); // turn print off (only show NL outer results, not inner Krylov)
@@ -443,8 +478,9 @@ int main(int argc, char **argv) {
     using T = double;
 
     // int nxe = 6, nxe_subdomain_size = 2;
-    int nxe = 32, nxe_subdomain_size = 4;
-    // int nxe = 256, nxe_subdomain_size = 4;
+    // int nxe = 32, nxe_subdomain_size = 4;
+    // int nxe = 128, nxe_subdomain_size = 4;
+    int nxe = 256, nxe_subdomain_size = 4;
     // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
     // for the coarse problem..
     T omega;
