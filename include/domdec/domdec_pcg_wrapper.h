@@ -1,10 +1,10 @@
 #pragma once
 #include "multigrid/solvers/solve_utils.h"
 
-template <typename T, class FETIDP, class KRYLOV>
-class FetiDpKrylovWrapper : public BaseSolver {
+template <typename T, class DOMDEC, class KRYLOV>
+class DomDecKrylovWrapper : public BaseSolver {
    public:
-    FetiDpKrylovWrapper(FETIDP *fetidp_, KRYLOV *krylov_) : fetidp(fetidp_), krylov(krylov_) {
+    DomDecKrylovWrapper(DOMDEC *fetidp_, KRYLOV *krylov_) : fetidp(fetidp_), krylov(krylov_) {
         nlam = fetidp->getLambdaSize();
         N = krylov->get_num_dof();
 
@@ -17,7 +17,7 @@ class FetiDpKrylovWrapper : public BaseSolver {
         d_iperm = bsr_data.iperm;
         d_perm = bsr_data.perm;
     }
-    ~FetiDpKrylovWrapper(){};  // must have virtual destructor?
+    ~DomDecKrylovWrapper(){};  // must have virtual destructor?
     bool solve(DeviceVec<T> rhs, DeviceVec<T> soln, bool check_conv = false) {
         // NOTE : rhs is ignored here since we have to compute residual in separate place for
         // res_IEV (FETI-DP case) and still want to use same original call structure in
@@ -41,7 +41,7 @@ class FetiDpKrylovWrapper : public BaseSolver {
         fetidp->set_IEV_residual(lambdaE, lambdaI, vars);
     }
     void update_after_assembly(DeviceVec<T> &vars) {
-        // krylov calls for FETIDP preconditioner (so don't need to call on that)
+        // krylov calls for DOMDEC preconditioner (so don't need to call on that)
         krylov->update_after_assembly(vars);
     }
     void factor() {}
@@ -53,7 +53,7 @@ class FetiDpKrylovWrapper : public BaseSolver {
     void free() {}
 
    public:
-    FETIDP *fetidp;
+    DOMDEC *fetidp;
     KRYLOV *krylov;
 
    private:

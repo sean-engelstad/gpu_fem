@@ -1,5 +1,12 @@
 # Discussion of Timing / Performance Profiling for FETI-DP on GPU
 
+* NOTE : BDDC in other folder is actually more convenient for nonlinear and linear problems than
+FETI-DP. Both solve in same # of iterations, but FETI-DP tracks the dual residual norm, while
+BDDC tracks a displacement norm (kind of like right vs left preconditioning).
+Thus, BDDC often ends up being more accurate to true residual (whereas FETI-DP requires a bit 
+deeper PCG rtol to get same solution accuracy as BDDC).
+
+
 ## Single-GPU Profiling
 
 * tried ILU(k) fillin of IE, I, S_VV matrices. Can solve with ILU(2) or ILU(3)

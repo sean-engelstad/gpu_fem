@@ -15,7 +15,7 @@
 #include <chrono>
 #include "multigrid/solvers/direct/cusp_directLU.h"
 
-#include "include/fetidp_assembler.h"
+#include "domdec/fetidp_assembler.h"
 #include "multigrid/solvers/krylov/bsr_pcg_matfree.h"
 
 void to_lowercase(char *str) {

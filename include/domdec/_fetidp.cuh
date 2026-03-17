@@ -1,7 +1,7 @@
 // ===========================================
 // FETI-DP kernels on CUDA GPU
 // ===========================================
-
+#pragma once
 
 template <typename T>
 __global__ static void k_bsrmv_transpose_ax(const int nnzb, const int block_dim, const int *rows, const int *cols, 
@@ -220,6 +220,25 @@ __global__ static void k_copyMatToMat_restrict(const int nnzb, const int block_d
 }
 
 template <typename T>
+__global__ static void k_addVecIEtoGam(const int IE_nnodes, const int block_dim, 
+    const int *IE_to_lam_map, const T *vec_IE, T *vec_lam, T a) {
+    int N = IE_nnodes * block_dim;
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= N) return;
+
+    int IE_node = tid / block_dim;
+    int lam_node = IE_to_lam_map[IE_node];
+    if (lam_node < 0) return;
+    int idof = tid % block_dim;
+    int IE_dof = block_dim * IE_node + idof;
+    int lam_dof = block_dim * lam_node + idof;
+    T s = 1.0; // always positive sign
+    T as = a * s;
+
+    atomicAdd(&vec_lam[lam_dof], as * vec_IE[IE_dof]);   
+}
+
+template <typename T>
 __global__ static void k_addVecIEtoLam(const int IE_nnodes, const int block_dim, 
     const int *IE_to_lam_map, const T *IE_to_lam_vec, const T *vec_IE, T *vec_lam, T a) {
     int N = IE_nnodes * block_dim;
@@ -252,6 +271,26 @@ __global__ static void k_addVecLamtoIE(const int IE_nnodes, const int block_dim,
     int IE_dof = block_dim * IE_node + idof;
     int lam_dof = block_dim * lam_node + idof;
     T s = IE_to_lam_vec[IE_node];
+    T as = a * s;
+
+    atomicAdd(&vec_IE[IE_dof], as * vec_lam[lam_dof]);   
+}
+
+
+template <typename T>
+__global__ static void k_addVecGamtoIE(const int IE_nnodes, const int block_dim, 
+    const int *IE_to_lam_map, const T *vec_lam, T *vec_IE, T a) {
+    int N = IE_nnodes * block_dim;
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= N) return;
+
+    int IE_node = tid / block_dim;
+    int lam_node = IE_to_lam_map[IE_node];
+    if (lam_node < 0) return;
+    int idof = tid % block_dim;
+    int IE_dof = block_dim * IE_node + idof;
+    int lam_dof = block_dim * lam_node + idof;
+    T s = 1.0;
     T as = a * s;
 
     atomicAdd(&vec_IE[IE_dof], as * vec_lam[lam_dof]);   

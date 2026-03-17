@@ -80,6 +80,8 @@ class FetidpSolver : public BaseSolver {
         using clock = std::chrono::high_resolution_clock;
         using sec = std::chrono::duration<double>;
 
+        printf("update after assembly\n");
+
         std::chrono::time_point<clock> t_begin, t0, t1, t_end;
 
         double t_assemble_subdomains = 0.0;
@@ -1436,6 +1438,8 @@ class FetidpSolver : public BaseSolver {
     void set_IEV_residual(T lambdaE, T lambdaI, DeviceVec<T> vars) {
         // res_IEV(u_IEV) = lambdaE * fext_IEV - lambdaI * fint_IEV
 
+        printf("set_IEV_residual\n");
+
         addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
         addVec_globalToIEV(vars, d_IEV_vars, block_dim, 1.0, 0.0);
 
@@ -1804,7 +1808,7 @@ class FetidpSolver : public BaseSolver {
         }
     }
 
-   private:
+   protected:
     void clear_host_data() { clear_structured_host_data(); }
 
     void clear_structured_host_data() {
@@ -2453,10 +2457,12 @@ class FetidpSolver : public BaseSolver {
         f_IEV = Vec(IEV_nnodes * block_dim);
         u_IEV = Vec(IEV_nnodes * block_dim);
         temp_IEV = Vec(IEV_nnodes * block_dim);
+        temp_V = Vec(Vc_nnodes * block_dim);
 
         // IE vectors
         f_IE = Vec(IE_nnodes * block_dim);
         u_IE = Vec(IE_nnodes * block_dim);
+        temp_IE = Vec(IE_nnodes * block_dim);
         rhs_IE_perm = Vec(IE_nnodes * block_dim);
         sol_IE_perm = Vec(IE_nnodes * block_dim);
 
@@ -2465,6 +2471,7 @@ class FetidpSolver : public BaseSolver {
         u_I = Vec(I_nnodes * block_dim);
         rhs_I_perm = Vec(I_nnodes * block_dim);
         sol_I_perm = Vec(I_nnodes * block_dim);
+        temp_I = Vec(I_nnodes * block_dim);
 
         // coarse vertex vectors
         f_V = Vec(Vc_nnodes * block_dim);
@@ -2482,7 +2489,7 @@ class FetidpSolver : public BaseSolver {
     BsrMatType *kmat, *kmat_IEV, *kmat_IE, *kmat_I, *B_delta, *B_Ddelta, *S_VV;
     Vec f_IEV, f_IE, f_I, f_V;
     Vec u_IEV, u_IE, u_I, u_V;
-    Vec temp_IEV;
+    Vec temp_IEV, temp_IE, temp_V, temp_I;
     BsrData IEV_bsr_data, IE_bsr_data, I_bsr_data;
     BsrData d_IEV_bsr_data, d_IE_bsr_data, d_I_bsr_data;
     BsrData Svv_bsr_data, d_Svv_bsr_data;
@@ -2490,7 +2497,7 @@ class FetidpSolver : public BaseSolver {
     int IE_nofill_nnzb, I_nofill_nnzb;
     int IEV_nnzb, IE_nnzb, I_nnzb;
 
-   private:
+   protected:
     ShellAssembler assembler;
     cublasHandle_t &cublasHandle;
     cusparseHandle_t &cusparseHandle;

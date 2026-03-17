@@ -35,8 +35,8 @@ nxe, nxs = 128, 32 # 4x4 works well also
 # nxe, nxs = 4, 2
 
 # thick = 1e-1
-thick = 1e-2
-# thick = 1e-3
+# thick = 1e-2
+thick = 1e-3
 
 
 # m, n = 2, 2
@@ -82,13 +82,13 @@ assembler = BDDC_Assembler(
 print(f"{assembler.num_subdomains=}")
 
 assembler.assemble_all()
-lam_rhs = assembler.get_lam_rhs() # g_G rhs 
-print(f"{np.linalg.norm(lam_rhs)=:.4e}")
-# print(f"{lam_rhs=}")
+gam_rhs = assembler.get_gam_rhs() # g_G rhs 
+print(f"{np.linalg.norm(gam_rhs)=:.4e}")
+# print(f"{gam_rhs=}")
 
-# for i in range(lam_rhs.shape[0] // 3):
-#     sub_vec = lam_rhs[3*i:(3*i+3)]
-#     print(f"lam_rhs, {i=} {sub_vec=}")
+# for i in range(gam_rhs.shape[0] // 3):
+#     sub_vec = gam_rhs[3*i:(3*i+3)]
+#     print(f"gam_rhs, {i=} {sub_vec=}")
 
 # DEBUG
 # import matplotlib.pyplot as plt
@@ -123,7 +123,7 @@ print(f"{np.linalg.norm(lam_rhs)=:.4e}")
 #         sub_vec = sd_force[3*inode:(3*inode+3)]
 #         print(f"force {inode=} {gnode=} {sub_vec=}")
 
-# soln1 = assembler.precond_solve(lam_rhs)
+# soln1 = assembler.precond_solve(gam_rhs)
 # for i in range(soln1.shape[0] // 3):
 #     sub_vec = soln1[3*i:(3*i+3)]
 #     print(f"pc-solve0, {i=} {sub_vec=}")
@@ -134,10 +134,10 @@ def norm(x):
 
 # assembler.neumann_solve(rhs)
 norm_hist = []
-lam_soln, nsteps = right_pcg_matfree(
-    assembler, b=lam_rhs,
-    # rtol=1e-6, 
-    rtol=1e-9,
+gam_soln, nsteps = right_pcg_matfree(
+    assembler, b=gam_rhs,
+    rtol=1e-6, 
+    # rtol=1e-9,
     atol=1e-20,
     max_iter=200,
     print_freq=3,
@@ -149,20 +149,20 @@ lam_soln, nsteps = right_pcg_matfree(
 #     print(f"\t{assembler.sd_edge_dofs[i_sd]=}")
             
 
-# for i in range(lam_soln.shape[0] // 3):
-#     sub_vec = lam_soln[3*i:(3*i+3)]
-#     print(f"lam_soln, {i=} {sub_vec=}")
+# for i in range(gam_soln.shape[0] // 3):
+#     sub_vec = gam_soln[3*i:(3*i+3)]
+#     print(f"gam_soln, {i=} {sub_vec=}")
 
 
 # check lambda linear system is solved
-interface_res = lam_rhs - assembler.mat_vec(lam_soln)
+interface_res = gam_rhs - assembler.mat_vec(gam_soln)
 res_nrm = norm(interface_res)
-rhs_nrm = norm(lam_rhs)
+rhs_nrm = norm(gam_rhs)
 rel_solve_nrm = res_nrm / rhs_nrm
 print(f"{rel_solve_nrm=:.4e}")
 
 # reconstruct global solution
-global_soln = assembler.get_global_solution(lam_soln)
+global_soln = assembler.get_global_solution(gam_soln)
 
 # for i in range(global_soln.shape[0] // 3):
 #     sub_vec = global_soln[3*i:(3*i+3)]
@@ -185,8 +185,8 @@ res_nrm_bddc = np.linalg.norm(assembler.force - assembler.kmat.dot(global_soln))
 print(f"{load_nrm=:.4e} {res_nrm_direct=:.4e} {res_nrm_bddc=:.4e}")
 
 # then plot the solution
-assembler.u = global_soln.copy() # store in assembler for plot
-assembler.plot_disp()
+# assembler.u = global_soln.copy() # store in assembler for plot
+# assembler.plot_disp()
 
 # DEBUG the FETI-DP system
 # ========================================

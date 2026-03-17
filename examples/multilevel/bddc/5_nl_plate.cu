@@ -21,7 +21,7 @@
 #include <chrono>
 #include "multigrid/solvers/direct/cusp_directLU.h"
 
-#include "domdec/fetidp_assembler.h"
+#include "domdec/bddc_assembler.h"
 #include "domdec/domdec_pcg_wrapper.h"
 #include "multigrid/solvers/krylov/bsr_pcg_matfree.h"
 
@@ -73,7 +73,7 @@ void to_lowercase(char *str) {
 }
 
 template <typename T>
-void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_level, 
+void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_level, 
     T thick, bool print_mem, T mag) {
     // =================
 
@@ -86,12 +86,12 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     using Quad = QuadLinearQuadrature<T>;
     using Basis = LagrangeQuadBasis<T, Quad, 1>;
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-    using FETIDP = FetidpSolver<T, Assembler, VecType, BsrMat>;
+    using BDDC = BddcSolver<T, Assembler, VecType, BsrMat>;
     // const bool MULTI_SMOOTH = true;
     const bool MULTI_SMOOTH = false; // often not MULTI_SMOOTH is better..
     using InnerSolver = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH>;
     using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH, true>;
-    using PCG = MatrixFreePCGSolver<T, FETIDP>; // FETIDP is the operator and preconditioner
+    using PCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
 
     if (!MULTI_SMOOTH) {
@@ -135,14 +135,14 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
 
     // bool print_timing = true; // profiling
     bool print_timing = false;
-    auto fetidp = new FETIDP(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
+    auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
     bool close_hoop = true; // true for cylinder case (not cylindrical panel)
-    fetidp->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
+    bddc->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
 
     // perform LU fillin and reordering (optional)
-    auto &I_bsr_data = fetidp->I_bsr_data;
-    auto &IE_bsr_data = fetidp->IE_bsr_data;
+    auto &I_bsr_data = bddc->I_bsr_data;
+    auto &IE_bsr_data = bddc->IE_bsr_data;
     I_bsr_data.AMD_reordering(); 
     if (fill_level != -1) { 
         I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
@@ -158,10 +158,10 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     }
 
     // now compute matrix sparsity, copy maps
-    fetidp->setup_matrix_sparsity();
+    bddc->setup_matrix_sparsity();
 
     // then perform coarse matrix fillin and compute sparsity
-    auto &Svv_bsr_data = fetidp->Svv_bsr_data;
+    auto &Svv_bsr_data = bddc->Svv_bsr_data;
     Svv_bsr_data.AMD_reordering();
     if (fill_level != -1) { 
         Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
@@ -169,27 +169,19 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
         Svv_bsr_data.compute_full_LU_pattern(10.0);
     }
 
-    fetidp->setup_coarse_matrix_sparsity();
+    bddc->setup_coarse_matrix_sparsity();
 
     // // assemble local FETI-DP blocks
-    // fetidp->assemble_subdomains();
+    // bddc->assemble_subdomains();
 
     // external load
     ObliqueShearSineLoad<T> load;
-    fetidp->add_subdomain_fext(load, mag);
+    bddc->add_subdomain_fext(load, mag);
 
     // and need it globally too..
     auto loads = assembler.createVarsVec();
     assembler.add_fext_fast(load, mag, loads);
     assembler.apply_bcs(loads);
-
-    // get loads (alternative way.. set from global rhs instead of element load assembly)
-    // NOTE : probably don't want this method cause isn't element-internal force integration here..
-    // double Q = 1.0; // load magnitude
-    // T *my_loads = getPlateLoads<T, Basis, Physics>(nxe, nxe, Lx, Ly, Q);
-    // auto loads = assembler.createVarsVec(my_loads);
-    // assembler.apply_bcs(loads);
-    // fetidp->set_global_rhs(loads);
 
     // ----------------------------------------
     // you still need actual solver objects here
@@ -199,32 +191,13 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     
     // just LU allowed for IE and I solvers to reduce mem footprint (1/2 as much memory for them)
     //   means only the LU factor is stored, not original matrix as well
-    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_IE, omega, nsmooth);
-    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->kmat_I, omega, nsmooth);
+    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
     // note assembler not really used in S_VV here or above classes either.. (and def not for size)
-    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV, omega, nsmooth);
-    // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *fetidp->S_VV);
+    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+    // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
     
-    
-    fetidp->set_inner_solvers(ie_solver, i_solver, v_solver);
-
-    // if (nxe < 10) {
-    //     // DEBUG small matrices
-    //     bool print_IEV = true; // already verified
-    //     bool print_IE = false; // already verified 
-    //     bool print_I = false; // already verified now
-    //     fetidp->debug_IEV_matrices(print_IEV, print_IE, print_I);
-    // }
-
-    // // factor each solver
-    // ie_solver->factor();
-    // i_solver->factor();
-
-    // // then assemble coarse problem (as it uses IE solver) before factoring v_solver
-    // fetidp->assemble_coarse_problem();
-    // // fetidp->debug_SVV_matrix();
-
-    // v_solver->factor();    
+    bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
@@ -238,27 +211,15 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     opts.atol = 1e-30;
 
     auto *lam_solver =
-        new PCG(cublasHandle, fetidp, fetidp, opts, fetidp->getLambdaSize(), 0);
-
-    // DEBUG:
-    // lam.zeroValues();
-    // fetidp->solve(lam_rhs, lam);
-    // T *h_lam_debug = lam.createHostVec().getPtr();
-    // for (int inode = 0; inode < lam.getSize() / 6; inode++) {
-    //     printf("h_lam_debug\n");
-    //     for (int idof = 2; idof < 5; idof++) {
-    //         printf("%.6e,", h_lam_debug[6 * inode + idof]);
-    //     }
-    //     printf("\n");
-    // }
+        new PCG(cublasHandle, bddc, bddc, opts, bddc->getLambdaSize(), 0);
 
     // run the assembly and factor (call from krylov solver, that also calls for preconditioner)
     lam_solver->update_after_assembly(vars);
 
     // lambda rhs
-    VecType<T> lam_rhs(fetidp->getLambdaSize());
-    VecType<T> lam(fetidp->getLambdaSize());
-    fetidp->get_lam_rhs(lam_rhs);
+    VecType<T> lam_rhs(bddc->getLambdaSize());
+    VecType<T> lam(bddc->getLambdaSize());
+    bddc->get_lam_rhs(lam_rhs);
 
     // optional: true initial residual before solve
     lam.zeroValues();
@@ -268,16 +229,16 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     // prelim linear solve
     lam_solver->solve(lam_rhs, lam, true);
 
-    fetidp->get_global_soln(lam, soln);
+    bddc->get_global_soln(lam, soln);
 
     T lin_disp = get_max_disp(soln);
 
-    // build the FETIDP-krylov wrapper
-    using FETI_WRAPPER = DomDecKrylovWrapper<T, FETIDP, PCG>;
-    auto wrapper = new FETI_WRAPPER(fetidp, lam_solver); 
+    // build the BDDC-krylov wrapper
+    using BDDC_WRAPPER = DomDecKrylovWrapper<T, BDDC, PCG>;
+    auto wrapper = new BDDC_WRAPPER(bddc, lam_solver); 
 
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_fetidp.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc.vtk");
 
     // -----------------------------------------------------------
     // 2) actually try Newton-mg solve here (this is just V1, later versions may use FMG cycle so less extra work needs to be done on fine grids)
@@ -292,11 +253,11 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     const bool LINE_SEARCH = true;
     // const bool LINE_SEARCH = false;
     const bool USE_FETI_IEV = true; // computes residual_IEV special way
-    using INK = InexactNewtonSolver<T, Mat, Vec, Assembler, FETI_WRAPPER, LINE_SEARCH, USE_FETI_IEV>;
+    using INK = InexactNewtonSolver<T, Mat, Vec, Assembler, BDDC_WRAPPER, LINE_SEARCH, USE_FETI_IEV>;
     using NL = NonlinearContinuationSolver<T, Vec, Assembler, INK>;
 
     // need a bit lower base rtol for FETI-DP because some loss in error due to global solution recovery
-    T base_rtol = 1e-11;
+    T base_rtol = 1e-4;
     // T base_rtol = 1e-10;
     // T base_rtol = 1e-8; // not enough for thinner shell.. (worse rtol requirements for FETI-DP)
 
@@ -316,10 +277,6 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
 
     // now try calling it
     T lambda0 = 0.2;
-    // T lambda0 = 0.05;
-    // T inner_atol = 1e-2;
-    // T inner_atol = 1e-4;
-    // T inner_atol = 1e-4;
     T inner_atol = 1e-6;
 
     lam_solver->set_print(false); // turn print off (only show NL outer results, not inner Krylov)
@@ -352,7 +309,7 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     // printf("\nassembly in %.4e sec, IEV-assembly+factor in %.4e sec, PCG-solve in %.4e sec\n", assembly_time.count(), IEV_factor_time.count(), solve_time.count());
     // printf("\ttotal IEV-setup and PCG in %.4e sec\n", total_time.count());
 
-    printf("\nFETI-DP solve summary:\n");
+    printf("\nBDDC solve summary:\n");
     printf("  final lambda residual : %.8e\n\n", final_lam_resid);
 
     printf("Timing breakdown (TODO more breakdown here):\n");
@@ -366,13 +323,13 @@ void solve_feti(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     // }
 
     auto h_vars = fine_vars.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_vars, "out/plate_fetidp_nl.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_vars, "out/plate_bddc_nl.vtk");
 
     delete lam_solver;
     delete ie_solver;
     delete i_solver;
     delete v_solver;
-    delete fetidp;
+    delete bddc;
 
     CHECK_CUSPARSE(cusparseDestroy(cusparseHandle));
     CHECK_CUBLAS(cublasDestroy(cublasHandle));
@@ -486,7 +443,8 @@ int main(int argc, char **argv) {
     using T = double;
 
     // int nxe = 6, nxe_subdomain_size = 2;
-    int nxe = 256, nxe_subdomain_size = 4;
+    int nxe = 32, nxe_subdomain_size = 4;
+    // int nxe = 256, nxe_subdomain_size = 4;
     // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
     // for the coarse problem..
     T omega;
@@ -499,7 +457,7 @@ int main(int argc, char **argv) {
     // thinner shell case, can solve fairly stably in thin shell also
     T thick = 1e-3, mag = 1e4; // leads to 0.07 NL/LIN ratio
 
-    std::string solver = "feti";
+    std::string solver = "bddc";
     // std::string solver = "direct";
     
     // optional smoothing
@@ -584,8 +542,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (solver == "feti") {
-        solve_feti<T>(nxe, nxe_subdomain_size, omega, nsmooth, fill_level, thick, print_mem, mag);
+    if (solver == "bddc") {
+        solve_bddc<T>(nxe, nxe_subdomain_size, omega, nsmooth, fill_level, thick, print_mem, mag);
     } else if (solver == "direct") {
         solve_direct<T>(nxe, thick, mag);
     }

@@ -104,6 +104,15 @@ class BDDC_Assembler(FETIDP_Assembler):
         else:
             yI = np.zeros(0, dtype=np.double)
 
+
+        # print(f"{i_sd=}")
+        # I_nodes = self.sd_interior_nodes[i_sd]
+        # for j in range(len(I_nodes)):
+        #     I_node = I_nodes[j]
+        #     glob_node = self.sd_nodes[i_sd][I_node]
+        #     sub_vec = yI[3*j:(3*j+3)]
+        #     print(f"\tinterior soln {j=} {glob_node=} {sub_vec}")
+
         zE = self.sd_A_EE[i_sd].dot(wE) + self.sd_A_EV[i_sd].dot(wV)
         zV = self.sd_A_VE[i_sd].dot(wE) + self.sd_A_VV[i_sd].dot(wV)
 
@@ -172,7 +181,7 @@ class BDDC_Assembler(FETIDP_Assembler):
     # main solver routines now
     # =========================================
 
-    def get_lam_rhs(self):
+    def get_gam_rhs(self):
         """
         For compatibility with existing Krylov driver, return the BDDC interface rhs:
             rhs = [gE_global; gV_global]
@@ -209,6 +218,11 @@ class BDDC_Assembler(FETIDP_Assembler):
             if len(V) > 0:
                 gV += self.sd_R_Vi[i_sd].T.dot(gVi)
 
+        # for j in range(nVg//3):
+        #     v_node = self.vertex_nodes_global[j]
+        #     sub_vec = gV[3*j:(3*j+3)]
+        #     print(f"gam vertex {j=} {v_node=} {sub_vec}")
+
         return np.concatenate([gE, gV])
     
     def mat_vec(self, uGamma: np.ndarray):
@@ -236,6 +250,20 @@ class BDDC_Assembler(FETIDP_Assembler):
                 yE_g += self.sd_R_Ei[i_sd].T.dot(zEi)
             if len(uVi) > 0:
                 yV_g += self.sd_R_Vi[i_sd].T.dot(zVi)
+
+        # print("matvec-uE")
+        # E_nodes = self.edge_interface_nodes_global
+        # for j in range(len(E_nodes)):
+        #     E_node = E_nodes[j]
+        #     sub_vec = yE_g[3*j:(3*j+3)]
+        #     print(f"\tedge soln {j=} {E_node=} {sub_vec}")
+
+        # V_nodes = self.vertex_nodes_global
+        # print("matvec-uV")
+        # for j in range(len(V_nodes)):
+        #     v_node = self.vertex_nodes_global[j]
+        #     sub_vec = yV_g[3*j:(3*j+3)]
+        #     print(f"\tuV vertex {j=} {v_node=} {sub_vec}")
 
         return np.concatenate([yE_g, yV_g])
 

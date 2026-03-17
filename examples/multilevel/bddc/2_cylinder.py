@@ -26,8 +26,8 @@ from krylov import right_pcg_matfree
 # nxe, nxs = 16, 4
 nxe, nxs = 32, 8
 
-# thick = 1e-1
-thick = 1e-2
+thick = 1e-1
+# thick = 1e-2
 # thick = 1e-3
 
 
@@ -35,7 +35,7 @@ m, n = 2, 2
 # m, n = 2, 3
 
 radius = 1.0
-xs_load_fcn = lambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
+xs_load_fcn = gambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
 def xyz_load_fcn(x,y,z):
     th = np.arctan2(y, z)
     dth = th - np.arctan2(-1.0,0)
@@ -49,8 +49,8 @@ assembler = BDDC_Assembler(
     nxe=nxe, nxs=nxs, nys=nxs,
     # nxe=4, nxs=2, nys=2, # DEBUG inputs
     # nxe=6, nxs=3, nys=3,
-    clamped=True,
-    # clamped=False,
+    cgamped=True,
+    # cgamped=False,
     load_fcn=xyz_load_fcn,    
     # would be nice if coarse space could be solved local (but that doesn't seem to work well, need to assemble it with sum of local Schur complements)
     coarse_mode="assembled", 
@@ -66,13 +66,13 @@ assembler.assemble_all()
 direct_soln = assembler.direct_solve(assembly=False) # cause already assembled
 assembler.plot_disp()
 
-lam_rhs = assembler.get_lam_rhs() # g_G rhs 
-print(f"{np.linalg.norm(lam_rhs)=:.4e}")
+gam_rhs = assembler.get_gam_rhs() # g_G rhs 
+print(f"{np.linalg.norm(gam_rhs)=:.4e}")
 
 # assembler.neumann_solve(rhs)
 norm_hist = []
-lam_soln, nsteps = right_pcg_matfree(
-    assembler, b=lam_rhs,
+gam_soln, nsteps = right_pcg_matfree(
+    assembler, b=gam_rhs,
     rtol=1e-6, atol=1e-20,
     max_iter=200,
     print_freq=3,
@@ -80,7 +80,7 @@ lam_soln, nsteps = right_pcg_matfree(
 )
 
 # reconstruct global solution
-global_soln = assembler.get_global_solution(lam_soln)
+global_soln = assembler.get_global_solution(gam_soln)
 
 
 

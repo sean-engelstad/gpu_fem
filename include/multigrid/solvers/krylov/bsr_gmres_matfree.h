@@ -6,12 +6,14 @@
 #endif
 #include "../solve_utils.h"
 
-template <typename T, class GRID, int N_SUBSPACE = 50>
-class GMRESSolver : public BaseSolver {
+template <typename T, class Operator, class GRID, int N_SUBSPACE = 50>
+class MatrixFreeGMRESSolver : public BaseSolver {
    public:
-    GMRESSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_, GRID *grid_,
-                BaseSolver *pc_, SolverOptions options, int MAX_ITER_ = 200, int N_ = 0)
+    MatrixFreeGMRESSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
+                          GRID *grid_, Operator *op_, BaseSolver *pc_, SolverOptions options,
+                          int MAX_ITER_ = 200, int N_ = 0)
         : grid(grid_),
+          op(op_),
           pc(pc_),
           options(options),
           cublasHandle(cublasHandle_),
@@ -41,7 +43,8 @@ class GMRESSolver : public BaseSolver {
         } else {
             N = N_;
         }
-        d_x = DeviceVec<T>(N).getPtr();  // needs to be separate vec than soln in grid
+        d_x_vec = DeviceVec<T>(N);
+        d_x = d_x_vec.getPtr();  // needs to be separate vec than soln in grid
 
         // printf("PCG Krylov solver made with options ncycl %d and print %d, with problem size
         // %d\n", options.ncycles, options.print, N);
@@ -63,7 +66,8 @@ class GMRESSolver : public BaseSolver {
 
         d_resid_vec = DeviceVec<T>(N);
         d_resid = d_resid_vec.getPtr();
-        d_w = DeviceVec<T>(N).getPtr();
+        d_w_vec = DeviceVec<T>(N);
+        d_w = d_w_vec.getPtr();
         d_z_vec = DeviceVec<T>(N);
         d_z = d_z_vec.getPtr();
 
@@ -90,10 +94,9 @@ class GMRESSolver : public BaseSolver {
     T getResidualNorm(DeviceVec<T> rhs_in, DeviceVec<T> soln_in) {
         // compute r_0 = b - Ax
         CHECK_CUDA(cudaMemcpy(d_resid, rhs_in.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice));
-        T a = -1.0, b = 1.0;
-        CHECK_CUSPARSE(cusparseDbsrmv(
-            cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
-            &a, descrK, d_vals, d_rowp, d_cols, block_dim, soln_in.getPtr(), &b, d_resid));
+        op->mat_vec(soln_in, d_tmp_vec);
+        T a = -1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_tmp_vec.getPtr(), 1, d_resid, 1));
 
         T resid_norm;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &resid_norm));
@@ -127,10 +130,9 @@ class GMRESSolver : public BaseSolver {
             // compute resid = rhs - A * x
             CHECK_CUDA(
                 cudaMemcpy(d_resid, rhs_in.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice));
-            a = -1.0, b = 1.0;
-            CHECK_CUSPARSE(cusparseDbsrmv(
-                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
-                nnzb, &a, descrK, d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_resid));
+            op->mat_vec(d_x_vec, d_tmp_vec);
+            a = -1.0;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_x_vec.getPtr(), 1, d_resid, 1));
 
             // get initial rhs
             T init_true_resid;
@@ -164,10 +166,8 @@ class GMRESSolver : public BaseSolver {
 
                 // w = A * vj + 0 * w
                 // BSR matrix multiply here MV
-                a = 1.0, b = 0.0;
-                CHECK_CUSPARSE(cusparseDbsrmv(
-                    cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb,
-                    mb, nnzb, &a, descrK, d_vals, d_rowp, d_cols, block_dim, d_tmp2, &b, d_w));
+                d_w_vec.zeroValues();
+                op->mat_vec(d_tmp2_vec, d_w_vec);
 
                 // now update householder matrix
                 for (int i = 0; i < j + 1; i++) {
@@ -276,10 +276,9 @@ class GMRESSolver : public BaseSolver {
 
         // compute resid = rhs - A * x again
         CHECK_CUDA(cudaMemcpy(d_resid, rhs_in.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice));
-        a = -1.0, b = 1.0;  // -1.0 * A * x + b => b
-        CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
-                                      CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a, descrK,
-                                      d_vals, d_rowp, d_cols, block_dim, d_x, &b, d_resid));
+        op->mat_vec(d_x_vec, d_tmp_vec);
+        a = -1.0;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_x_vec.getPtr(), 1, d_resid, 1));
 
         T final_resid;
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, N, d_resid, 1, &final_resid));
@@ -316,6 +315,7 @@ class GMRESSolver : public BaseSolver {
     }
 
     GRID *grid;
+    Operator *op;
     BaseSolver *pc;
     SolverOptions options;
     int ilevel;
@@ -326,6 +326,7 @@ class GMRESSolver : public BaseSolver {
     // DeviceVec<T> soln, rhs;
     int N, mb, nb, nnzb, block_dim;
     int *d_rowp, *d_cols, *iperm;
+    DeviceVec<T> d_x_vec;
     T *d_vals;
     T *d_x, *d_resid;
     DeviceVec<T> d_resid_vec;
@@ -354,6 +355,7 @@ class GMRESSolver : public BaseSolver {
     cusparseMatDescr_t descrK;
 
     // temp vecs for GMRES algorithm
+    DeviceVec<T> d_w_vec;
     DeviceVec<T> d_z_vec, d_tmp_vec, d_tmp2_vec, d_xR_vec;
     T *d_tmp, *d_tmp2, *d_w, *d_z, *d_xR;
     T *d_Hred, *d_gred;
