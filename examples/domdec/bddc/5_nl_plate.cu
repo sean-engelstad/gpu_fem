@@ -250,7 +250,7 @@ void solve_bddc(int nxe, int nxe_subdomain_size, T omega, int nsmooth, int fill_
     printf("initial gamma residual = %.8e\n", init_gam_resid);
 
     // prelim linear solve
-    // lam_solver->solve(lam_rhs, lam, true);
+    lam_solver->solve(lam_rhs, lam, true);
 
     bddc->get_global_soln(lam, soln);
 
