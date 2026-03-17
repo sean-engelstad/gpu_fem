@@ -165,6 +165,10 @@ class CusparseMGDirectLU : public BaseSolver {
     void smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln, int _n_iters = -1,
                       bool print = false, int print_freq = 0) {
         for (int iter = 0; iter < n_iters; iter++) {
+            // full update on first iteration, next are damped
+            // this helps case with higher fillin converge (if all damped will not give true soln)
+            T scale = (iter == 0) ? 1.0 : omega;
+
             // get the solution from the defect rhs
             // =====================================
 
@@ -183,13 +187,13 @@ class CusparseMGDirectLU : public BaseSolver {
 
             // 4) compute defect update after new solution term..
             //     ..(with soln change stored in d_temp2)
-            T a = -omega, b = 1.0;  // with omega * d_temp2 update
+            T a = -scale, b = 1.0;  // with omega * d_temp2 update
             CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
                                           CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a,
                                           descrK, d_vals, d_rowp, d_cols, block_dim, d_temp2, &b,
                                           d_defect.getPtr()));
             // also update d_soln += omega * d_temp2
-            a = omega;
+            a = scale;
             CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp2, 1, d_soln.getPtr(), 1));
         }
     }

@@ -509,12 +509,12 @@ int main(int argc, char **argv) {
         }
         printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/plate_err.vtk");
 
-        for (int idof = 0; idof < 6; idof++) {
-            T orig_nrm = get_max_disp(h_soln, idof);
-            T err_nrm = get_max_disp(h_err, idof);
-            T rel_nrm = err_nrm / (orig_nrm + 1e-30);
-            printf("\tidof %d, orig |u|=%.4e, err nrm %.4e, rel err nrm %.4e to direct solve\n", idof, orig_nrm, err_nrm, rel_nrm);
-        }
+        // for (int idof = 0; idof < 6; idof++) {
+        //     T orig_nrm = get_max_disp(h_soln, idof);
+        //     T err_nrm = get_max_disp(h_err, idof);
+        //     T rel_nrm = err_nrm / (orig_nrm + 1e-30);
+        //     printf("\tidof %d, orig |u|=%.4e, err nrm %.4e, rel err nrm %.4e to direct solve\n", idof, orig_nrm, err_nrm, rel_nrm);
+        // }
         
         // now compute the residuals of each..
         int nvars = assembler2.get_num_vars();

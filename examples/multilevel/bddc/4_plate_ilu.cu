@@ -124,9 +124,13 @@ int main(int argc, char **argv) {
     bool print_mem = false;
     T mag = 1.0;
     
+    // somewhat works (but sometimes soln recovery isn't as good despite Krylov solve in the multi-smooth case?)
+    // direct solve FETI seems much better..
+    // also thickness independence gets worse for ILU(k) instead of LU fillin (LU fillin in 3_plate.cu)
+
     // optional smoothing
     // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
-    omega = 0.5, nsmooth = 2, fill_level = 2;
+    omega = 0.5, nsmooth = 2, fill_level = 3;
     // or single-level (no multiple smoothing) and ILU(k)
     // omega = 1.0, nsmooth = 1, fill_level = 2;
     // 2) or if full LU fillin
@@ -253,18 +257,18 @@ int main(int argc, char **argv) {
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
-    auto &IE_bsr_data = bddc->IE_bsr_data;
-    // if (fill_level != -1) { 
-    //     I_bsr_data.RCM_reordering();
-    //     I_bsr_data.qorder_reordering(0.5);
-    //     I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    // } else {
-    //     I_bsr_data.AMD_reordering(); 
-    //     I_bsr_data.compute_full_LU_pattern(10.0);
-    // }
-    I_bsr_data.AMD_reordering(); 
-    I_bsr_data.compute_full_LU_pattern(10.0);
+    if (fill_level != -1) { 
+        I_bsr_data.RCM_reordering();
+        I_bsr_data.qorder_reordering(0.5);
+        I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
+    } else {
+        I_bsr_data.AMD_reordering(); 
+        I_bsr_data.compute_full_LU_pattern(10.0);
+    }
+    // I_bsr_data.AMD_reordering(); 
+    // I_bsr_data.compute_full_LU_pattern(10.0);
 
+    auto &IE_bsr_data = bddc->IE_bsr_data;
     if (fill_level != -1) { 
         IE_bsr_data.RCM_reordering();
         IE_bsr_data.qorder_reordering(0.5);
@@ -273,6 +277,8 @@ int main(int argc, char **argv) {
         IE_bsr_data.AMD_reordering(); 
         IE_bsr_data.compute_full_LU_pattern(10.0);
     }
+    // IE_bsr_data.AMD_reordering(); 
+    // IE_bsr_data.compute_full_LU_pattern(10.0);
 
     // now compute matrix sparsity, copy maps
     bddc->setup_matrix_sparsity();
@@ -311,8 +317,8 @@ int main(int argc, char **argv) {
     //   means only the LU factor is stored, not original matrix as well
     auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
     auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
-    // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
+    // auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+    auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
 
     // if (nxe < 10) {
     //     // DEBUG small matrices
@@ -539,12 +545,12 @@ int main(int argc, char **argv) {
         }
         printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/plate_err.vtk");
 
-        for (int idof = 0; idof < 6; idof++) {
-            T orig_nrm = get_max_disp(h_soln, idof);
-            T err_nrm = get_max_disp(h_err, idof);
-            T rel_nrm = err_nrm / (orig_nrm + 1e-30);
-            printf("\tidof %d, orig |u|=%.4e, err nrm %.4e, rel err nrm %.4e to direct solve\n", idof, orig_nrm, err_nrm, rel_nrm);
-        }
+        // for (int idof = 0; idof < 6; idof++) {
+        //     T orig_nrm = get_max_disp(h_soln, idof);
+        //     T err_nrm = get_max_disp(h_err, idof);
+        //     T rel_nrm = err_nrm / (orig_nrm + 1e-30);
+        //     printf("\tidof %d, orig |u|=%.4e, err nrm %.4e, rel err nrm %.4e to direct solve\n", idof, orig_nrm, err_nrm, rel_nrm);
+        // }
         
         // now compute the residuals of each..
         int nvars = assembler2.get_num_vars();

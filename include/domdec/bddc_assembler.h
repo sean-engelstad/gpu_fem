@@ -108,8 +108,20 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         // }
     }
 
-    void mat_vec(const DeviceVec<T> &gam_in, DeviceVec<T> &gam_out) {
+    void mat_vec(DeviceVec<T> &gam_in, DeviceVec<T> &gam_out) {
         gam_out.zeroValues();
+
+        // const T *h_gam_in = gam_in.createHostVec().getPtr();
+        // printf("h_gam_in_mat_vec:\n");
+        // for (int ilam = 0; ilam < ngam; ilam++) {
+        //     int iglob = gam_nodes[ilam];
+        //     printf("igam %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_gam_in[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
 
         this->addVecGamtoIEV(gam_in, this->u_IEV, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, 1.0, 0.0, this->f_IEV);
@@ -123,6 +135,18 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 1.0, this->f_IEV);
         this->addVecIEVtoGam(this->f_IEV, gam_out, 1.0, 0.0);
+
+        // const T *h_gam_soln = gam_out.createHostVec().getPtr();
+        // printf("h_gam_out_mat_vec:\n");
+        // for (int ilam = 0; ilam < ngam; ilam++) {
+        //     int iglob = gam_nodes[ilam];
+        //     printf("igam %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_gam_soln[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
     }
 
     bool solve(DeviceVec<T> gam_rhs, DeviceVec<T> gam, bool check_conv = false) {
@@ -169,7 +193,7 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         return false;  // fail = false
     }
 
-    void get_global_soln(const DeviceVec<T> &gam, DeviceVec<T> &soln) {
+    void get_global_soln(DeviceVec<T> &gam, DeviceVec<T> &soln) {
         // recover global solution from interface DOF
         soln.zeroValues();
 
