@@ -107,14 +107,16 @@ int main(int argc, char **argv) {
     // can't run this small a problem (1 vertex with S_VV coarse solver for some reason)
     // int nxe = 4, nxe_subdomain_size = 2;
     // int nxe = 6, nxe_subdomain_size = 2;
-    int nxe = 128, nxe_subdomain_size = 4;
-    // int nxe = 256, nxe_subdomain_size = 4;
+    // int nxe = 128, nxe_subdomain_size = 4; // this problem has optimal runtime for 4x4 subdomains
+    // int nxe = 128, nxe_subdomain_size = 8;
+    int nxe = 256, nxe_subdomain_size = 8; // 8 subdomains slightly faster (cause shrinks coarse problem) for local + HPC
     // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
     // for the coarse problem..
     T omega;
     int nsmooth, fill_level;
     T thick = 1e-3;
-    bool print_mem = false;
+    // bool print_mem = false;
+    bool print_mem = true;
     T mag = 1.0;
     
     // optional smoothing
@@ -380,79 +382,81 @@ int main(int argc, char **argv) {
     printf("  --------------------------------\n");
     printf("  total setup + solve   : %.4e s\n\n", total_time.count());
 
-    // if (print_mem) {
-    //     // get memory usage
-    //     size_t bytes_per_double = sizeof(double);
-    //     double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
+    if (print_mem) {
+        // get memory usage
+        size_t bytes_per_double = sizeof(double);
+        double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
 
-    //     // nnzb counts
-    //     int kmat_nnzb   = kmat.getBsrData().nnzb;
-    //     int IEV_nnzb    = bddc->kmat_IEV->getBsrData().nnzb;
-    //     int IE_nnzb     = IE_bsr_data.nnzb;
-    //     int I_nnzb      = I_bsr_data.nnzb;
-    //     int coarse_nnzb = Svv_bsr_data.nnzb;
+        // nnzb counts
+        int kmat_nnzb   = kmat.getBsrData().nnzb;
+        int IEV_nnzb    = bddc->kmat_IEV->getBsrData().nnzb;
+        int IE_nnzb     = IE_bsr_data.nnzb;
+        int I_nnzb      = I_bsr_data.nnzb;
+        int coarse_nnzb = Svv_bsr_data.nnzb;
 
-    //     // no-fill counts (must already exist in your code)
-    //     int IE_nofill_nnzb     = bddc->IE_nofill_nnzb;
-    //     int I_nofill_nnzb      = bddc->I_nofill_nnzb;
-    //     int coarse_nofill_nnzb = bddc->Svv_nofill_nnzb;   // or whatever your variable is called
+        // no-fill counts (must already exist in your code)
+        int IE_nofill_nnzb     = bddc->IE_nofill_nnzb;
+        int I_nofill_nnzb      = bddc->I_nofill_nnzb;
+        int coarse_nofill_nnzb = bddc->Svv_nofill_nnzb;   // or whatever your variable is called
 
-    //     // memory in MB
-    //     double kmat_mem_mb   = bytes_per_block * static_cast<double>(kmat_nnzb)   / 1024.0 / 1024.0;
-    //     double IEV_mem_mb    = bytes_per_block * static_cast<double>(IEV_nnzb)    / 1024.0 / 1024.0;
-    //     double IE_mem_mb     = bytes_per_block * static_cast<double>(IE_nnzb)     / 1024.0 / 1024.0;
-    //     double I_mem_mb      = bytes_per_block * static_cast<double>(I_nnzb)      / 1024.0 / 1024.0;
-    //     double coarse_mem_mb = bytes_per_block * static_cast<double>(coarse_nnzb) / 1024.0 / 1024.0;
+        // memory in MB
+        double kmat_mem_mb   = bytes_per_block * static_cast<double>(kmat_nnzb)   / 1024.0 / 1024.0;
+        double IEV_mem_mb    = bytes_per_block * static_cast<double>(IEV_nnzb)    / 1024.0 / 1024.0;
+        double IE_mem_mb     = bytes_per_block * static_cast<double>(IE_nnzb)     / 1024.0 / 1024.0;
+        double I_mem_mb      = bytes_per_block * static_cast<double>(I_nnzb)      / 1024.0 / 1024.0;
+        double coarse_mem_mb = bytes_per_block * static_cast<double>(coarse_nnzb) / 1024.0 / 1024.0;
 
-    //     // total stored blocks:
-    //     //   kmat * 1
-    //     //   IEV  * 1
-    //     //   IE   * 2
-    //     //   I    * 1
-    //     //   coarse * 1
-    //     long long total_stored_nnzb =
-    //         static_cast<long long>(kmat_nnzb) +
-    //         static_cast<long long>(IEV_nnzb) +
-    //         2LL * static_cast<long long>(IE_nnzb) +
-    //         static_cast<long long>(I_nnzb) +
-    //         static_cast<long long>(coarse_nnzb);
+        // total stored blocks:
+        //   kmat * 1
+        //   IEV  * 1
+        //   IE   * 2
+        //   I    * 1
+        //   coarse * 1
+        long long total_stored_nnzb =
+            static_cast<long long>(kmat_nnzb) +
+            static_cast<long long>(IEV_nnzb) +
+            2LL * static_cast<long long>(IE_nnzb) +
+            static_cast<long long>(I_nnzb) +
+            static_cast<long long>(coarse_nnzb);
 
-    //     double total_mem_mb =
-    //         bytes_per_block * static_cast<double>(total_stored_nnzb) / 1024.0 / 1024.0;
+        double total_mem_mb =
+            bytes_per_block * static_cast<double>(total_stored_nnzb) / 1024.0 / 1024.0;
 
-    //     // fill ratios
-    //     double IE_fill_ratio =
-    //         (IE_nofill_nnzb > 0) ? static_cast<double>(IE_nnzb) / static_cast<double>(IE_nofill_nnzb) : 0.0;
-    //     double I_fill_ratio =
-    //         (I_nofill_nnzb > 0) ? static_cast<double>(I_nnzb) / static_cast<double>(I_nofill_nnzb) : 0.0;
-    //     double coarse_fill_ratio =
-    //         (coarse_nofill_nnzb > 0) ? static_cast<double>(coarse_nnzb) / static_cast<double>(coarse_nofill_nnzb) : 0.0;
+        // fill ratios
+        double IE_fill_ratio =
+            (IE_nofill_nnzb > 0) ? static_cast<double>(IE_nnzb) / static_cast<double>(IE_nofill_nnzb) : 0.0;
+        double I_fill_ratio =
+            (I_nofill_nnzb > 0) ? static_cast<double>(I_nnzb) / static_cast<double>(I_nofill_nnzb) : 0.0;
+        double coarse_fill_ratio =
+            (coarse_nofill_nnzb > 0) ? static_cast<double>(coarse_nnzb) / static_cast<double>(coarse_nofill_nnzb) : 0.0;
 
-    //     // optional: added fill blocks
-    //     int IE_fill_added     = IE_nnzb - IE_nofill_nnzb;
-    //     int I_fill_added      = I_nnzb - I_nofill_nnzb;
-    //     int coarse_fill_added = coarse_nnzb - coarse_nofill_nnzb;
+        // optional: added fill blocks
+        int IE_fill_added     = IE_nnzb - IE_nofill_nnzb;
+        int I_fill_added      = I_nnzb - I_nofill_nnzb;
+        int coarse_fill_added = coarse_nnzb - coarse_nofill_nnzb;
+        T overall_fill_ratio = total_stored_nnzb * 1.0 / kmat_nnzb;
 
-    //     printf("\nFETI-DP memory breakdown:\n");
-    //     printf("  kmat                 : nnzb = %d, mem = %.4f MB\n", kmat_nnzb, kmat_mem_mb);
-    //     printf("  IEV                  : nnzb = %d, mem = %.4f MB\n", IEV_nnzb, IEV_mem_mb);
-    //     printf("  IE                   : nnzb = %d, mem = %.4f MB\n", IE_nnzb, IE_mem_mb);
-    //     printf("    nofill             : %d\n", IE_nofill_nnzb);
-    //     printf("    fill added         : %d\n", IE_fill_added);
-    //     printf("    fill ratio         : %.4f\n", IE_fill_ratio);
-    //     printf("  I                    : nnzb = %d, mem = %.4f MB\n", I_nnzb, I_mem_mb);
-    //     printf("    nofill             : %d\n", I_nofill_nnzb);
-    //     printf("    fill added         : %d\n", I_fill_added);
-    //     printf("    fill ratio         : %.4f\n", I_fill_ratio);
-    //     printf("  coarse S_VV          : nnzb = %d, mem = %.4f MB\n", coarse_nnzb, coarse_mem_mb);
-    //     printf("    nofill             : %d\n", coarse_nofill_nnzb);
-    //     printf("    fill added         : %d\n", coarse_fill_added);
-    //     printf("    fill ratio         : %.4f\n", coarse_fill_ratio);
-    //     printf("  --------------------------------\n");
-    //     printf("  total stored nnzb    : %lld\n", total_stored_nnzb);
-    //     printf("  total memory         : %.4f MB\n\n", total_mem_mb);
+        printf("\nFETI-DP memory breakdown:\n");
+        printf("  kmat                 : nnzb = %d, mem = %.4f MB\n", kmat_nnzb, kmat_mem_mb);
+        printf("  IEV                  : nnzb = %d, mem = %.4f MB\n", IEV_nnzb, IEV_mem_mb);
+        printf("  IE                   : nnzb = %d, mem = %.4f MB\n", IE_nnzb, IE_mem_mb);
+        printf("    nofill             : %d\n", IE_nofill_nnzb);
+        printf("    fill added         : %d\n", IE_fill_added);
+        printf("    fill ratio         : %.4f\n", IE_fill_ratio);
+        printf("  I                    : nnzb = %d, mem = %.4f MB\n", I_nnzb, I_mem_mb);
+        printf("    nofill             : %d\n", I_nofill_nnzb);
+        printf("    fill added         : %d\n", I_fill_added);
+        printf("    fill ratio         : %.4f\n", I_fill_ratio);
+        printf("  coarse S_VV          : nnzb = %d, mem = %.4f MB\n", coarse_nnzb, coarse_mem_mb);
+        printf("    nofill             : %d\n", coarse_nofill_nnzb);
+        printf("    fill added         : %d\n", coarse_fill_added);
+        printf("    fill ratio         : %.4f\n", coarse_fill_ratio);
+        printf("  --------------------------------\n");
+        printf("  total stored nnzb    : %lld\n", total_stored_nnzb);
+        printf("  total memory         : %.4f MB\n", total_mem_mb);
+        printf("    overall fill ratio : %.4f\n\n", overall_fill_ratio);
 
-    // }
+    }
 
 
     if (gam_fail) {
@@ -496,7 +500,7 @@ int main(int argc, char **argv) {
         auto end3 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> solve_time_dir = end3 - start3;
 
-        printf("BDDC solve time in %.4e sec, direct in %.4e sec\n", solve_time.count(), solve_time_dir.count());
+        printf("BDDC solve time in %.4e sec, direct in %.4e sec\n", total_time.count(), solve_time_dir.count());
 
         // T lin_max_disp = get_max_disp(soln2);
         auto h_soln3 = soln2.createHostVec();
