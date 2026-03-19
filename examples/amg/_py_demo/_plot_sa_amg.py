@@ -100,7 +100,7 @@ nex, net = 6, 6
 R, L = 1.0, 2.0
 
 X, Y, Z, x_nodes, th_nodes = build_nodes(nex, net, R, L)
-quads, elem_ids = inset_element_quads_with_ids(x_nodes, th_nodes, R, inset_frac=0.1)
+quads, elem_ids = inset_element_quads_with_ids(x_nodes, th_nodes, R, inset_frac=0.08)
 
 # AMG aggregation on structured parameter-space node graph
 aggregate_ind = build_aggregation_on_parameter_grid(nex, net, threshold=0.25)
@@ -122,7 +122,8 @@ for (i, j) in elem_ids:
     agg_corners = np.asarray(agg_corners, dtype=int)
     elem_agg = np.bincount(agg_corners).argmax()
     rgba = list(cmap(elem_agg))
-    rgba[3] = 0.35  # transparency
+    # rgba[3] = 0.5  # transparency
+    rgba[3] = 1.0 # opaque
     elem_colors.append(tuple(rgba))
 
 # node colors
@@ -136,14 +137,25 @@ for i in range(nex + 1):
         node_colors[ctr, :] = cmap(int(aggregate_ind[i, j]))
         ctr += 1
 
+
+import niceplots
+plt.style.use(niceplots.get_style())
+
 fig = plt.figure(figsize=(10, 7))
 ax = fig.add_subplot(111, projection="3d")
 style_axes_clean(ax)
 
 # colored inset elements
+# elem_poly = Poly3DCollection(
+#     quads,
+#     facecolors=elem_colors,
+#     edgecolors=(0.25, 0.25, 0.25, 0.9),
+#     linewidths=1.0,
+# )
+# gray inset elements
 elem_poly = Poly3DCollection(
     quads,
-    facecolors=elem_colors,
+    facecolors=(0.7, 0.7, 0.7, 0.35),  # light gray with transparency
     edgecolors=(0.25, 0.25, 0.25, 0.9),
     linewidths=1.0,
 )
@@ -152,11 +164,12 @@ ax.add_collection3d(elem_poly)
 # colored nodes
 ax.scatter(
     node_xyz[:, 0], node_xyz[:, 1], node_xyz[:, 2],
-    s=65,
+    s=150,
     c=node_colors,
     edgecolors="black",
-    linewidths=0.45,
+    linewidths=0.6,
     depthshade=False,
+    alpha=1.0,
 )
 
 ax.set_box_aspect((L, R, R))

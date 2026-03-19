@@ -76,7 +76,10 @@ R, L = 1.0, 2.0
 
 X, Y, Z, x_nodes, th_nodes = build_nodes(nex, net, R, L)
 
-gray_quads = inset_element_quads(x_nodes, th_nodes, R, inset_frac=0.1)
+gray_quads = inset_element_quads(x_nodes, th_nodes, R, inset_frac=0.08)
+
+import niceplots
+plt.style.use(niceplots.get_style())
 
 fig = plt.figure(figsize=(10, 7))
 ax = fig.add_subplot(111, projection="3d")
@@ -102,19 +105,21 @@ for i in range(X.shape[0]):
             xf.append(X[i, j]); yf.append(Y[i, j]); zf.append(Z[i, j])
 
 # Plot nodes
-ax.scatter(xf, yf, zf, s=40, c="orange", edgecolors="black", label="F")
-ax.scatter(xc, yc, zc, s=60, c="blue", edgecolors="black", label="C")
+ax.scatter(xf, yf, zf, s=120, c="orange", edgecolors="black", label="F", depthshade=False)
+ax.scatter(xc, yc, zc, s=150, c="blue", edgecolors="black", label="C", depthshade=False)
 
 ax.set_box_aspect((L, R, R))
 ax.view_init(elev=20, azim=60)
 # ax.legend()
 ax.legend(
-    loc="upper left",
-    bbox_to_anchor=(0.05, 0.8),  # INSIDE the axes
+    loc="upper center",
+    bbox_to_anchor=(0.3, 0.85),
     frameon=False,
+    ncol=2,
     borderpad=0.2,
     handletextpad=0.3,
-    labelspacing=0.2
+    labelspacing=0.2,
+    fontsize=20   # <-- fix here
 )
 
 fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
