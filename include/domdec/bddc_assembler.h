@@ -77,6 +77,30 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->temp_lam2 = Vec(this->lam_nnodes * this->block_dim);
     }
 
+    void setup_wing_subdomains(int nxse_, int nyse_) {
+        // call base FETI-DP setup
+        FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_wing_subdomains(nxse_, nyse_);
+
+        // TODO: BDDC unique maps/weights for edge averaging
+
+        // build vectors of size gam
+        n_edge = this->lam_nnodes;
+        this->ngam = n_edge + this->Vc_nnodes;
+        gam_nodes = new int[this->ngam];
+
+        for (int i = 0; i < n_edge; i++) {
+            gam_nodes[i] = this->lam_nodes[i];
+        }
+        for (int i = n_edge; i < ngam; i++) {
+            gam_nodes[i] = this->Vc_nodes[i - n_edge];
+        }
+        // printf("gam_nodes (nE %d, nV %d): ", n_edge, this->Vc_nnodes);
+        // printVec<int>(ngam, gam_nodes);
+
+        this->temp_lam = Vec(this->lam_nnodes * this->block_dim);
+        this->temp_lam2 = Vec(this->lam_nnodes * this->block_dim);
+    }
+
     void update_after_assembly(DeviceVec<T> &vars) {
         // copy vars to d_vars (NL update)
         vars.copyValuesTo(this->d_vars);

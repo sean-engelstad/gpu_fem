@@ -10,6 +10,7 @@
 #include "cuda_utils.h"
 #include "element/shell/_shell.cuh"
 #include "linalg/bsr_data.h"
+#include "multigrid/smoothers/_wingbox_coloring.h"
 #include "multigrid/solvers/solve_utils.h"
 
 enum NodeClass { INTERIOR = 0, DIRICHLET_EDGE = 1, EDGE = 2, VERTEX = 3 };
@@ -708,6 +709,753 @@ class FetidpSolver : public BaseSolver {
         I_bsr_data = BsrData(I_nnodes, block_dim, I_nnzb, I_rowp, I_cols);
         I_bsr_data.rows = I_rows;
         I_nofill_nnzb = I_nnzb;
+    }
+
+    void setup_wing_subdomains(int nxse_, int nyse_) {
+        clear_structured_host_data();
+
+        // first do splitting by component-type of the nodes
+        // need this part later to assign edges across subdomains
+        int *nodal_num_wing_comps, *node_wing_geom_ind;
+        WingboxMultiColoring<ShellAssembler>::get_nodal_geom_indices(
+            assembler, nodal_num_wing_comps, node_wing_geom_ind);
+
+        // get the element components
+        int num_comps = assembler.get_num_components();
+        int *h_elem_comps = assembler.getElemComponents().createHostVec().getPtr();
+        T *h_xpts = d_xpts.createHostVec().getPtr();
+
+        // // compute the centroid of each element
+        // T *elem_centroids = new T[3 * num_elements];
+        // memset(elem_centroids, 0.0, 3 * num_elements * sizeof(int));
+        // for (int ielem = 0; ielem < num_elements; ielem++) {
+        //     int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+        //     // int i_component = h_elem_comps[ielem];
+
+        //     for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //         int gnode = local_elem_conn[lnode];
+        //         T *xpt = &h_xpts[3 * gnode];
+        //         elem_centroids[3 * ielem] += xpt[0] / nodes_per_elem;
+        //         elem_centroids[3 * ielem + 1] += xpt[1] / nodes_per_elem;
+        //         elem_centroids[3 * ielem + 2] += xpt[2] / nodes_per_elem;
+        //     }
+        // }
+
+        // // element subdomain indices
+        // int *elem_sd_ind = new int[num_elements];
+        // memset(elem_sd_ind, 0, num_elements * sizeof(int));
+        // int i_subdomain = 0;  // will be filled in loops below
+
+        // // compute a component-based connectivity of adjacent elemens, using repeat nodes
+        // // or using node-elem relationships, or maybe node pairings in each component
+        // int *elem2elem_row_cts = new int[num_elements];
+        // int *comp_num_elems = new int[num_comps];
+        // memset(elem2elem_row_cts, 0, num_elements * sizeof(int));
+        // memset(comp_num_elems, 0, num_comps * sizeof(int));
+        // for (int ielem = 0; ielem < num_elements; ielem++) {
+        //     int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+        //     int icomp = h_elem_comps[ielem];
+        //     comp_num_elems[icomp]++;
+        //     bool elem_is_interior = true;
+        //     bool elem_is_edge = true;
+        //     for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //         int gnode = local_elem_conn[lnode];
+        //         int node_class = node_wing_geom_ind[gnode];
+        //         if (node_class > 0) elem_is_interior = false;  // one node is on component
+        //         boundary if (node_class > 1) elem_is_edge = false;      // one node is on
+        //         component corner
+        //     }
+        //     if (elem_is_interior) {
+        //         // then will have 4 neighbor elements in its wing component
+        //         elem2elem_row_cts[ielem] = 4;
+        //     } else if (elem_is_edge) {
+        //         elem2elem_row_cts[ielem] = 3;
+        //     } else {
+        //         elem2elem_row_cts[ielem] = 2;
+        //     }
+        // }
+
+        // // elem2elem (adjacent elems) for each wingbox component in double pointer
+        // int **elem2elem_ielem = new int *[num_comps];
+        // int **elem2elem_rowp = new int *[num_comps];
+        // int **elem2elem_cols = new int *[num_comps];
+        // int *elem2elem_nnz = new int[num_comps];
+        // for (int icomp = 0; icomp < num_comps; icomp++) {
+        //     int _num_elems = comp_num_elems[icomp];  // num elements in the component
+        //     T *e2e_ielem = elem2elem_ielem[icomp];
+        //     T *e2e_rowp = elem2elem_rowp[icomp];
+        //     T *e2e_cols = elem2elem_cols[icomp];
+        //     e2e_ielem = new int[_num_elems];
+        //     e2e_rowp = new int[_num_elems + 1];
+
+        //     // compute the rowp from element counts
+        //     int elem_ct = 0;
+        //     for (int ielem = 0; ielem < num_elements; ielem++) {
+        //         int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+        //         int jcomp = h_elem_comps[ielem];
+        //         if (icomp == jcomp) e2e_ielem[elem_ct] = ielem;
+        //         // now compute rowp part here
+        //         e2e_rowp[elem_ct + 1] = e2e_rowp[elem_ct] + elem2elem_row_cts[ielem];
+        //         elem_ct++;
+        //     }
+        //     int nnz = e2e_rowp[_num_elems];  // last rowp value is nnz for e2e map
+        //     elem2elem_nnz[icomp] = nnz;
+
+        //     // now finally compute adjacent elems in cols
+        //     // is a faster way to do this probably.. by using nearest neighbors or something?
+        //     // TODO : speed this method up here..
+        //     e2e_cols = new int[nnz];
+        //     int ind = 0;
+        //     // loop over all pairs of elems in the local connecitivity, TODO : need faster way to
+        //     do
+        //     // this for higher DOF
+        //     // can probably use MELD to speed this up somehow (locality of nodes and nearest
+        //     // neighbors)
+        //     for (int i2 = 0; i2 < _num_elems2; i2++) {
+        //         int i = i2 % _num_elems, j = i2 / _num_elems;
+        //         int ielem = e2e_ielem[i];
+        //         int *li_conn = &elem_conn[nodes_per_elem * ielem];
+        //         int jelem = e2e_ielem[j];
+        //         int *lj_conn = &elem_conn[nodes_per_elem * jelem];
+        //         // loop over all pairs of nodes in elems, need at least two matches
+        //         // to count as adjacent element
+        //         int num_match = 0;
+        //         for (int lnode2 = 0; lnode2 < nodes_per_elem * nodes_per_elem; lnode2++) {
+        //             int lnodei = lnode2 % nodes_per_elem, lnodej = lnode2 / nodes_per_elem;
+        //             int inode = li_conn[lnodei], jnode = lj_conn[lnodej];
+        //             if (inode == jnode) num_match++;
+        //         }
+        //         if (num_match > 1)
+        //             e2e_cols[ind] = j;  // store adjacent element in comp_elem indices (reduced)
+        //     }
+
+        //     // compute the two principal directions (heuristic, not really inertia calculation)
+        //     // of the wing component => xz, yz or xy, using dx, dy, dz etc from xmin, xmax, etc.
+        //     T *xpt_min = new T[3];
+        //     memset(xpt_min, 1e30, 3 * sizeof(T));
+        //     T *xpt_max = new T[3];
+        //     memset(xpt_max, -1e30, 3 * sizeof(T));
+        //     for (int i = 0; i < _num_elems; i++) {
+        //         int ielem = e2e_ielem[i];
+        //         int *lconn = &elem_conn[nodes_per_elem * ielem];
+        //         for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //             int gnode = lconn[lnode];
+        //             T *xpt = &h_xpts[3 * gnode];
+        //             for (int dim = 0; dim < 3; dim++) {
+        //                 xpt_min[dim] = (xpt[dim] < xpt_min[dim]) ? xpt[dim] : xpt_min[dim];
+        //                 xpt_max[dim] = (xpt[dim] > xpt_max[dim]) ? xpt[dim] : xpt_max[dim];
+        //             }
+        //         }
+        //     }
+
+        //     T *xpt_span = new T[3];
+        //     T min_span = 1e30;
+        //     int min_direc = -1;
+        //     for (int dim = 0; dim < 3; dim++) {
+        //         xpt_span[dim] = xpt_max[dim] - xpt_min[dim];
+        //         int min_direc = (xpt_span[dim] < min_span) ? dim : min_direc;
+        //         min_span = (xpt_span[dim] < min_span) ? xpt_span[dim] : min_span;
+        //     }
+
+        //     // TODO : actually do need to change this to an inertial axes calculation
+        //     // cause swept back thin spars will not get correct in-plane ref axes
+        //     // then if Z in one of ref axes, don't choose planar one for that case
+
+        //     T *ref_axis1 = new T[3];
+        //     memset(ref_axis1, 0.0, 3 * sizeof(T));
+        //     T *ref_axis2 = new T[3];
+        //     memset(ref_axis2, 0.0, 3 * sizeof(T));
+        //     if (min_direc == 0) {
+        //         // then face in yz plane probably
+        //         ref_axis1[1] = 1.0;
+        //         ref_axis2[2] = 1.0;
+        //     } else if (min_direc == 1) {
+        //         // then face in xz plane probably
+        //         ref_axis1[0] = 1.0;
+        //         ref_axis2[2] = 1.0;
+        //     } else {
+        //         // then face in xy plane probably
+        //         ref_axis1[0] = 1.0;
+        //         ref_axis2[1] = 1.0;
+        //     }
+
+        //     // get the element that has the minimum xpt value (bottom corner)
+        //     int min_lelem = -1;
+        //     T min_xi = 1e30, min_eta = 1e30;
+        //     for (int i = 0; i < _num_elems; i++) {
+        //         int ielem = e2e_ielem[i];
+        //         T *xpt_elem = &elem_centroids[ielem];
+        //         T xi = A2D::VecDotCore<T, 3>(xpt_elem, ref_axis1);
+        //         T eta = A2D::VecDotCore<T, 3>(xpt_elem, ref_axis2);
+        //         if (xi < min_xi && eta < min_eta) {
+        //             min_lelem = i;
+        //             xi = min_xi, eta = min_eta;
+        //         }
+        //     }
+
+        //     // now loop through e2e connectivity and assign subdomains finally
+        //     // until all subdomains filled
+        // }
+
+        // // now go through and assign ixe, iye structured indices in the wing
+        // int *ixe_indices = new int[_num_elems];
+        // int *iye_indices = new int[_num_elems];
+        // bool *assigned = new int[_num_elems];
+        // memset(ixe_indices, 0, _num_elems * sizeof(int));
+        // memset(iye_indices, 0, _num_elems * sizeof(int));
+        // memset(assigned, 0, _num_elems * sizeof(int));
+        // // starts with (0,0) the min element in plane
+        // ixe_indices[min_lelem] = 0;
+        // iye_indices[min_lelem] = 0;
+        // assigned[min_lelem] = true;
+        // int n_assigned = 1;
+        // int i = min_lelem;  // start from the unfilled element here
+
+        // while (n_assigned < _num_elems) {
+        //     // compute an adjacent unfilled element
+        //     bool any_unfilled = false;
+        //     for (int jp = e2e_rowp[i]; jp < e2e_rowp[i + 1]; jp++) {
+        //         int j = e2e_cols[jp];
+        //         if (assigned[j]) continue;
+        //         // if not assigned then we did find an unfilled elem
+        //         any_unfilled = true;
+        //         int ielem = e2e_ind[i], jelem = e2e_ind[j];
+        //         T *xpti = &elem_centroids[ielem];
+        //         T *xptj = &elem_centroids[jelem];
+        //         T *dx = new T[3];
+        //         for (int dim = 0; dim < 3; dim++) {
+        //             dx[dim] = xptj[dim] - xpti[dim];
+        //         }
+        //         // now compute dot products with ref axes
+        //         T xi_dist = A2D::VecDotCore<T, 3>(dx, ref_axis1);
+        //         T eta_dist = A2D::VecDotCore<T, 3>(dx, ref_axis2);
+        //         if (xi_dist > eta_dist) {
+        //             // then it's a dx or dxi elem2elem connection, increment ixe here depending
+        //             on
+        //             // sign
+        //             int sign = (xi_dist > 0.0) ? 1 : -1;
+        //             ixe_indices[j] = ixe_indices[i] + sign;
+        //             iye_indices[j] = ixe_indices[j];
+        //         } else {
+        //             // then it's a dy or deta elem2elem connection, inc iye here
+        //             int sign = (eta_dist > 0.0) ? 1 : -1;
+        //             ixe_indices[j] = ixe_indices[i];
+        //             iye_indices[j] = ixe_indices[j] + sign;
+        //         }
+
+        //         // now change the ref elem to j now
+        //         assigned[j] = true;
+        //         i = j;
+        //         break;  // only assign one element at a time
+        //     }
+
+        //     // if none were unfilled then find a new element that is unfilled for next while loop
+        //     // iteration
+        //     if (!any_unfilled) {
+        //         for (int j = 0; j < _num_elems; j++) {
+        //             if (!assigned[j]) {
+        //                 i = j;  // next search element is j now
+        //                 break;
+        //             }
+        //         }
+        //     }
+
+        //     // first get the num subdomains each direction in this component
+        //     int nxs_comp = -1, nys_comp = -1;
+        //     for (int i = 0; i < _num_elems; i++) {
+        //         int ielem = e2e_ind[i];
+        //         int ixe = ixe_indices[i];
+        //         int iye = iye_indices[i];
+        //         // use num elements per subdomain each direction to assign subdomains in each
+        //         // component
+        //         int nxs = (ixe + nxse_ - 1) / nxse_, nys = (iye + nyse_ - 1) / nyse_;
+        //         if (nxs > nxs_comp) {
+        //             nxs_comp = nxs;
+        //         }
+        //         if (nys > nys_comp) {
+        //             nys_comp = nys;
+        //         }
+        //         elem_sd_ind[ielem] = i_subdomain + ixs
+        //     }
+
+        //     // then loop back through and now assign subdomain indices
+        //     for (int i = 0; i < _num_elems; i++) {
+        //         int ielem = e2e_ind[i];
+        //         int ixe = ixe_indices[i];
+        //         int iye = iye_indices[i];
+        //         // use num elements per subdomain each direction to assign subdomains in each
+        //         // component
+        //         int ixs = ixe / nxse_, iys = iye / nyse_;
+        //         elem_sd_ind[ielem] = i_subdomain + ixs + iys * nxs_comp;
+        //     }
+        //     // now update subdomain offset for next component
+        //     i_subdomain += nxs_comp * nys_comp;
+
+        // }  // end of component loop
+
+        // // -----------------------------------------
+        // // node -> subdomain incidence
+        // // -----------------------------------------
+        // node_elem_nnz = 0;
+        // node_elem_rowp = new int[num_nodes + 1];
+        // node_elem_ct = new int[num_nodes];
+        // std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+        // std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+        // for (int ielem = 0; ielem < num_elements; ielem++) {
+        //     int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+        //     for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //         int gnode = local_elem_conn[lnode];
+        //         node_elem_ct[gnode]++;
+        //         node_elem_nnz++;
+        //     }
+        // }
+
+        // for (int inode = 0; inode < num_nodes; inode++) {
+        //     node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+        // }
+
+        // int *temp_node_elem = new int[num_nodes];
+        // node_sd_cols = new int[node_elem_nnz];
+        // std::memset(temp_node_elem, 0, num_nodes * sizeof(int));
+        // std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+        // for (int ielem = 0; ielem < num_elements; ielem++) {
+        //     int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+        //     int subdomain_ind = elem_sd_ind[ielem];
+
+        //     for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //         int gnode = local_elem_conn[lnode];
+        //         int offset = node_elem_rowp[gnode] + temp_node_elem[gnode];
+        //         node_sd_cols[offset] = subdomain_ind;
+        //         temp_node_elem[gnode]++;
+        //     }
+        // }
+        // delete[] temp_node_elem;
+
+        // // -----------------------------------------
+        // // classify nodes
+        // // -----------------------------------------
+        // node_class_ind = new int[num_nodes];
+        // std::memset(node_class_ind, 0, num_nodes * sizeof(int));
+
+        // nnodes_interior = 0;
+        // nnodes_edge = 0;
+        // nnodes_vertex = 0;
+        // nnodes_dirichlet_edge = 0;
+
+        // printf(
+        //     "WARNING: for unstructured meshes, this node classification may fail at
+        //     junctions.\n");
+
+        // for (int inode = 0; inode < num_nodes; inode++) {
+        //     std::unordered_set<int> node_sds;
+        //     for (int jp = node_elem_rowp[inode]; jp < node_elem_rowp[inode + 1]; jp++) {
+        //         node_sds.insert(node_sd_cols[jp]);
+        //     }
+
+        //     int ix = inode % nx;
+        //     int iy = inode / nx;
+        //     bool on_x = (ix == 0) || (ix == nx - 1);
+        //     bool on_y = ((iy == 0) || (iy == ny - 1)) && !close_hoop;
+        //     bool on_bndry = on_x || on_y;
+
+        //     int nsd = static_cast<int>(node_sds.size());
+
+        //     if (nsd < 2) {
+        //         node_class_ind[inode] = INTERIOR;
+        //         nnodes_interior++;
+        //     } else if (nsd == 2) {
+        //         // TODO : this logic is not quite right for wing..
+        //         // //
+        //         // if (on_bndry) {
+        //         //     node_class_ind[inode] = DIRICHLET_EDGE;
+        //         //     nnodes_dirichlet_edge++;
+        //         // } else {
+        //         //     node_class_ind[inode] = EDGE;
+        //         //     nnodes_edge++;
+        //         // }
+        //     } else {
+        //         node_class_ind[inode] = VERTEX;
+        //         nnodes_vertex++;
+        //     }
+        // }
+
+        // // TODO:
+        // // This count assumes structured duplication counts:
+        // //   interior            -> 1 copy
+        // //   dirichlet-edge      -> 2 copies
+        // //   edge                -> 2 copies
+        // //   vertex              -> 4 copies
+        // // Revisit for more general cases.
+        // I_nnodes = nnodes_interior + 2 * nnodes_dirichlet_edge;
+        // IE_nnodes = I_nnodes + 2 * nnodes_edge;
+        // IEV_nnodes = IE_nnodes + 4 * nnodes_vertex;
+        // Vc_nnodes = nnodes_vertex;     // vertex non-repeated (here for coarse system)
+        // V_nnodes = 4 * nnodes_vertex;  // vertex repeated
+        // lam_nnodes = nnodes_edge;      // FETI lagrange multipliers
+
+        // // -----------------------------------------
+        // // build duplicated IEV nodal layout
+        // // -----------------------------------------
+        // IEV_sd_ptr = new int[num_subdomains + 1];
+        // IEV_sd_ind = new int[IEV_nnodes];
+        // IEV_nodes = new int[IEV_nnodes];
+
+        // std::memset(IEV_sd_ptr, 0, (num_subdomains + 1) * sizeof(int));
+
+        // int IEV_ind = 0;
+        // int *temp_completion = new int[num_nodes];
+
+        // for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+        //     std::memset(temp_completion, 0, num_nodes * sizeof(int));
+        //     IEV_sd_ptr[i_subdomain + 1] = IEV_sd_ptr[i_subdomain];
+
+        //     for (int ielem = 0; ielem < num_elements; ielem++) {
+        //         if (elem_sd_ind[ielem] != i_subdomain) continue;
+
+        //         int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+        //         for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //             int gnode = local_elem_conn[lnode];
+        //             if (temp_completion[gnode]) continue;
+
+        //             IEV_nodes[IEV_ind] = gnode;
+        //             IEV_sd_ind[IEV_ind] = i_subdomain;
+        //             IEV_sd_ptr[i_subdomain + 1]++;
+        //             IEV_ind++;
+        //             temp_completion[gnode] = 1;
+        //         }
+        //     }
+        // }
+        // delete[] temp_completion;
+
+        // // printf("IEV_sd_ptr: ");
+        // // printVec<int>(num_subdomains + 1, IEV_sd_ptr);
+        // // printf("IEV_sd_ind: ");
+        // // printVec<int>(IEV_nnodes, IEV_sd_ind);
+
+        // // -----------------------------------------
+        // // build IEV element connectivity
+        // // -----------------------------------------
+        // IEV_elem_conn = new int[num_elements * nodes_per_elem];
+        // for (int ielem = 0; ielem < num_elements; ielem++) {
+        //     int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+        //     int i_subdomain = elem_sd_ind[ielem];
+
+        //     for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+        //         int gnode = local_elem_conn[lnode];
+        //         int local_ind = -1;
+
+        //         for (int jp = IEV_sd_ptr[i_subdomain]; jp < IEV_sd_ptr[i_subdomain + 1]; jp++) {
+        //             if (IEV_nodes[jp] == gnode) {
+        //                 local_ind = jp;
+        //                 break;
+        //             }
+        //         }
+
+        //         if (local_ind < 0) {
+        //             printf("ERROR: failed to find duplicated IEV node for elem %d node %d\n",
+        //             ielem,
+        //                    gnode);
+        //         }
+        //         IEV_elem_conn[nodes_per_elem * ielem + lnode] = local_ind;
+        //     }
+        // }
+
+        // // printf("IEV_ind %d\n", IEV_ind);
+        // // printf("IEV_nodes %d: ", IEV_nnodes);
+        // // printVec<int>(IEV_nnodes, IEV_nodes);
+        // // printf("IEV_conn: ");
+        // // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+
+        // // -----------------------------------------
+        // // IE and I nodal lists
+        // // -----------------------------------------
+        // IE_nodes = new int[IE_nnodes];
+        // I_nodes = new int[I_nnodes];
+        // std::memset(IE_nodes, 0, IE_nnodes * sizeof(int));
+        // std::memset(I_nodes, 0, I_nnodes * sizeof(int));
+        // IE_interior = new bool[IE_nnodes];
+        // IE_general_edge = new bool[IE_nnodes];
+
+        // int IE_ind = 0;
+        // int I_ind = 0;
+        // for (int inode = 0; inode < IEV_nnodes; inode++) {
+        //     int gnode = IEV_nodes[inode];
+        //     int node_class = node_class_ind[gnode];
+
+        //     if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+        //         IE_interior[IE_ind] = node_class == INTERIOR || node_class == DIRICHLET_EDGE;
+        //         IE_general_edge[IE_ind] = node_class == DIRICHLET_EDGE || node_class == EDGE;
+        //         IE_nodes[IE_ind++] = gnode;
+        //     }
+        //     if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+        //         I_nodes[I_ind++] = gnode;
+        //     }
+        // }
+        // d_IE_interior = HostVec<bool>(IE_nnodes, IE_interior).createDeviceVec().getPtr();
+        // d_IE_general_edge = HostVec<bool>(IE_nnodes, IE_general_edge).createDeviceVec().getPtr();
+        // d_IE_nodes = HostVec<int>(IE_nnodes, IE_nodes).createDeviceVec().getPtr();
+
+        // // printf("IE_nodes %d: ", IE_nnodes);
+        // // printVec<int>(IE_nnodes, IE_nodes);
+        // // printf("I_nodes %d: ", I_nnodes);
+        // // printVec<int>(I_nnodes, I_nodes);
+
+        // // -----------------------------------------
+        // // build IEV sparsity from duplicated connectivity
+        // // -----------------------------------------
+        // IEV_bsr_data = BsrData(num_elements, IEV_nnodes, nodes_per_elem, block_dim,
+        // IEV_elem_conn); IEV_rowp = IEV_bsr_data.rowp; IEV_cols = IEV_bsr_data.cols; IEV_nnzb =
+        // IEV_bsr_data.nnzb; IEV_rows = new int[IEV_nnzb]; for (int inode = 0; inode < IEV_nnodes;
+        // inode++) {
+        //     for (int jp = IEV_rowp[inode]; jp < IEV_rowp[inode + 1]; jp++) {
+        //         IEV_rows[jp] = inode;
+        //     }
+        // }
+        // // printf("IEV_rowp with nnzb %d: ", IEV_nnzb);
+        // // printVec<int>(IEV_nnodes + 1, IEV_rowp);
+        // // printf("IEV_cols: ");
+        // // printVec<int>(IEV_nnzb, IEV_cols);
+
+        // // -----------------------------------------
+        // // reduced rowp arrays
+        // // -----------------------------------------
+        // IE_rowp = new int[IE_nnodes + 1];
+        // I_rowp = new int[I_nnodes + 1];
+        // std::memset(IE_rowp, 0, (IE_nnodes + 1) * sizeof(int));
+        // std::memset(I_rowp, 0, (I_nnodes + 1) * sizeof(int));
+
+        // int IE_row = 0;
+        // int I_row = 0;
+        // for (int row = 0; row < IEV_nnodes; row++) {
+        //     int gnode_row = IEV_nodes[row];
+        //     int class_row = node_class_ind[gnode_row];
+        //     bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+        //     bool typeIE_row = (typeI_row || class_row == EDGE);
+
+        //     if (typeI_row) I_rowp[I_row + 1] = I_rowp[I_row];
+        //     if (typeIE_row) IE_rowp[IE_row + 1] = IE_rowp[IE_row];
+
+        //     for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+        //         int col = IEV_cols[jp];
+        //         int gnode_col = IEV_nodes[col];
+        //         int class_col = node_class_ind[gnode_col];
+        //         bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+        //         bool typeIE_col = (typeI_col || class_col == EDGE);
+
+        //         if (typeI_row && typeI_col) I_rowp[I_row + 1]++;
+        //         if (typeIE_row && typeIE_col) IE_rowp[IE_row + 1]++;
+        //     }
+
+        //     if (typeI_row) I_row++;
+        //     if (typeIE_row) IE_row++;
+        // }
+
+        // I_nnzb = I_rowp[I_nnodes];
+        // IE_nnzb = IE_rowp[IE_nnodes];
+
+        // // printf("I_rowp nnzb %d: ", I_nnzb);
+        // // printVec<int>(I_nnodes + 1, I_rowp);
+        // // printf("IE_nodes %d: ", IE_nnodes);
+        // // printVec<int>(IE_nnodes, IE_nodes);
+        // // printf("IE_rowp nnzb %d: ", IE_nnzb);
+        // // printVec<int>(IE_nnodes + 1, IE_rowp);
+
+        // IE_rows = new int[IE_nnzb];
+        // for (int inode = 0; inode < IE_nnodes; inode++) {
+        //     for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+        //         IE_rows[jp] = inode;
+        //     }
+        // }
+        // I_rows = new int[I_nnzb];
+        // for (int inode = 0; inode < I_nnodes; inode++) {
+        //     for (int jp = I_rowp[inode]; jp < I_rowp[inode + 1]; jp++) {
+        //         I_rows[jp] = inode;
+        //     }
+        // }
+
+        // // -----------------------------------------
+        // // IEV -> IE map
+        // // -----------------------------------------
+        // IEVtoIE_map = new int[IEV_nnodes];
+        // std::memset(IEVtoIE_map, -1, IEV_nnodes * sizeof(int));
+        // IEVtoIE_imap = new int[IE_nnodes];
+
+        // IE_ind = 0;
+        // for (int inode = 0; inode < IEV_nnodes; inode++) {
+        //     int gnode = IEV_nodes[inode];
+        //     int node_class = node_class_ind[gnode];
+        //     if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+        //         IEVtoIE_imap[IE_ind] = inode;
+        //         IEVtoIE_map[inode] = IE_ind++;
+        //     }
+        // }
+
+        // // printf("IEVtoIE_map: ");
+        // // printVec<int>(IEV_nnodes, IEVtoIE_map);
+
+        // // put on device
+        // d_IEVtoIE_imap = HostVec<int>(IE_nnodes, IEVtoIE_imap).createDeviceVec().getPtr();
+
+        // // -----------------------------------------
+        // // IEV -> I map
+        // // -----------------------------------------
+        // IEVtoI_map = new int[IEV_nnodes];
+        // IEVtoI_imap = new int[I_nnodes];
+        // std::memset(IEVtoI_map, -1, IEV_nnodes * sizeof(int));
+
+        // I_ind = 0;
+        // for (int inode = 0; inode < IEV_nnodes; inode++) {
+        //     int gnode = IEV_nodes[inode];
+        //     int node_class = node_class_ind[gnode];
+        //     if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+        //         IEVtoI_imap[I_ind] = inode;
+        //         IEVtoI_map[inode] = I_ind++;
+        //     }
+        // }
+
+        // // printf("IEVtoI_map: ");
+        // // printVec<int>(IEV_nnodes, IEVtoI_map);
+
+        // // put on device
+        // d_IEVtoI_imap = HostVec<int>(I_nnodes, IEVtoI_imap).createDeviceVec().getPtr();
+
+        // // -----------------------------------------
+        // // reduced column arrays
+        // // -----------------------------------------
+        // IE_cols = new int[IE_nnzb];
+        // I_cols = new int[I_nnzb];
+
+        // I_ind = 0;
+        // IE_ind = 0;
+        // for (int row = 0; row < IEV_nnodes; row++) {
+        //     int gnode_row = IEV_nodes[row];
+        //     int class_row = node_class_ind[gnode_row];
+        //     bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+        //     bool typeIE_row = (typeI_row || class_row == EDGE);
+
+        //     for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+        //         int col = IEV_cols[jp];
+        //         int gnode_col = IEV_nodes[col];
+        //         int class_col = node_class_ind[gnode_col];
+        //         bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+        //         bool typeIE_col = (typeI_col || class_col == EDGE);
+
+        //         if (typeI_row && typeI_col) {
+        //             I_cols[I_ind++] = IEVtoI_map[col];
+        //         }
+        //         if (typeIE_row && typeIE_col) {
+        //             IE_cols[IE_ind++] = IEVtoIE_map[col];
+        //         }
+        //     }
+        // }
+
+        // // printf("I_cols: ");
+        // // printVec<int>(I_nnzb, I_cols);
+        // // printf("IE_cols: ");
+        // // printVec<int>(IE_nnzb, IE_cols);
+
+        // d_IEV_elem_conn =
+        //     HostVec<int>(num_elements * nodes_per_elem, IEV_elem_conn).createDeviceVec();
+
+        // // -----------------------------------------
+        // // IEV -> Vc map (coarse non-repeated vertices)
+        // // -----------------------------------------
+
+        // // make a list of the reduced Vc_ind (takes global node and figures out it's Vc_ind)
+        // std::unordered_set<int> Vc_nodeset;
+        // for (int i = 0; i < IEV_nnodes; i++) {
+        //     int gnode = IEV_nodes[i];
+        //     int node_class = node_class_ind[gnode];
+        //     if (node_class == VERTEX) {
+        //         Vc_nodeset.insert(gnode);
+        //     }
+        // }
+        // std::vector<int> Vc_nodes_vec(Vc_nodeset.begin(), Vc_nodeset.end());
+        // std::sort(Vc_nodes_vec.begin(), Vc_nodes_vec.end());
+        // // printf("Vc_nodes %d: ", Vc_nodes_vec.size());
+        // // printVec<int>(Vc_nodes_vec.size(), Vc_nodes_vec.data());
+
+        // int *Vc_inodes = new int[num_nodes];  // takes Vc global node => Vc red node
+        // memset(Vc_inodes, -1, num_nodes * sizeof(int));
+        // for (int i = 0; i < Vc_nodes_vec.size(); i++) {
+        //     int j = Vc_nodes_vec[i];
+        //     Vc_inodes[j] = i;
+        // }
+
+        // // printf("Vc_inodes: ");
+        // // printVec<int>(num_nodes, Vc_inodes);
+
+        // d_Vc_nodes = HostVec<int>(Vc_nnodes, Vc_nodes_vec.data()).createDeviceVec().getPtr();
+        // Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
+
+        // // set VcToV_imap and IEVtoV_imap now
+        // VctoV_imap = new int[V_nnodes];
+        // std::memset(VctoV_imap, -1, V_nnodes * sizeof(int));
+        // IEVtoV_imap = new int[V_nnodes];
+        // std::memset(IEVtoV_imap, -1, V_nnodes * sizeof(int));
+
+        // int V_ind = 0;
+        // for (int inode = 0; inode < IEV_nnodes; inode++) {
+        //     int gnode = IEV_nodes[inode];
+        //     int node_class = node_class_ind[gnode];
+        //     if (node_class == VERTEX) {
+        //         int Vc_ind = Vc_inodes[gnode];
+        //         VctoV_imap[V_ind] = Vc_ind;
+        //         IEVtoV_imap[V_ind] = inode;
+        //         V_ind++;
+        //     }
+        // }
+
+        // // printf("IEVtoV_imap %d: ", V_nnodes);
+        // // printVec<int>(V_nnodes, IEVtoV_imap);
+
+        // // put on device
+        // d_IEVtoV_imap = HostVec<int>(V_nnodes, IEVtoV_imap).createDeviceVec().getPtr();
+        // d_VctoV_imap = HostVec<int>(V_nnodes, VctoV_imap).createDeviceVec().getPtr();
+
+        // // Build all remaining maps/permutations:
+        // //  - jump operator ownership/sign maps
+
+        // _compute_jump_operators();
+        // allocate_workspace();
+
+        // // ---------------------------------------------------
+        // // Save ORIGINAL nofill sparsity for IE and I
+        // // before fill-in / AMD reordering
+        // // ---------------------------------------------------
+        // IE_bsr_data = BsrData(IE_nnodes, block_dim, IE_nnzb, IE_rowp, IE_cols);
+        // IE_bsr_data.rows = IE_rows;
+        // IE_nofill_nnzb = IE_nnzb;
+        // IE_perm = IE_bsr_data.perm, IE_iperm = IE_bsr_data.iperm;
+
+        // // sparsity before the permutation
+        // // printf("\nIE SPARSITY BEFORE PERMUTATION\n");
+        // // for (int inode = 0; inode < IE_nnodes; inode++) {
+        // //     printf("(");
+        // //     int grow = IE_nodes[IE_perm[inode]];
+        // //     printf("%d, ", grow);
+        // //     for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+        // //         int j = IE_cols[jp];
+        // //         int gcol = IE_nodes[IE_perm[j]];
+        // //         printf("%d ", gcol);
+        // //     }
+        // //     printf(")\n");
+        // // }
+        // // printf("\n\n");
+
+        // // printf("pre-perm IE_rowp: ");
+        // // printVec<int>(IE_nnodes + 1, IE_rowp);
+        // // printf("IE_cols: ");
+        // // printVec<int>(IE_nnzb, IE_cols);
+        // // printf("IE_nodes: ");
+        // // printVec<int>(IE_nnodes, IE_nodes);
+        // // printf("\n");
+
+        // I_bsr_data = BsrData(I_nnodes, block_dim, I_nnzb, I_rowp, I_cols);
+        // I_bsr_data.rows = I_rows;
+        // I_nofill_nnzb = I_nnzb;
     }
 
     void setup_matrix_sparsity() {
