@@ -424,6 +424,13 @@ class FetidpSolver : public BaseSolver {
         // printf("IEV_conn: ");
         // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
 
+        // for (int iev = 0; iev < IEV_nnodes; iev++) {
+        //     int isd = IEV_sd_ind[iev];
+        //     int gnode = IEV_nodes[iev];
+        //     int iclass = node_class_ind[gnode];
+        //     printf("iev %d, isd %d, gnode %d, class %d\n", iev, isd, gnode, iclass);
+        // }
+
         // -----------------------------------------
         // IE and I nodal lists
         // -----------------------------------------
@@ -716,13 +723,55 @@ class FetidpSolver : public BaseSolver {
         I_nofill_nnzb = I_nnzb;
     }
 
-    void setup_wing_subdomains(int nxse_, int nyse_, bool compute_jump = true) {
+    void setup_tacs_component_subdomains(int nxse_, int nyse_, bool compute_jump = true) {
         clear_structured_host_data();
 
         // printf("SETUP_WING_SUBDOMAINS : get_nodal_geom_indices\n");
         int *nodal_num_wing_comps, *node_wing_geom_ind;
         WingboxMultiColoring<ShellAssembler>::get_nodal_geom_indices(
             assembler, nodal_num_wing_comps, node_wing_geom_ind);
+
+        // modify node_wing_geom_ind for plate + cylinder fuselage cases
+        // add edges and vertices if they only belong to one or two elements
+        // for plate + cylinder fuselage cases (outer bndry)
+        int *node_nelems = new int[num_nodes];
+        memset(node_nelems, 0, num_nodes * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                node_nelems[gnode]++;
+            }
+        }
+
+        // compute the BC indices needed for kmat_IEV
+        auto d_bcs = assembler.getBCs();
+        int n_orig_bcs = d_bcs.getSize();
+        int *h_bcs = d_bcs.createHostVec().getPtr();
+        // printf("h_bcs: ");
+        // printVec<int>(n_orig_bcs, h_bcs);
+
+        // get from Dirichlet bcs
+        bool *dirichlet_ind = new bool[num_nodes];
+        memset(dirichlet_ind, false, num_nodes * sizeof(bool));
+        for (int ibc = 0; ibc < n_orig_bcs; ibc++) {
+            int bc_node = h_bcs[ibc] / block_dim;
+            dirichlet_ind[bc_node] = true;
+        }
+        // printf("dirichlet ind: ");
+        // printVec<bool>(num_nodes, dirichlet_ind);
+
+        int *node_bndry_ind = new int[num_nodes];
+        for (int inode = 0; inode < num_nodes; inode++) {
+            node_bndry_ind[inode] = 0;
+            int nelems_attached = node_nelems[inode];
+            // outer bndry nodes changed to edge + vertices
+            if (nelems_attached == 2) {
+                node_bndry_ind[inode] = 1;  // change it to edge node if was labeled interior
+            } else if (nelems_attached == 1) {
+                node_bndry_ind[inode] = 2;  // change to vertex node
+            }
+        }
 
         T *h_wgeom_ind = new T[num_nodes * block_dim];
         memset(h_wgeom_ind, 0.0, num_nodes * block_dim * sizeof(T));
@@ -780,8 +829,13 @@ class FetidpSolver : public BaseSolver {
             for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
                 int gnode = local_elem_conn[lnode];
                 int node_class = node_wing_geom_ind[gnode];
+                int bndry_class = node_bndry_ind[gnode];
                 if (node_class > 0) elem_is_interior = false;
                 if (node_class > 1) elem_is_edge = false;
+                if (bndry_class > 0) elem_is_interior = false;
+                if (bndry_class > 1) elem_is_edge = false;
+                // on bndry + inter-subdomain edge also counts like a vertex
+                if (bndry_class == 1 && node_class == 1) elem_is_edge = false;
             }
 
             if (elem_is_interior) {
@@ -895,8 +949,9 @@ class FetidpSolver : public BaseSolver {
             //         int gnode = lconn[lnode];
             //         T *xpt = &h_xpts[3 * gnode];
             //         for (int dim = 0; dim < 3; dim++) {
-            //             xpt_min[dim] = (xpt[dim] < xpt_min[dim]) ? xpt[dim] : xpt_min[dim];
-            //             xpt_max[dim] = (xpt[dim] > xpt_max[dim]) ? xpt[dim] : xpt_max[dim];
+            //             xpt_min[dim] = (xpt[dim] < xpt_min[dim]) ? xpt[dim] :
+            //             xpt_min[dim]; xpt_max[dim] = (xpt[dim] > xpt_max[dim]) ? xpt[dim]
+            //             : xpt_max[dim];
             //         }
             //     }
             // }
@@ -1103,7 +1158,8 @@ class FetidpSolver : public BaseSolver {
             T evals[3];
             T VT[9];
 
-            // copy I into flat row-major array because eig3x3_exact_givens modifies A in place
+            // copy I into flat row-major array because eig3x3_exact_givens modifies A in
+            // place
             T A_I[9] = {
                 I[0][0], I[0][1], I[0][2], I[1][0], I[1][1], I[1][2], I[2][0], I[2][1], I[2][2],
             };
@@ -1125,7 +1181,8 @@ class FetidpSolver : public BaseSolver {
             //   evals[1] = middle
             //   evals[2] = smallest
             //
-            // for a thin plate/shell face, the largest inertia axis should be the normal-like one
+            // for a thin plate/shell face, the largest inertia axis should be the
+            // normal-like one
             T inertial_normal[3] = {axis0[0], axis0[1], axis0[2]};
             T inertial_axis_a[3] = {axis1[0], axis1[1], axis1[2]};
             T inertial_axis_b[3] = {axis2[0], axis2[1], axis2[2]};
@@ -1186,7 +1243,8 @@ class FetidpSolver : public BaseSolver {
                 ref_axis2[2] = 1.0;
             }
 
-            // printf("principal inertias (descending): %.6e %.6e %.6e\n", evals[0], evals[1],
+            // printf("principal inertias (descending): %.6e %.6e %.6e\n", evals[0],
+            // evals[1],
             //        evals[2]);
             // printf("inertial_normal: ");
             // printVec<T>(3, inertial_normal);
@@ -1217,7 +1275,8 @@ class FetidpSolver : public BaseSolver {
                 }
             }
 
-            // printf("min_lelem %d, min_xi %.4e, min_eta %.4e\n", min_lelem, min_xi, min_eta);
+            // printf("min_lelem %d, min_xi %.4e, min_eta %.4e\n", min_lelem, min_xi,
+            // min_eta);
 
             // printf("pre ixe_indices, %d\n", _num_elems);
             int *ixe_indices = new int[_num_elems];
@@ -1264,7 +1323,8 @@ class FetidpSolver : public BaseSolver {
                     T xi_dist = A2D::VecDotCore<T, 3>(dx, ref_axis1);
                     T eta_dist = A2D::VecDotCore<T, 3>(dx, ref_axis2);
 
-                    // printf("e2e pair (%d,%d), (xi,eta)=(%.4e,%.4e)\n", i, j, xi_dist, eta_dist);
+                    // printf("e2e pair (%d,%d), (xi,eta)=(%.4e,%.4e)\n", i, j, xi_dist,
+                    // eta_dist);
 
                     if (fabs(xi_dist) > fabs(eta_dist)) {
                         int sign = (xi_dist > 0.0) ? 1 : -1;
@@ -1284,9 +1344,9 @@ class FetidpSolver : public BaseSolver {
                 }
 
                 if (!assigned_new) {
-                    // printf("assigned new %d, any_unfilled %d\n", assigned_new, any_unfilled);
-                    // printf("\tassigned: ");
-                    // printVec<bool>(_num_elems, assigned);
+                    // printf("assigned new %d, any_unfilled %d\n", assigned_new,
+                    // any_unfilled); printf("\tassigned: "); printVec<bool>(_num_elems,
+                    // assigned);
                     bool found_seed = false;
                     for (int j = 0; j < _num_elems; j++) {
                         bool has_unfilled_adj = false;
@@ -1354,9 +1414,8 @@ class FetidpSolver : public BaseSolver {
         auto h_vars = assembler.createVarsVec().createHostVec();
         printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, elem_sd_ind,
                                                             "subdomains", "out/wing_sd.vtk");
-        // printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars,
-        // debug_lelem_sd_ind,
-        //                                                     "subdomains", "out/wing_lsd.vtk");
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, debug_lelem_sd_ind,
+                                                            "subdomains", "out/wing_lsd.vtk");
         // printf("\tdone printToVTK elemVec");
 
         // -----------------------------------------
@@ -1406,11 +1465,12 @@ class FetidpSolver : public BaseSolver {
         std::memset(node_class_ind, 0, num_nodes * sizeof(int));
 
         printf(
-            "WARNING: for unstructured meshes, this node classification may fail at junctions.\n");
+            "WARNING: for unstructured meshes, this node classification may fail at "
+            "junctions.\n");
 
         node_nsd = new int[num_nodes];
         I_nnodes = 0, IE_nnodes = 0, IEV_nnodes = 0;
-        Vc_nnodes = 0, V_nnodes, lam_nnodes = 0;
+        Vc_nnodes = 0, V_nnodes = 0, lam_nnodes = 0;
 
         for (int inode = 0; inode < num_nodes; inode++) {
             std::unordered_set<int> node_sds;
@@ -1424,19 +1484,21 @@ class FetidpSolver : public BaseSolver {
             if (nsd < 2) {
                 node_class_ind[inode] = INTERIOR;
                 I_nnodes++, IE_nnodes++, IEV_nnodes++;
+            } else if (dirichlet_ind[inode]) {
+                node_class_ind[inode] = INTERIOR;
+                if (node_bndry_ind[inode] > 0) {
+                    node_class_ind[inode] = DIRICHLET_EDGE;
+                    // acts like an edge node, repeated twice
+                    I_nnodes += nsd;
+                    IE_nnodes += nsd;
+                    IEV_nnodes += nsd;
+                }
             } else if (nsd == 2 || node_wing_geom_ind[inode] == 1) {
                 // TODO: this logic is not quite right for wing..
                 node_class_ind[inode] = EDGE;
                 lam_nnodes++;
                 IE_nnodes += nsd;
                 IEV_nnodes += nsd;
-                // if (on_bndry) {
-                //     node_class_ind[inode] = DIRICHLET_EDGE;
-                //     nnodes_dirichlet_edge++;
-                // } else {
-                //     node_class_ind[inode] = EDGE;
-                //     nnodes_edge++;
-                // }
             } else {
                 node_class_ind[inode] = VERTEX;
                 Vc_nnodes++;  //, lam_nnodes++;
@@ -1454,6 +1516,16 @@ class FetidpSolver : public BaseSolver {
         auto h_soln_debug = HostVec<T>(num_nodes * block_dim, h_soln);
         printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug, "out/wing_node_nsd.vtk");
 
+        // print to VTK the IEV labels..
+        T *h_soln2 = new T[num_nodes * block_dim];
+        memset(h_soln2, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_soln2[6 * i] = node_class_ind[i];
+        }
+        auto h_soln_debug2 = HostVec<T>(num_nodes * block_dim, h_soln2);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug2, "out/wing_node_class.vtk");
+        // printf("done with classify nodes\n");
+
         // -----------------------------------------
         // build duplicated IEV nodal layout
         // -----------------------------------------
@@ -1469,6 +1541,7 @@ class FetidpSolver : public BaseSolver {
         for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
             std::memset(temp_completion, 0, num_nodes * sizeof(int));
             IEV_sd_ptr[i_subdomain + 1] = IEV_sd_ptr[i_subdomain];
+            // printf("isd %d\n", i_subdomain);
 
             for (int ielem = 0; ielem < num_elements; ielem++) {
                 if (elem_sd_ind[ielem] != i_subdomain) continue;
@@ -1492,6 +1565,8 @@ class FetidpSolver : public BaseSolver {
         // printVec<int>(num_subdomains + 1, IEV_sd_ptr);
         // printf("IEV_sd_ind: ");
         // printVec<int>(IEV_nnodes, IEV_sd_ind);
+        // printf("IEV_nodes: ");
+        // printVec<int>(IEV_nnodes, IEV_nodes);
 
         // -----------------------------------------
         // build IEV element connectivity
@@ -1526,6 +1601,13 @@ class FetidpSolver : public BaseSolver {
         // printf("IEV_conn: ");
         // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
 
+        // for (int iev = 0; iev < IEV_nnodes; iev++) {
+        //     int isd = IEV_sd_ind[iev];
+        //     int gnode = IEV_nodes[iev];
+        //     int iclass = node_class_ind[gnode];
+        //     printf("iev %d, isd %d, gnode %d, class %d\n", iev, isd, gnode, iclass);
+        // }
+
         // -----------------------------------------
         // IE and I nodal lists
         // -----------------------------------------
@@ -1542,11 +1624,12 @@ class FetidpSolver : public BaseSolver {
             int gnode = IEV_nodes[inode];
             int node_class = node_class_ind[gnode];
 
-            // no DIRICHLET_EDGE on wing case, we'll see if this is an issue..
-            if (node_class == INTERIOR || node_class == EDGE) {
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IE_interior[IE_ind] = node_class == INTERIOR || node_class == DIRICHLET_EDGE;
+                IE_general_edge[IE_ind] = node_class == DIRICHLET_EDGE || node_class == EDGE;
                 IE_nodes[IE_ind++] = gnode;
             }
-            if (node_class == INTERIOR) {
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
                 I_nodes[I_ind++] = gnode;
             }
         }
@@ -1829,7 +1912,9 @@ class FetidpSolver : public BaseSolver {
         printf(
             "NOTE : FETI-DP doesn't support permutations yet on subdomains.. TBD later on "
             "that\n");
-        printf("\tJust does full fillin currently of each matrix used for inner linear solves\n");
+        printf(
+            "\tJust does full fillin currently of each matrix used for inner linear "
+            "solves\n");
 
         // do fillin of IE and I matrices (later also do coarse matrix)
         IE_rowp = IE_bsr_data.rowp, IE_cols = IE_bsr_data.cols, IE_nnzb = IE_bsr_data.nnzb;
@@ -1930,7 +2015,8 @@ class FetidpSolver : public BaseSolver {
 
                         int gr_IE = IE_nodes[i], gc_IE = IE_nodes[j];
                         int gr_IEV = IEV_nodes[i_IEV], gc_IEV = IEV_nodes[j_IEV];
-                        // printf("nofill ind %d, IE (%d,%d) block %d, IEV (%d,%d) block %d\n",
+                        // printf("nofill ind %d, IE (%d,%d) block %d, IEV (%d,%d) block
+                        // %d\n",
                         //        nofill_ind, gr_IE, gc_IE, jp, gr_IEV, gc_IEV, kp);
                         nofill_ind++;
                         found = true;
@@ -2089,12 +2175,11 @@ class FetidpSolver : public BaseSolver {
         // printVec<int>(Svv_nnzb, Svv_cols);
 
         // now go back through and put cols in
-        // use temp_Svv_fill to help keep track of putting nonzero entries in the Svv sparsity
-        // int *temp_Svv_fill = new int[Vc_nnodes];
-        // memset(temp_Svv_fill, 0, Vc_nnodes * sizeof(int));
-        // Svv_cols = new int[Svv_nnzb];
-        // memset(Svv_cols, 0, Svv_nnzb * sizeof(int));
-        // for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+        // use temp_Svv_fill to help keep track of putting nonzero entries in the Svv
+        // sparsity int *temp_Svv_fill = new int[Vc_nnodes]; memset(temp_Svv_fill, 0,
+        // Vc_nnodes * sizeof(int)); Svv_cols = new int[Svv_nnzb]; memset(Svv_cols, 0,
+        // Svv_nnzb * sizeof(int)); for (int i_subdomain = 0; i_subdomain < num_subdomains;
+        // i_subdomain++) {
         //     std::unordered_set<int> sd_Vc_nodeset;
 
         //     for (int ielem = 0; ielem < num_elements; ielem++) {
@@ -2124,10 +2209,10 @@ class FetidpSolver : public BaseSolver {
         //     }
         // }
 
-        // printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
-        // printVec<int>(Vc_nnodes + 1, Svv_rowp);
-        // printf("Svv_cols: ");
-        // printVec<int>(Svv_nnzb, Svv_cols);
+        printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
+        printVec<int>(Vc_nnodes + 1, Svv_rowp);
+        printf("Svv_cols: ");
+        printVec<int>(Svv_nnzb, Svv_cols);
 
         Svv_rows = new int[Svv_nnzb];
         for (int i = 0; i < Vc_nnodes; i++) {
@@ -2246,8 +2331,8 @@ class FetidpSolver : public BaseSolver {
             d_IEVtoSVV_blocks[k] = nullptr;
         }
 
-        // printf("Vc_nodes: ");
-        // printVec<int>(Vc_nnodes, Vc_nodes);
+        printf("Vc_nodes: ");
+        printVec<int>(Vc_nnodes, Vc_nodes);
 
         std::vector<int> IEVset_blocks_host[4];
         std::vector<int> IEVout_blocks_host[4];
@@ -2272,8 +2357,10 @@ class FetidpSolver : public BaseSolver {
                     }
 
                     if (vc_node < 0) {
-                        printf("ERROR: vertex gnode %d on subdomain %d not found in Vc_nodes\n",
-                               gnode, isd);
+                        printf(
+                            "ERROR: vertex gnode %d on subdomain %d not found in "
+                            "Vc_nodes\n",
+                            gnode, isd);
                         exit(-1);
                     }
 
@@ -2281,10 +2368,10 @@ class FetidpSolver : public BaseSolver {
                 }
             }
 
-            // printf("i_sd %d, sd_iev_vertex_blocks: ", isd);
-            // printVec<int>(sd_iev_vertex_blocks.size(), sd_iev_vertex_blocks.data());
-            // printf("i_sd %d, sd_vc_nodes: ", isd);
-            // printVec<int>(sd_vc_nodes.size(), sd_vc_nodes.data());
+            printf("i_sd %d, sd_iev_vertex_blocks: ", isd);
+            printVec<int>(sd_iev_vertex_blocks.size(), sd_iev_vertex_blocks.data());
+            printf("i_sd %d, sd_vc_nodes: ", isd);
+            printVec<int>(sd_vc_nodes.size(), sd_vc_nodes.data());
 
             const int nsv = static_cast<int>(sd_iev_vertex_blocks.size());
             if (nsv == 0) continue;
@@ -2326,7 +2413,8 @@ class FetidpSolver : public BaseSolver {
 
                     if (svv_block < 0) {
                         printf(
-                            "ERROR: could not find global Svv block for subdomain %d, row %d, "
+                            "ERROR: could not find global Svv block for subdomain %d, row "
+                            "%d, "
                             "col "
                             "%d\n",
                             isd, vc_row, vc_col);
@@ -3024,8 +3112,8 @@ class FetidpSolver : public BaseSolver {
         // to compute the -A_{V,IE} * A_{IE,IE}^{-1} * A_{IE,V} += > S_{VV} second Schur
         // complement inverse term as part of coarse matrix assembly for vertices
         // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
-        // Krylov step so this is similar expense to like 8 Krylov steps (not too bad, but not
-        // trivial)
+        // Krylov step so this is similar expense to like 8 Krylov steps (not too bad, but
+        // not trivial)
         int ncols = 4 * block_dim;
         for (int icol = 0; icol < ncols; icol++) {
             u_IEV.zeroValues();
@@ -3047,12 +3135,12 @@ class FetidpSolver : public BaseSolver {
     //     complement
     //     // inverse term as part of coarse matrix assembly for vertices
 
-    //     // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
-    //     Krylov
+    //     // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve
+    //     per Krylov
     //     // step so this is similar expense to like 8 Krylov steps (not too bad, but not
     //     trivial)
-    //     // TODO : maybe I can find faster way to do sparse mat-mat triangular solves instead
-    //     later?
+    //     // TODO : maybe I can find faster way to do sparse mat-mat triangular solves
+    //     instead later?
 
     //     cudaEvent_t start, stop, e1, e2, e3, e4;
     //     float total_ms = 0.0f, spmv_ms = 0.0f, solve_ms = 0.0f;
@@ -3071,7 +3159,8 @@ class FetidpSolver : public BaseSolver {
     //     int ncols = 4 * block_dim;
     //     for (int icol = 0; icol < ncols; icol++) {
     //         u_IEV.zeroValues();
-    //         setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else 0
+    //         setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else
+    //         0
 
     //         if (print_timing) CHECK_CUDA(cudaEventRecord(e1));
     //         sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
@@ -3116,8 +3205,8 @@ class FetidpSolver : public BaseSolver {
     //         printf("\tcomputeSvvInverseTerm: %.6f ms\n", total_ms);
     //         printf("\t\t2 sparseMatVec total : %.6f ms\n", spmv_ms);
     //         printf("\t\tsolveSubdomainIE total: %.6f ms\n", solve_ms);
-    //         printf("\t\tother total          : %.6f ms\n", total_ms - spmv_ms - solve_ms);
-    //         printf("\t\tacross %d cols or steps here\n", ncols);
+    //         printf("\t\tother total          : %.6f ms\n", total_ms - spmv_ms -
+    //         solve_ms); printf("\t\tacross %d cols or steps here\n", ncols);
 
     //         CHECK_CUDA(cudaEventDestroy(start));
     //         CHECK_CUDA(cudaEventDestroy(stop));
@@ -3273,7 +3362,8 @@ class FetidpSolver : public BaseSolver {
         //     int gnode1 = IE_nodes[IE_node];
         //     int IEV_node = h_IEVtoIE_imap[IE_node];
         //     int gnode2 = IEV_nodes[IEV_node];
-        //     printf("ind %d, IEV_node %d, gnode1 %d, gnode2 %d\n", IE_node, IEV_node, gnode1,
+        //     printf("ind %d, IEV_node %d, gnode1 %d, gnode2 %d\n", IE_node, IEV_node,
+        //     gnode1,
         //            gnode2);
         // }
     }
@@ -3302,8 +3392,8 @@ class FetidpSolver : public BaseSolver {
         // int *h_IEVtoV_imap = DeviceVec<int>(V_nnodes,
         // d_IEVtoV_imap).createHostVec().getPtr(); printf("h_IEVtoV_imap: ");
         // printVec<int>(V_nnodes, h_IEVtoV_imap);
-        // int *h_VctoV_imap = DeviceVec<int>(V_nnodes, d_VctoV_imap).createHostVec().getPtr();
-        // printf("h_VctoV_imap: ");
+        // int *h_VctoV_imap = DeviceVec<int>(V_nnodes,
+        // d_VctoV_imap).createHostVec().getPtr(); printf("h_VctoV_imap: ");
         // printVec<int>(V_nnodes, h_VctoV_imap);
     }
 
@@ -3519,7 +3609,8 @@ class FetidpSolver : public BaseSolver {
     }
 
     void _compute_jump_operators(bool square_domain = true) {
-        // compute +1/0/-1 coefficients from u_IE to lam (with 0 for I and +1/-1 for E edges)
+        // compute +1/0/-1 coefficients from u_IE to lam (with 0 for I and +1/-1 for E
+        // edges)
 
         // compute IE to lam map
         IE_to_lam_map = new int[IE_nnodes];

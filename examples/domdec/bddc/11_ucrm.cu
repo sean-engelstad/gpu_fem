@@ -250,7 +250,7 @@ int main(int argc, char **argv) {
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
 
-    bddc->setup_wing_subdomains(nxe_subdomain_size, nxe_subdomain_size);
+    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size);
     printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
     // return;
 

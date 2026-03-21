@@ -329,6 +329,7 @@ int main(int argc, char **argv) {
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
+    // opts.ncycles = 2;
     opts.ncycles = 50;
     // opts.ncycles = 500;
     opts.print = true;

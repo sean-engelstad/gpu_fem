@@ -27,11 +27,14 @@ from mpi4py import MPI
 from tacs import caps2tacs, pytacs
 import os
 
+# two versions of fuselage
+# PREFIX = "cylinder_fuselage"
+PREFIX = "box_fuselage"
 
 comm = MPI.COMM_WORLD
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
-csm_path = os.path.join(base_dir, "cylinder_fuselage.csm")
+csm_path = os.path.join(base_dir, f"{PREFIX}.csm")
 
 # F2F MODEL and SHAPE MODELS
 # ----------------------------------------
@@ -137,7 +140,7 @@ def num_to_padstr(mynum):
 
 # create the design variables by components now
 # since this mirrors the way TACS creates design variables
-component_groups = ["uskin", "lskin", "lespar", "tespar", "rib"]
+component_groups = ["uskin1", "uskin2", "lskin1", "lskin2", "lespar1", "lespar2", "tespar1", "tespar2", "rib"]
 
 # print(f"{component_groups=}")
 # exit()
@@ -210,7 +213,7 @@ tacs_aim.pre_analysis()
 # can't read BDF + DAT file pair like pynastran..
 
 orig_bdf = os.path.join("capsStruct_0", "Scratch", "tacs", "tacs.dat")
-final_bdf = "cylinder_fuselage_L" + str(args.level) + ".bdf"
+final_bdf = f"{PREFIX}_L" + str(args.level) + ".bdf"
 
 model = BDF()
 model.read_bdf(orig_bdf, xref=True)

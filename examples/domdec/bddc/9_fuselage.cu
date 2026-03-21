@@ -54,14 +54,13 @@ T get_max_disp(HostVec<T> h_soln, int idof = 2) {
 // declare a couple different types of loads..
 template <typename T>
 struct UniformPressure {
-    T q0;
-
-    __HOST_DEVICE__
-    UniformPressure(T q0_) : q0(q0_) {}
+    // T q0;
+    // __HOST_DEVICE__
+    // UniformPressure(T q0_) : q0(q0_) {}
 
     __HOST_DEVICE__
     T operator()(T x, T y, T z) const {
-        return q0;
+        return 1.0;
     }
 };
 
@@ -204,13 +203,10 @@ int main(int argc, char **argv) {
 
     // =================
 
-    printf("TODO : for HSCT case, may need METIS with more general subdomains.. that are not as smooth boundaries? cause mesh more unstructured, RETURNing early\n");
-    return;
     // read the ESP/CAPS => nastran mesh for TACS
     TACSMeshLoader mesh_loader{comm};
-    // std::string fname = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
-    // std::string fname = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
-    std::string fname = "../../ilu/uCRM/CRM_box_2nd.bdf"; // clamped BCs (since only written for clamped rn)
+    std::string fname = "meshes/box_fuselage_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+    // std::string fname = "meshes/cylinder_fuselage_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
     mesh_loader.scanBDFFile(fname.c_str());
     double E = 70e9, nu = 0.3;  // material & thick properties (start thicker first try)
     printf("making assembler for mesh '%s'\n", fname.c_str());
@@ -249,6 +245,7 @@ int main(int argc, char **argv) {
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
 
+    printf("setup wing subdomains\n");
     bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size);
     printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
     // return;
@@ -271,7 +268,9 @@ int main(int argc, char **argv) {
     }
 
     // now compute matrix sparsity, copy maps
+    printf("setup matrix sparsity\n");
     bddc->setup_matrix_sparsity();
+    printf("\tdone with setup matrix sparsity\n");
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
@@ -282,13 +281,16 @@ int main(int argc, char **argv) {
         Svv_bsr_data.compute_full_LU_pattern(10.0);
     }
 
+    printf("setup coarse matrix sparsity\n");
     bddc->setup_coarse_matrix_sparsity();
+    printf("\tdone with setup coarse matrix sparsity\n");
 
     // assemble local FETI-DP blocks
     bddc->assemble_subdomains();
 
     // external load (can add internally)
-    ObliqueShearSineLoad<T> load;
+    // ObliqueShearSineLoad<T> load;
+    UniformPressure<T> load;
     bddc->add_subdomain_fext(load, mag);
 
     bddc->set_IEV_residual(1.0, 0.0, vars);
@@ -335,7 +337,8 @@ int main(int argc, char **argv) {
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
-    opts.ncycles = 50;
+    // opts.ncycles = 50;
+    opts.ncycles = 150;
     // opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
@@ -365,7 +368,6 @@ int main(int argc, char **argv) {
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> IEV_factor_time = start1 - start0;
-
 
     bool gam_fail = gam_solver->solve(gam_rhs, gam, true);
     bddc->get_global_soln(gam, soln);
@@ -472,7 +474,7 @@ int main(int argc, char **argv) {
     }
 
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/fuse_bddc.vtk");
 
     // compare to direct solver (the solution)
     bool compare_direct = true;
@@ -485,9 +487,8 @@ int main(int argc, char **argv) {
 
         // read the ESP/CAPS => nastran mesh for TACS
         TACSMeshLoader mesh_loader2{comm};
-        // std::string fname2 = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
-        // std::string fname2 = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
-        std::string fname2 = "../../ilu/uCRM/CRM_box_2nd.bdf";
+        std::string fname2 = "meshes/box_fuselage_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+        // std::string fname2 = "meshes/cylinder_fuselage_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
         mesh_loader2.scanBDFFile(fname2.c_str());
         printf("making assembler for mesh '%s'\n", fname.c_str());
         
@@ -520,14 +521,14 @@ int main(int argc, char **argv) {
 
         // T lin_max_disp = get_max_disp(soln2);
         auto h_soln3 = soln2.createHostVec();
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/plate_lin.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/fuse_lin.vtk");
 
         // now also compute solution error on host and print to VTK
         auto h_err = HostVec<T>(h_soln3.getSize());
         for (int i = 0; i < h_soln3.getSize(); i++) {
             h_err[i] = h_soln3[i] - h_soln[i];
         }
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/plate_err.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/fuse_err.vtk");
 
         // for (int idof = 0; idof < 6; idof++) {
         //     T orig_nrm = get_max_disp(h_soln, idof);

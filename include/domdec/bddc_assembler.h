@@ -77,11 +77,11 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->temp_lam2 = Vec(this->lam_nnodes * this->block_dim);
     }
 
-    void setup_wing_subdomains(int nxse_, int nyse_) {
+    void setup_tacs_component_subdomains(int nxse_, int nyse_) {
         // call base FETI-DP setup
         bool compute_jump = false;
-        FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_wing_subdomains(nxse_, nyse_,
-                                                                            compute_jump);
+        FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_tacs_component_subdomains(nxse_, nyse_,
+                                                                                      compute_jump);
 
         // TODO: BDDC unique maps/weights for edge averaging
         // printf("\tdone with BDDC outer setup wing subdomains\n");
@@ -239,6 +239,18 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         // similar to FETI-DP mat_vec (flipped), but a bit different
         this->addVecGamtoIEV<SCALED>(gam_rhs, this->f_IEV, 1.0, 0.0);
 
+        // const T *h_fIEV = this->f_IEV.createHostVec().getPtr();
+        // printf("h_fIEV-pc with #IEV = %d:\n", this->IEV_nnodes);
+        // for (int ilam = 0; ilam < this->IEV_nnodes; ilam++) {
+        //     int iglob = this->IEV_nodes[ilam];
+        //     printf("iIEV %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_fIEV[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
+
         // debug check initial V_rhs
         // for vertices in rectangular part (will need to change this for wing case here)
         // TODO : change this part for wing case here..
@@ -247,9 +259,47 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
 
         // IE solve
         this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
+
+        // const T *h_fIE0 = this->f_IE.createHostVec().getPtr();
+        // printf("h_fIE0-pc with #IE = %d:\n", this->IE_nnodes);
+        // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
+        //     int iglob = this->IE_nodes[ilam];
+        //     printf("iIE %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_fIE0[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
+
         this->addVecIEtoIEV(this->f_IE, this->f_IEV, -1.0, 1.0);  // remove IE part
         this->zeroInteriorIE(this->f_IE);
+
+        // const T *h_fIE = this->f_IE.createHostVec().getPtr();
+        // printf("h_fIE-pc with #IE = %d:\n", this->IE_nnodes);
+        // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
+        //     int iglob = this->IE_nodes[ilam];
+        //     printf("iIE %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_fIE[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
+
         this->solveSubdomainIE(this->f_IE, this->u_IE);
+
+        // const T *h_uIE = this->u_IE.createHostVec().getPtr();
+        // printf("h_uIE-pc:\n");
+        // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
+        //     int iglob = this->IE_nodes[ilam];
+        //     printf("iIE %d, glob node %d: ", ilam, iglob);
+        //     for (int idof = 2; idof < 5; idof++) {
+        //         int lam_dof = this->block_dim * ilam + idof;
+        //         printf("%.6e,", h_uIE[lam_dof]);
+        //     }
+        //     printf("\n");
+        // }
 
         this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 0.0, this->f_IEV);
