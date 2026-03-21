@@ -67,9 +67,16 @@ select add 17
 
 attribute capsConstraint $bndry
 
+# make sure you also get the nodes adjacent to edge
+
+
+udprim editAttr filename <<
+ NODE ADJ2EDGE capsConstraint=bndry
+ SET capsConstraint=bndry
+>>
 
 select body
 attribute capsAIM $tacsAIM;egadsTessAIM
 
 end
-|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||

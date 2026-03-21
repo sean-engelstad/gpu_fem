@@ -169,7 +169,9 @@ def num_to_padstr(mynum):
 
 # create the design variables by components now
 # since this mirrors the way TACS creates design variables
-component_groups = ["rib" + num_to_padstr(irib) for irib in range(1, nribs + 1)]
+# component_groups = ["rib" + num_to_padstr(irib) for irib in range(1, nribs + 1)]
+# removed rib1 from BDDC case
+component_groups = ["rib" + num_to_padstr(irib) for irib in range(2, nribs + 1)]
 for prefix in ["spLE", "spTE", "uOML", "lOML"]:
     component_groups += [prefix + num_to_padstr(iOML) for iOML in range(1, nOML + 1)]
 component_groups = sorted(component_groups)

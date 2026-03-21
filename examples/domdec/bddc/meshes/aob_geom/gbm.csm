@@ -52,7 +52,15 @@ ifthen view:flow EQ 1
     udprim $/wingAeroHalf twist5 twist5 twist6 twist6 twist7 twist7 twist8 twist8 twist9 twist9
 endif
 
+# needed for special BDDC case
+select face 
+select sub $capsGroup $rib1
+extract @sellist
+
+select body
+attribute capsAIM $tacsAIM;egadsTessAIM
+
 end
 |
 |
-|
+||
