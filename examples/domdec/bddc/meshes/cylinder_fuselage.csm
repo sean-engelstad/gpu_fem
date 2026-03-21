@@ -1,0 +1,81 @@
+# cylinder with internal ribs as a fuselage type structure
+
+cylinder 0 0 0 3 0 0 1.0
+box -1 -0.5 -3  5 1 6
+intersect
+#--- throw 999
+store cylinder
+
+restore cylinder
+box 1.5 -5 -5 0 10 10
+
+select face
+attribute capsGroup $rib
+#--- box 1 0 -5 1 0 10
+#--- subtract
+#--- throw 999
+
+intersect
+
+restore cylinder
+#--- throw 999
+select face
+select sub 2
+select sub 4
+extract @sellist
+
+
+
+union
+
+
+#--- throw 999
+
+select face 10
+attribute capsGroup $uskin1
+select face 9
+attribute capsGroup $uskin2
+select face 7
+attribute capsGroup $lskin1
+select face 2
+attribute capsGroup $lskin2
+select face 13
+select add 12
+attribute capsGroup $lespar1
+select face 11
+select add 6
+attribute capsGroup $lespar2
+select face 3
+select add 8
+attribute capsGroup $tespar1
+select face 5
+select add 1
+attribute capsGroup $tespar2
+
+
+
+#--- throw 999
+
+select edge 26
+select add 29
+select add 30
+
+select add 20
+select add 9
+select add 22
+
+select add 24
+select add 27
+select add 17
+
+select add 16
+select add 1
+select add 6
+attribute capsConstraint $bndry
+
+
+select body
+attribute capsAIM $tacsAIM;egadsTessAIM
+
+end
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||

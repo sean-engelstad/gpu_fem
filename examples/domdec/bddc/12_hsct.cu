@@ -110,8 +110,8 @@ int main(int argc, char **argv) {
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
 
-    // int level = 0; // wing mesh level
-    int level = 1;
+    int level = 0; // wing mesh level
+    // int level = 1;
     int nxe_subdomain_size = 4;
     // int nxe_subdomain_size = 8;
     T omega;
@@ -204,9 +204,13 @@ int main(int argc, char **argv) {
 
     // =================
 
+    printf("TODO : for HSCT case, may need METIS with more general subdomains.. that are not as smooth boundaries? cause mesh more unstructured, RETURNing early\n");
+    return;
     // read the ESP/CAPS => nastran mesh for TACS
     TACSMeshLoader mesh_loader{comm};
-    std::string fname = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+    // std::string fname = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+    // std::string fname = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+    std::string fname = "../../ilu/uCRM/CRM_box_2nd.bdf"; // clamped BCs (since only written for clamped rn)
     mesh_loader.scanBDFFile(fname.c_str());
     double E = 70e9, nu = 0.3;  // material & thick properties (start thicker first try)
     printf("making assembler for mesh '%s'\n", fname.c_str());
@@ -247,7 +251,7 @@ int main(int argc, char **argv) {
 
     bddc->setup_wing_subdomains(nxe_subdomain_size, nxe_subdomain_size);
     printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
-    return;
+    // return;
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
@@ -481,7 +485,9 @@ int main(int argc, char **argv) {
 
         // read the ESP/CAPS => nastran mesh for TACS
         TACSMeshLoader mesh_loader2{comm};
-        std::string fname2 = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+        // std::string fname2 = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+        // std::string fname2 = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+        std::string fname2 = "../../ilu/uCRM/CRM_box_2nd.bdf";
         mesh_loader2.scanBDFFile(fname2.c_str());
         printf("making assembler for mesh '%s'\n", fname.c_str());
         

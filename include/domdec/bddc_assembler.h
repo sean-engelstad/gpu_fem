@@ -79,13 +79,17 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
 
     void setup_wing_subdomains(int nxse_, int nyse_) {
         // call base FETI-DP setup
-        FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_wing_subdomains(nxse_, nyse_);
+        bool compute_jump = false;
+        FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_wing_subdomains(nxse_, nyse_,
+                                                                            compute_jump);
 
         // TODO: BDDC unique maps/weights for edge averaging
+        // printf("\tdone with BDDC outer setup wing subdomains\n");
 
         // build vectors of size gam
         n_edge = this->lam_nnodes;
         this->ngam = n_edge + this->Vc_nnodes;
+        // printf("n_edge %d, ngam %d\n", n_edge, this->ngam);
         gam_nodes = new int[this->ngam];
 
         for (int i = 0; i < n_edge; i++) {
@@ -238,7 +242,8 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         // debug check initial V_rhs
         // for vertices in rectangular part (will need to change this for wing case here)
         // TODO : change this part for wing case here..
-        this->addVecIEVtoVc(this->f_IEV, this->f_V, 0.25, 0.0);
+        // this->addVecIEVtoVc(this->f_IEV, this->f_V, 0.25, 0.0);
+        this->template addVecIEVtoVc<SCALED>(this->f_IEV, this->f_V, 1.0, 0.0);
 
         // IE solve
         this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
@@ -264,7 +269,8 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
 
         // add u_V into u_IEV
         // TODO : generalize better than 0.25 here (for wing case)
-        this->addVecVctoIEV(this->u_V, this->u_IEV, 0.25, 1.0);
+        // this->addVecVctoIEV(this->u_V, this->u_IEV, 0.25, 1.0);
+        this->template addVecVctoIEV<SCALED>(this->u_V, this->u_IEV, 1.0, 1.0);
 
         // now IEV to gam with averaging
         this->addVecIEVtoGam<SCALED>(this->u_IEV, gam, 1.0, 0.0);
@@ -299,14 +305,15 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         //     }
         //     printf("\n");
         // }
+        const bool SCALED = true;
 
         // set IE values from interface to IEV subdomains
         this->addVecGamtoIEV(gam, this->u_IEV, 1.0, 0.0);
 
         // first add the solved E and V DOF into IE and V parts (no scaling 1.0)
         // this->addVecGamtoIEV()
-
-        this->addVecIEVtoVc(this->u_IEV, this->u_V, 0.25, 0.0);
+        // this->addVecIEVtoVc(this->u_IEV, this->u_V, 0.25, 0.0);
+        this->template addVecIEVtoVc<SCALED>(this->u_IEV, this->u_V, 1.0, 0.0);
         this->addVecIEVtoI(this->res_IEV, this->f_I, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 0.0, this->f_IEV);
         this->addVecIEVtoI(this->f_IEV, this->f_I, 1.0, 1.0);
@@ -371,8 +378,15 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->addVecIEVtoIE(vec_IEV, this->temp_IE, alpha, 0.0);
         addVecIEtoGam(this->temp_IE, this->temp_lam, 1.0, 0.0);
 
-        T a = SCALED ? 0.5 : 1.0;
         int edge_size = this->lam_nnodes * this->block_dim;
+        if constexpr (SCALED) {
+            dim3 block(32), grid((edge_size + 31) / 32);
+            k_subdomain_normalize_vec_inout<T><<<grid, block>>>(
+                this->lam_nnodes, this->block_dim, this->d_edge_nsd, this->temp_lam.getPtr());
+        }
+
+        // T a = (SCALED ? 0.5 : 1.0);
+        T a = 1.0;
         CHECK_CUBLAS(cublasDaxpy(this->cublasHandle, edge_size, &a, this->temp_lam.getPtr(), 1,
                                  vec_gam.getPtr(), 1));
 
@@ -394,11 +408,16 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->temp_lam.zeroValues();
         this->temp_V.zeroValues();
 
-        T a = SCALED ? 0.5 : 1.0;
-        a *= alpha;
+        // T a = (SCALED ? 0.5 : 1.0) * alpha;
+        T a = alpha;
         int edge_size = this->lam_nnodes * this->block_dim;
         CHECK_CUBLAS(cublasDaxpy(this->cublasHandle, edge_size, &a, vec_gam.getPtr(), 1,
                                  this->temp_lam.getPtr(), 1));
+        if constexpr (SCALED) {
+            dim3 block(32), grid((edge_size + 31) / 32);
+            k_subdomain_normalize_vec_inout<T><<<grid, block>>>(
+                this->lam_nnodes, this->block_dim, this->d_edge_nsd, this->temp_lam.getPtr());
+        }
 
         addVecGamtoIE(this->temp_lam, this->temp_IE, 1.0, 0.0);
         this->addVecIEtoIEV(this->temp_IE, vec_IEV, 1.0, 0.0);

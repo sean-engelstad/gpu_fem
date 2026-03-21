@@ -8,7 +8,7 @@ import numpy as np, scipy.sparse as sp
 
 import sys
 sys.path.append("../feti_dp/")
-from src import BDDC_Assembler, MITCShellElement
+from src import BDDC_Assembler, MITCShellElement, BDDC_EdgeAvg_Assembler
 from src import RichardsonSolver, ILU0Preconditioner, ExactSparseSolver, ILUTPreconditioner
 
 import sys
@@ -24,18 +24,29 @@ from krylov import right_pcg_matfree
 # nxe, nxs = 32, 4
 # nxe, nxs = 16, 2
 # nxe, nxs = 16, 4
-nxe, nxs = 32, 8
+# nxe, nxs = 32, 8
+nxe, nxs = 16, 4
 
-thick = 1e-1
+# thick = 1e-1
 # thick = 1e-2
 # thick = 1e-3
+thick = 1e-4
+
+# extra constraints
+# edge_averages = False
+edge_averages = True
+
+if edge_averages:
+    ASSEMBLER = BDDC_EdgeAvg_Assembler
+else:
+    ASSEMBLER = BDDC_Assembler
 
 
 m, n = 2, 2
 # m, n = 2, 3
 
 radius = 1.0
-xs_load_fcn = gambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
+xs_load_fcn = lambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
 def xyz_load_fcn(x,y,z):
     th = np.arctan2(y, z)
     dth = th - np.arctan2(-1.0,0)
@@ -43,13 +54,13 @@ def xyz_load_fcn(x,y,z):
     return xs_load_fcn(x, s)
 
 ELEMENT = MITCShellElement()
-assembler = BDDC_Assembler(
+assembler = ASSEMBLER(
     ELEMENT=ELEMENT,
     thick=thick,
     nxe=nxe, nxs=nxs, nys=nxs,
     # nxe=4, nxs=2, nys=2, # DEBUG inputs
     # nxe=6, nxs=3, nys=3,
-    cgamped=True,
+    clamped=True,
     # cgamped=False,
     load_fcn=xyz_load_fcn,    
     # would be nice if coarse space could be solved local (but that doesn't seem to work well, need to assemble it with sum of local Schur complements)
@@ -92,5 +103,5 @@ rel_nrm = err_nrm / orig_nrm
 print(f"{err_nrm=:.4e} {orig_nrm=:.4e} {rel_nrm=:.4e}")
 
 # then plot the solution
-assembler.u = global_soln.copy() # store in assembler for plot
-assembler.plot_disp()
+# assembler.u = global_soln.copy() # store in assembler for plot
+# assembler.plot_disp()

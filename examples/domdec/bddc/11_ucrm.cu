@@ -81,6 +81,11 @@ struct ObliqueShearSineLoad {
 int main(int argc, char **argv) {
     // NOTE : this version uses inner direct solvers
 
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
+
+
     using T = double;
     using Director = LinearizedRotation<T>;
     constexpr bool has_ref_axis = false;
@@ -104,14 +109,11 @@ int main(int argc, char **argv) {
     using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH, true>;
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
-    // can't run this small a problem (1 vertex with S_VV coarse solver for some reason)
-    // int nxe = 4, nxe_subdomain_size = 2;
-    // int nxe = 6, nxe_subdomain_size = 2;
-    // int nxe = 128, nxe_subdomain_size = 4; // this problem has optimal runtime for 4x4 subdomains
-    // int nxe = 128, nxe_subdomain_size = 8;
-    int nxe = 256, nxe_subdomain_size = 8; // 8 subdomains slightly faster (cause shrinks coarse problem) for local + HPC
-    // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
-    // for the coarse problem..
+
+    int level = 0; // wing mesh level
+    // int level = 1;
+    int nxe_subdomain_size = 4;
+    // int nxe_subdomain_size = 8;
     T omega;
     int nsmooth, fill_level;
     T thick = 1e-3;
@@ -136,11 +138,11 @@ int main(int argc, char **argv) {
         char* arg = argv[i];
         to_lowercase(arg);
 
-        if (strcmp(arg, "--nxe") == 0) {
+        if (strcmp(arg, "--level") == 0) {
             if (i + 1 < argc) {
-                nxe = std::atoi(argv[++i]);
+                level = std::atoi(argv[++i]);
             } else {
-                std::cerr << "Missing value for --nxe\n";
+                std::cerr << "Missing value for --level\n";
                 return 1;
             }
         } else if (strcmp(arg, "--thick") == 0) {
@@ -202,16 +204,20 @@ int main(int argc, char **argv) {
 
     // =================
 
-    int nye = nxe;
-    int nxs = nxe / nxe_subdomain_size;
-    int nys = nxe / nxe_subdomain_size;
-    double Lx = 1.0, Ly = 1.0;
-    double E = 70e9, nu = 0.3, rho = 2500, ys = 350e6;
-    // int nxe_per_comp = nxe, nye_per_comp = nye;
-    int nxe_per_comp = nxe / 2, nye_per_comp = nye / 2;
+    printf("TODO : for uCRM case, may need METIS with more general subdomains.. that are not as smooth boundaries? cause mesh more unstructured, RETURNing early\n");
+    return;
 
-    auto assembler = createPlateClampedAssembler<Assembler>(
-        nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+    // read the ESP/CAPS => nastran mesh for TACS
+    TACSMeshLoader mesh_loader{comm};
+    // std::string fname = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+    // std::string fname = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+    std::string fname = "../../ilu/uCRM/CRM_box_2nd.bdf"; // clamped BCs (since only written for clamped rn)
+    mesh_loader.scanBDFFile(fname.c_str());
+    double E = 70e9, nu = 0.3;  // material & thick properties (start thicker first try)
+    printf("making assembler for mesh '%s'\n", fname.c_str());
+    
+    // create the TACS Assembler from the mesh loader
+    auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
 
     // auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
@@ -243,9 +249,10 @@ int main(int argc, char **argv) {
     bool print_timing = true; // profiling
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
-    bool close_hoop = false; // true for cylinder case (not cylindrical panel)
-    bddc->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
-    // bddc->setup_wing_subdomains(nxe_subdomain_size, nxe_subdomain_size); // debug this method (for wing case)
+
+    bddc->setup_wing_subdomains(nxe_subdomain_size, nxe_subdomain_size);
+    printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
+    // return;
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
@@ -477,8 +484,16 @@ int main(int argc, char **argv) {
         assembler.add_fext_fast(load, mag, loads);
         assembler.apply_bcs(loads);
 
-        auto assembler2 = createPlateClampedAssembler<Assembler>(
-            nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+        // read the ESP/CAPS => nastran mesh for TACS
+        TACSMeshLoader mesh_loader2{comm};
+        // std::string fname2 = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+        // std::string fname2 = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+        std::string fname2 = "../../ilu/uCRM/CRM_box_2nd.bdf";
+        mesh_loader2.scanBDFFile(fname2.c_str());
+        printf("making assembler for mesh '%s'\n", fname.c_str());
+        
+        // create the TACS Assembler from the mesh loader
+        auto assembler2 = Assembler::createFromBDF(mesh_loader2, Data(E, nu, thick));
 
         // BSR factorization (need to change it to )
         auto& bsr_data = assembler2.getBsrData();
