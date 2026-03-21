@@ -470,7 +470,7 @@ int main(int argc, char **argv) {
     //     int I_fill_added      = I_nnzb - I_nofill_nnzb;
     //     int coarse_fill_added = coarse_nnzb - coarse_nofill_nnzb;
 
-    //     printf("\nFETI-DP memory breakdown:\n");
+    //     printf("\nBDDC memory breakdown:\n");
     //     printf("  kmat                 : nnzb = %d, mem = %.4f MB\n", kmat_nnzb, kmat_mem_mb);
     //     printf("  IEV                  : nnzb = %d, mem = %.4f MB\n", IEV_nnzb, IEV_mem_mb);
     //     printf("  IE                   : nnzb = %d, mem = %.4f MB\n", IE_nnzb, IE_mem_mb);

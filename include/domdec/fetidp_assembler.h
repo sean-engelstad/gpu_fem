@@ -2209,10 +2209,10 @@ class FetidpSolver : public BaseSolver {
         //     }
         // }
 
-        printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
-        printVec<int>(Vc_nnodes + 1, Svv_rowp);
-        printf("Svv_cols: ");
-        printVec<int>(Svv_nnzb, Svv_cols);
+        // printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
+        // printVec<int>(Vc_nnodes + 1, Svv_rowp);
+        // printf("Svv_cols: ");
+        // printVec<int>(Svv_nnzb, Svv_cols);
 
         Svv_rows = new int[Svv_nnzb];
         for (int i = 0; i < Vc_nnodes; i++) {
@@ -2331,8 +2331,8 @@ class FetidpSolver : public BaseSolver {
             d_IEVtoSVV_blocks[k] = nullptr;
         }
 
-        printf("Vc_nodes: ");
-        printVec<int>(Vc_nnodes, Vc_nodes);
+        // printf("Vc_nodes: ");
+        // printVec<int>(Vc_nnodes, Vc_nodes);
 
         std::vector<int> IEVset_blocks_host[4];
         std::vector<int> IEVout_blocks_host[4];
@@ -2368,10 +2368,10 @@ class FetidpSolver : public BaseSolver {
                 }
             }
 
-            printf("i_sd %d, sd_iev_vertex_blocks: ", isd);
-            printVec<int>(sd_iev_vertex_blocks.size(), sd_iev_vertex_blocks.data());
-            printf("i_sd %d, sd_vc_nodes: ", isd);
-            printVec<int>(sd_vc_nodes.size(), sd_vc_nodes.data());
+            // printf("i_sd %d, sd_iev_vertex_blocks: ", isd);
+            // printVec<int>(sd_iev_vertex_blocks.size(), sd_iev_vertex_blocks.data());
+            // printf("i_sd %d, sd_vc_nodes: ", isd);
+            // printVec<int>(sd_vc_nodes.size(), sd_vc_nodes.data());
 
             const int nsv = static_cast<int>(sd_iev_vertex_blocks.size());
             if (nsv == 0) continue;

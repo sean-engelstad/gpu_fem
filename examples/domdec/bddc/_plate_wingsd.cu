@@ -443,7 +443,7 @@ int main(int argc, char **argv) {
         int coarse_fill_added = coarse_nnzb - coarse_nofill_nnzb;
         T overall_fill_ratio = total_stored_nnzb * 1.0 / kmat_nnzb;
 
-        printf("\nFETI-DP memory breakdown:\n");
+        printf("\nBDDC memory breakdown:\n");
         printf("  kmat                 : nnzb = %d, mem = %.4f MB\n", kmat_nnzb, kmat_mem_mb);
         printf("  IEV                  : nnzb = %d, mem = %.4f MB\n", IEV_nnzb, IEV_mem_mb);
         printf("  IE                   : nnzb = %d, mem = %.4f MB\n", IE_nnzb, IE_mem_mb);

@@ -1274,7 +1274,7 @@ int TACSMeshLoader::scanBDFFile(const char *file_name) {
 
     // Distribute the component numbers and descritpions
     MPI_Bcast(&num_components, 1, MPI_INT, root, comm);
-    printf("num_components %d\n", num_components);
+    // printf("num_components %d\n", num_components);
     if (rank != root) {
         component_elems = new char[9 * num_components];
         component_descript = new char[33 * num_components];

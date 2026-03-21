@@ -245,9 +245,9 @@ int main(int argc, char **argv) {
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
 
-    printf("setup wing subdomains\n");
+    // printf("setup wing subdomains\n");
     bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size);
-    printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
+    // printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
     // return;
 
     // perform LU fillin and reordering (optional)
@@ -268,9 +268,9 @@ int main(int argc, char **argv) {
     }
 
     // now compute matrix sparsity, copy maps
-    printf("setup matrix sparsity\n");
+    // printf("setup matrix sparsity\n");
     bddc->setup_matrix_sparsity();
-    printf("\tdone with setup matrix sparsity\n");
+    // printf("\tdone with setup matrix sparsity\n");
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
@@ -281,9 +281,9 @@ int main(int argc, char **argv) {
         Svv_bsr_data.compute_full_LU_pattern(10.0);
     }
 
-    printf("setup coarse matrix sparsity\n");
+    // printf("setup coarse matrix sparsity\n");
     bddc->setup_coarse_matrix_sparsity();
-    printf("\tdone with setup coarse matrix sparsity\n");
+    // printf("\tdone with setup coarse matrix sparsity\n");
 
     // assemble local FETI-DP blocks
     bddc->assemble_subdomains();
@@ -391,6 +391,7 @@ int main(int argc, char **argv) {
     printf("  PCG solve             : %.4e s\n", solve_time.count());
     printf("  --------------------------------\n");
     printf("  total setup + solve   : %.4e s\n\n", total_time.count());
+    int kmat_nnzb;
 
     if (print_mem) {
         // get memory usage
@@ -398,7 +399,7 @@ int main(int argc, char **argv) {
         double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
 
         // nnzb counts
-        int kmat_nnzb   = kmat.getBsrData().nnzb;
+        kmat_nnzb   = kmat.getBsrData().nnzb;
         int IEV_nnzb    = bddc->kmat_IEV->getBsrData().nnzb;
         int IE_nnzb     = IE_bsr_data.nnzb;
         int I_nnzb      = I_bsr_data.nnzb;
@@ -446,25 +447,12 @@ int main(int argc, char **argv) {
         int coarse_fill_added = coarse_nnzb - coarse_nofill_nnzb;
         T overall_fill_ratio = total_stored_nnzb * 1.0 / kmat_nnzb;
 
-        printf("\nFETI-DP memory breakdown:\n");
-        printf("  kmat                 : nnzb = %d, mem = %.4f MB\n", kmat_nnzb, kmat_mem_mb);
-        printf("  IEV                  : nnzb = %d, mem = %.4f MB\n", IEV_nnzb, IEV_mem_mb);
-        printf("  IE                   : nnzb = %d, mem = %.4f MB\n", IE_nnzb, IE_mem_mb);
-        printf("    nofill             : %d\n", IE_nofill_nnzb);
-        printf("    fill added         : %d\n", IE_fill_added);
-        printf("    fill ratio         : %.4f\n", IE_fill_ratio);
-        printf("  I                    : nnzb = %d, mem = %.4f MB\n", I_nnzb, I_mem_mb);
-        printf("    nofill             : %d\n", I_nofill_nnzb);
-        printf("    fill added         : %d\n", I_fill_added);
-        printf("    fill ratio         : %.4f\n", I_fill_ratio);
-        printf("  coarse S_VV          : nnzb = %d, mem = %.4f MB\n", coarse_nnzb, coarse_mem_mb);
-        printf("    nofill             : %d\n", coarse_nofill_nnzb);
-        printf("    fill added         : %d\n", coarse_fill_added);
-        printf("    fill ratio         : %.4f\n", coarse_fill_ratio);
-        printf("  --------------------------------\n");
-        printf("  total stored nnzb    : %lld\n", total_stored_nnzb);
-        printf("  total memory         : %.4f MB\n", total_mem_mb);
-        printf("    overall fill ratio : %.4f\n\n", overall_fill_ratio);
+        printf("\nBDDC mem: total %.2f MB (nnzb=%lld, fill=%.2f)\n",
+            total_mem_mb, total_stored_nnzb, overall_fill_ratio);
+
+        printf("  K:%d | IEV:%d | IE:%d(%.2f) | I:%d(%.2f) | SVV:%d(%.2f)\n",
+            kmat_nnzb, IEV_nnzb, IE_nnzb, IE_fill_ratio,
+            I_nnzb, I_fill_ratio, coarse_nnzb, coarse_fill_ratio);
 
     }
 
@@ -517,7 +505,17 @@ int main(int argc, char **argv) {
         auto end3 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> solve_time_dir = end3 - start3;
 
+
+        size_t bytes_per_double = sizeof(double);
+        double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
+        int LU_nnzb = kmat2.getBsrData().nnzb;
+        double LU_mat_mem   = bytes_per_block * static_cast<double>(LU_nnzb)   / 1024.0 / 1024.0;
+        double LU_fill = LU_nnzb * 1.0 / kmat_nnzb;
+        int nvars = assembler2.get_num_vars();
+
         printf("BDDC solve time in %.4e sec, direct in %.4e sec\n", total_time.count(), solve_time_dir.count());
+        printf("\tLU mat mem %.2f MB (nnzb=%d, fill=%.2f)\n", LU_mat_mem, LU_nnzb, LU_fill);
+        printf("\t#DOF = %d\n", nvars);
 
         // T lin_max_disp = get_max_disp(soln2);
         auto h_soln3 = soln2.createHostVec();
@@ -538,7 +536,7 @@ int main(int argc, char **argv) {
         // }
         
         // now compute the residuals of each..
-        int nvars = assembler2.get_num_vars();
+        // int nvars = assembler2.get_num_vars();
         assembler2.set_variables(soln2);
         assembler2.add_residual_fast(res);
         T a = -1.0;

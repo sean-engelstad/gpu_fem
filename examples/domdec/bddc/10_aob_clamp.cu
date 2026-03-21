@@ -268,9 +268,9 @@ int main(int argc, char **argv) {
     }
 
     // now compute matrix sparsity, copy maps
-    printf("setup matrix sparsity\n");
+    // printf("setup matrix sparsity\n");
     bddc->setup_matrix_sparsity();
-    printf("\tdone with setup matrix sparsity\n");
+    // printf("\tdone with setup matrix sparsity\n");
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
@@ -281,9 +281,9 @@ int main(int argc, char **argv) {
         Svv_bsr_data.compute_full_LU_pattern(10.0);
     }
 
-    printf("setup coarse matrix sparsity\n");
+    // printf("setup coarse matrix sparsity\n");
     bddc->setup_coarse_matrix_sparsity();
-    printf("\tdone with setup coarse matrix sparsity\n");
+    // printf("\tdone with setup coarse matrix sparsity\n");
 
     // assemble local FETI-DP blocks
     bddc->assemble_subdomains();
@@ -446,25 +446,12 @@ int main(int argc, char **argv) {
         int coarse_fill_added = coarse_nnzb - coarse_nofill_nnzb;
         T overall_fill_ratio = total_stored_nnzb * 1.0 / kmat_nnzb;
 
-        printf("\nFETI-DP memory breakdown:\n");
-        printf("  kmat                 : nnzb = %d, mem = %.4f MB\n", kmat_nnzb, kmat_mem_mb);
-        printf("  IEV                  : nnzb = %d, mem = %.4f MB\n", IEV_nnzb, IEV_mem_mb);
-        printf("  IE                   : nnzb = %d, mem = %.4f MB\n", IE_nnzb, IE_mem_mb);
-        printf("    nofill             : %d\n", IE_nofill_nnzb);
-        printf("    fill added         : %d\n", IE_fill_added);
-        printf("    fill ratio         : %.4f\n", IE_fill_ratio);
-        printf("  I                    : nnzb = %d, mem = %.4f MB\n", I_nnzb, I_mem_mb);
-        printf("    nofill             : %d\n", I_nofill_nnzb);
-        printf("    fill added         : %d\n", I_fill_added);
-        printf("    fill ratio         : %.4f\n", I_fill_ratio);
-        printf("  coarse S_VV          : nnzb = %d, mem = %.4f MB\n", coarse_nnzb, coarse_mem_mb);
-        printf("    nofill             : %d\n", coarse_nofill_nnzb);
-        printf("    fill added         : %d\n", coarse_fill_added);
-        printf("    fill ratio         : %.4f\n", coarse_fill_ratio);
-        printf("  --------------------------------\n");
-        printf("  total stored nnzb    : %lld\n", total_stored_nnzb);
-        printf("  total memory         : %.4f MB\n", total_mem_mb);
-        printf("    overall fill ratio : %.4f\n\n", overall_fill_ratio);
+        printf("\nBDDC mem: total %.2f MB (nnzb=%lld, fill=%.2f)\n",
+            total_mem_mb, total_stored_nnzb, overall_fill_ratio);
+
+        printf("  K:%d | IEV:%d | IE:%d(%.2f) | I:%d(%.2f) | SVV:%d(%.2f)\n",
+            kmat_nnzb, IEV_nnzb, IE_nnzb, IE_fill_ratio,
+            I_nnzb, I_fill_ratio, coarse_nnzb, coarse_fill_ratio);
 
     }
 
