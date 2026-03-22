@@ -16,6 +16,8 @@
 #include "multigrid/solvers/direct/cusp_directLU.h"
 
 #include "domdec/bddc_assembler.h"
+#include "multigrid/grid.h"
+#include "multigrid/solvers/krylov/bsr_pcg.h"
 #include "multigrid/solvers/krylov/bsr_pcg_matfree.h"
 
 void to_lowercase(char *str) {
@@ -102,14 +104,15 @@ int main(int argc, char **argv) {
 
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
     using BDDC = BddcSolver<T, Assembler, VecType, BsrMat>;
-    // const bool MULTI_SMOOTH = true;
-    const bool MULTI_SMOOTH = false; // often not MULTI_SMOOTH is better..
-    using InnerSolver = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH>;
-    using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH, true>;
+    using InnerSolver = CusparseMGDirectLU<T, Assembler>;
+    using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, true>;
+    using DUMMY = InnerSolver;
+    using GRID = SingleGrid<Assembler, DUMMY, DUMMY, NONE>; // GRID class largely unused
+    using KIPCG = PCGSolver<T, GRID>;
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
 
-    int level = 0; // wing mesh level
+    int level = 2; // wing mesh level
     // int level = 1;
     // int nxe_subdomain_size = 4;
     int nxe_subdomain_size = 8;
@@ -130,10 +133,7 @@ int main(int argc, char **argv) {
     // 2) or if full LU fillin
     // think I actually need to run with full direct fillin (cause otherwise solution recovery is wrong)
     omega = 1.0, nsmooth = 1, fill_level = -1; // -1 indicates full LU fillin
-
-    if (!MULTI_SMOOTH) {
-        printf("NOTE: MULTI_SMOOTH is false, so omega, nsmooth inputs are ignored.\n");
-    }
+    // omega = 0.5, nsmooth = 1, fill_level = -1; // -1 indicates full LU fillin
 
     for (int i = 1; i < argc; ++i) {
         char* arg = argv[i];
@@ -213,10 +213,10 @@ int main(int argc, char **argv) {
         printf("subdomain size %d too large for level 0, changing to 4\n", nxe_subdomain_size);
         nxe_subdomain_size = 4;
     }
-    if (nxe_subdomain_size < 16 && level == 4) {
-        printf("subdomain size %d too large for level 4, changing to 16, not sure why need this\n", nxe_subdomain_size);
-        nxe_subdomain_size = 16;
-    }
+    // if (nxe_subdomain_size < 16 && level == 4) {
+    //     printf("subdomain size %d too large for level 4, changing to 16, not sure why need this\n", nxe_subdomain_size);
+    //     nxe_subdomain_size = 16;
+    // }
 
 
     // =================
@@ -243,6 +243,7 @@ int main(int argc, char **argv) {
     auto soln2 = assembler.createVarsVec();
     auto vars = assembler.createVarsVec();
     auto res = assembler.createVarsVec();
+    auto loads = assembler.createVarsVec();
 
     // kmat assembly (not actually needed here, but is needed for the nonlinear problem))
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -291,17 +292,21 @@ int main(int argc, char **argv) {
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
     auto &IE_bsr_data = bddc->IE_bsr_data;
-    I_bsr_data.AMD_reordering(); 
     if (fill_level != -1) { 
+        I_bsr_data.RCM_reordering();
+        I_bsr_data.qorder_reordering(0.5);
         I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
     } else {
+        I_bsr_data.AMD_reordering(); 
         I_bsr_data.compute_full_LU_pattern(10.0);
     }
 
-    IE_bsr_data.AMD_reordering(); 
     if (fill_level != -1) { 
+        IE_bsr_data.RCM_reordering();
+        IE_bsr_data.qorder_reordering(0.5);
         IE_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
     } else {
+        IE_bsr_data.AMD_reordering(); 
         IE_bsr_data.compute_full_LU_pattern(10.0);
     }
 
@@ -312,10 +317,12 @@ int main(int argc, char **argv) {
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
-    Svv_bsr_data.AMD_reordering();
     if (fill_level != -1) { 
+        Svv_bsr_data.RCM_reordering();
+        Svv_bsr_data.qorder_reordering(0.5);
         Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
     } else {
+        Svv_bsr_data.AMD_reordering();
         Svv_bsr_data.compute_full_LU_pattern(10.0);
     }
 
@@ -338,35 +345,50 @@ int main(int argc, char **argv) {
     // ----------------------------------------
     //
     // Example sketch only; replace with your actual solver classes:
+
+    if (fill_level == -1) {
+        // setup direct solver
+        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+        auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
+        auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
     
-    // just LU allowed for IE and I solvers to reduce mem footprint (1/2 as much memory for them)
-    //   means only the LU factor is stored, not original matrix as well
-    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
-    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-    // note assembler not really used in S_VV here or above classes either.. (and def not for size)
-    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
-    // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
+        // factor each solver
+        ie_solver->factor();
+        i_solver->factor();
+
+        bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
+
+        bddc->assemble_coarse_problem();
+        v_solver->factor();    
+
+    } else {
+        // setup incomplete solvers
+        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+        auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
+        auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+       
+        // factor each solver
+        ie_solver->factor();
+        i_solver->factor();
+
+        // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
+        SolverOptions ki_opts;
+        ki_opts.ncycles = 50;
+        // opts.ncycles = 500;
+        ki_opts.print = true;
+        ki_opts.print_freq = 5;
+        ki_opts.debug = true;
+        ki_opts.rtol = 1e-15;
+        ki_opts.atol = 1e-30;
+
+        auto grid = new GRID(assembler, nullptr, nullptr, *bddc->getKmatI(), loads, cublasHandle, cusparseHandle);
+        auto i_krylov = new KIPCG(cublasHandle, cusparseHandle, grid, i_solver, ki_opts, 0, bddc->getInvars());
+        bddc->set_inner_solvers(ie_solver, i_solver, v_solver, i_krylov);
+
+        bddc->assemble_coarse_problem();
+        v_solver->factor();    
+    }
     
-    
-    bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
-
-    // if (nxe < 10) {
-    //     // DEBUG small matrices
-    //     bool print_IEV = true; // already verified
-    //     bool print_IE = false; // already verified 
-    //     bool print_I = false; // already verified now
-    //     bddc->debug_IEV_matrices(print_IEV, print_IE, print_I);
-    // }
-
-    // factor each solver
-    ie_solver->factor();
-    i_solver->factor();
-
-    // then assemble coarse problem (as it uses IE solver) before factoring v_solver
-    bddc->assemble_coarse_problem();
-    // bddc->debug_SVV_matrix();
-
-    v_solver->factor();    
 
     // lambda rhs
     VecType<T> gam_rhs(bddc->getLambdaSize());
@@ -601,9 +623,9 @@ int main(int argc, char **argv) {
     }
 
     delete gam_solver;
-    delete ie_solver;
-    delete i_solver;
-    delete v_solver;
+    // delete ie_solver;
+    // delete i_solver;
+    // delete v_solver;
     delete bddc;
 
 

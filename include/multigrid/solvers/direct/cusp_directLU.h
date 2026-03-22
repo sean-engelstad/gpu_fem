@@ -4,7 +4,7 @@
 // cusparse directLU solves with multigrid (V-cycle style preconditioner for two levels)
 // only works from coarsest grid to next level
 
-template <typename T, class Assembler, bool MULTI_SMOOTH = false, bool JUST_LU_DATA = false>
+template <typename T, class Assembler, bool JUST_LU_DATA = false>
 class CusparseMGDirectLU : public BaseSolver {
    public:
     CusparseMGDirectLU(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
@@ -17,6 +17,7 @@ class CusparseMGDirectLU : public BaseSolver {
         kmat = kmat_;
         n_iters = n_iters_;
         omega = omega_;
+        MULTI_SMOOTH = n_iters_ > 1;
 
         BsrData bsr_data = kmat.getBsrData();
         mb = bsr_data.nnodes;
@@ -201,7 +202,7 @@ class CusparseMGDirectLU : public BaseSolver {
     bool solve(DeviceVec<T> rhs, DeviceVec<T> soln, bool check_conv = false) {
         /* assume here the rhs and soln are in solver permutations / orderings */
 
-        if constexpr (MULTI_SMOOTH) {
+        if (MULTI_SMOOTH) {
             // setup rhs and soln with init guess of 0
             cudaMemcpy(d_rhs, rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
             cudaMemset(d_inner_soln, 0, N * sizeof(T));  // re-zero the solution
@@ -321,4 +322,5 @@ class CusparseMGDirectLU : public BaseSolver {
     T *d_rhs, *d_inner_soln;
     int n_iters;
     T omega;
+    bool MULTI_SMOOTH;
 };

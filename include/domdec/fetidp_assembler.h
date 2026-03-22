@@ -1626,6 +1626,7 @@ class FetidpSolver : public BaseSolver {
             }
 
             // make unique
+            int num_subdomains_0 = num_subdomains;
             std::sort(subdomains.begin(), subdomains.end());
             subdomains.erase(std::unique(subdomains.begin(), subdomains.end()), subdomains.end());
             num_subdomains = subdomains.size();  // update subdomain number now
@@ -1635,8 +1636,8 @@ class FetidpSolver : public BaseSolver {
 
             // now make the elem_sd_ind 0 to (new_num_subdomains-1)
             int *subdomain_iperm =
-                new int[num_subdomains];  // inverse map : old_sd => new_reduced_sd
-            memset(subdomain_iperm, -1, num_subdomains * sizeof(int));
+                new int[num_subdomains_0];  // inverse map : old_sd => new_reduced_sd
+            memset(subdomain_iperm, -1, num_subdomains_0 * sizeof(int));
 
             for (int isd = 0; isd < num_subdomains; isd++) {
                 int old_sd = subdomains[isd];
@@ -1644,7 +1645,7 @@ class FetidpSolver : public BaseSolver {
                 subdomain_iperm[old_sd] = isd;
             }
             // printf("subdomain_iperm: ");
-            // printVec<int>(num_subdomains, subdomain_iperm);
+            // printVec<int>(num_subdomains_0, subdomain_iperm);
 
             for (int ielem = 0; ielem < num_elements; ielem++) {
                 int old_sd = elem_sd_ind[ielem];
@@ -1894,7 +1895,9 @@ class FetidpSolver : public BaseSolver {
         // -----------------------------------------
         // build IEV sparsity from duplicated connectivity
         // -----------------------------------------
+        // printf("build BSR data\n");
         IEV_bsr_data = BsrData(num_elements, IEV_nnodes, nodes_per_elem, block_dim, IEV_elem_conn);
+        // printf("\tdone build BSR data\n");
         IEV_rowp = IEV_bsr_data.rowp;
         IEV_cols = IEV_bsr_data.cols;
         IEV_nnzb = IEV_bsr_data.nnzb;

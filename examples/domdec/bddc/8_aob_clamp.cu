@@ -16,6 +16,8 @@
 #include "multigrid/solvers/direct/cusp_directLU.h"
 
 #include "domdec/bddc_assembler.h"
+#include "multigrid/grid.h"
+#include "multigrid/solvers/krylov/bsr_pcg.h"
 #include "multigrid/solvers/krylov/bsr_pcg_matfree.h"
 
 void to_lowercase(char *str) {
@@ -54,14 +56,13 @@ T get_max_disp(HostVec<T> h_soln, int idof = 2) {
 // declare a couple different types of loads..
 template <typename T>
 struct UniformPressure {
-    T q0;
-
-    __HOST_DEVICE__
-    UniformPressure(T q0_) : q0(q0_) {}
+    // T q0;
+    // __HOST_DEVICE__
+    // UniformPressure(T q0_) : q0(q0_) {}
 
     __HOST_DEVICE__
     T operator()(T x, T y, T z) const {
-        return q0;
+        return 1.0;
     }
 };
 
@@ -103,14 +104,15 @@ int main(int argc, char **argv) {
 
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
     using BDDC = BddcSolver<T, Assembler, VecType, BsrMat>;
-    // const bool MULTI_SMOOTH = true;
-    const bool MULTI_SMOOTH = false; // often not MULTI_SMOOTH is better..
-    using InnerSolver = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH>;
-    using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, MULTI_SMOOTH, true>;
+    using InnerSolver = CusparseMGDirectLU<T, Assembler>;
+    using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, true>;
+    using DUMMY = InnerSolver;
+    using GRID = SingleGrid<Assembler, DUMMY, DUMMY, NONE>; // GRID class largely unused
+    using KIPCG = PCGSolver<T, GRID>;
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
 
-    int level = 0; // wing mesh level
+    int level = 2; // wing mesh level
     // int level = 1;
     int nxe_subdomain_size = 4;
     // int nxe_subdomain_size = 8;
@@ -120,6 +122,8 @@ int main(int argc, char **argv) {
     // bool print_mem = false;
     bool print_mem = true;
     T mag = 1.0;
+    // whether to wrap subdomains around junctions
+    int wraparound = 1; // 1 is true, 0 is false
     
     // optional smoothing
     // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
@@ -129,10 +133,6 @@ int main(int argc, char **argv) {
     // 2) or if full LU fillin
     // think I actually need to run with full direct fillin (cause otherwise solution recovery is wrong)
     omega = 1.0, nsmooth = 1, fill_level = -1; // -1 indicates full LU fillin
-
-    if (!MULTI_SMOOTH) {
-        printf("NOTE: MULTI_SMOOTH is false, so omega, nsmooth inputs are ignored.\n");
-    }
 
     for (int i = 1; i < argc; ++i) {
         char* arg = argv[i];
@@ -173,6 +173,13 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --subdomain\n";
                 return 1;
             }
+        } else if (strcmp(arg, "--wraparound") == 0) {
+            if (i + 1 < argc) {
+                wraparound = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --wraparound\n";
+                return 1;
+            }
         } else if (strcmp(arg, "--fill") == 0) {
             if (i + 1 < argc) {
                 fill_level = std::atoi(argv[++i]);
@@ -204,14 +211,19 @@ int main(int argc, char **argv) {
 
     // =================
 
-    printf("TODO : for uCRM case, may need METIS with more general subdomains.. that are not as smooth boundaries? cause mesh more unstructured, RETURNing early\n");
-    return;
+    if (nxe_subdomain_size == 8 && level == 0) {
+        printf("subdomain size %d too large for level 0, changing to 4\n", nxe_subdomain_size);
+        nxe_subdomain_size = 4;
+    }
+    // if (nxe_subdomain_size < 16 && level == 4) {
+    //     printf("subdomain size %d too large for level 4, changing to 16, not sure why need this\n", nxe_subdomain_size);
+    //     nxe_subdomain_size = 16;
+    // }
 
     // read the ESP/CAPS => nastran mesh for TACS
     TACSMeshLoader mesh_loader{comm};
     // std::string fname = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
-    // std::string fname = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
-    std::string fname = "../../ilu/uCRM/CRM_box_2nd.bdf"; // clamped BCs (since only written for clamped rn)
+    std::string fname = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
     mesh_loader.scanBDFFile(fname.c_str());
     double E = 70e9, nu = 0.3;  // material & thick properties (start thicker first try)
     printf("making assembler for mesh '%s'\n", fname.c_str());
@@ -230,6 +242,7 @@ int main(int argc, char **argv) {
     auto soln2 = assembler.createVarsVec();
     auto vars = assembler.createVarsVec();
     auto res = assembler.createVarsVec();
+    auto loads = assembler.createVarsVec();
 
     // kmat assembly (not actually needed here, but is needed for the nonlinear problem))
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -250,46 +263,84 @@ int main(int argc, char **argv) {
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
 
-    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size);
-    printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
+    int MOD_WRAPAROUND = -1;
+    if (wraparound) {
+        // if this then subdomains do wraparound subdomains
+        // mod wraparound maybe should also be settable, but generally you want it to match nxe nodes per component / 2
+        // not same as nxe_subdomain_size, maybe for structured meshes like this could set it differently
+        if (level == 0) {
+            MOD_WRAPAROUND = 2;
+        } else if (level == 1) {
+            MOD_WRAPAROUND = 4;
+        } else if (level == 2) {
+            MOD_WRAPAROUND = 8;
+        } else if (level == 3) {
+            MOD_WRAPAROUND = 16;
+        } else if (level == 4) {
+            MOD_WRAPAROUND = 32;
+            // MOD_WRAPAROUND = 16;
+            // MOD_WRAPAROUND = 8;
+            // MOD_WRAPAROUND = nxe_subdomain_size / 2;
+        }
+        // see if this helps?
+        // MOD_WRAPAROUND = nxe_subdomain_size / 2;
+        printf("BUILDING subdomains that wraparound patch-to-patch junctions with element modulo %d, can help stabilize thin shell BDDC convergence\n", MOD_WRAPAROUND);
+    } else {
+        printf("BUILDING subdomains that do not wraparound but line up with junctions. This has worse thin shell performance in BDDC typically. call --wraparound 1 to turn on\n");
+    }
+
+    // printf("setup wing subdomains\n");
+    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size, MOD_WRAPAROUND);
+    // printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
     // return;
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
     auto &IE_bsr_data = bddc->IE_bsr_data;
-    I_bsr_data.AMD_reordering(); 
     if (fill_level != -1) { 
+        I_bsr_data.RCM_reordering();
+        I_bsr_data.qorder_reordering(0.5);
         I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
     } else {
+        I_bsr_data.AMD_reordering(); 
         I_bsr_data.compute_full_LU_pattern(10.0);
     }
 
-    IE_bsr_data.AMD_reordering(); 
     if (fill_level != -1) { 
+        IE_bsr_data.RCM_reordering();
+        IE_bsr_data.qorder_reordering(0.5);
         IE_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
     } else {
+        IE_bsr_data.AMD_reordering(); 
         IE_bsr_data.compute_full_LU_pattern(10.0);
     }
 
     // now compute matrix sparsity, copy maps
+    // printf("setup matrix sparsity\n");
     bddc->setup_matrix_sparsity();
+    // printf("\tdone with setup matrix sparsity\n");
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
-    Svv_bsr_data.AMD_reordering();
     if (fill_level != -1) { 
+        Svv_bsr_data.RCM_reordering();
+        Svv_bsr_data.qorder_reordering(0.5);
         Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
     } else {
+        Svv_bsr_data.AMD_reordering();
         Svv_bsr_data.compute_full_LU_pattern(10.0);
     }
 
+    // printf("setup coarse matrix sparsity\n");
     bddc->setup_coarse_matrix_sparsity();
+    // printf("\tdone with setup coarse matrix sparsity\n");
 
     // assemble local FETI-DP blocks
     bddc->assemble_subdomains();
 
     // external load (can add internally)
-    ObliqueShearSineLoad<T> load;
+    // ObliqueShearSineLoad<T> load;
+    UniformPressure<T> load;
     bddc->add_subdomain_fext(load, mag);
 
     bddc->set_IEV_residual(1.0, 0.0, vars);
@@ -300,34 +351,48 @@ int main(int argc, char **argv) {
     //
     // Example sketch only; replace with your actual solver classes:
     
-    // just LU allowed for IE and I solvers to reduce mem footprint (1/2 as much memory for them)
-    //   means only the LU factor is stored, not original matrix as well
-    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
-    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-    // note assembler not really used in S_VV here or above classes either.. (and def not for size)
-    auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
-    // auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV);
+    if (fill_level == -1) {
+        // setup direct solver
+        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+        auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
+        auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
     
-    
-    bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
+        // factor each solver
+        ie_solver->factor();
+        i_solver->factor();
 
-    // if (nxe < 10) {
-    //     // DEBUG small matrices
-    //     bool print_IEV = true; // already verified
-    //     bool print_IE = false; // already verified 
-    //     bool print_I = false; // already verified now
-    //     bddc->debug_IEV_matrices(print_IEV, print_IE, print_I);
-    // }
+        bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
 
-    // factor each solver
-    ie_solver->factor();
-    i_solver->factor();
+        bddc->assemble_coarse_problem();
+        v_solver->factor();    
 
-    // then assemble coarse problem (as it uses IE solver) before factoring v_solver
-    bddc->assemble_coarse_problem();
-    // bddc->debug_SVV_matrix();
+    } else {
+        // setup incomplete solvers
+        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+        auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
+        auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+       
+        // factor each solver
+        ie_solver->factor();
+        i_solver->factor();
 
-    v_solver->factor();    
+        // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
+        SolverOptions ki_opts;
+        ki_opts.ncycles = 50;
+        // opts.ncycles = 500;
+        ki_opts.print = true;
+        ki_opts.print_freq = 5;
+        ki_opts.debug = true;
+        ki_opts.rtol = 1e-15;
+        ki_opts.atol = 1e-30;
+
+        auto grid = new GRID(assembler, nullptr, nullptr, *bddc->getKmatI(), loads, cublasHandle, cusparseHandle);
+        auto i_krylov = new KIPCG(cublasHandle, cusparseHandle, grid, i_solver, ki_opts, 0, bddc->getInvars());
+        bddc->set_inner_solvers(ie_solver, i_solver, v_solver, i_krylov);
+
+        bddc->assemble_coarse_problem();
+        v_solver->factor();    
+    }   
 
     // lambda rhs
     VecType<T> gam_rhs(bddc->getLambdaSize());
@@ -336,7 +401,8 @@ int main(int argc, char **argv) {
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
-    opts.ncycles = 50;
+    // opts.ncycles = 50;
+    opts.ncycles = 150;
     // opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
@@ -367,7 +433,6 @@ int main(int argc, char **argv) {
     auto start1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> IEV_factor_time = start1 - start0;
 
-
     bool gam_fail = gam_solver->solve(gam_rhs, gam, true);
     bddc->get_global_soln(gam, soln);
 
@@ -391,13 +456,14 @@ int main(int argc, char **argv) {
     printf("  --------------------------------\n");
     printf("  total setup + solve   : %.4e s\n\n", total_time.count());
 
+    int kmat_nnzb;
     if (print_mem) {
         // get memory usage
         size_t bytes_per_double = sizeof(double);
         double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
 
         // nnzb counts
-        int kmat_nnzb   = kmat.getBsrData().nnzb;
+        kmat_nnzb   = kmat.getBsrData().nnzb;
         int IEV_nnzb    = bddc->kmat_IEV->getBsrData().nnzb;
         int IE_nnzb     = IE_bsr_data.nnzb;
         int I_nnzb      = I_bsr_data.nnzb;
@@ -460,7 +526,7 @@ int main(int argc, char **argv) {
     }
 
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/wing_bddc.vtk");
 
     // compare to direct solver (the solution)
     bool compare_direct = true;
@@ -474,8 +540,7 @@ int main(int argc, char **argv) {
         // read the ESP/CAPS => nastran mesh for TACS
         TACSMeshLoader mesh_loader2{comm};
         // std::string fname2 = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
-        // std::string fname2 = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
-        std::string fname2 = "../../ilu/uCRM/CRM_box_2nd.bdf";
+        std::string fname2 = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
         mesh_loader2.scanBDFFile(fname2.c_str());
         printf("making assembler for mesh '%s'\n", fname.c_str());
         
@@ -504,18 +569,27 @@ int main(int argc, char **argv) {
         auto end3 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> solve_time_dir = end3 - start3;
 
+        size_t bytes_per_double = sizeof(double);
+        double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
+        int LU_nnzb = kmat2.getBsrData().nnzb;
+        double LU_mat_mem   = bytes_per_block * static_cast<double>(LU_nnzb)   / 1024.0 / 1024.0;
+        double LU_fill = LU_nnzb * 1.0 / kmat_nnzb;
+        int nvars = assembler2.get_num_vars();
+
         printf("BDDC solve time in %.4e sec, direct in %.4e sec\n", total_time.count(), solve_time_dir.count());
+        printf("\tLU mat mem %.2f MB (nnzb=%d, fill=%.2f)\n", LU_mat_mem, LU_nnzb, LU_fill);
+        printf("\t#DOF = %d\n", nvars);
 
         // T lin_max_disp = get_max_disp(soln2);
         auto h_soln3 = soln2.createHostVec();
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/plate_lin.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/wing_lin.vtk");
 
         // now also compute solution error on host and print to VTK
         auto h_err = HostVec<T>(h_soln3.getSize());
         for (int i = 0; i < h_soln3.getSize(); i++) {
             h_err[i] = h_soln3[i] - h_soln[i];
         }
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/plate_err.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/wing_err.vtk");
 
         // for (int idof = 0; idof < 6; idof++) {
         //     T orig_nrm = get_max_disp(h_soln, idof);
@@ -525,7 +599,7 @@ int main(int argc, char **argv) {
         // }
         
         // now compute the residuals of each..
-        int nvars = assembler2.get_num_vars();
+        // int nvars = assembler2.get_num_vars();
         assembler2.set_variables(soln2);
         assembler2.add_residual_fast(res);
         T a = -1.0;
@@ -552,9 +626,9 @@ int main(int argc, char **argv) {
     }
 
     delete gam_solver;
-    delete ie_solver;
-    delete i_solver;
-    delete v_solver;
+    // delete ie_solver;
+    // delete i_solver;
+    // delete v_solver;
     delete bddc;
 
 
