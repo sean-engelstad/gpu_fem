@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
 
-    int level = 0; // wing mesh level
+    int level = 2; // wing mesh level
     // int level = 1;
     int nxe_subdomain_size = 4;
     // int nxe_subdomain_size = 8;
