@@ -212,8 +212,8 @@ int main(int argc, char **argv) {
     // =================
 
     if (nxe_subdomain_size == 8 && level == 0) {
-        printf("subdomain size %d too large for level 0, changing to 4\n", nxe_subdomain_size);
-        nxe_subdomain_size = 4;
+        printf("subdomain size %d too large for level 0, changing to 2\n", nxe_subdomain_size);
+        nxe_subdomain_size = 2;
     }
     // if (nxe_subdomain_size < 16 && level == 4) {
     //     printf("subdomain size %d too large for level 4, changing to 16, not sure why need this\n", nxe_subdomain_size);
@@ -622,6 +622,10 @@ int main(int argc, char **argv) {
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, res.getPtr(), 1, &res_norm_feti));
         T res_rel_nrm_feti = res_norm_feti / load_nrm;
         printf("\tres_nrm_feti %.4e, rel_nrm %.4e\n", res_norm_feti, res_rel_nrm_feti);
+
+        if (res_rel_nrm_feti > 1e-6) {
+            printf("ERROR: relative res norm didn't fully converge\n");
+        }
         
     }
 

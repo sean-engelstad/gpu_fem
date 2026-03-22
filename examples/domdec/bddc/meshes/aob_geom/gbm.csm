@@ -57,10 +57,13 @@ select face
 select sub $capsGroup $rib1
 extract @sellist
 
+select edge
+attribute capsMesh $alledge
+
 select body
 attribute capsAIM $tacsAIM;egadsTessAIM
 
 end
 |
 |
-||
+|||

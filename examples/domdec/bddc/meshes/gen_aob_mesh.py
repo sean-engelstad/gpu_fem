@@ -14,6 +14,8 @@ from pyNastran.bdf.bdf import BDF
 
 parent_parser = argparse.ArgumentParser(add_help=False)
 parent_parser.add_argument("--spanMult", type=float, default=1.0) # recommend 1.0, 1.1, 1.2, 1.3
+parent_parser.add_argument("--setedge", type=int, default=1) # default is that it is explicitly setting # points per edge
+# if want to try and turn this off.. you can
 parent_parser.add_argument(
     "--level",
     type=int,
@@ -46,17 +48,6 @@ tacs_model = caps2tacs.TacsModel.build(
     verbosity=1,
 )
 
-# global mesh size settings for each level..
-# if args.level == 0:
-#     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
-#         edge_pt_min=2,
-#         edge_pt_max=5,
-#         global_mesh_size=0.1,
-#         max_surf_offset=0.08,
-#         max_dihedral_angle=20,
-#     ).register_to(
-#         tacs_model
-#     )
 
 # finer level 0
 if args.level == 0:
@@ -141,13 +132,24 @@ egads_aim = tacs_model.mesh_aim
 # # 70000 if elem_mult = 2
 # elem_mult = 2
 
-# if comm.rank == 0:
-#     aim = egads_aim.aim
-#     aim.input.Mesh_Sizing = {
-#         "chord": {"numEdgePoints": 20*elem_mult},
-#         "span": {"numEdgePoints": 10*elem_mult},
-#         "vert": {"numEdgePoints": 10*elem_mult},
-#     }
+# num_edges = 2 * (args.level + 2)
+num_edges = 4 * 2**(args.level)
+if args.level == 3:
+    num_edges = 30 # make it slightly smallernum_edges
+
+OVERWRITE_EDGE = args.setedge
+
+
+if comm.rank == 0 and OVERWRITE_EDGE:
+    aim = egads_aim.aim
+    aim.input.Mesh_Sizing = {
+        "alledge" : {"numEdgePoints" : num_edges}
+    }
+    # aim.input.Mesh_Sizing = {
+    #     "chord": {"numEdgePoints": 20*elem_mult},
+    #     "span": {"numEdgePoints": 10*elem_mult},
+    #     "vert": {"numEdgePoints": 10*elem_mult},
+    # }
 
 # BODIES AND STRUCT DVs
 # -------------------------------------------------
@@ -264,6 +266,9 @@ model.read_bdf(orig_bdf, xref=True)
 model.write_bdf(final_bdf, size=16) #, sort_ids=False)
 
 # TODO : still doesn't quite work yet..
+
+if OVERWRITE_EDGE:
+    print(f"NOTE : (can turn that off) OVERWROTE EDGEs with {num_edges} elements per side")
 
 # # --------------------------------------------------
 # # try writing out BDF file in more benign order of elems (ESP/CAPS has strange order of actual nodes, elems despite writing out components in right order)
