@@ -269,6 +269,8 @@ model.write_bdf(final_bdf, size=16) #, sort_ids=False)
 
 if OVERWRITE_EDGE:
     print(f"NOTE : (can turn that off) OVERWROTE EDGEs with {num_edges} elements per side")
+    if args.level == 3 and num_edges != 32:
+        print(f"\tlevel 3 #elements per side was modified from 32 to {num_edges}")
 
 # # --------------------------------------------------
 # # try writing out BDF file in more benign order of elems (ESP/CAPS has strange order of actual nodes, elems despite writing out components in right order)

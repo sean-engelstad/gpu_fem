@@ -180,19 +180,26 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     }
 
     void mat_vec(DeviceVec<T> &gam_in, DeviceVec<T> &gam_out) {
-        gam_out.zeroValues();
+        // outer mat_vec method, calls timing or non-timing version
+        if (this->print_timing) {
+            _mat_vec_timing(gam_in, gam_out);
+        } else {
+            _mat_vec(gam_in, gam_out);
+        }
+    }
 
-        // const T *h_gam_in = gam_in.createHostVec().getPtr();
-        // printf("h_gam_in_mat_vec:\n");
-        // for (int ilam = 0; ilam < ngam; ilam++) {
-        //     int iglob = gam_nodes[ilam];
-        //     printf("igam %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_gam_in[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
+    bool solve(DeviceVec<T> gam_rhs, DeviceVec<T> gam, bool check_conv = false) {
+        // outer mat_vec method, calls timing or non-timing version
+        if (this->print_timing) {
+            return _solve_timing(gam_rhs, gam, check_conv);
+        } else {
+            return _solve(gam_rhs, gam, check_conv);
+        }
+    }
+
+    void _mat_vec(DeviceVec<T> &gam_in, DeviceVec<T> &gam_out) {
+        // non-profiled method
+        gam_out.zeroValues();
 
         this->addVecGamtoIEV(gam_in, this->u_IEV, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, 1.0, 0.0, this->f_IEV);
@@ -206,100 +213,24 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 1.0, this->f_IEV);
         this->addVecIEVtoGam(this->f_IEV, gam_out, 1.0, 0.0);
-
-        // const T *h_gam_soln = gam_out.createHostVec().getPtr();
-        // printf("h_gam_out_mat_vec:\n");
-        // for (int ilam = 0; ilam < ngam; ilam++) {
-        //     int iglob = gam_nodes[ilam];
-        //     printf("igam %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_gam_soln[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
     }
 
-    bool solve(DeviceVec<T> gam_rhs, DeviceVec<T> gam, bool check_conv = false) {
+    bool _solve(DeviceVec<T> gam_rhs, DeviceVec<T> gam, bool check_conv = false) {
         // does edge averaging (not vertex averaging since that's primal S_VV)
         const bool SCALED = true;
 
-        // const T *h_gam_rhs = gam_rhs.createHostVec().getPtr();
-        // printf("h_gam_rhs-pc:\n");
-        // for (int ilam = 0; ilam < ngam; ilam++) {
-        //     int iglob = gam_nodes[ilam];
-        //     printf("igam %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_gam_rhs[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
-
-        // similar to FETI-DP mat_vec (flipped), but a bit different
         this->addVecGamtoIEV<SCALED>(gam_rhs, this->f_IEV, 1.0, 0.0);
 
-        // const T *h_fIEV = this->f_IEV.createHostVec().getPtr();
-        // printf("h_fIEV-pc with #IEV = %d:\n", this->IEV_nnodes);
-        // for (int ilam = 0; ilam < this->IEV_nnodes; ilam++) {
-        //     int iglob = this->IEV_nodes[ilam];
-        //     printf("iIEV %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_fIEV[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
-
         // debug check initial V_rhs
-        // for vertices in rectangular part (will need to change this for wing case here)
-        // TODO : change this part for wing case here..
-        // this->addVecIEVtoVc(this->f_IEV, this->f_V, 0.25, 0.0);
         this->template addVecIEVtoVc<SCALED>(this->f_IEV, this->f_V, 1.0, 0.0);
 
         // IE solve
         this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
 
-        // const T *h_fIE0 = this->f_IE.createHostVec().getPtr();
-        // printf("h_fIE0-pc with #IE = %d:\n", this->IE_nnodes);
-        // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
-        //     int iglob = this->IE_nodes[ilam];
-        //     printf("iIE %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_fIE0[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
-
         this->addVecIEtoIEV(this->f_IE, this->f_IEV, -1.0, 1.0);  // remove IE part
         this->zeroInteriorIE(this->f_IE);
 
-        // const T *h_fIE = this->f_IE.createHostVec().getPtr();
-        // printf("h_fIE-pc with #IE = %d:\n", this->IE_nnodes);
-        // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
-        //     int iglob = this->IE_nodes[ilam];
-        //     printf("iIE %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_fIE[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
-
         this->solveSubdomainIE(this->f_IE, this->u_IE);
-
-        // const T *h_uIE = this->u_IE.createHostVec().getPtr();
-        // printf("h_uIE-pc:\n");
-        // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
-        //     int iglob = this->IE_nodes[ilam];
-        //     printf("iIE %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_uIE[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
 
         this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 0.0, this->f_IEV);
@@ -316,26 +247,10 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
 
         this->solveSubdomainIE(this->f_IE, this->u_IE);
         this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 1.0);
-
-        // add u_V into u_IEV
-        // TODO : generalize better than 0.25 here (for wing case)
-        // this->addVecVctoIEV(this->u_V, this->u_IEV, 0.25, 1.0);
         this->template addVecVctoIEV<SCALED>(this->u_V, this->u_IEV, 1.0, 1.0);
 
         // now IEV to gam with averaging
         this->addVecIEVtoGam<SCALED>(this->u_IEV, gam, 1.0, 0.0);
-
-        // const T *h_gam = gam.createHostVec().getPtr();
-        // printf("h_gam-pc:\n");
-        // for (int ilam = 0; ilam < ngam; ilam++) {
-        //     int iglob = gam_nodes[ilam];
-        //     printf("igam %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_gam[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
 
         return false;  // fail = false
     }
@@ -343,26 +258,12 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     void get_global_soln(DeviceVec<T> &gam, DeviceVec<T> &soln) {
         // recover global solution from interface DOF
         soln.zeroValues();
-
-        // const T *h_gam_soln = gam.createHostVec().getPtr();
-        // printf("h_gam_soln:\n");
-        // for (int ilam = 0; ilam < ngam; ilam++) {
-        //     int iglob = gam_nodes[ilam];
-        //     printf("igam %d, glob node %d: ", ilam, iglob);
-        //     for (int idof = 2; idof < 5; idof++) {
-        //         int lam_dof = this->block_dim * ilam + idof;
-        //         printf("%.6e,", h_gam_soln[lam_dof]);
-        //     }
-        //     printf("\n");
-        // }
         const bool SCALED = true;
 
         // set IE values from interface to IEV subdomains
         this->addVecGamtoIEV(gam, this->u_IEV, 1.0, 0.0);
 
         // first add the solved E and V DOF into IE and V parts (no scaling 1.0)
-        // this->addVecGamtoIEV()
-        // this->addVecIEVtoVc(this->u_IEV, this->u_V, 0.25, 0.0);
         this->template addVecIEVtoVc<SCALED>(this->u_IEV, this->u_V, 1.0, 0.0);
         this->addVecIEVtoI(this->res_IEV, this->f_I, 1.0, 0.0);
         this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 0.0, this->f_IEV);
@@ -498,6 +399,247 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     }
 
    private:
+    void _mat_vec_timing(DeviceVec<T> &gam_in, DeviceVec<T> &gam_out) {
+        cudaEvent_t e_start, e_stop;
+        float t_gam_to_iev_and_kmat = 0.0f;
+        float t_subdomainI_prep = 0.0f;
+        float t_subdomainI_solve = 0.0f;
+        float t_back_substitution = 0.0f;
+
+        const bool do_timing = this->print_timing;  // or just `print_timing` if in scope
+
+        if (do_timing) {
+            CHECK_CUDA(cudaEventCreate(&e_start));
+            CHECK_CUDA(cudaEventCreate(&e_stop));
+        }
+
+        gam_out.zeroValues();
+
+        // -----------------------------------
+        // 1) gam -> IEV and first kmat apply
+        // -----------------------------------
+        if (do_timing) CHECK_CUDA(cudaEventRecord(e_start));
+
+        this->addVecGamtoIEV(gam_in, this->u_IEV, 1.0, 0.0);
+        this->sparseMatVec(*this->kmat_IEV, this->u_IEV, 1.0, 0.0, this->f_IEV);
+
+        if (do_timing) {
+            CHECK_CUDA(cudaEventRecord(e_stop));
+            CHECK_CUDA(cudaEventSynchronize(e_stop));
+            CHECK_CUDA(cudaEventElapsedTime(&t_gam_to_iev_and_kmat, e_start, e_stop));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // -----------------------------------
+        // 2) prepare I solve
+        // -----------------------------------
+        if (do_timing) CHECK_CUDA(cudaEventRecord(e_start));
+
+        this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
+        this->addVecIEtoI(this->f_IE, this->f_I, 1.0, 0.0);
+
+        if (do_timing) {
+            CHECK_CUDA(cudaEventRecord(e_stop));
+            CHECK_CUDA(cudaEventSynchronize(e_stop));
+            CHECK_CUDA(cudaEventElapsedTime(&t_subdomainI_prep, e_start, e_stop));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // -----------------------------------
+        // 3) subdomain I solve
+        // -----------------------------------
+        if (do_timing) CHECK_CUDA(cudaEventRecord(e_start));
+
+        this->solveSubdomainI(this->f_I, this->u_I);
+
+        if (do_timing) {
+            CHECK_CUDA(cudaEventRecord(e_stop));
+            CHECK_CUDA(cudaEventSynchronize(e_stop));
+            CHECK_CUDA(cudaEventElapsedTime(&t_subdomainI_solve, e_start, e_stop));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // -----------------------------------
+        // 4) back-substitution and final kmat
+        // -----------------------------------
+        if (do_timing) CHECK_CUDA(cudaEventRecord(e_start));
+
+        this->addVecItoIE(this->u_I, this->u_IE, 1.0, 0.0);
+        this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
+        this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 1.0, this->f_IEV);
+        this->addVecIEVtoGam(this->f_IEV, gam_out, 1.0, 0.0);
+
+        if (do_timing) {
+            CHECK_CUDA(cudaEventRecord(e_stop));
+            CHECK_CUDA(cudaEventSynchronize(e_stop));
+            CHECK_CUDA(cudaEventElapsedTime(&t_back_substitution, e_start, e_stop));
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            printf("mat_vec timing breakdown:\n");
+            printf("\tgam->IEV + kmat_IEV             : %.6f ms\n", t_gam_to_iev_and_kmat);
+            printf("\tprep subdomainI rhs            : %.6f ms\n", t_subdomainI_prep);
+            printf("\tsolveSubdomainI                : %.6f ms\n", t_subdomainI_solve);
+            printf("\tback-subst + kmat + IEV->gam   : %.6f ms\n", t_back_substitution);
+            printf("\ttotal                          : %.6f ms\n",
+                   t_gam_to_iev_and_kmat + t_subdomainI_prep + t_subdomainI_solve +
+                       t_back_substitution);
+
+            CHECK_CUDA(cudaEventDestroy(e_start));
+            CHECK_CUDA(cudaEventDestroy(e_stop));
+        }
+    }
+
+    bool _solve_timing(DeviceVec<T> gam_rhs, DeviceVec<T> gam, bool check_conv = false) {
+        // does edge averaging (not vertex averaging since that's primal S_VV)
+        const bool SCALED = true;
+
+        cudaEvent_t s1, e1, s2, e2, s3, e3, s4, e4, s5, e5, s6, e6;
+        float t1 = 0.0f, t2 = 0.0f, t3 = 0.0f, t4 = 0.0f, t5 = 0.0f, t6 = 0.0f;
+
+        if (this->print_timing) {
+            cudaEventCreate(&s1);
+            cudaEventCreate(&e1);
+            cudaEventCreate(&s2);
+            cudaEventCreate(&e2);
+            cudaEventCreate(&s3);
+            cudaEventCreate(&e3);
+            cudaEventCreate(&s4);
+            cudaEventCreate(&e4);
+            cudaEventCreate(&s5);
+            cudaEventCreate(&e5);
+            cudaEventCreate(&s6);
+            cudaEventCreate(&e6);
+        }
+
+        // -----------------------------------
+        // 1) Initial lift/scatter from gamma
+        // -----------------------------------
+        if (this->print_timing) cudaEventRecord(s1);
+
+        this->addVecGamtoIEV<SCALED>(gam_rhs, this->f_IEV, 1.0, 0.0);
+
+        // debug check initial V_rhs
+        this->template addVecIEVtoVc<SCALED>(this->f_IEV, this->f_V, 1.0, 0.0);
+
+        // IE solve setup
+        this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
+        this->addVecIEtoIEV(this->f_IE, this->f_IEV, -1.0, 1.0);  // remove IE part
+        this->zeroInteriorIE(this->f_IE);
+
+        if (this->print_timing) {
+            cudaEventRecord(e1);
+            cudaEventSynchronize(e1);
+            cudaEventElapsedTime(&t1, s1, e1);
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // ------------------------
+        // 2) First IE subdomain solve
+        // ------------------------
+        if (this->print_timing) cudaEventRecord(s2);
+
+        this->solveSubdomainIE(this->f_IE, this->u_IE);
+
+        if (this->print_timing) {
+            cudaEventRecord(e2);
+            cudaEventSynchronize(e2);
+            cudaEventElapsedTime(&t2, s2, e2);
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // ------------------------
+        // 3) Build and solve coarse problem
+        // ------------------------
+        if (this->print_timing) cudaEventRecord(s3);
+
+        this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
+        this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 0.0, this->f_IEV);
+
+        // coarse solve
+        this->addVecIEVtoVc(this->f_IEV, this->f_V, 1.0, 1.0);
+        this->solveCoarse(this->f_V, this->u_V);
+
+        if (this->print_timing) {
+            cudaEventRecord(e3);
+            cudaEventSynchronize(e3);
+            cudaEventElapsedTime(&t3, s3, e3);
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // ------------------------
+        // 4) Harmonic extension setup back to IE
+        // ------------------------
+        if (this->print_timing) cudaEventRecord(s4);
+
+        this->addVecVctoIEV(this->u_V, this->temp_IEV, 1.0, 0.0);
+        this->sparseMatVec(*this->kmat_IEV, this->temp_IEV, -1.0, 0.0, this->f_IEV);
+        this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
+        this->u_IE.zeroValues();
+
+        if (this->print_timing) {
+            cudaEventRecord(e4);
+            cudaEventSynchronize(e4);
+            cudaEventElapsedTime(&t4, s4, e4);
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // ------------------------
+        // 5) Second IE subdomain solve
+        // ------------------------
+        if (this->print_timing) cudaEventRecord(s5);
+
+        this->solveSubdomainIE(this->f_IE, this->u_IE);
+
+        if (this->print_timing) {
+            cudaEventRecord(e5);
+            cudaEventSynchronize(e5);
+            cudaEventElapsedTime(&t5, s5, e5);
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // ------------------------
+        // 6) Final accumulation / averaging back to gamma
+        // ------------------------
+        if (this->print_timing) cudaEventRecord(s6);
+
+        this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 1.0);
+        this->template addVecVctoIEV<SCALED>(this->u_V, this->u_IEV, 1.0, 1.0);
+
+        // now IEV to gam with averaging
+        this->addVecIEVtoGam<SCALED>(this->u_IEV, gam, 1.0, 0.0);
+
+        if (this->print_timing) {
+            cudaEventRecord(e6);
+            cudaEventSynchronize(e6);
+            cudaEventElapsedTime(&t6, s6, e6);
+            CHECK_CUDA(cudaDeviceSynchronize());
+
+            printf("BDDCSolver::solve timing breakdown:\n");
+            printf("\t  gamma -> IEV/IE setup        : %.6f ms\n", t1);
+            printf("\t  solveSubdomainIE #1          : %.6f ms\n", t2);
+            printf("\t  coarse residual + solve      : %.6f ms\n", t3);
+            printf("\t  harmonic extension setup     : %.6f ms\n", t4);
+            printf("\t  solveSubdomainIE #2          : %.6f ms\n", t5);
+            printf("\t  final IEV/V -> gamma         : %.6f ms\n", t6);
+            printf("\t  total                        : %.6f ms\n", t1 + t2 + t3 + t4 + t5 + t6);
+
+            cudaEventDestroy(s1);
+            cudaEventDestroy(e1);
+            cudaEventDestroy(s2);
+            cudaEventDestroy(e2);
+            cudaEventDestroy(s3);
+            cudaEventDestroy(e3);
+            cudaEventDestroy(s4);
+            cudaEventDestroy(e4);
+            cudaEventDestroy(s5);
+            cudaEventDestroy(e5);
+            cudaEventDestroy(s6);
+            cudaEventDestroy(e6);
+        }
+
+        return false;  // fail = false
+    }
+
     bool warnings;
     int ngam, n_edge;
     int gam_offset;

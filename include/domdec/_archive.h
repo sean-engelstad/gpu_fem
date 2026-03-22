@@ -213,3 +213,164 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     int gam_offset;
     DeviceVec<T> temp_lam, temp_lam2;
 };
+
+void mat_vec(DeviceVec<T> &gam_in, DeviceVec<T> &gam_out) {
+    gam_out.zeroValues();
+
+    // const T *h_gam_in = gam_in.createHostVec().getPtr();
+    // printf("h_gam_in_mat_vec:\n");
+    // for (int ilam = 0; ilam < ngam; ilam++) {
+    //     int iglob = gam_nodes[ilam];
+    //     printf("igam %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_gam_in[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+
+    this->addVecGamtoIEV(gam_in, this->u_IEV, 1.0, 0.0);
+    this->sparseMatVec(*this->kmat_IEV, this->u_IEV, 1.0, 0.0, this->f_IEV);
+
+    // solve rest of local Schur complement
+    this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
+    this->addVecIEtoI(this->f_IE, this->f_I, 1.0, 0.0);
+    this->solveSubdomainI(this->f_I, this->u_I);
+
+    this->addVecItoIE(this->u_I, this->u_IE, 1.0, 0.0);
+    this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
+    this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 1.0, this->f_IEV);
+    this->addVecIEVtoGam(this->f_IEV, gam_out, 1.0, 0.0);
+
+    // const T *h_gam_soln = gam_out.createHostVec().getPtr();
+    // printf("h_gam_out_mat_vec:\n");
+    // for (int ilam = 0; ilam < ngam; ilam++) {
+    //     int iglob = gam_nodes[ilam];
+    //     printf("igam %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_gam_soln[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+}
+
+bool solve(DeviceVec<T> gam_rhs, DeviceVec<T> gam, bool check_conv = false) {
+    // does edge averaging (not vertex averaging since that's primal S_VV)
+    const bool SCALED = true;
+
+    // const T *h_gam_rhs = gam_rhs.createHostVec().getPtr();
+    // printf("h_gam_rhs-pc:\n");
+    // for (int ilam = 0; ilam < ngam; ilam++) {
+    //     int iglob = gam_nodes[ilam];
+    //     printf("igam %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_gam_rhs[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+
+    // similar to FETI-DP mat_vec (flipped), but a bit different
+    this->addVecGamtoIEV<SCALED>(gam_rhs, this->f_IEV, 1.0, 0.0);
+
+    // const T *h_fIEV = this->f_IEV.createHostVec().getPtr();
+    // printf("h_fIEV-pc with #IEV = %d:\n", this->IEV_nnodes);
+    // for (int ilam = 0; ilam < this->IEV_nnodes; ilam++) {
+    //     int iglob = this->IEV_nodes[ilam];
+    //     printf("iIEV %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_fIEV[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+
+    // debug check initial V_rhs
+    // for vertices in rectangular part (will need to change this for wing case here)
+    // TODO : change this part for wing case here..
+    // this->addVecIEVtoVc(this->f_IEV, this->f_V, 0.25, 0.0);
+    this->template addVecIEVtoVc<SCALED>(this->f_IEV, this->f_V, 1.0, 0.0);
+
+    // IE solve
+    this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
+
+    // const T *h_fIE0 = this->f_IE.createHostVec().getPtr();
+    // printf("h_fIE0-pc with #IE = %d:\n", this->IE_nnodes);
+    // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
+    //     int iglob = this->IE_nodes[ilam];
+    //     printf("iIE %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_fIE0[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+
+    this->addVecIEtoIEV(this->f_IE, this->f_IEV, -1.0, 1.0);  // remove IE part
+    this->zeroInteriorIE(this->f_IE);
+
+    // const T *h_fIE = this->f_IE.createHostVec().getPtr();
+    // printf("h_fIE-pc with #IE = %d:\n", this->IE_nnodes);
+    // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
+    //     int iglob = this->IE_nodes[ilam];
+    //     printf("iIE %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_fIE[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+
+    this->solveSubdomainIE(this->f_IE, this->u_IE);
+
+    // const T *h_uIE = this->u_IE.createHostVec().getPtr();
+    // printf("h_uIE-pc:\n");
+    // for (int ilam = 0; ilam < this->IE_nnodes; ilam++) {
+    //     int iglob = this->IE_nodes[ilam];
+    //     printf("iIE %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_uIE[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+
+    this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 0.0);
+    this->sparseMatVec(*this->kmat_IEV, this->u_IEV, -1.0, 0.0, this->f_IEV);
+
+    // coarse solve
+    this->addVecIEVtoVc(this->f_IEV, this->f_V, 1.0, 1.0);
+    this->solveCoarse(this->f_V, this->u_V);
+
+    // harmonic extension back to edge space
+    this->addVecVctoIEV(this->u_V, this->temp_IEV, 1.0, 0.0);
+    this->sparseMatVec(*this->kmat_IEV, this->temp_IEV, -1.0, 0.0, this->f_IEV);
+    this->addVecIEVtoIE(this->f_IEV, this->f_IE, 1.0, 0.0);
+    this->u_IE.zeroValues();
+
+    this->solveSubdomainIE(this->f_IE, this->u_IE);
+    this->addVecIEtoIEV(this->u_IE, this->u_IEV, 1.0, 1.0);
+
+    // add u_V into u_IEV
+    // TODO : generalize better than 0.25 here (for wing case)
+    // this->addVecVctoIEV(this->u_V, this->u_IEV, 0.25, 1.0);
+    this->template addVecVctoIEV<SCALED>(this->u_V, this->u_IEV, 1.0, 1.0);
+
+    // now IEV to gam with averaging
+    this->addVecIEVtoGam<SCALED>(this->u_IEV, gam, 1.0, 0.0);
+
+    // const T *h_gam = gam.createHostVec().getPtr();
+    // printf("h_gam-pc:\n");
+    // for (int ilam = 0; ilam < ngam; ilam++) {
+    //     int iglob = gam_nodes[ilam];
+    //     printf("igam %d, glob node %d: ", ilam, iglob);
+    //     for (int idof = 2; idof < 5; idof++) {
+    //         int lam_dof = this->block_dim * ilam + idof;
+    //         printf("%.6e,", h_gam[lam_dof]);
+    //     }
+    //     printf("\n");
+    // }
+
+    return false;  // fail = false
+}

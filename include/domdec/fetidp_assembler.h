@@ -2814,13 +2814,18 @@ class FetidpSolver : public BaseSolver {
         copyKmat_IEVtoI();
     }
 
-    // void assemble_coarse_problem() {
-    //     // now also compute the Schur complement inverse term in S_VV
-    //     S_VV->zeroValues();
-    //     copyKmat_IEVtoSvv();
-    //     computeSvvInverseTerm();
-    // }
     void assemble_coarse_problem() {
+        // now also compute the Schur complement inverse term in S_VV
+        if (print_timing) {
+            _assemble_coarse_problem_timing();
+        } else {
+            // non timed version
+            S_VV->zeroValues();
+            copyKmat_IEVtoSvv();
+            computeSvvInverseTerm();
+        }
+    }
+    void _assemble_coarse_problem_timing() {
         cudaEvent_t s1, e1, s2, e2;
         float t1 = 0.0f, t2 = 0.0f;
 

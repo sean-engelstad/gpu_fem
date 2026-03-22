@@ -259,7 +259,8 @@ int main(int argc, char **argv) {
     cusparseHandle_t cusparseHandle = nullptr;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    bool print_timing = true; // profiling
+    // bool print_timing = true; // profiling
+    bool print_timing = false; // profiling
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
 
