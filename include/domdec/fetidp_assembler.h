@@ -72,6 +72,7 @@ class FetidpSolver : public BaseSolver {
         d_vars = assembler.getVars();
         d_elem_components = assembler.getElemComponents();
         d_compData = assembler.getCompData();
+        MAX_NUM_VERTEX_PER_SUBDOMAIN = 4;
 
         descrK = 0;
         CHECK_CUSPARSE(cusparseCreateMatDescr(&descrK));
@@ -723,7 +724,8 @@ class FetidpSolver : public BaseSolver {
         I_nofill_nnzb = I_nnzb;
     }
 
-    void setup_tacs_component_subdomains(int nxse_, int nyse_, bool compute_jump = true) {
+    void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
+                                         bool compute_jump = true) {
         clear_structured_host_data();
 
         // printf("SETUP_WING_SUBDOMAINS : get_nodal_geom_indices\n");
@@ -1381,13 +1383,27 @@ class FetidpSolver : public BaseSolver {
                 iye_max = (iye_indices[i] > iye_max) ? iye_indices[i] : iye_max;
             }
 
+            // ensures ixe, iye indices are (0,0) at corner
             for (int i = 0; i < _num_elems; i++) {
                 ixe_indices[i] -= ixe_min;
                 iye_indices[i] -= iye_min;
             }
+            // compute number of subdomains each direction (in this component)
+            int nxs_comp = (ixe_max - ixe_min + nxse_ - 1) / nxse_;
+            int nys_comp = (iye_max - iye_min + nyse_ - 1) / nyse_;
 
-            int nxs_comp = (ixe_max - ixe_min + nxse_) / nxse_;
-            int nys_comp = (iye_max - iye_min + nyse_) / nyse_;
+            if (MOD_WRAPAROUND != -1) {
+                // then modify the ixe, iye indices with modulo, so not (0,0) at corner
+                // part of code to ensure wraparound subdomains
+                for (int i = 0; i < _num_elems; i++) {
+                    ixe_indices[i] += MOD_WRAPAROUND;
+                    iye_indices[i] += MOD_WRAPAROUND;
+                }
+
+                // compute number of subdomains each direction (modify it)
+                nxs_comp = (ixe_max - ixe_min + MOD_WRAPAROUND + nxse_ - 1) / nxse_;
+                nys_comp = (iye_max - iye_min + MOD_WRAPAROUND + nyse_ - 1) / nyse_;
+            }
 
             for (int i = 0; i < _num_elems; i++) {
                 int ielem = e2e_ielem[i];
@@ -1410,12 +1426,245 @@ class FetidpSolver : public BaseSolver {
         num_subdomains = i_subdomain;
         // printf("num_subdomains %d\n", num_subdomains);
 
+        auto h_vars0 = assembler.createVarsVec().createHostVec();
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars0, elem_sd_ind,
+                                                            "subdomains", "out/comp_sd0.vtk");
+
+        if (MOD_WRAPAROUND != -1) {
+            // now make wraparound subdomains if they meet on subdomain boundaries
+            MAX_NUM_VERTEX_PER_SUBDOMAIN = 6;  // for multi-patch structures
+
+            // -----------------------------------------
+            // node -> subdomain incidence (with repeats)
+            // one entry per incident element
+            // -----------------------------------------
+            node_elem_nnz = 0;
+            node_elem_rowp = new int[num_nodes + 1];
+            node_elem_ct = new int[num_nodes];
+            std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+            std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    node_elem_ct[gnode]++;
+                    node_elem_nnz++;
+                }
+            }
+
+            for (int inode = 0; inode < num_nodes; inode++) {
+                node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+            }
+
+            int *temp_node_elem0 = new int[num_nodes];
+            node_sd_cols = new int[node_elem_nnz];
+            std::memset(temp_node_elem0, 0, num_nodes * sizeof(int));
+            std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                int subdomain_ind = elem_sd_ind[ielem];
+
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    int offset = node_elem_rowp[gnode] + temp_node_elem0[gnode];
+                    node_sd_cols[offset] = subdomain_ind;
+                    temp_node_elem0[gnode]++;
+                }
+            }
+            delete[] temp_node_elem0;
+
+            // -----------------------------------------
+            // classify node relative to a touching subdomain:
+            // 0 = interior, 1 = edge, 2 = vertex
+            //
+            // Since the mesh is structured, assume the classification is
+            // consistent across touching subdomains for the purposes here.
+            // -----------------------------------------
+            int *node_sd_bndry_ind = new int[num_nodes];
+            std::memset(node_sd_bndry_ind, 0, num_nodes * sizeof(int));
+
+            for (int inode = 0; inode < num_nodes; inode++) {
+                int start = node_elem_rowp[inode];
+                int end = node_elem_rowp[inode + 1];
+
+                if (start == end) {
+                    node_sd_bndry_ind[inode] = 0;
+                    continue;
+                }
+
+                // just use the first touching subdomain
+                int sd0 = node_sd_cols[start];
+
+                // count how many incident elements from this subdomain contain the node
+                int count_in_sd = 0;
+                for (int j = start; j < end; j++) {
+                    if (node_sd_cols[j] == sd0) {
+                        count_in_sd++;
+                    }
+                }
+
+                if (count_in_sd == 4) {
+                    node_sd_bndry_ind[inode] = 0;  // interior
+                } else if (count_in_sd == 2) {
+                    node_sd_bndry_ind[inode] = 1;  // edge
+                } else if (count_in_sd == 1) {
+                    node_sd_bndry_ind[inode] = 2;  // vertex
+                } else {
+                    // unexpected for structured quad subdomains
+                    printf("warning: inode %d has count_in_sd = %d in subdomain %d\n", inode,
+                           count_in_sd, sd0);
+                    node_sd_bndry_ind[inode] = 2;
+                }
+            }
+
+            // now for any nodes which are on subdomain EDGE boundaries, make list of
+            // subdomain groups that we're going to join together
+            std::vector<std::vector<int>> sd_groups;
+
+            for (int inode = 0; inode < num_nodes; inode++) {
+                int _sd_bndry = node_sd_bndry_ind[inode];
+                int _comp_bndry = node_wing_geom_ind[inode];
+
+                if (_sd_bndry == 1 && _comp_bndry == 1) {
+                    // node must be on a subdomain edge, not a subdomain vertex
+                    // AND on a component edge
+                    int start = node_elem_rowp[inode];
+                    int end = node_elem_rowp[inode + 1];
+
+                    std::vector<int> group;
+                    group.reserve(end - start);
+
+                    // collect all incident subdomains
+                    for (int j = start; j < end; j++) {
+                        group.push_back(node_sd_cols[j]);
+                    }
+
+                    // unique them
+                    std::sort(group.begin(), group.end());
+                    group.erase(std::unique(group.begin(), group.end()), group.end());
+
+                    // only keep actual interface groups
+                    if (group.size() > 1) {
+                        // printf("sd group: ");
+                        // printVec<int>(group.size(), group.data());
+                        sd_groups.push_back(group);
+                    }
+                }
+            }
+
+            // optional: remove repeated groups
+            std::sort(sd_groups.begin(), sd_groups.end());
+            sd_groups.erase(std::unique(sd_groups.begin(), sd_groups.end()), sd_groups.end());
+
+            // now modify elem_sd_ind by combining certain subdomain pairs on TACS component
+            // interfaces OR patch boundaries for (int inode)
+            // first make a rowp, cols of the current elems in each subdomain
+            int *elem_sd_cts = new int[num_subdomains];
+            memset(elem_sd_cts, 0, num_subdomains * sizeof(int));
+            int *elem_sd_rowp = new int[num_subdomains + 1];
+            memset(elem_sd_rowp, 0, (num_subdomains + 1) * sizeof(int));
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int i_subdomain = elem_sd_ind[ielem];
+                // start by just putting row cts in i_subdomain+1 entry (then later we'll add up to
+                // get full rowp offsets)
+                elem_sd_cts[i_subdomain]++;
+            }
+
+            for (int i_sd = 0; i_sd < num_subdomains; i_sd++) {
+                elem_sd_rowp[i_sd + 1] = elem_sd_rowp[i_sd] + elem_sd_cts[i_sd];
+            }
+
+            int *elem_sd_cols = new int[num_elements];
+            memset(elem_sd_cols, 0, num_elements * sizeof(int));
+            // reuse cts to keep track of filling up rowp + cols
+            memset(elem_sd_cts, 0, num_subdomains * sizeof(int));
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int i_subdomain = elem_sd_ind[ielem];
+                int offset = elem_sd_rowp[i_subdomain] + elem_sd_cts[i_subdomain];
+                elem_sd_cols[offset] = ielem;
+                elem_sd_cts[i_subdomain]++;
+            }
+
+            // the whole reason we did that above part is to avoid num_elements^2 operations
+            // now use this sparse element list to more cheaply join together subdomain groups
+            // printf("orig elem_sd_ind: ");
+            // printVec<int>(num_elements, elem_sd_ind);
+            for (auto group : sd_groups) {
+                int first_sd_ind = group[0];
+
+                // for middle cases: adjust first_sd_ind in case it was changed previously
+                int isd0 = group[0];
+                int ielem0 = elem_sd_cols[elem_sd_rowp[isd0]];
+                if (elem_sd_ind[ielem0] != first_sd_ind) first_sd_ind = elem_sd_ind[ielem0];
+
+                // printf("sd group write: ");
+                // printVec<int>(group.size(), group.data());
+                for (auto isd : group) {
+                    // now loop through elements in this subdomain and write them to the first sd
+                    // ind
+                    for (int jp = elem_sd_rowp[isd]; jp < elem_sd_rowp[isd + 1]; jp++) {
+                        int ielem = elem_sd_cols[jp];
+                        // printf("modify ielem %d, from isd %d to %d\n", ielem, elem_sd_ind[ielem],
+                        //        first_sd_ind);
+                        elem_sd_ind[ielem] = first_sd_ind;
+                    }
+                }
+            }
+
+            // printf("elem_sd_ind: ");
+            // printVec<int>(num_elements, elem_sd_ind);
+
+            // now get full # of unique subdomains
+            // now get full # of unique subdomains
+            std::vector<int> subdomains;
+            subdomains.reserve(num_elements);
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                subdomains.push_back(elem_sd_ind[ielem]);
+            }
+
+            // make unique
+            std::sort(subdomains.begin(), subdomains.end());
+            subdomains.erase(std::unique(subdomains.begin(), subdomains.end()), subdomains.end());
+            num_subdomains = subdomains.size();  // update subdomain number now
+
+            // printf("subdomains %d: ", subdomains.size());
+            // printVec<int>(subdomains.size(), subdomains.data());
+
+            // now make the elem_sd_ind 0 to (new_num_subdomains-1)
+            int *subdomain_iperm =
+                new int[num_subdomains];  // inverse map : old_sd => new_reduced_sd
+            memset(subdomain_iperm, -1, num_subdomains * sizeof(int));
+
+            for (int isd = 0; isd < num_subdomains; isd++) {
+                int old_sd = subdomains[isd];
+                // printf("isd %d => old_sd %d\n", isd, old_sd);
+                subdomain_iperm[old_sd] = isd;
+            }
+            // printf("subdomain_iperm: ");
+            // printVec<int>(num_subdomains, subdomain_iperm);
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int old_sd = elem_sd_ind[ielem];
+                int new_red_sd = subdomain_iperm[old_sd];
+                elem_sd_ind[ielem] = new_red_sd;
+            }
+
+            // printf("elem_sd_ind: ");
+            // printVec<int>(num_elements, elem_sd_ind);
+
+            // TODO : reset node_sd_cols, node_sd_rowp, node_elem_ct pointers (delete)
+            // for new set of subdomains, as we recompute them again later
+        }
+
         // printf("printToVTK elemVec\n");
         auto h_vars = assembler.createVarsVec().createHostVec();
         printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, elem_sd_ind,
-                                                            "subdomains", "out/wing_sd.vtk");
+                                                            "subdomains", "out/comp_sd.vtk");
         printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, debug_lelem_sd_ind,
-                                                            "subdomains", "out/wing_lsd.vtk");
+                                                            "subdomains", "out/comp_lsd.vtk");
         // printf("\tdone printToVTK elemVec");
 
         // -----------------------------------------
@@ -1514,7 +1763,7 @@ class FetidpSolver : public BaseSolver {
             h_soln[6 * i] = node_nsd[i];
         }
         auto h_soln_debug = HostVec<T>(num_nodes * block_dim, h_soln);
-        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug, "out/wing_node_nsd.vtk");
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug, "out/comp_node_nsd.vtk");
 
         // print to VTK the IEV labels..
         T *h_soln2 = new T[num_nodes * block_dim];
@@ -1523,7 +1772,7 @@ class FetidpSolver : public BaseSolver {
             h_soln2[6 * i] = node_class_ind[i];
         }
         auto h_soln_debug2 = HostVec<T>(num_nodes * block_dim, h_soln2);
-        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug2, "out/wing_node_class.vtk");
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug2, "out/comp_node_class.vtk");
         // printf("done with classify nodes\n");
 
         // -----------------------------------------
@@ -2323,7 +2572,7 @@ class FetidpSolver : public BaseSolver {
             HostVec<int>(Svv_copy_nnzb, Svv_Vc_copyBlocks.data()).createDeviceVec().getPtr();
 
         // CONSTRUCT coarse Schur complement mat-invmat-mat maps
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
             IEVset_nnzb[k] = 0;
             IEVtoSVV_nnzb[k] = 0;
             d_IEVset_blocks[k] = nullptr;
@@ -2334,9 +2583,9 @@ class FetidpSolver : public BaseSolver {
         // printf("Vc_nodes: ");
         // printVec<int>(Vc_nnodes, Vc_nodes);
 
-        std::vector<int> IEVset_blocks_host[4];
-        std::vector<int> IEVout_blocks_host[4];
-        std::vector<int> IEVtoSVV_blocks_host[4];
+        std::vector<int> IEVset_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
+        std::vector<int> IEVout_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
+        std::vector<int> IEVtoSVV_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
 
         for (int isd = 0; isd < num_subdomains; isd++) {
             std::vector<int> sd_iev_vertex_blocks;  // repeated IEV block ids for THIS subdomain
@@ -2377,8 +2626,9 @@ class FetidpSolver : public BaseSolver {
             if (nsv == 0) continue;
 
             // optional sanity check for structured quad subdomains
-            if (nsv > 4) {
-                printf("ERROR: subdomain %d has %d local vertex slots (>4)\n", isd, nsv);
+            if (nsv > MAX_NUM_VERTEX_PER_SUBDOMAIN) {
+                printf("ERROR: subdomain %d has %d local vertex slots (>%d)\n", isd, nsv,
+                       MAX_NUM_VERTEX_PER_SUBDOMAIN);
                 exit(-1);
             }
 
@@ -2438,7 +2688,7 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
             IEVset_nnzb[k] = static_cast<int>(IEVset_blocks_host[k].size());
             IEVtoSVV_nnzb[k] = static_cast<int>(IEVtoSVV_blocks_host[k].size());
 
@@ -3114,7 +3364,7 @@ class FetidpSolver : public BaseSolver {
         // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
         // Krylov step so this is similar expense to like 8 Krylov steps (not too bad, but
         // not trivial)
-        int ncols = 4 * block_dim;
+        int ncols = MAX_NUM_VERTEX_PER_SUBDOMAIN * block_dim;
         for (int icol = 0; icol < ncols; icol++) {
             u_IEV.zeroValues();
             setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else 0
@@ -3829,13 +4079,14 @@ class FetidpSolver : public BaseSolver {
     int *d_node_nsd, *d_edge_nsd, *d_vertex_nsd, *d_IE_nsd;
 
     // // up to 4 local vertex slots per subdomain (structured quad partition case)
-    int *IEVset_blocks[4], *d_IEVset_blocks[4];      // for setVec_IEVtoV_vals
-    int *IEVout_blocks[4], *d_IEVout_blocks[4];      // for addMat_IEVtoV_vals read side
-    int *IEVtoSVV_blocks[4], *d_IEVtoSVV_blocks[4];  // for addMat_IEVtoV_vals write side
+    int *IEVset_blocks[6], *d_IEVset_blocks[6];      // for setVec_IEVtoV_vals
+    int *IEVout_blocks[6], *d_IEVout_blocks[6];      // for addMat_IEVtoV_vals read side
+    int *IEVtoSVV_blocks[6], *d_IEVtoSVV_blocks[6];  // for addMat_IEVtoV_vals write side
+    int MAX_NUM_VERTEX_PER_SUBDOMAIN;
 
-    int IEVset_nnzb[4];
+    int IEVset_nnzb[6];
     // int IEVout_nnzb[4];
-    int IEVtoSVV_nnzb[4];
+    int IEVtoSVV_nnzb[6];
     // int *IEVtoV_nnzb;       // length 4
     // int **d_IEVtoV_blocks;  // length 4, each entry is device ptr to block list
     // int *IEVtoSVV_nnzb;       // length 4

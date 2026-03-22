@@ -111,14 +111,16 @@ int main(int argc, char **argv) {
 
     int level = 0; // wing mesh level
     // int level = 1;
-    int nxe_subdomain_size = 4;
-    // int nxe_subdomain_size = 8;
+    // int nxe_subdomain_size = 4;
+    int nxe_subdomain_size = 8;
     T omega;
     int nsmooth, fill_level;
     T thick = 1e-3;
     // bool print_mem = false;
     bool print_mem = true;
     T mag = 1.0;
+    // whether to wrap subdomains around junctions
+    int wraparound = 1; // 1 is true, 0 is false
     
     // optional smoothing
     // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
@@ -172,6 +174,13 @@ int main(int argc, char **argv) {
                 std::cerr << "Missing value for --subdomain\n";
                 return 1;
             }
+        } else if (strcmp(arg, "--wraparound") == 0) {
+            if (i + 1 < argc) {
+                wraparound = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --wraparound\n";
+                return 1;
+            }
         } else if (strcmp(arg, "--fill") == 0) {
             if (i + 1 < argc) {
                 fill_level = std::atoi(argv[++i]);
@@ -198,6 +207,15 @@ int main(int argc, char **argv) {
             std::cerr << "Usage: " << argv[0] << " [direct/krylov] [--nxe value] [--SR value] [--nsmooth int]" << std::endl;
             return 1;
         }
+    }
+
+    if (nxe_subdomain_size == 8 && level == 0) {
+        printf("subdomain size %d too large for level 0, changing to 4\n", nxe_subdomain_size);
+        nxe_subdomain_size = 4;
+    }
+    if (nxe_subdomain_size < 16 && level == 4) {
+        printf("subdomain size %d too large for level 4, changing to 16, not sure why need this\n", nxe_subdomain_size);
+        nxe_subdomain_size = 16;
     }
 
 
@@ -244,9 +262,29 @@ int main(int argc, char **argv) {
     bool print_timing = true; // profiling
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
+    int MOD_WRAPAROUND = -1;
+    if (wraparound) {
+        // if this then subdomains do wraparound subdomains
+        // mod wraparound maybe should also be settable, but generally you want it to match nxe nodes per component / 2
+        // not same as nxe_subdomain_size, maybe for structured meshes like this could set it differently
+        if (level == 0) {
+            MOD_WRAPAROUND = 2;
+        } else if (level == 1) {
+            MOD_WRAPAROUND = 4;
+        } else if (level == 2) {
+            MOD_WRAPAROUND = 8;
+        } else if (level == 3) {
+            MOD_WRAPAROUND = 16;
+        } else if (level == 4) {
+            MOD_WRAPAROUND = 32;
+        }
+        printf("BUILDING subdomains that wraparound patch-to-patch junctions with element modulo %d, can help stabilize thin shell BDDC convergence\n", MOD_WRAPAROUND);
+    } else {
+        printf("BUILDING subdomains that do not wraparound but line up with junctions. This has worse thin shell performance in BDDC typically. call --wraparound 1 to turn on\n");
+    }
 
     // printf("setup wing subdomains\n");
-    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size);
+    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size, MOD_WRAPAROUND);
     // printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
     // return;
 
