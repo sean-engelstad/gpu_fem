@@ -215,6 +215,9 @@ int main(int argc, char **argv) {
         printf("subdomain size %d too large for level 0, changing to 2\n", nxe_subdomain_size);
         nxe_subdomain_size = 2;
     }
+    if (nxe_subdomain_size != 8 && level == 3) {
+        printf("NOTE : best performance for L3 from subdomain = 8 (on HPC)\n", nxe_subdomain_size);
+    }
     // if (nxe_subdomain_size < 16 && level == 4) {
     //     printf("subdomain size %d too large for level 4, changing to 16, not sure why need this\n", nxe_subdomain_size);
     //     nxe_subdomain_size = 16;
@@ -277,12 +280,17 @@ int main(int argc, char **argv) {
             MOD_WRAPAROUND = 8;
         } else if (level == 3) {
             MOD_WRAPAROUND = 16;
+            // MOD_WRAPAROUND = nxe_subdomain_size / 2;
         } else if (level == 4) {
             MOD_WRAPAROUND = 32;
             // MOD_WRAPAROUND = 16;
             // MOD_WRAPAROUND = 8;
             // MOD_WRAPAROUND = nxe_subdomain_size / 2;
         }
+
+        // should really be half the subdomain size for modulo..
+        MOD_WRAPAROUND = nxe_subdomain_size / 2;
+
         // see if this helps?
         // MOD_WRAPAROUND = nxe_subdomain_size / 2;
         printf("BUILDING subdomains that wraparound patch-to-patch junctions with element modulo %d, can help stabilize thin shell BDDC convergence\n", MOD_WRAPAROUND);
@@ -532,6 +540,7 @@ int main(int argc, char **argv) {
     // compare to direct solver (the solution)
     bool compare_direct = true;
     // bool compare_direct = false;
+    if (level >= 4) compare_direct = false; // too high DOF for direct solve on single GPU
     if (compare_direct) {
         // and need it globally too..
         auto loads = assembler.createVarsVec();

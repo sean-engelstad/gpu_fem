@@ -134,8 +134,9 @@ egads_aim = tacs_model.mesh_aim
 
 # num_edges = 2 * (args.level + 2)
 num_edges = 4 * 2**(args.level)
-if args.level == 3:
-    num_edges = 30 # make it slightly smallernum_edges
+if args.level == 4:
+    num_edges = 48
+    print("WARNING: L4 mesh has reduced edges each side..")
 
 OVERWRITE_EDGE = args.setedge
 
@@ -269,8 +270,11 @@ model.write_bdf(final_bdf, size=16) #, sort_ids=False)
 
 if OVERWRITE_EDGE:
     print(f"NOTE : (can turn that off) OVERWROTE EDGEs with {num_edges} elements per side")
-    if args.level == 3 and num_edges != 32:
-        print(f"\tlevel 3 #elements per side was modified from 32 to {num_edges}")
+    # if args.level == 3 and num_edges != 32:
+    #     print(f"\tlevel 3 #elements per side was modified from 32 to {num_edges}")
+    if args.level == 4:
+        num_edges = 48
+        print(f"WARNING: L4 mesh has reduced edges each side.. {num_edges=} not 64x64")
 
 # # --------------------------------------------------
 # # try writing out BDF file in more benign order of elems (ESP/CAPS has strange order of actual nodes, elems despite writing out components in right order)
