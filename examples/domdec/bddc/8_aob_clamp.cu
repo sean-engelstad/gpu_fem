@@ -56,14 +56,13 @@ T get_max_disp(HostVec<T> h_soln, int idof = 2) {
 // declare a couple different types of loads..
 template <typename T>
 struct UniformPressure {
-    T q0;
-
-    __HOST_DEVICE__
-    UniformPressure(T q0_) : q0(q0_) {}
+    // T q0;
+    // __HOST_DEVICE__
+    // UniformPressure(T q0_) : q0(q0_) {}
 
     __HOST_DEVICE__
     T operator()(T x, T y, T z) const {
-        return q0;
+        return 1.0;
     }
 };
 
@@ -82,6 +81,11 @@ struct ObliqueShearSineLoad {
 
 int main(int argc, char **argv) {
     // NOTE : this version uses inner direct solvers
+
+    // Intialize MPI and declare communicator
+    MPI_Init(&argc, &argv);
+    MPI_Comm comm = MPI_COMM_WORLD;
+
 
     using T = double;
     using Director = LinearizedRotation<T>;
@@ -107,20 +111,19 @@ int main(int argc, char **argv) {
     using KIPCG = PCGSolver<T, GRID>;
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
-    // can't run this small a problem (1 vertex with S_VV coarse solver for some reason)
-    // int nxe = 4, nxe_subdomain_size = 2;
-    // int nxe = 6, nxe_subdomain_size = 2;
-    // int nxe = 128, nxe_subdomain_size = 4; // this problem has optimal runtime for 4x4 subdomains
-    // int nxe = 128, nxe_subdomain_size = 8;
-    int nxe = 256, nxe_subdomain_size = 8; // 8 subdomains slightly faster (cause shrinks coarse problem) for local + HPC
-    // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
-    // for the coarse problem..
+
+    int level = 2; // wing mesh level
+    // int level = 1;
+    int nxe_subdomain_size = 4;
+    // int nxe_subdomain_size = 8;
     T omega;
     int nsmooth, fill_level;
     T thick = 1e-3;
     // bool print_mem = false;
     bool print_mem = true;
     T mag = 1.0;
+    // whether to wrap subdomains around junctions
+    int wraparound = 1; // 1 is true, 0 is false
     
     // optional smoothing
     // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
@@ -131,19 +134,15 @@ int main(int argc, char **argv) {
     // think I actually need to run with full direct fillin (cause otherwise solution recovery is wrong)
     omega = 1.0, nsmooth = 1, fill_level = -1; // -1 indicates full LU fillin
 
-    // if (!MULTI_SMOOTH) {
-    //     printf("NOTE: MULTI_SMOOTH is false, so omega, nsmooth inputs are ignored.\n");
-    // }
-
     for (int i = 1; i < argc; ++i) {
         char* arg = argv[i];
         to_lowercase(arg);
 
-        if (strcmp(arg, "--nxe") == 0) {
+        if (strcmp(arg, "--level") == 0) {
             if (i + 1 < argc) {
-                nxe = std::atoi(argv[++i]);
+                level = std::atoi(argv[++i]);
             } else {
-                std::cerr << "Missing value for --nxe\n";
+                std::cerr << "Missing value for --level\n";
                 return 1;
             }
         } else if (strcmp(arg, "--thick") == 0) {
@@ -172,6 +171,13 @@ int main(int argc, char **argv) {
                 nxe_subdomain_size = std::atoi(argv[++i]);
             } else {
                 std::cerr << "Missing value for --subdomain\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--wraparound") == 0) {
+            if (i + 1 < argc) {
+                wraparound = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --wraparound\n";
                 return 1;
             }
         } else if (strcmp(arg, "--fill") == 0) {
@@ -205,16 +211,28 @@ int main(int argc, char **argv) {
 
     // =================
 
-    int nye = nxe;
-    int nxs = nxe / nxe_subdomain_size;
-    int nys = nxe / nxe_subdomain_size;
-    double Lx = 1.0, Ly = 1.0;
-    double E = 70e9, nu = 0.3, rho = 2500, ys = 350e6;
-    // int nxe_per_comp = nxe, nye_per_comp = nye;
-    int nxe_per_comp = nxe / 2, nye_per_comp = nye / 2;
+    if (nxe_subdomain_size == 8 && level == 0) {
+        printf("subdomain size %d too large for level 0, changing to 2\n", nxe_subdomain_size);
+        nxe_subdomain_size = 2;
+    }
+    if (nxe_subdomain_size != 8 && level == 3) {
+        printf("NOTE : best performance for L3 from subdomain = 8 (on HPC)\n", nxe_subdomain_size);
+    }
+    // if (nxe_subdomain_size < 16 && level == 4) {
+    //     printf("subdomain size %d too large for level 4, changing to 16, not sure why need this\n", nxe_subdomain_size);
+    //     nxe_subdomain_size = 16;
+    // }
 
-    auto assembler = createPlateClampedAssembler<Assembler>(
-        nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+    // read the ESP/CAPS => nastran mesh for TACS
+    TACSMeshLoader mesh_loader{comm};
+    // std::string fname = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+    std::string fname = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+    mesh_loader.scanBDFFile(fname.c_str());
+    double E = 70e9, nu = 0.3;  // material & thick properties (start thicker first try)
+    printf("making assembler for mesh '%s'\n", fname.c_str());
+    
+    // create the TACS Assembler from the mesh loader
+    auto assembler = Assembler::createFromBDF(mesh_loader, Data(E, nu, thick));
 
     // auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
@@ -244,12 +262,46 @@ int main(int argc, char **argv) {
     cusparseHandle_t cusparseHandle = nullptr;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    bool print_timing = true; // profiling
+    // bool print_timing = true; // profiling
+    bool print_timing = false; // profiling
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
-    bool close_hoop = false; // true for cylinder case (not cylindrical panel)
-    bddc->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
-    // bddc->setup_wing_subdomains(nxe_subdomain_size, nxe_subdomain_size); // debug this method (for wing case)
+
+    int MOD_WRAPAROUND = -1;
+    if (wraparound) {
+        // if this then subdomains do wraparound subdomains
+        // mod wraparound maybe should also be settable, but generally you want it to match nxe nodes per component / 2
+        // not same as nxe_subdomain_size, maybe for structured meshes like this could set it differently
+        if (level == 0) {
+            MOD_WRAPAROUND = 2;
+        } else if (level == 1) {
+            MOD_WRAPAROUND = 4;
+        } else if (level == 2) {
+            MOD_WRAPAROUND = 8;
+        } else if (level == 3) {
+            MOD_WRAPAROUND = 16;
+            // MOD_WRAPAROUND = nxe_subdomain_size / 2;
+        } else if (level == 4) {
+            MOD_WRAPAROUND = 32;
+            // MOD_WRAPAROUND = 16;
+            // MOD_WRAPAROUND = 8;
+            // MOD_WRAPAROUND = nxe_subdomain_size / 2;
+        }
+
+        // should really be half the subdomain size for modulo..
+        MOD_WRAPAROUND = nxe_subdomain_size / 2;
+
+        // see if this helps?
+        // MOD_WRAPAROUND = nxe_subdomain_size / 2;
+        printf("BUILDING subdomains that wraparound patch-to-patch junctions with element modulo %d, can help stabilize thin shell BDDC convergence\n", MOD_WRAPAROUND);
+    } else {
+        printf("BUILDING subdomains that do not wraparound but line up with junctions. This has worse thin shell performance in BDDC typically. call --wraparound 1 to turn on\n");
+    }
+
+    // printf("setup wing subdomains\n");
+    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size, MOD_WRAPAROUND);
+    // printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
+    // return;
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
@@ -288,13 +340,16 @@ int main(int argc, char **argv) {
         Svv_bsr_data.compute_full_LU_pattern(10.0);
     }
 
+    // printf("setup coarse matrix sparsity\n");
     bddc->setup_coarse_matrix_sparsity();
+    // printf("\tdone with setup coarse matrix sparsity\n");
 
     // assemble local FETI-DP blocks
     bddc->assemble_subdomains();
 
     // external load (can add internally)
-    ObliqueShearSineLoad<T> load;
+    // ObliqueShearSineLoad<T> load;
+    UniformPressure<T> load;
     bddc->add_subdomain_fext(load, mag);
 
     bddc->set_IEV_residual(1.0, 0.0, vars);
@@ -355,8 +410,8 @@ int main(int argc, char **argv) {
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
-    // opts.ncycles = 2;
-    opts.ncycles = 50;
+    // opts.ncycles = 50;
+    opts.ncycles = 150;
     // opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
@@ -387,7 +442,6 @@ int main(int argc, char **argv) {
     auto start1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> IEV_factor_time = start1 - start0;
 
-
     bool gam_fail = gam_solver->solve(gam_rhs, gam, true);
     bddc->get_global_soln(gam, soln);
 
@@ -412,7 +466,6 @@ int main(int argc, char **argv) {
     printf("  total setup + solve   : %.4e s\n\n", total_time.count());
 
     int kmat_nnzb;
-
     if (print_mem) {
         // get memory usage
         size_t bytes_per_double = sizeof(double);
@@ -482,19 +535,27 @@ int main(int argc, char **argv) {
     }
 
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/wing_bddc.vtk");
 
     // compare to direct solver (the solution)
     bool compare_direct = true;
     // bool compare_direct = false;
+    if (level >= 4) compare_direct = false; // too high DOF for direct solve on single GPU
     if (compare_direct) {
         // and need it globally too..
         auto loads = assembler.createVarsVec();
         assembler.add_fext_fast(load, mag, loads);
         assembler.apply_bcs(loads);
 
-        auto assembler2 = createPlateClampedAssembler<Assembler>(
-            nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
+        // read the ESP/CAPS => nastran mesh for TACS
+        TACSMeshLoader mesh_loader2{comm};
+        // std::string fname2 = "../../gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+        std::string fname2 = "meshes/aob_wing_clamped_L" + std::to_string(level) + ".bdf"; // clamped BCs (since only written for clamped rn)
+        mesh_loader2.scanBDFFile(fname2.c_str());
+        printf("making assembler for mesh '%s'\n", fname.c_str());
+        
+        // create the TACS Assembler from the mesh loader
+        auto assembler2 = Assembler::createFromBDF(mesh_loader2, Data(E, nu, thick));
 
         // BSR factorization (need to change it to )
         auto& bsr_data = assembler2.getBsrData();
@@ -531,14 +592,14 @@ int main(int argc, char **argv) {
 
         // T lin_max_disp = get_max_disp(soln2);
         auto h_soln3 = soln2.createHostVec();
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/plate_lin.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/wing_lin.vtk");
 
         // now also compute solution error on host and print to VTK
         auto h_err = HostVec<T>(h_soln3.getSize());
         for (int i = 0; i < h_soln3.getSize(); i++) {
             h_err[i] = h_soln3[i] - h_soln[i];
         }
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/plate_err.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/wing_err.vtk");
 
         // for (int idof = 0; idof < 6; idof++) {
         //     T orig_nrm = get_max_disp(h_soln, idof);
@@ -548,6 +609,7 @@ int main(int argc, char **argv) {
         // }
         
         // now compute the residuals of each..
+        // int nvars = assembler2.get_num_vars();
         assembler2.set_variables(soln2);
         assembler2.add_residual_fast(res);
         T a = -1.0;
@@ -570,6 +632,10 @@ int main(int argc, char **argv) {
         CHECK_CUBLAS(cublasDnrm2(cublasHandle, nvars, res.getPtr(), 1, &res_norm_feti));
         T res_rel_nrm_feti = res_norm_feti / load_nrm;
         printf("\tres_nrm_feti %.4e, rel_nrm %.4e\n", res_norm_feti, res_rel_nrm_feti);
+
+        if (res_rel_nrm_feti > 1e-6) {
+            printf("ERROR: relative res norm didn't fully converge\n");
+        }
         
     }
 

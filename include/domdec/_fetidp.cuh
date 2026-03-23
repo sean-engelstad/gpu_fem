@@ -115,18 +115,19 @@ __global__ static void k_zeroInterior(const int nnodes, const int block_dim, con
 
 template <typename T>
 __global__ static void k_addVec_IEtoGlobal(const int IE_nnodes, const int block_dim, const int *IE_globalMap, 
-    const bool *d_general_edge,  const T *x, T *y, T a) {
+    const int *d_IE_nsd,  const T *x, T *y, T a) {
     int N_IE = IE_nnodes * block_dim;
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     if (tid >= N_IE) return;
 
     int IE_node = tid / block_dim;
     int glob_node = IE_globalMap[IE_node];
-    bool is_edge = d_general_edge[IE_node];
+    // bool is_edge = d_general_edge[IE_node];
     int idof = tid % block_dim;
     int dof_IE = block_dim * IE_node + idof;
     int dof_glob = block_dim * glob_node + idof;
-    T alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
+    // T alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
+    T alpha = 1.0 / d_IE_nsd[IE_node];
     // this edge map includes edge + dirichlet edge (which also add 0.5 weight into global, a bit tricky)
 
     atomicAdd(&y[dof_glob], a * alpha * x[dof_IE]);
@@ -134,27 +135,52 @@ __global__ static void k_addVec_IEtoGlobal(const int IE_nnodes, const int block_
 
 template <typename T, bool scaled = false>
 __global__ static void k_addVec_GlobalToIE(const int IE_nnodes, const int block_dim, const int *IE_globalMap, 
-    const bool *d_general_edge,  const T *x, T *y, T a) {
+    const int *d_IE_nsd,  const T *x, T *y, T a) {
     int N_IE = IE_nnodes * block_dim;
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     if (tid >= N_IE) return;
 
     int IE_node = tid / block_dim;
     int glob_node = IE_globalMap[IE_node];
-    bool is_edge = d_general_edge[IE_node];
+    // bool is_edge = d_general_edge[IE_node];
     int idof = tid % block_dim;
     int dof_IE = block_dim * IE_node + idof;
     int dof_glob = block_dim * glob_node + idof;
     // don't want half-weight for scattering global solution to edge nodes (it's more of a copy)
     T alpha;
     if constexpr (scaled) {
-        alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
+        alpha = 1.0 / d_IE_nsd[IE_node];
+        // alpha = is_edge ? (0.5) : 1.0; // half-weight for edge-nodes
     } else {
         alpha = 1.0;
     }
     // this edge map includes edge + dirichlet edge (which also add 0.5 weight into global, a bit tricky)
 
     atomicAdd(&y[dof_IE], a * alpha * x[dof_glob]);
+}
+
+template <typename T>
+__global__ static void k_subdomain_normalize_vec(const int nnodes, const int block_dim, const int *d_num_subdomain, const T *vec_in, T *vec_out) {
+    int N = nnodes * block_dim;
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= N) return;
+
+    int inode = tid / block_dim;
+    // change to float type here for next division
+    T nsd = 1.0 * d_num_subdomain[inode];
+    vec_out[tid] = vec_in[tid] / nsd;
+}
+
+template <typename T>
+__global__ static void k_subdomain_normalize_vec_inout(const int nnodes, const int block_dim, const int *d_num_subdomain, T *vec) {
+    int N = nnodes * block_dim;
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    if (tid >= N) return;
+
+    int inode = tid / block_dim;
+    // change to float type here for next division
+    T nsd = 1.0 * d_num_subdomain[inode];
+    vec[tid] /= nsd;
 }
 
 template <typename T>
@@ -175,7 +201,7 @@ __global__ static void k_addVec_VctoGlobal(const int Vc_nnodes, const int block_
 }
 
 template <typename T, bool scaled = false>
-__global__ static void k_addVec_GlobaltoVc(const int Vc_nnodes, const int block_dim, const int *Vc_globalMap, 
+__global__ static void k_addVec_GlobaltoVc(const int Vc_nnodes, const int block_dim, const int *Vc_globalMap, const int *d_vertex_nsd,
     const T *x, T *y, T a) {
     int N_Vc = Vc_nnodes * block_dim;
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
@@ -187,8 +213,10 @@ __global__ static void k_addVec_GlobaltoVc(const int Vc_nnodes, const int block_
     int dof_Vc = block_dim * Vc_node + idof;
     int dof_glob = block_dim * glob_node + idof;
     T weight = 1.0;
+    T nsd = d_vertex_nsd[Vc_node] * 1.0; // convert from int to float
     if constexpr (scaled) {
-        weight *= 0.25;
+        // weight *= 0.25;
+        weight /= nsd;
     }
     a *= weight;
 

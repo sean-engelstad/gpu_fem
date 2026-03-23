@@ -366,7 +366,11 @@ __GLOBAL__ static void k_add_fext_fast(int32_t num_elements, LoadMagnitude mag,
     T n0[3] = {0};
     Basis::template interpFields<3, 3>(pt, fn, n0);
 
+    T e3[3] = {0.0, 0.0, 1.0};
+    T mult = A2D::VecDotCore<T, 3>(n0, e3);
+
     T coeff = scale * q * load_mag;
+    coeff *= mult; // optional
 
     // assemble element force vector
     for (int inode = 0; inode < Basis::num_nodes; inode++) {

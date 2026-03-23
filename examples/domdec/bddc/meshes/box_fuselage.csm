@@ -1,0 +1,82 @@
+# cylinder with internal ribs as a fuselage type structure
+
+#--- cylinder 0 0 0 3 0 0 1.0
+box 0 -0.5 -0.5 2 1 1
+# box -1 -0.3 -3  5 0.6 6
+# intersect
+#--- throw 999
+store cylinder
+
+restore cylinder
+box 1 -5 -5 0 10 10
+
+#--- throw 999
+
+select face
+attribute capsGroup $rib
+#--- box 1 0 -5 1 0 10
+#--- subtract
+#--- throw 999
+
+intersect
+
+restore cylinder
+#--- throw 999
+select face
+#--- select sub 2
+#--- select sub 4
+select sub 1
+select sub 2
+extract @sellist
+
+
+union
+
+
+#--- throw 999
+
+select face 6
+attribute capsGroup $uskin1
+select face 9
+attribute capsGroup $uskin2
+select face 1
+attribute capsGroup $lskin1
+select face 3
+attribute capsGroup $lskin2
+select face 2
+attribute capsGroup $lespar1
+select face 7
+attribute capsGroup $lespar2
+select face 5
+attribute capsGroup $tespar1
+select face 8
+attribute capsGroup $tespar2
+
+
+#--- throw 999
+
+select edge 7
+select add 15
+select add 4
+select add 14
+
+select add 19
+select add 20
+select add 9
+select add 17
+
+attribute capsConstraint $bndry
+
+# make sure you also get the nodes adjacent to edge
+
+
+udprim editAttr filename <<
+ NODE ADJ2EDGE capsConstraint=bndry
+ SET capsConstraint=bndry
+>>
+
+select body
+attribute capsAIM $tacsAIM;egadsTessAIM
+
+end
+||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||

@@ -156,8 +156,8 @@ class InexactNewtonSolver {
             prev_res_nrm = res_nrm;
 
             // DEBUG
-            T res_nrm2 = computeResidual(lambda);
-            printf("\t\tres_nrm2 with alpha %.4e: %.4e\n", alpha, res_nrm2);
+            // T res_nrm2 = computeResidual(lambda);
+            // printf("\t\tres_nrm2 with alpha %.4e: %.4e\n", alpha, res_nrm2);
 
             // // compare with solution from direct solver
             // CUSPARSE::direct_LU_solve(kmat, res, update);

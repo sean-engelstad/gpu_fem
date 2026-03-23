@@ -10,6 +10,9 @@
 #include "cuda_utils.h"
 #include "element/shell/_shell.cuh"
 #include "linalg/bsr_data.h"
+#include "linalg/svd_utils.h"
+#include "mesh/vtk_writer.h"
+#include "multigrid/smoothers/_wingbox_coloring.h"
 #include "multigrid/solvers/solve_utils.h"
 
 enum NodeClass { INTERIOR = 0, DIRICHLET_EDGE = 1, EDGE = 2, VERTEX = 3 };
@@ -69,6 +72,7 @@ class FetidpSolver : public BaseSolver {
         d_vars = assembler.getVars();
         d_elem_components = assembler.getElemComponents();
         d_compData = assembler.getCompData();
+        MAX_NUM_VERTEX_PER_SUBDOMAIN = 4;
 
         descrK = 0;
         CHECK_CUSPARSE(cusparseCreateMatDescr(&descrK));
@@ -292,6 +296,8 @@ class FetidpSolver : public BaseSolver {
         // -----------------------------------------
         node_class_ind = new int[num_nodes];
         std::memset(node_class_ind, 0, num_nodes * sizeof(int));
+        node_nsd = new int[num_nodes];
+        std::memset(node_nsd, 0, num_nodes * sizeof(int));
 
         nnodes_interior = 0;
         nnodes_edge = 0;
@@ -314,6 +320,7 @@ class FetidpSolver : public BaseSolver {
             bool on_bndry = on_x || on_y;
 
             int nsd = static_cast<int>(node_sds.size());
+            node_nsd[inode] = nsd;
 
             if (nsd < 2) {
                 node_class_ind[inode] = INTERIOR;
@@ -417,6 +424,13 @@ class FetidpSolver : public BaseSolver {
         // printVec<int>(IEV_nnodes, IEV_nodes);
         // printf("IEV_conn: ");
         // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+
+        // for (int iev = 0; iev < IEV_nnodes; iev++) {
+        //     int isd = IEV_sd_ind[iev];
+        //     int gnode = IEV_nodes[iev];
+        //     int iclass = node_class_ind[gnode];
+        //     printf("iev %d, isd %d, gnode %d, class %d\n", iev, isd, gnode, iclass);
+        // }
 
         // -----------------------------------------
         // IE and I nodal lists
@@ -710,11 +724,1449 @@ class FetidpSolver : public BaseSolver {
         I_nofill_nnzb = I_nnzb;
     }
 
+    void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
+                                         bool compute_jump = true) {
+        clear_structured_host_data();
+
+        // printf("SETUP_WING_SUBDOMAINS : get_nodal_geom_indices\n");
+        int *nodal_num_wing_comps, *node_wing_geom_ind;
+        WingboxMultiColoring<ShellAssembler>::get_nodal_geom_indices(
+            assembler, nodal_num_wing_comps, node_wing_geom_ind);
+
+        // modify node_wing_geom_ind for plate + cylinder fuselage cases
+        // add edges and vertices if they only belong to one or two elements
+        // for plate + cylinder fuselage cases (outer bndry)
+        int *node_nelems = new int[num_nodes];
+        memset(node_nelems, 0, num_nodes * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                node_nelems[gnode]++;
+            }
+        }
+
+        // compute the BC indices needed for kmat_IEV
+        auto d_bcs = assembler.getBCs();
+        int n_orig_bcs = d_bcs.getSize();
+        int *h_bcs = d_bcs.createHostVec().getPtr();
+        // printf("h_bcs: ");
+        // printVec<int>(n_orig_bcs, h_bcs);
+
+        // get from Dirichlet bcs
+        bool *dirichlet_ind = new bool[num_nodes];
+        memset(dirichlet_ind, false, num_nodes * sizeof(bool));
+        for (int ibc = 0; ibc < n_orig_bcs; ibc++) {
+            int bc_node = h_bcs[ibc] / block_dim;
+            dirichlet_ind[bc_node] = true;
+        }
+        // printf("dirichlet ind: ");
+        // printVec<bool>(num_nodes, dirichlet_ind);
+
+        int *node_bndry_ind = new int[num_nodes];
+        for (int inode = 0; inode < num_nodes; inode++) {
+            node_bndry_ind[inode] = 0;
+            int nelems_attached = node_nelems[inode];
+            // outer bndry nodes changed to edge + vertices
+            if (nelems_attached == 2) {
+                node_bndry_ind[inode] = 1;  // change it to edge node if was labeled interior
+            } else if (nelems_attached == 1) {
+                node_bndry_ind[inode] = 2;  // change to vertex node
+            }
+        }
+
+        T *h_wgeom_ind = new T[num_nodes * block_dim];
+        memset(h_wgeom_ind, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_wgeom_ind[6 * i] = node_wing_geom_ind[i];
+        }
+        auto h_wgeom_vec = HostVec<T>(num_nodes * block_dim, h_wgeom_ind);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_wgeom_vec,
+                                               "out/wing_node_geom_ind.vtk");
+
+        int num_comps = assembler.get_num_components();
+        int *h_elem_comps = assembler.getElemComponents().createHostVec().getPtr();
+        T *h_xpts = d_xpts.createHostVec().getPtr();
+
+        // compute the centroid of each element
+        // printf("SETUP_WING_SUBDOMAINS : get_elem_centroids\n");
+        T *elem_centroids = new T[3 * num_elements];
+        memset(elem_centroids, 0, 3 * num_elements * sizeof(T));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                T *xpt = &h_xpts[3 * gnode];
+                elem_centroids[3 * ielem + 0] += xpt[0];
+                elem_centroids[3 * ielem + 1] += xpt[1];
+                elem_centroids[3 * ielem + 2] += xpt[2];
+            }
+
+            elem_centroids[3 * ielem + 0] /= nodes_per_elem;
+            elem_centroids[3 * ielem + 1] /= nodes_per_elem;
+            elem_centroids[3 * ielem + 2] /= nodes_per_elem;
+        }
+
+        elem_sd_ind = new int[num_elements];
+        memset(elem_sd_ind, 0, num_elements * sizeof(int));
+        int *debug_lelem_sd_ind = new int[num_elements];  // elem_sd_ind in local components
+        memset(debug_lelem_sd_ind, 0, num_elements * sizeof(int));
+        int i_subdomain = 0;
+
+        // printf("SETUP_WING_SUBDOMAINS : elem2elem_row_cts + comp_num_elems\n");
+        int *elem2elem_row_cts = new int[num_elements];
+        int *comp_num_elems = new int[num_comps];
+        memset(elem2elem_row_cts, 0, num_elements * sizeof(int));
+        memset(comp_num_elems, 0, num_comps * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int icomp = h_elem_comps[ielem];
+            comp_num_elems[icomp]++;
+
+            bool elem_is_interior = true;
+            bool elem_is_edge = true;
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int node_class = node_wing_geom_ind[gnode];
+                int bndry_class = node_bndry_ind[gnode];
+                if (node_class > 0) elem_is_interior = false;
+                if (node_class > 1) elem_is_edge = false;
+                if (bndry_class > 0) elem_is_interior = false;
+                if (bndry_class > 1) elem_is_edge = false;
+                // on bndry + inter-subdomain edge also counts like a vertex
+                if (bndry_class == 1 && node_class == 1) elem_is_edge = false;
+            }
+
+            if (elem_is_interior) {
+                elem2elem_row_cts[ielem] = 4;
+            } else if (elem_is_edge) {
+                elem2elem_row_cts[ielem] = 3;
+            } else {
+                elem2elem_row_cts[ielem] = 2;
+            }
+        }
+
+        // printf("comp_num_elems (%d num_comps): ", num_comps);
+        // printVec<int>(num_comps, comp_num_elems);
+
+        int **elem2elem_ielem = new int *[num_comps];
+        int **elem2elem_rowp = new int *[num_comps];
+        int **elem2elem_cols = new int *[num_comps];
+        int *elem2elem_nnz = new int[num_comps];
+
+        for (int icomp = 0; icomp < num_comps; icomp++) {
+            elem2elem_ielem[icomp] = nullptr;
+            elem2elem_rowp[icomp] = nullptr;
+            elem2elem_cols[icomp] = nullptr;
+            elem2elem_nnz[icomp] = 0;
+        }
+
+        for (int icomp = 0; icomp < num_comps; icomp++) {
+            int _num_elems = comp_num_elems[icomp];
+
+            int *e2e_ielem = new int[_num_elems];
+            int *e2e_rowp = new int[_num_elems + 1];
+            elem2elem_ielem[icomp] = e2e_ielem;
+            elem2elem_rowp[icomp] = e2e_rowp;
+
+            e2e_rowp[0] = 0;
+
+            // build reduced element list and row pointers only for this component
+            int elem_ct = 0;
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int jcomp = h_elem_comps[ielem];
+                if (icomp != jcomp) {
+                    continue;
+                }
+
+                e2e_ielem[elem_ct] = ielem;
+                e2e_rowp[elem_ct + 1] = e2e_rowp[elem_ct] + elem2elem_row_cts[ielem];
+                elem_ct++;
+            }
+
+            if (elem_ct != _num_elems) {
+                printf("ERROR: icomp %d expected _num_elems %d but got elem_ct %d\n", icomp,
+                       _num_elems, elem_ct);
+                exit(1);
+            }
+
+            int nnz = e2e_rowp[_num_elems];
+            elem2elem_nnz[icomp] = nnz;
+
+            // printf("\n\nicomp %d\n", icomp);
+            // printf("e2e_ielem (_num_elems %d): ", _num_elems);
+            // printVec<int>(_num_elems, e2e_ielem);
+            // printf("e2e_rowp: ");
+            // printVec<int>(_num_elems + 1, e2e_rowp);
+
+            int *e2e_cols = new int[nnz];
+            elem2elem_cols[icomp] = e2e_cols;
+
+            int ind = 0;
+            for (int i2 = 0; i2 < _num_elems * _num_elems; i2++) {
+                int i = i2 / _num_elems, j = i2 % _num_elems;
+                if (i == j) continue;
+
+                int ielem = e2e_ielem[i];
+                int *li_conn = &elem_conn[nodes_per_elem * ielem];
+                int jelem = e2e_ielem[j];
+                int *lj_conn = &elem_conn[nodes_per_elem * jelem];
+
+                int num_match = 0;
+                for (int lnode2 = 0; lnode2 < nodes_per_elem * nodes_per_elem; lnode2++) {
+                    int lnodei = lnode2 % nodes_per_elem;
+                    int lnodej = lnode2 / nodes_per_elem;
+                    int inode = li_conn[lnodei], jnode = lj_conn[lnodej];
+                    if (inode == jnode) num_match++;
+                }
+
+                if (num_match > 1) {
+                    if (ind >= nnz) {
+                        printf("ERROR: e2e_cols overflow for icomp %d\n", icomp);
+                        exit(1);
+                    }
+                    e2e_cols[ind++] = j;
+                }
+            }
+
+            if (ind != nnz) {
+                printf("WARNING: icomp %d expected nnz %d but filled %d\n", icomp, nnz, ind);
+                nnz = ind;
+                elem2elem_nnz[icomp] = ind;
+            }
+
+            // printf("e2e_cols with nnz %d: ", nnz);
+            // printVec<int>(nnz, e2e_cols);
+
+            // T xpt_min[3] = {1e20, 1e20, 1e20};
+            // T xpt_max[3] = {-1e20, -1e20, -1e20};
+
+            // for (int i = 0; i < _num_elems; i++) {
+            //     int ielem = e2e_ielem[i];
+            //     int *lconn = &elem_conn[nodes_per_elem * ielem];
+            //     for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+            //         int gnode = lconn[lnode];
+            //         T *xpt = &h_xpts[3 * gnode];
+            //         for (int dim = 0; dim < 3; dim++) {
+            //             xpt_min[dim] = (xpt[dim] < xpt_min[dim]) ? xpt[dim] :
+            //             xpt_min[dim]; xpt_max[dim] = (xpt[dim] > xpt_max[dim]) ? xpt[dim]
+            //             : xpt_max[dim];
+            //         }
+            //     }
+            // }
+
+            // printf("xpt_min: ");
+            // printVec<T>(3, xpt_min);
+            // printf("xpt_max: ");
+            // printVec<T>(3, xpt_max);
+
+            // T xpt_span[3];
+            // T min_span = 1e30;
+            // int min_direc = -1;
+            // for (int dim = 0; dim < 3; dim++) {
+            //     xpt_span[dim] = xpt_max[dim] - xpt_min[dim];
+            //     if (xpt_span[dim] < min_span) {
+            //         min_span = xpt_span[dim];
+            //         min_direc = dim;
+            //     }
+            // }
+
+            // printf("xpt_span: ");
+            // printVec<T>(3, xpt_span);
+
+            // T ref_axis1[3] = {0.0, 0.0, 0.0};
+            // T ref_axis2[3] = {0.0, 0.0, 0.0};
+
+            // if (min_direc == 0) {
+            //     ref_axis1[1] = 1.0;
+            //     ref_axis2[2] = 1.0;
+            // } else if (min_direc == 1) {
+            //     ref_axis1[0] = 1.0;
+            //     ref_axis2[2] = 1.0;
+            // } else {
+            //     ref_axis1[0] = 1.0;
+            //     ref_axis2[1] = 1.0;
+            // }
+
+            // printf("ref_axis1: ");
+            // printVec<T>(3, ref_axis1);
+            // printf("ref_axis2: ");
+            // printVec<T>(3, ref_axis2);
+
+            T xpt_min[3] = {1e20, 1e20, 1e20};
+            T xpt_max[3] = {-1e20, -1e20, -1e20};
+
+            // ---------------------------------------------
+            // First pass: bounds + component centroid
+            // ---------------------------------------------
+            T xcg[3] = {0.0, 0.0, 0.0};
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                T *xpt_elem = &elem_centroids[3 * ielem];
+
+                xcg[0] += xpt_elem[0];
+                xcg[1] += xpt_elem[1];
+                xcg[2] += xpt_elem[2];
+
+                int *lconn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = lconn[lnode];
+                    T *xpt = &h_xpts[3 * gnode];
+                    for (int dim = 0; dim < 3; dim++) {
+                        xpt_min[dim] = (xpt[dim] < xpt_min[dim]) ? xpt[dim] : xpt_min[dim];
+                        xpt_max[dim] = (xpt[dim] > xpt_max[dim]) ? xpt[dim] : xpt_max[dim];
+                    }
+                }
+            }
+            xcg[0] /= _num_elems;
+            xcg[1] /= _num_elems;
+            xcg[2] /= _num_elems;
+
+            // printf("xpt_min: ");
+            // printVec<T>(3, xpt_min);
+            // printf("xpt_max: ");
+            // printVec<T>(3, xpt_max);
+
+            T xpt_span[3];
+            for (int dim = 0; dim < 3; dim++) {
+                xpt_span[dim] = xpt_max[dim] - xpt_min[dim];
+            }
+            // printf("xpt_span: ");
+            // printVec<T>(3, xpt_span);
+
+            // ---------------------------------------------
+            // Helpers
+            // ---------------------------------------------
+            auto vec_dot = [](const T *a, const T *b) -> T {
+                return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            };
+
+            auto vec_norm = [&](const T *a) -> T { return sqrt(vec_dot(a, a)); };
+
+            auto normalize = [&](T *a) {
+                T nrm = vec_norm(a);
+                if (nrm > 1e-30) {
+                    a[0] /= nrm;
+                    a[1] /= nrm;
+                    a[2] /= nrm;
+                }
+            };
+
+            auto abs_dot = [&](const T *a, const T *b) -> T { return fabs(vec_dot(a, b)); };
+
+            auto swap_scalar = [](T &a, T &b) {
+                T tmp = a;
+                a = b;
+                b = tmp;
+            };
+
+            auto swap_vec3 = [](T *a, T *b) {
+                for (int k = 0; k < 3; k++) {
+                    T tmp = a[k];
+                    a[k] = b[k];
+                    b[k] = tmp;
+                }
+            };
+
+            // ---------------------------------------------
+            // Approximate geometric normal from element faces
+            // ---------------------------------------------
+            T geom_normal[3] = {0.0, 0.0, 0.0};
+
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                int *lconn = &elem_conn[nodes_per_elem * ielem];
+
+                T *x0 = &h_xpts[3 * lconn[0]];
+                T *x1 = &h_xpts[3 * lconn[1]];
+                T *x2 = &h_xpts[3 * lconn[2]];
+                T *x3 = &h_xpts[3 * lconn[3]];
+
+                T e01[3] = {x1[0] - x0[0], x1[1] - x0[1], x1[2] - x0[2]};
+                T e02[3] = {x2[0] - x0[0], x2[1] - x0[1], x2[2] - x0[2]};
+                T e03[3] = {x3[0] - x0[0], x3[1] - x0[1], x3[2] - x0[2]};
+
+                T n1[3], n2[3];
+                A2D::VecCrossCore<T>(e01, e02, n1);
+                A2D::VecCrossCore<T>(e02, e03, n2);
+
+                geom_normal[0] += n1[0] + n2[0];
+                geom_normal[1] += n1[1] + n2[1];
+                geom_normal[2] += n1[2] + n2[2];
+            }
+
+            if (vec_norm(geom_normal) < 1e-12) {
+                int min_direc = 0;
+                T min_span = xpt_span[0];
+                for (int dim = 1; dim < 3; dim++) {
+                    if (xpt_span[dim] < min_span) {
+                        min_span = xpt_span[dim];
+                        min_direc = dim;
+                    }
+                }
+                geom_normal[0] = 0.0;
+                geom_normal[1] = 0.0;
+                geom_normal[2] = 0.0;
+                geom_normal[min_direc] = 1.0;
+            }
+            normalize(geom_normal);
+
+            // printf("geom_normal: ");
+            // printVec<T>(3, geom_normal);
+
+            // ---------------------------------------------
+            // Build rigid-body inertia tensor about centroid
+            // using lumped unit masses at element centroids
+            // ---------------------------------------------
+            T I[3][3];
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 3; c++) {
+                    I[r][c] = 0.0;
+                }
+            }
+
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                T *x = &elem_centroids[3 * ielem];
+
+                T dx = x[0] - xcg[0];
+                T dy = x[1] - xcg[1];
+                T dz = x[2] - xcg[2];
+
+                I[0][0] += dy * dy + dz * dz;
+                I[1][1] += dx * dx + dz * dz;
+                I[2][2] += dx * dx + dy * dy;
+
+                I[0][1] -= dx * dy;
+                I[0][2] -= dx * dz;
+                I[1][2] -= dy * dz;
+            }
+            I[1][0] = I[0][1];
+            I[2][0] = I[0][2];
+            I[2][1] = I[1][2];
+
+            // printf("Inertia tensor:\n");
+            // for (int r = 0; r < 3; r++) {
+            //     printf("%.6e %.6e %.6e\n", I[r][0], I[r][1], I[r][2]);
+            // }
+
+            // ---------------------------------------------
+            // Diagonalize symmetric 3x3 inertia tensor
+            // using existing exact Givens routine
+            // ---------------------------------------------
+            T evals[3];
+            T VT[9];
+
+            // copy I into flat row-major array because eig3x3_exact_givens modifies A in
+            // place
+            T A_I[9] = {
+                I[0][0], I[0][1], I[0][2], I[1][0], I[1][1], I[1][2], I[2][0], I[2][1], I[2][2],
+            };
+
+            // use exact sorting, not smoothed sorting
+            eig3x3_exact_givens<T, 12, false, true>(A_I, evals, VT);
+
+            // rows of VT are eigenvectors
+            T axis0[3] = {VT[0], VT[1], VT[2]};
+            T axis1[3] = {VT[3], VT[4], VT[5]};
+            T axis2[3] = {VT[6], VT[7], VT[8]};
+            normalize(axis0);
+            normalize(axis1);
+            normalize(axis2);
+
+            // eig3x3_exact_givens with can_swap=true, smoothed=false sorts DESCENDING
+            // so:
+            //   evals[0] = largest principal inertia
+            //   evals[1] = middle
+            //   evals[2] = smallest
+            //
+            // for a thin plate/shell face, the largest inertia axis should be the
+            // normal-like one
+            T inertial_normal[3] = {axis0[0], axis0[1], axis0[2]};
+            T inertial_axis_a[3] = {axis1[0], axis1[1], axis1[2]};
+            T inertial_axis_b[3] = {axis2[0], axis2[1], axis2[2]};
+
+            // orient normal consistently with geometric normal
+            if (vec_dot(inertial_normal, geom_normal) < 0.0) {
+                inertial_normal[0] *= -1.0;
+                inertial_normal[1] *= -1.0;
+                inertial_normal[2] *= -1.0;
+            }
+
+            T ex[3] = {1.0, 0.0, 0.0};
+            T ey[3] = {0.0, 1.0, 0.0};
+            T ez[3] = {0.0, 0.0, 1.0};
+
+            T ref_axis1[3], ref_axis2[3], ref_axis3[3];
+
+            // keep normal as the inertial normal
+            ref_axis3[0] = inertial_normal[0];
+            ref_axis3[1] = inertial_normal[1];
+            ref_axis3[2] = inertial_normal[2];
+
+            // pick ref_axis1 as whichever Cartesian axis is closest to inertial_axis_a
+            T dax = fabs(vec_dot(inertial_axis_a, ex));
+            T day = fabs(vec_dot(inertial_axis_a, ey));
+            T daz = fabs(vec_dot(inertial_axis_a, ez));
+
+            if (dax >= day && dax >= daz) {
+                ref_axis1[0] = 1.0;
+                ref_axis1[1] = 0.0;
+                ref_axis1[2] = 0.0;
+            } else if (day >= dax && day >= daz) {
+                ref_axis1[0] = 0.0;
+                ref_axis1[1] = 1.0;
+                ref_axis1[2] = 0.0;
+            } else {
+                ref_axis1[0] = 0.0;
+                ref_axis1[1] = 0.0;
+                ref_axis1[2] = 1.0;
+            }
+
+            // pick ref_axis2 as whichever Cartesian axis is closest to inertial_axis_b
+            T dbx = fabs(vec_dot(inertial_axis_b, ex));
+            T dby = fabs(vec_dot(inertial_axis_b, ey));
+            T dbz = fabs(vec_dot(inertial_axis_b, ez));
+
+            if (dbx >= dby && dbx >= dbz) {
+                ref_axis2[0] = 1.0;
+                ref_axis2[1] = 0.0;
+                ref_axis2[2] = 0.0;
+            } else if (dby >= dbx && dby >= dbz) {
+                ref_axis2[0] = 0.0;
+                ref_axis2[1] = 1.0;
+                ref_axis2[2] = 0.0;
+            } else {
+                ref_axis2[0] = 0.0;
+                ref_axis2[1] = 0.0;
+                ref_axis2[2] = 1.0;
+            }
+
+            // printf("principal inertias (descending): %.6e %.6e %.6e\n", evals[0],
+            // evals[1],
+            //        evals[2]);
+            // printf("inertial_normal: ");
+            // printVec<T>(3, inertial_normal);
+            // printf("inertial_axis_a: ");
+            // printVec<T>(3, inertial_axis_a);
+            // printf("inertial_axis_b: ");
+            // printVec<T>(3, inertial_axis_b);
+            // printf("ref_axis1: ");
+            // printVec<T>(3, ref_axis1);
+            // printf("ref_axis2: ");
+            // printVec<T>(3, ref_axis2);
+            // printf("ref_axis3: ");
+            // printVec<T>(3, ref_axis3);
+
+            int min_lelem = -1;
+            T min_xi = 1e30, min_eta = 1e30;
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                T *xpt_elem = &elem_centroids[3 * ielem];
+                T xi = A2D::VecDotCore<T, 3>(xpt_elem, ref_axis1);
+                T eta = A2D::VecDotCore<T, 3>(xpt_elem, ref_axis2);
+                // printf("i %d, xi %.4e, eta %.4e\n", i, xi, eta);
+
+                if (xi + eta < min_xi + min_eta) {
+                    min_lelem = i;
+                    min_xi = xi;
+                    min_eta = eta;
+                }
+            }
+
+            // printf("min_lelem %d, min_xi %.4e, min_eta %.4e\n", min_lelem, min_xi,
+            // min_eta);
+
+            // printf("pre ixe_indices, %d\n", _num_elems);
+            int *ixe_indices = new int[_num_elems];
+            int *iye_indices = new int[_num_elems];
+            // printf("pre assigned int* assign\n");
+            bool *assigned = new bool[_num_elems];
+            // printf("mem allocate\n");
+
+            for (int i = 0; i < _num_elems; i++) {
+                ixe_indices[i] = 0;
+                iye_indices[i] = 0;
+                assigned[i] = false;
+            }
+
+            // printf("post memset\n");
+            ixe_indices[min_lelem] = 0;
+            iye_indices[min_lelem] = 0;
+            // printf("assigned bool pre\n");
+            assigned[min_lelem] = true;
+            int n_assigned = 1;
+            int i = min_lelem;
+
+            // printf("Pre while loop\n");
+            while (n_assigned < _num_elems) {
+                bool any_unfilled = false;
+                bool assigned_new = false;
+                // printf("while loop\n");
+
+                for (int jp = e2e_rowp[i]; jp < e2e_rowp[i + 1]; jp++) {
+                    int j = e2e_cols[jp];
+                    if (assigned[j]) continue;
+
+                    any_unfilled = true;
+
+                    int ielem = e2e_ielem[i], jelem = e2e_ielem[j];
+                    T *xpti = &elem_centroids[3 * ielem];
+                    T *xptj = &elem_centroids[3 * jelem];
+
+                    T dx[3];
+                    for (int dim = 0; dim < 3; dim++) {
+                        dx[dim] = xptj[dim] - xpti[dim];
+                    }
+
+                    T xi_dist = A2D::VecDotCore<T, 3>(dx, ref_axis1);
+                    T eta_dist = A2D::VecDotCore<T, 3>(dx, ref_axis2);
+
+                    // printf("e2e pair (%d,%d), (xi,eta)=(%.4e,%.4e)\n", i, j, xi_dist,
+                    // eta_dist);
+
+                    if (fabs(xi_dist) > fabs(eta_dist)) {
+                        int sign = (xi_dist > 0.0) ? 1 : -1;
+                        ixe_indices[j] = ixe_indices[i] + sign;
+                        iye_indices[j] = iye_indices[i];
+                    } else {
+                        int sign = (eta_dist > 0.0) ? 1 : -1;
+                        ixe_indices[j] = ixe_indices[i];
+                        iye_indices[j] = iye_indices[i] + sign;
+                    }
+
+                    assigned[j] = true;
+                    n_assigned++;
+                    i = j;
+                    assigned_new = true;
+                    break;
+                }
+
+                if (!assigned_new) {
+                    // printf("assigned new %d, any_unfilled %d\n", assigned_new,
+                    // any_unfilled); printf("\tassigned: "); printVec<bool>(_num_elems,
+                    // assigned);
+                    bool found_seed = false;
+                    for (int j = 0; j < _num_elems; j++) {
+                        bool has_unfilled_adj = false;
+                        for (int kp = e2e_rowp[j]; kp < e2e_rowp[j + 1]; kp++) {
+                            int k = e2e_cols[kp];
+                            if (!assigned[k]) has_unfilled_adj = true;
+                        }
+                        if (has_unfilled_adj) {
+                            // printf("\tfound seed True\n", assigned_new, any_unfilled);
+                            i = j;
+                            found_seed = true;
+                            break;
+                        }
+                    }
+                    if (!found_seed) {
+                        break;
+                    }
+                }
+            }
+
+            // printf("ixe_indices: ");
+            // printVec<int>(_num_elems, ixe_indices);
+            // printf("iye_indices: ");
+            // printVec<int>(_num_elems, iye_indices);
+
+            int ixe_min = ixe_indices[0], ixe_max = ixe_indices[0];
+            int iye_min = iye_indices[0], iye_max = iye_indices[0];
+            for (int i = 1; i < _num_elems; i++) {
+                ixe_min = (ixe_indices[i] < ixe_min) ? ixe_indices[i] : ixe_min;
+                ixe_max = (ixe_indices[i] > ixe_max) ? ixe_indices[i] : ixe_max;
+                iye_min = (iye_indices[i] < iye_min) ? iye_indices[i] : iye_min;
+                iye_max = (iye_indices[i] > iye_max) ? iye_indices[i] : iye_max;
+            }
+
+            // ensures ixe, iye indices are (0,0) at corner
+            for (int i = 0; i < _num_elems; i++) {
+                ixe_indices[i] -= ixe_min;
+                iye_indices[i] -= iye_min;
+            }
+            // compute number of subdomains each direction (in this component)
+            int nxs_comp = (ixe_max - ixe_min + nxse_ - 1) / nxse_;
+            int nys_comp = (iye_max - iye_min + nyse_ - 1) / nyse_;
+
+            if (MOD_WRAPAROUND != -1) {
+                // then modify the ixe, iye indices with modulo, so not (0,0) at corner
+                // part of code to ensure wraparound subdomains
+                for (int i = 0; i < _num_elems; i++) {
+                    ixe_indices[i] += MOD_WRAPAROUND;
+                    iye_indices[i] += MOD_WRAPAROUND;
+                }
+
+                // compute number of subdomains each direction (modify it)
+                nxs_comp = (ixe_max - ixe_min + MOD_WRAPAROUND + nxse_ - 1) / nxse_;
+                nys_comp = (iye_max - iye_min + MOD_WRAPAROUND + nyse_ - 1) / nyse_;
+            }
+
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                int ixe = ixe_indices[i];
+                int iye = iye_indices[i];
+
+                int ixs = ixe / nxse_;
+                int iys = iye / nyse_;
+                elem_sd_ind[ielem] = i_subdomain + ixs + iys * nxs_comp;
+                debug_lelem_sd_ind[ielem] = elem_sd_ind[ielem] - i_subdomain;
+            }
+
+            i_subdomain += nxs_comp * nys_comp;
+
+            delete[] ixe_indices;
+            delete[] iye_indices;
+            delete[] assigned;
+        }  // end of component loop
+
+        num_subdomains = i_subdomain;
+        // printf("num_subdomains %d\n", num_subdomains);
+
+        auto h_vars0 = assembler.createVarsVec().createHostVec();
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars0, elem_sd_ind,
+                                                            "subdomains", "out/comp_sd0.vtk");
+
+        if (MOD_WRAPAROUND != -1) {
+            // now make wraparound subdomains if they meet on subdomain boundaries
+            MAX_NUM_VERTEX_PER_SUBDOMAIN = 6;  // for multi-patch structures
+
+            // -----------------------------------------
+            // node -> subdomain incidence (with repeats)
+            // one entry per incident element
+            // -----------------------------------------
+            node_elem_nnz = 0;
+            node_elem_rowp = new int[num_nodes + 1];
+            node_elem_ct = new int[num_nodes];
+            std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+            std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    node_elem_ct[gnode]++;
+                    node_elem_nnz++;
+                }
+            }
+
+            for (int inode = 0; inode < num_nodes; inode++) {
+                node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+            }
+
+            int *temp_node_elem0 = new int[num_nodes];
+            node_sd_cols = new int[node_elem_nnz];
+            std::memset(temp_node_elem0, 0, num_nodes * sizeof(int));
+            std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                int subdomain_ind = elem_sd_ind[ielem];
+
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    int offset = node_elem_rowp[gnode] + temp_node_elem0[gnode];
+                    node_sd_cols[offset] = subdomain_ind;
+                    temp_node_elem0[gnode]++;
+                }
+            }
+            delete[] temp_node_elem0;
+
+            // -----------------------------------------
+            // classify node relative to a touching subdomain:
+            // 0 = interior, 1 = edge, 2 = vertex
+            //
+            // Since the mesh is structured, assume the classification is
+            // consistent across touching subdomains for the purposes here.
+            // -----------------------------------------
+            int *node_sd_bndry_ind = new int[num_nodes];
+            std::memset(node_sd_bndry_ind, 0, num_nodes * sizeof(int));
+
+            for (int inode = 0; inode < num_nodes; inode++) {
+                int start = node_elem_rowp[inode];
+                int end = node_elem_rowp[inode + 1];
+
+                if (start == end) {
+                    node_sd_bndry_ind[inode] = 0;
+                    continue;
+                }
+
+                // just use the first touching subdomain
+                int sd0 = node_sd_cols[start];
+
+                // count how many incident elements from this subdomain contain the node
+                int count_in_sd = 0;
+                for (int j = start; j < end; j++) {
+                    if (node_sd_cols[j] == sd0) {
+                        count_in_sd++;
+                    }
+                }
+
+                if (count_in_sd == 4) {
+                    node_sd_bndry_ind[inode] = 0;  // interior
+                } else if (count_in_sd == 2) {
+                    node_sd_bndry_ind[inode] = 1;  // edge
+                } else if (count_in_sd == 1) {
+                    node_sd_bndry_ind[inode] = 2;  // vertex
+                } else {
+                    // unexpected for structured quad subdomains
+                    printf("warning: inode %d has count_in_sd = %d in subdomain %d\n", inode,
+                           count_in_sd, sd0);
+                    node_sd_bndry_ind[inode] = 2;
+                }
+            }
+
+            // now for any nodes which are on subdomain EDGE boundaries, make list of
+            // subdomain groups that we're going to join together
+            std::vector<std::vector<int>> sd_groups;
+
+            for (int inode = 0; inode < num_nodes; inode++) {
+                int _sd_bndry = node_sd_bndry_ind[inode];
+                int _comp_bndry = node_wing_geom_ind[inode];
+
+                if (_sd_bndry == 1 && _comp_bndry == 1) {
+                    // node must be on a subdomain edge, not a subdomain vertex
+                    // AND on a component edge
+                    int start = node_elem_rowp[inode];
+                    int end = node_elem_rowp[inode + 1];
+
+                    std::vector<int> group;
+                    group.reserve(end - start);
+
+                    // collect all incident subdomains
+                    for (int j = start; j < end; j++) {
+                        group.push_back(node_sd_cols[j]);
+                    }
+
+                    // unique them
+                    std::sort(group.begin(), group.end());
+                    group.erase(std::unique(group.begin(), group.end()), group.end());
+
+                    // only keep actual interface groups
+                    if (group.size() > 1) {
+                        // printf("sd group: ");
+                        // printVec<int>(group.size(), group.data());
+                        sd_groups.push_back(group);
+                    }
+                }
+            }
+
+            // optional: remove repeated groups
+            std::sort(sd_groups.begin(), sd_groups.end());
+            sd_groups.erase(std::unique(sd_groups.begin(), sd_groups.end()), sd_groups.end());
+
+            // now modify elem_sd_ind by combining certain subdomain pairs on TACS component
+            // interfaces OR patch boundaries for (int inode)
+            // first make a rowp, cols of the current elems in each subdomain
+            int *elem_sd_cts = new int[num_subdomains];
+            memset(elem_sd_cts, 0, num_subdomains * sizeof(int));
+            int *elem_sd_rowp = new int[num_subdomains + 1];
+            memset(elem_sd_rowp, 0, (num_subdomains + 1) * sizeof(int));
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int i_subdomain = elem_sd_ind[ielem];
+                // start by just putting row cts in i_subdomain+1 entry (then later we'll add up to
+                // get full rowp offsets)
+                elem_sd_cts[i_subdomain]++;
+            }
+
+            for (int i_sd = 0; i_sd < num_subdomains; i_sd++) {
+                elem_sd_rowp[i_sd + 1] = elem_sd_rowp[i_sd] + elem_sd_cts[i_sd];
+            }
+
+            int *elem_sd_cols = new int[num_elements];
+            memset(elem_sd_cols, 0, num_elements * sizeof(int));
+            // reuse cts to keep track of filling up rowp + cols
+            memset(elem_sd_cts, 0, num_subdomains * sizeof(int));
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int i_subdomain = elem_sd_ind[ielem];
+                int offset = elem_sd_rowp[i_subdomain] + elem_sd_cts[i_subdomain];
+                elem_sd_cols[offset] = ielem;
+                elem_sd_cts[i_subdomain]++;
+            }
+
+            // the whole reason we did that above part is to avoid num_elements^2 operations
+            // now use this sparse element list to more cheaply join together subdomain groups
+            // printf("orig elem_sd_ind: ");
+            // printVec<int>(num_elements, elem_sd_ind);
+            for (auto group : sd_groups) {
+                int first_sd_ind = group[0];
+
+                // for middle cases: adjust first_sd_ind in case it was changed previously
+                int isd0 = group[0];
+                int ielem0 = elem_sd_cols[elem_sd_rowp[isd0]];
+                if (elem_sd_ind[ielem0] != first_sd_ind) first_sd_ind = elem_sd_ind[ielem0];
+
+                // printf("sd group write: ");
+                // printVec<int>(group.size(), group.data());
+                for (auto isd : group) {
+                    // now loop through elements in this subdomain and write them to the first sd
+                    // ind
+                    for (int jp = elem_sd_rowp[isd]; jp < elem_sd_rowp[isd + 1]; jp++) {
+                        int ielem = elem_sd_cols[jp];
+                        // printf("modify ielem %d, from isd %d to %d\n", ielem, elem_sd_ind[ielem],
+                        //        first_sd_ind);
+                        elem_sd_ind[ielem] = first_sd_ind;
+                    }
+                }
+            }
+
+            // printf("elem_sd_ind: ");
+            // printVec<int>(num_elements, elem_sd_ind);
+
+            // now get full # of unique subdomains
+            // now get full # of unique subdomains
+            std::vector<int> subdomains;
+            subdomains.reserve(num_elements);
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                subdomains.push_back(elem_sd_ind[ielem]);
+            }
+
+            // make unique
+            int num_subdomains_0 = num_subdomains;
+            std::sort(subdomains.begin(), subdomains.end());
+            subdomains.erase(std::unique(subdomains.begin(), subdomains.end()), subdomains.end());
+            num_subdomains = subdomains.size();  // update subdomain number now
+
+            // printf("subdomains %d: ", subdomains.size());
+            // printVec<int>(subdomains.size(), subdomains.data());
+
+            // now make the elem_sd_ind 0 to (new_num_subdomains-1)
+            int *subdomain_iperm =
+                new int[num_subdomains_0];  // inverse map : old_sd => new_reduced_sd
+            memset(subdomain_iperm, -1, num_subdomains_0 * sizeof(int));
+
+            for (int isd = 0; isd < num_subdomains; isd++) {
+                int old_sd = subdomains[isd];
+                // printf("isd %d => old_sd %d\n", isd, old_sd);
+                subdomain_iperm[old_sd] = isd;
+            }
+            // printf("subdomain_iperm: ");
+            // printVec<int>(num_subdomains_0, subdomain_iperm);
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int old_sd = elem_sd_ind[ielem];
+                int new_red_sd = subdomain_iperm[old_sd];
+                elem_sd_ind[ielem] = new_red_sd;
+            }
+
+            // printf("elem_sd_ind: ");
+            // printVec<int>(num_elements, elem_sd_ind);
+
+            // TODO : reset node_sd_cols, node_sd_rowp, node_elem_ct pointers (delete)
+            // for new set of subdomains, as we recompute them again later
+        }
+
+        // printf("printToVTK elemVec\n");
+        auto h_vars = assembler.createVarsVec().createHostVec();
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, elem_sd_ind,
+                                                            "subdomains", "out/comp_sd.vtk");
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, debug_lelem_sd_ind,
+                                                            "subdomains", "out/comp_lsd.vtk");
+        // printf("\tdone printToVTK elemVec");
+
+        // -----------------------------------------
+        // node -> subdomain incidence
+        // -----------------------------------------
+        node_elem_nnz = 0;
+        node_elem_rowp = new int[num_nodes + 1];
+        node_elem_ct = new int[num_nodes];
+        std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+        std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                node_elem_ct[gnode]++;
+                node_elem_nnz++;
+            }
+        }
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+        }
+
+        int *temp_node_elem = new int[num_nodes];
+        node_sd_cols = new int[node_elem_nnz];
+        std::memset(temp_node_elem, 0, num_nodes * sizeof(int));
+        std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int subdomain_ind = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int offset = node_elem_rowp[gnode] + temp_node_elem[gnode];
+                node_sd_cols[offset] = subdomain_ind;
+                temp_node_elem[gnode]++;
+            }
+        }
+        delete[] temp_node_elem;
+
+        // -----------------------------------------
+        // classify nodes
+        // -----------------------------------------
+        node_class_ind = new int[num_nodes];
+        std::memset(node_class_ind, 0, num_nodes * sizeof(int));
+
+        printf(
+            "WARNING: for unstructured meshes, this node classification may fail at "
+            "junctions.\n");
+
+        node_nsd = new int[num_nodes];
+        I_nnodes = 0, IE_nnodes = 0, IEV_nnodes = 0;
+        Vc_nnodes = 0, V_nnodes = 0, lam_nnodes = 0;
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            std::unordered_set<int> node_sds;
+            for (int jp = node_elem_rowp[inode]; jp < node_elem_rowp[inode + 1]; jp++) {
+                node_sds.insert(node_sd_cols[jp]);
+            }
+
+            int nsd = static_cast<int>(node_sds.size());
+            node_nsd[inode] = nsd;
+
+            if (nsd < 2) {
+                node_class_ind[inode] = INTERIOR;
+                I_nnodes++, IE_nnodes++, IEV_nnodes++;
+            } else if (dirichlet_ind[inode]) {
+                node_class_ind[inode] = INTERIOR;
+                if (node_bndry_ind[inode] > 0) {
+                    node_class_ind[inode] = DIRICHLET_EDGE;
+                    // acts like an edge node, repeated twice
+                    I_nnodes += nsd;
+                    IE_nnodes += nsd;
+                    IEV_nnodes += nsd;
+                }
+            } else if (nsd == 2 || node_wing_geom_ind[inode] == 1) {
+                // TODO: this logic is not quite right for wing..
+                node_class_ind[inode] = EDGE;
+                lam_nnodes++;
+                IE_nnodes += nsd;
+                IEV_nnodes += nsd;
+            } else {
+                node_class_ind[inode] = VERTEX;
+                Vc_nnodes++;  //, lam_nnodes++;
+                V_nnodes += nsd;
+                IEV_nnodes += nsd;
+            }
+        }
+
+        // print to VTK the nodal num subdomains
+        T *h_soln = new T[num_nodes * block_dim];
+        memset(h_soln, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_soln[6 * i] = node_nsd[i];
+        }
+        auto h_soln_debug = HostVec<T>(num_nodes * block_dim, h_soln);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug, "out/comp_node_nsd.vtk");
+
+        // print to VTK the IEV labels..
+        T *h_soln2 = new T[num_nodes * block_dim];
+        memset(h_soln2, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_soln2[6 * i] = node_class_ind[i];
+        }
+        auto h_soln_debug2 = HostVec<T>(num_nodes * block_dim, h_soln2);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug2, "out/comp_node_class.vtk");
+        // printf("done with classify nodes\n");
+
+        // -----------------------------------------
+        // build duplicated IEV nodal layout
+        // -----------------------------------------
+        IEV_sd_ptr = new int[num_subdomains + 1];
+        IEV_sd_ind = new int[IEV_nnodes];
+        IEV_nodes = new int[IEV_nnodes];
+
+        std::memset(IEV_sd_ptr, 0, (num_subdomains + 1) * sizeof(int));
+
+        int IEV_ind = 0;
+        int *temp_completion = new int[num_nodes];
+
+        for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+            std::memset(temp_completion, 0, num_nodes * sizeof(int));
+            IEV_sd_ptr[i_subdomain + 1] = IEV_sd_ptr[i_subdomain];
+            // printf("isd %d\n", i_subdomain);
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                if (elem_sd_ind[ielem] != i_subdomain) continue;
+
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    if (temp_completion[gnode]) continue;
+
+                    IEV_nodes[IEV_ind] = gnode;
+                    IEV_sd_ind[IEV_ind] = i_subdomain;
+                    IEV_sd_ptr[i_subdomain + 1]++;
+                    IEV_ind++;
+                    temp_completion[gnode] = 1;
+                }
+            }
+        }
+        delete[] temp_completion;
+
+        // printf("IEV_sd_ptr: ");
+        // printVec<int>(num_subdomains + 1, IEV_sd_ptr);
+        // printf("IEV_sd_ind: ");
+        // printVec<int>(IEV_nnodes, IEV_sd_ind);
+        // printf("IEV_nodes: ");
+        // printVec<int>(IEV_nnodes, IEV_nodes);
+
+        // -----------------------------------------
+        // build IEV element connectivity
+        // -----------------------------------------
+        IEV_elem_conn = new int[num_elements * nodes_per_elem];
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int i_subdomain = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int local_ind = -1;
+
+                for (int jp = IEV_sd_ptr[i_subdomain]; jp < IEV_sd_ptr[i_subdomain + 1]; jp++) {
+                    if (IEV_nodes[jp] == gnode) {
+                        local_ind = jp;
+                        break;
+                    }
+                }
+
+                if (local_ind < 0) {
+                    printf("ERROR: failed to find duplicated IEV node for elem %d node %d\n", ielem,
+                           gnode);
+                }
+                IEV_elem_conn[nodes_per_elem * ielem + lnode] = local_ind;
+            }
+        }
+
+        // printf("IEV_ind %d\n", IEV_ind);
+        // printf("IEV_nodes %d: ", IEV_nnodes);
+        // printVec<int>(IEV_nnodes, IEV_nodes);
+        // printf("IEV_conn: ");
+        // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+
+        // for (int iev = 0; iev < IEV_nnodes; iev++) {
+        //     int isd = IEV_sd_ind[iev];
+        //     int gnode = IEV_nodes[iev];
+        //     int iclass = node_class_ind[gnode];
+        //     printf("iev %d, isd %d, gnode %d, class %d\n", iev, isd, gnode, iclass);
+        // }
+
+        // -----------------------------------------
+        // IE and I nodal lists
+        // -----------------------------------------
+        IE_nodes = new int[IE_nnodes];
+        I_nodes = new int[I_nnodes];
+        std::memset(IE_nodes, 0, IE_nnodes * sizeof(int));
+        std::memset(I_nodes, 0, I_nnodes * sizeof(int));
+        IE_interior = new bool[IE_nnodes];
+        IE_general_edge = new bool[IE_nnodes];
+
+        int IE_ind = 0;
+        int I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IE_interior[IE_ind] = node_class == INTERIOR || node_class == DIRICHLET_EDGE;
+                IE_general_edge[IE_ind] = node_class == DIRICHLET_EDGE || node_class == EDGE;
+                IE_nodes[IE_ind++] = gnode;
+            }
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                I_nodes[I_ind++] = gnode;
+            }
+        }
+        d_IE_interior = HostVec<bool>(IE_nnodes, IE_interior).createDeviceVec().getPtr();
+        d_IE_general_edge = HostVec<bool>(IE_nnodes, IE_general_edge).createDeviceVec().getPtr();
+        d_IE_nodes = HostVec<int>(IE_nnodes, IE_nodes).createDeviceVec().getPtr();
+
+        // printf("IE_nodes %d: ", IE_nnodes);
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("I_nodes %d: ", I_nnodes);
+        // printVec<int>(I_nnodes, I_nodes);
+
+        // -----------------------------------------
+        // build IEV sparsity from duplicated connectivity
+        // -----------------------------------------
+        // printf("build BSR data\n");
+        IEV_bsr_data = BsrData(num_elements, IEV_nnodes, nodes_per_elem, block_dim, IEV_elem_conn);
+        // printf("\tdone build BSR data\n");
+        IEV_rowp = IEV_bsr_data.rowp;
+        IEV_cols = IEV_bsr_data.cols;
+        IEV_nnzb = IEV_bsr_data.nnzb;
+        IEV_rows = new int[IEV_nnzb];
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            for (int jp = IEV_rowp[inode]; jp < IEV_rowp[inode + 1]; jp++) {
+                IEV_rows[jp] = inode;
+            }
+        }
+        // printf("IEV_rowp with nnzb %d: ", IEV_nnzb);
+        // printVec<int>(IEV_nnodes + 1, IEV_rowp);
+        // printf("IEV_cols: ");
+        // printVec<int>(IEV_nnzb, IEV_cols);
+
+        // -----------------------------------------
+        // reduced rowp arrays
+        // -----------------------------------------
+        IE_rowp = new int[IE_nnodes + 1];
+        I_rowp = new int[I_nnodes + 1];
+        std::memset(IE_rowp, 0, (IE_nnodes + 1) * sizeof(int));
+        std::memset(I_rowp, 0, (I_nnodes + 1) * sizeof(int));
+
+        int IE_row = 0;
+        int I_row = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            if (typeI_row) I_rowp[I_row + 1] = I_rowp[I_row];
+            if (typeIE_row) IE_rowp[IE_row + 1] = IE_rowp[IE_row];
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) I_rowp[I_row + 1]++;
+                if (typeIE_row && typeIE_col) IE_rowp[IE_row + 1]++;
+            }
+
+            if (typeI_row) I_row++;
+            if (typeIE_row) IE_row++;
+        }
+
+        I_nnzb = I_rowp[I_nnodes];
+        IE_nnzb = IE_rowp[IE_nnodes];
+
+        // printf("I_rowp nnzb %d: ", I_nnzb);
+        // printVec<int>(I_nnodes + 1, I_rowp);
+        // printf("IE_nodes %d: ", IE_nnodes);
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("IE_rowp nnzb %d: ", IE_nnzb);
+        // printVec<int>(IE_nnodes + 1, IE_rowp);
+
+        IE_rows = new int[IE_nnzb];
+        for (int inode = 0; inode < IE_nnodes; inode++) {
+            for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+                IE_rows[jp] = inode;
+            }
+        }
+        I_rows = new int[I_nnzb];
+        for (int inode = 0; inode < I_nnodes; inode++) {
+            for (int jp = I_rowp[inode]; jp < I_rowp[inode + 1]; jp++) {
+                I_rows[jp] = inode;
+            }
+        }
+
+        // -----------------------------------------
+        // IEV -> IE map
+        // -----------------------------------------
+        IEVtoIE_map = new int[IEV_nnodes];
+        std::memset(IEVtoIE_map, -1, IEV_nnodes * sizeof(int));
+        IEVtoIE_imap = new int[IE_nnodes];
+
+        IE_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IEVtoIE_imap[IE_ind] = inode;
+                IEVtoIE_map[inode] = IE_ind++;
+            }
+        }
+
+        // printf("IEVtoIE_map: ");
+        // printVec<int>(IEV_nnodes, IEVtoIE_map);
+
+        // put on device
+        d_IEVtoIE_imap = HostVec<int>(IE_nnodes, IEVtoIE_imap).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // IEV -> I map
+        // -----------------------------------------
+        IEVtoI_map = new int[IEV_nnodes];
+        IEVtoI_imap = new int[I_nnodes];
+        std::memset(IEVtoI_map, -1, IEV_nnodes * sizeof(int));
+
+        I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                IEVtoI_imap[I_ind] = inode;
+                IEVtoI_map[inode] = I_ind++;
+            }
+        }
+
+        // printf("IEVtoI_map: ");
+        // printVec<int>(IEV_nnodes, IEVtoI_map);
+
+        // put on device
+        d_IEVtoI_imap = HostVec<int>(I_nnodes, IEVtoI_imap).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // reduced column arrays
+        // -----------------------------------------
+        IE_cols = new int[IE_nnzb];
+        I_cols = new int[I_nnzb];
+
+        I_ind = 0;
+        IE_ind = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) {
+                    I_cols[I_ind++] = IEVtoI_map[col];
+                }
+                if (typeIE_row && typeIE_col) {
+                    IE_cols[IE_ind++] = IEVtoIE_map[col];
+                }
+            }
+        }
+
+        // printf("I_cols: ");
+        // printVec<int>(I_nnzb, I_cols);
+        // printf("IE_cols: ");
+        // printVec<int>(IE_nnzb, IE_cols);
+
+        d_IEV_elem_conn =
+            HostVec<int>(num_elements * nodes_per_elem, IEV_elem_conn).createDeviceVec();
+
+        // -----------------------------------------
+        // IEV -> Vc map (coarse non-repeated vertices)
+        // -----------------------------------------
+
+        // make a list of the reduced Vc_ind (takes global node and figures out it's Vc_ind)
+        std::unordered_set<int> Vc_nodeset;
+        for (int i = 0; i < IEV_nnodes; i++) {
+            int gnode = IEV_nodes[i];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                Vc_nodeset.insert(gnode);
+            }
+        }
+        std::vector<int> Vc_nodes_vec(Vc_nodeset.begin(), Vc_nodeset.end());
+        std::sort(Vc_nodes_vec.begin(), Vc_nodes_vec.end());
+        // printf("Vc_nodes %d: ", Vc_nodes_vec.size());
+        // printVec<int>(Vc_nodes_vec.size(), Vc_nodes_vec.data());
+
+        int *Vc_inodes = new int[num_nodes];  // takes Vc global node => Vc red node
+        memset(Vc_inodes, -1, num_nodes * sizeof(int));
+        for (int i = 0; i < Vc_nodes_vec.size(); i++) {
+            int j = Vc_nodes_vec[i];
+            Vc_inodes[j] = i;
+        }
+
+        // printf("Vc_inodes: ");
+        // printVec<int>(num_nodes, Vc_inodes);
+
+        d_Vc_nodes = HostVec<int>(Vc_nnodes, Vc_nodes_vec.data()).createDeviceVec().getPtr();
+        Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
+
+        // printf("post move to device of Vc_nodes\n");
+
+        // set VcToV_imap and IEVtoV_imap now
+        VctoV_imap = new int[V_nnodes];
+        std::memset(VctoV_imap, -1, V_nnodes * sizeof(int));
+        IEVtoV_imap = new int[V_nnodes];
+        std::memset(IEVtoV_imap, -1, V_nnodes * sizeof(int));
+
+        int V_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                int Vc_ind = Vc_inodes[gnode];
+                VctoV_imap[V_ind] = Vc_ind;
+                IEVtoV_imap[V_ind] = inode;
+                V_ind++;
+            }
+        }
+
+        // printf("IEVtoV_imap %d: ", V_nnodes);
+        // printVec<int>(V_nnodes, IEVtoV_imap);
+
+        // put on device
+        d_IEVtoV_imap = HostVec<int>(V_nnodes, IEVtoV_imap).createDeviceVec().getPtr();
+        d_VctoV_imap = HostVec<int>(V_nnodes, VctoV_imap).createDeviceVec().getPtr();
+
+        // Build all remaining maps/permutations:
+        //  - jump operator ownership/sign maps
+
+        // printf("compute jump operators\n");
+        bool square_domain = compute_jump;  // should be false
+        _compute_jump_operators(square_domain);
+        // printf("allocate workspace\n");
+        allocate_workspace();
+        // printf("\tdone with allocate workspace\n");
+
+        // ---------------------------------------------------
+        // Save ORIGINAL nofill sparsity for IE and I
+        // before fill-in / AMD reordering
+        // ---------------------------------------------------
+        IE_bsr_data = BsrData(IE_nnodes, block_dim, IE_nnzb, IE_rowp, IE_cols);
+        IE_bsr_data.rows = IE_rows;
+        IE_nofill_nnzb = IE_nnzb;
+        IE_perm = IE_bsr_data.perm, IE_iperm = IE_bsr_data.iperm;
+
+        // sparsity before the permutation
+        // printf("\nIE SPARSITY BEFORE PERMUTATION\n");
+        // for (int inode = 0; inode < IE_nnodes; inode++) {
+        //     printf("(");
+        //     int grow = IE_nodes[IE_perm[inode]];
+        //     printf("%d, ", grow);
+        //     for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+        //         int j = IE_cols[jp];
+        //         int gcol = IE_nodes[IE_perm[j]];
+        //         printf("%d ", gcol);
+        //     }
+        //     printf(")\n");
+        // }
+        // printf("\n\n");
+
+        // printf("pre-perm IE_rowp: ");
+        // printVec<int>(IE_nnodes + 1, IE_rowp);
+        // printf("IE_cols: ");
+        // printVec<int>(IE_nnzb, IE_cols);
+        // printf("IE_nodes: ");
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("\n");
+
+        I_bsr_data = BsrData(I_nnodes, block_dim, I_nnzb, I_rowp, I_cols);
+        I_bsr_data.rows = I_rows;
+        I_nofill_nnzb = I_nnzb;
+        // printf("\tdone with setup wing subdomains\n");
+    }
+
     void setup_matrix_sparsity() {
         // USER must call this routine..
         printf(
-            "NOTE : FETI-DP doesn't support permutations yet on subdomains.. TBD later on that\n");
-        printf("\tJust does full fillin currently of each matrix used for inner linear solves\n");
+            "NOTE : FETI-DP doesn't support permutations yet on subdomains.. TBD later on "
+            "that\n");
+        printf(
+            "\tJust does full fillin currently of each matrix used for inner linear "
+            "solves\n");
 
         // do fillin of IE and I matrices (later also do coarse matrix)
         IE_rowp = IE_bsr_data.rowp, IE_cols = IE_bsr_data.cols, IE_nnzb = IE_bsr_data.nnzb;
@@ -748,6 +2200,8 @@ class FetidpSolver : public BaseSolver {
         // }
         // printf("\n\n");
 
+        // printf("SETUP MATRIX SPARSITY 1\n");
+
         // recompute rows after potential fillin
         delete[] IE_rows, I_rows;
         IE_rows = new int[IE_nnzb];
@@ -764,6 +2218,8 @@ class FetidpSolver : public BaseSolver {
         }
         IE_bsr_data.rows = IE_rows;
         I_bsr_data.rows = I_rows;
+
+        // printf("SETUP MATRIX SPARSITY 2\n");
 
         // now move sparsity to the device
         // and no fillin for IEV matrix cause it isn't used for linear solves
@@ -782,6 +2238,8 @@ class FetidpSolver : public BaseSolver {
 
         d_IE_perm = d_IE_bsr_data.perm, d_IE_iperm = d_IE_bsr_data.iperm;
         d_I_perm = d_I_bsr_data.perm, d_I_iperm = d_I_bsr_data.iperm;
+
+        // printf("SETUP MATRIX SPARSITY 3\n");
 
         // -----------------------------------------
         // IEV => IE kmat block copy map
@@ -809,7 +2267,8 @@ class FetidpSolver : public BaseSolver {
 
                         int gr_IE = IE_nodes[i], gc_IE = IE_nodes[j];
                         int gr_IEV = IEV_nodes[i_IEV], gc_IEV = IEV_nodes[j_IEV];
-                        // printf("nofill ind %d, IE (%d,%d) block %d, IEV (%d,%d) block %d\n",
+                        // printf("nofill ind %d, IE (%d,%d) block %d, IEV (%d,%d) block
+                        // %d\n",
                         //        nofill_ind, gr_IE, gc_IE, jp, gr_IEV, gc_IEV, kp);
                         nofill_ind++;
                         found = true;
@@ -822,6 +2281,9 @@ class FetidpSolver : public BaseSolver {
                 // }
             }
         }
+
+        // printf("SETUP MATRIX SPARSITY 4\n");
+
         d_kmat_IEtoIEV_map =
             HostVec<int>(IE_nofill_nnzb, kmat_IEtoIEV_map).createDeviceVec().getPtr();
         d_kmat_IEnofill_map =
@@ -830,6 +2292,8 @@ class FetidpSolver : public BaseSolver {
         // -----------------------------------------
         // IEV => I kmat block copy map
         // -----------------------------------------
+
+        // printf("SETUP MATRIX SPARSITY 5\n");
 
         kmat_Inofill_map = new int[I_nofill_nnzb];
         kmat_ItoIEV_map = new int[I_nofill_nnzb];
@@ -861,6 +2325,9 @@ class FetidpSolver : public BaseSolver {
                 // }
             }
         }
+
+        // printf("SETUP MATRIX SPARSITY 6\n");
+
         d_kmat_ItoIEV_map = HostVec<int>(I_nofill_nnzb, kmat_ItoIEV_map).createDeviceVec().getPtr();
         d_kmat_Inofill_map =
             HostVec<int>(I_nofill_nnzb, kmat_Inofill_map).createDeviceVec().getPtr();
@@ -868,6 +2335,8 @@ class FetidpSolver : public BaseSolver {
         // -----------------------------------------
         // get S_VV matrix sparsity / nonzero pattern (nofill first)
         // -----------------------------------------
+
+        // printf("SETUP MATRIX SPARSITY 7\n");
 
         // reverse map of global => reduced Vc nodes
         Vc_node_imap = new int[num_nodes];
@@ -877,8 +2346,14 @@ class FetidpSolver : public BaseSolver {
             Vc_node_imap[glob_node] = vnode;
         }
 
+        // printf("SETUP MATRIX SPARSITY 8\n");
+
         // printf("Vc_node_imap: ");
         // printVec<int>(num_nodes, Vc_node_imap);
+        // printf("Vc_nnodes %d\n", Vc_nnodes);
+
+        // printf("elem_sd_ind: ");
+        // printVec<int>(num_elements, elem_sd_ind);
 
         // build unique adjacency per coarse row
         std::vector<std::unordered_set<int>> Svv_adj(Vc_nnodes);
@@ -913,6 +2388,8 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
+        // printf("SETUP MATRIX SPARSITY 9\n");
+
         // row counts from unique adjacency
         int *Svv_rowcts = new int[Vc_nnodes];
         memset(Svv_rowcts, 0, Vc_nnodes * sizeof(int));
@@ -932,6 +2409,8 @@ class FetidpSolver : public BaseSolver {
         Svv_cols = new int[Svv_nnzb];
         memset(Svv_cols, 0, Svv_nnzb * sizeof(int));
 
+        // printf("SETUP MATRIX SPARSITY 10\n");
+
         for (int i = 0; i < Vc_nnodes; i++) {
             int jp = Svv_rowp[i];
             for (int j : Svv_adj[i]) {
@@ -948,12 +2427,11 @@ class FetidpSolver : public BaseSolver {
         // printVec<int>(Svv_nnzb, Svv_cols);
 
         // now go back through and put cols in
-        // use temp_Svv_fill to help keep track of putting nonzero entries in the Svv sparsity
-        // int *temp_Svv_fill = new int[Vc_nnodes];
-        // memset(temp_Svv_fill, 0, Vc_nnodes * sizeof(int));
-        // Svv_cols = new int[Svv_nnzb];
-        // memset(Svv_cols, 0, Svv_nnzb * sizeof(int));
-        // for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+        // use temp_Svv_fill to help keep track of putting nonzero entries in the Svv
+        // sparsity int *temp_Svv_fill = new int[Vc_nnodes]; memset(temp_Svv_fill, 0,
+        // Vc_nnodes * sizeof(int)); Svv_cols = new int[Svv_nnzb]; memset(Svv_cols, 0,
+        // Svv_nnzb * sizeof(int)); for (int i_subdomain = 0; i_subdomain < num_subdomains;
+        // i_subdomain++) {
         //     std::unordered_set<int> sd_Vc_nodeset;
 
         //     for (int ielem = 0; ielem < num_elements; ielem++) {
@@ -994,6 +2472,8 @@ class FetidpSolver : public BaseSolver {
                 Svv_rows[jp] = i;
             }
         }
+
+        // printf("SETUP MATRIX SPARSITY 11\n");
 
         // -----------------------------------------
         // build Svv matrix sparsity and do fillin
@@ -1095,7 +2575,7 @@ class FetidpSolver : public BaseSolver {
             HostVec<int>(Svv_copy_nnzb, Svv_Vc_copyBlocks.data()).createDeviceVec().getPtr();
 
         // CONSTRUCT coarse Schur complement mat-invmat-mat maps
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
             IEVset_nnzb[k] = 0;
             IEVtoSVV_nnzb[k] = 0;
             d_IEVset_blocks[k] = nullptr;
@@ -1106,9 +2586,9 @@ class FetidpSolver : public BaseSolver {
         // printf("Vc_nodes: ");
         // printVec<int>(Vc_nnodes, Vc_nodes);
 
-        std::vector<int> IEVset_blocks_host[4];
-        std::vector<int> IEVout_blocks_host[4];
-        std::vector<int> IEVtoSVV_blocks_host[4];
+        std::vector<int> IEVset_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
+        std::vector<int> IEVout_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
+        std::vector<int> IEVtoSVV_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
 
         for (int isd = 0; isd < num_subdomains; isd++) {
             std::vector<int> sd_iev_vertex_blocks;  // repeated IEV block ids for THIS subdomain
@@ -1129,8 +2609,10 @@ class FetidpSolver : public BaseSolver {
                     }
 
                     if (vc_node < 0) {
-                        printf("ERROR: vertex gnode %d on subdomain %d not found in Vc_nodes\n",
-                               gnode, isd);
+                        printf(
+                            "ERROR: vertex gnode %d on subdomain %d not found in "
+                            "Vc_nodes\n",
+                            gnode, isd);
                         exit(-1);
                     }
 
@@ -1147,8 +2629,9 @@ class FetidpSolver : public BaseSolver {
             if (nsv == 0) continue;
 
             // optional sanity check for structured quad subdomains
-            if (nsv > 4) {
-                printf("ERROR: subdomain %d has %d local vertex slots (>4)\n", isd, nsv);
+            if (nsv > MAX_NUM_VERTEX_PER_SUBDOMAIN) {
+                printf("ERROR: subdomain %d has %d local vertex slots (>%d)\n", isd, nsv,
+                       MAX_NUM_VERTEX_PER_SUBDOMAIN);
                 exit(-1);
             }
 
@@ -1183,18 +2666,21 @@ class FetidpSolver : public BaseSolver {
 
                     if (svv_block < 0) {
                         printf(
-                            "ERROR: could not find global Svv block for subdomain %d, row %d, col "
+                            "ERROR: could not find global Svv block for subdomain %d, row "
+                            "%d, "
+                            "col "
                             "%d\n",
                             isd, vc_row, vc_col);
                         exit(-1);
                     }
 
-                    // duplicate iev_block once for each local coarse destination in THIS subdomain
-                    // row
+                    // duplicate iev_block once for each local coarse destination in THIS
+                    // subdomain row
                     IEVout_blocks_host[k].push_back(iev_block2);
                     IEVtoSVV_blocks_host[k].push_back(svv_block);
 
-                    // printf("IEVout sd %d, k %d, iev_block %d, gnode %d\n", isd, k, iev_block2,
+                    // printf("IEVout sd %d, k %d, iev_block %d, gnode %d\n", isd, k,
+                    // iev_block2,
                     //        IEV_nodes[iev_block2]);
 
                     // debug print if needed
@@ -1205,7 +2691,7 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
             IEVset_nnzb[k] = static_cast<int>(IEVset_blocks_host[k].size());
             IEVtoSVV_nnzb[k] = static_cast<int>(IEVtoSVV_blocks_host[k].size());
 
@@ -1328,13 +2814,18 @@ class FetidpSolver : public BaseSolver {
         copyKmat_IEVtoI();
     }
 
-    // void assemble_coarse_problem() {
-    //     // now also compute the Schur complement inverse term in S_VV
-    //     S_VV->zeroValues();
-    //     copyKmat_IEVtoSvv();
-    //     computeSvvInverseTerm();
-    // }
     void assemble_coarse_problem() {
+        // now also compute the Schur complement inverse term in S_VV
+        if (print_timing) {
+            _assemble_coarse_problem_timing();
+        } else {
+            // non timed version
+            S_VV->zeroValues();
+            copyKmat_IEVtoSvv();
+            computeSvvInverseTerm();
+        }
+    }
+    void _assemble_coarse_problem_timing() {
         cudaEvent_t s1, e1, s2, e2;
         float t1 = 0.0f, t2 = 0.0f;
 
@@ -1878,10 +3369,10 @@ class FetidpSolver : public BaseSolver {
         // need 24 IE subdomain solves (tops) for quad-macro elements of struct mesh
         // to compute the -A_{V,IE} * A_{IE,IE}^{-1} * A_{IE,V} += > S_{VV} second Schur
         // complement inverse term as part of coarse matrix assembly for vertices
-        // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per Krylov
-        // step so this is similar expense to like 8 Krylov steps (not too bad, but not
-        // trivial)
-        int ncols = 4 * block_dim;
+        // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
+        // Krylov step so this is similar expense to like 8 Krylov steps (not too bad, but
+        // not trivial)
+        int ncols = MAX_NUM_VERTEX_PER_SUBDOMAIN * block_dim;
         for (int icol = 0; icol < ncols; icol++) {
             u_IEV.zeroValues();
             setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else 0
@@ -1902,11 +3393,12 @@ class FetidpSolver : public BaseSolver {
     //     complement
     //     // inverse term as part of coarse matrix assembly for vertices
 
-    //     // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
-    //     Krylov
-    //     // step so this is similar expense to like 8 Krylov steps (not too bad, but not trivial)
-    //     // TODO : maybe I can find faster way to do sparse mat-mat triangular solves instead
-    //     later?
+    //     // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve
+    //     per Krylov
+    //     // step so this is similar expense to like 8 Krylov steps (not too bad, but not
+    //     trivial)
+    //     // TODO : maybe I can find faster way to do sparse mat-mat triangular solves
+    //     instead later?
 
     //     cudaEvent_t start, stop, e1, e2, e3, e4;
     //     float total_ms = 0.0f, spmv_ms = 0.0f, solve_ms = 0.0f;
@@ -1925,7 +3417,8 @@ class FetidpSolver : public BaseSolver {
     //     int ncols = 4 * block_dim;
     //     for (int icol = 0; icol < ncols; icol++) {
     //         u_IEV.zeroValues();
-    //         setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else 0
+    //         setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else
+    //         0
 
     //         if (print_timing) CHECK_CUDA(cudaEventRecord(e1));
     //         sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
@@ -1970,8 +3463,8 @@ class FetidpSolver : public BaseSolver {
     //         printf("\tcomputeSvvInverseTerm: %.6f ms\n", total_ms);
     //         printf("\t\t2 sparseMatVec total : %.6f ms\n", spmv_ms);
     //         printf("\t\tsolveSubdomainIE total: %.6f ms\n", solve_ms);
-    //         printf("\t\tother total          : %.6f ms\n", total_ms - spmv_ms - solve_ms);
-    //         printf("\t\tacross %d cols or steps here\n", ncols);
+    //         printf("\t\tother total          : %.6f ms\n", total_ms - spmv_ms -
+    //         solve_ms); printf("\t\tacross %d cols or steps here\n", ncols);
 
     //         CHECK_CUDA(cudaEventDestroy(start));
     //         CHECK_CUDA(cudaEventDestroy(stop));
@@ -2028,15 +3521,15 @@ class FetidpSolver : public BaseSolver {
 
         int nvals = IE_nnodes * vars_per_node_in;
         dim3 block(32), grid((nvals + 31) / 32);
-        k_addVec_GlobalToIE<T, scaled><<<grid, block>>>(IE_nnodes, vars_per_node_in, d_IE_nodes,
-                                                        d_IE_general_edge, x_global.getPtr(),
-                                                        u_IE.getPtr(), a);
+        k_addVec_GlobalToIE<T, scaled><<<grid, block>>>(
+            IE_nnodes, vars_per_node_in, d_IE_nodes, d_IE_nsd, x_global.getPtr(), u_IE.getPtr(), a);
 
         int nvals2 = Vc_nnodes * vars_per_node_in;
         dim3 grid2((nvals2 + 31) / 32);
         // scales by 0.25x like for load distribution
         k_addVec_GlobaltoVc<T, scaled><<<grid2, block>>>(Vc_nnodes, vars_per_node_in, d_Vc_nodes,
-                                                         x_global.getPtr(), u_V.getPtr(), a);
+                                                         d_vertex_nsd, x_global.getPtr(),
+                                                         u_V.getPtr(), a);
         // CHECK_CUBLAS(cublasDscal(cublasHandle, u_IE.getSize(), &a, u_IE.getPtr(), 1));
 
         // T *h_u_IE = u_IE.createHostVec().getPtr();
@@ -2091,6 +3584,7 @@ class FetidpSolver : public BaseSolver {
             <<<grid, block>>>(I_nnodes, block_dim, d_IEVtoI_imap, x.getPtr(), y.getPtr(), a);
     }
 
+    template <bool scaled = false>
     void addVecIEVtoVc(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b) {
         // gather/scatter assembled primal V entries from IEV into Vc (coarse vertex,
         // non-repeated) map(a * x) + b * y => y
@@ -2099,6 +3593,13 @@ class FetidpSolver : public BaseSolver {
         dim3 block(32), grid((nvals + 31) / 32);
         k_addVec_IEVtoVc<T><<<grid, block>>>(V_nnodes, block_dim, d_IEVtoV_imap, d_VctoV_imap,
                                              x.getPtr(), y.getPtr(), a);
+
+        if constexpr (scaled) {
+            int Vc_nvals = Vc_nnodes * block_dim;
+            dim3 block(32), grid((Vc_nvals + 31) / 32);
+            k_subdomain_normalize_vec_inout<T>
+                <<<grid, block>>>(this->Vc_nnodes, this->block_dim, this->d_vertex_nsd, y.getPtr());
+        }
     }
 
     void addVecIEtoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b, int vars_per_node = -1) {
@@ -2119,26 +3620,38 @@ class FetidpSolver : public BaseSolver {
         //     int gnode1 = IE_nodes[IE_node];
         //     int IEV_node = h_IEVtoIE_imap[IE_node];
         //     int gnode2 = IEV_nodes[IEV_node];
-        //     printf("ind %d, IEV_node %d, gnode1 %d, gnode2 %d\n", IE_node, IEV_node, gnode1,
+        //     printf("ind %d, IEV_node %d, gnode1 %d, gnode2 %d\n", IE_node, IEV_node,
+        //     gnode1,
         //            gnode2);
         // }
     }
 
+    template <bool scaled = false>
     void addVecVctoIEV(const DeviceVec<T> &x, DeviceVec<T> &y, T a, T b, int vars_per_node = -1) {
         // inject coarse/global V entries into local IEV primal slots
         // map(a * x) + b * y => y
+
+        cudaMemcpy(this->temp_V.getPtr(), x.getPtr(), this->Vc_nnodes * this->block_dim * sizeof(T),
+                   cudaMemcpyDeviceToDevice);
+        if constexpr (scaled) {
+            int Vc_nvals = Vc_nnodes * block_dim;
+            dim3 block(32), grid((Vc_nvals + 31) / 32);
+            k_subdomain_normalize_vec_inout<T><<<grid, block>>>(
+                this->Vc_nnodes, this->block_dim, this->d_vertex_nsd, this->temp_V.getPtr());
+        }
+
         if (vars_per_node == -1) vars_per_node = block_dim;
         CHECK_CUBLAS(cublasDscal(cublasHandle, y.getSize(), &b, y.getPtr(), 1));
         int nvals = V_nnodes * vars_per_node;
         dim3 block(32), grid((nvals + 31) / 32);
         k_addVec_VctoIEV<T><<<grid, block>>>(V_nnodes, vars_per_node, d_IEVtoV_imap, d_VctoV_imap,
-                                             x.getPtr(), y.getPtr(), a);
+                                             this->temp_V.getPtr(), y.getPtr(), a);
 
         // int *h_IEVtoV_imap = DeviceVec<int>(V_nnodes,
         // d_IEVtoV_imap).createHostVec().getPtr(); printf("h_IEVtoV_imap: ");
         // printVec<int>(V_nnodes, h_IEVtoV_imap);
-        // int *h_VctoV_imap = DeviceVec<int>(V_nnodes, d_VctoV_imap).createHostVec().getPtr();
-        // printf("h_VctoV_imap: ");
+        // int *h_VctoV_imap = DeviceVec<int>(V_nnodes,
+        // d_VctoV_imap).createHostVec().getPtr(); printf("h_VctoV_imap: ");
         // printVec<int>(V_nnodes, h_VctoV_imap);
     }
 
@@ -2196,7 +3709,7 @@ class FetidpSolver : public BaseSolver {
 
         int nvals = IE_nnodes * block_dim;
         dim3 block(32), grid((nvals + 31) / 32);
-        k_addVec_IEtoGlobal<T><<<grid, block>>>(IE_nnodes, block_dim, d_IE_nodes, d_IE_general_edge,
+        k_addVec_IEtoGlobal<T><<<grid, block>>>(IE_nnodes, block_dim, d_IE_nodes, d_IE_nsd,
                                                 u_IE.getPtr(), soln.getPtr(), 1.0);
 
         int nvals2 = Vc_nnodes * block_dim;
@@ -2353,8 +3866,9 @@ class FetidpSolver : public BaseSolver {
         sol_out.permuteData(block_dim, d_perm);
     }
 
-    void _compute_jump_operators() {
-        // compute +1/0/-1 coefficients from u_IE to lam (with 0 for I and +1/-1 for E edges)
+    void _compute_jump_operators(bool square_domain = true) {
+        // compute +1/0/-1 coefficients from u_IE to lam (with 0 for I and +1/-1 for E
+        // edges)
 
         // compute IE to lam map
         IE_to_lam_map = new int[IE_nnodes];
@@ -2392,6 +3906,34 @@ class FetidpSolver : public BaseSolver {
         // printf("lam_nodes %d: ", lam_nnodes);
         // printVec<int>(lam_nnodes, lam_nodes);
 
+        d_IE_to_lam_map = HostVec<int>(IE_nnodes, IE_to_lam_map).createDeviceVec().getPtr();
+
+        // get the scales for edge DOF (# subdomains)
+        edge_nsd = new int[lam_nnodes];
+        for (int ilam = 0; ilam < lam_nnodes; ilam++) {
+            int glob_node = lam_nodes[ilam];
+            edge_nsd[ilam] = node_nsd[glob_node];
+        }
+
+        // and similarly for vertex
+        vertex_nsd = new int[Vc_nnodes];
+        for (int iv = 0; iv < Vc_nnodes; iv++) {
+            int glob_node = Vc_nodes[iv];
+            vertex_nsd[iv] = node_nsd[glob_node];
+        }
+
+        IE_nsd = new int[IE_nnodes];
+        for (int i = 0; i < IE_nnodes; i++) {
+            int glob_node = IE_nodes[i];
+            IE_nsd[i] = node_nsd[glob_node];
+        }
+
+        d_edge_nsd = HostVec<int>(lam_nnodes, edge_nsd).createDeviceVec().getPtr();
+        d_vertex_nsd = HostVec<int>(Vc_nnodes, vertex_nsd).createDeviceVec().getPtr();
+        d_IE_nsd = HostVec<int>(IE_nnodes, IE_nsd).createDeviceVec().getPtr();
+
+        if (!square_domain) return;  //
+
         IE_to_lam_vec = new T[IE_nnodes];
         for (int inode = 0; inode < IE_nnodes; inode++) {
             int glob_node = IE_nodes[inode];
@@ -2418,7 +3960,6 @@ class FetidpSolver : public BaseSolver {
         // printVec<T>(IE_nnodes, IE_to_lam_vec);
 
         d_IE_to_lam_vec = HostVec<T>(IE_nnodes, IE_to_lam_vec).createDeviceVec().getPtr();
-        d_IE_to_lam_map = HostVec<int>(IE_nnodes, IE_to_lam_map).createDeviceVec().getPtr();
     }
 
     static int find_block_index(int irow, int jcol, const int *rowp, const int *cols) {
@@ -2542,14 +4083,18 @@ class FetidpSolver : public BaseSolver {
     int Svv_copy_nnzb;
     int *d_Svv_Vc_copyBlocks, *d_Svv_IEV_copyBlocks;
 
-    // // up to 4 local vertex slots per subdomain (structured quad partition case)
-    int *IEVset_blocks[4], *d_IEVset_blocks[4];      // for setVec_IEVtoV_vals
-    int *IEVout_blocks[4], *d_IEVout_blocks[4];      // for addMat_IEVtoV_vals read side
-    int *IEVtoSVV_blocks[4], *d_IEVtoSVV_blocks[4];  // for addMat_IEVtoV_vals write side
+    int *node_nsd, *edge_nsd, *vertex_nsd, *IE_nsd;
+    int *d_node_nsd, *d_edge_nsd, *d_vertex_nsd, *d_IE_nsd;
 
-    int IEVset_nnzb[4];
+    // // up to 4 local vertex slots per subdomain (structured quad partition case)
+    int *IEVset_blocks[6], *d_IEVset_blocks[6];      // for setVec_IEVtoV_vals
+    int *IEVout_blocks[6], *d_IEVout_blocks[6];      // for addMat_IEVtoV_vals read side
+    int *IEVtoSVV_blocks[6], *d_IEVtoSVV_blocks[6];  // for addMat_IEVtoV_vals write side
+    int MAX_NUM_VERTEX_PER_SUBDOMAIN;
+
+    int IEVset_nnzb[6];
     // int IEVout_nnzb[4];
-    int IEVtoSVV_nnzb[4];
+    int IEVtoSVV_nnzb[6];
     // int *IEVtoV_nnzb;       // length 4
     // int **d_IEVtoV_blocks;  // length 4, each entry is device ptr to block list
     // int *IEVtoSVV_nnzb;       // length 4

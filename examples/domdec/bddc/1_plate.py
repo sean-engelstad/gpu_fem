@@ -9,7 +9,7 @@ import numpy as np, scipy.sparse as sp
 import sys
 
 sys.path.append("../feti_dp/")
-from src import MITCPlateElement, BDDC_Assembler
+from src import MITCPlateElement, BDDC_Assembler, BDDC_EdgeAvg_Assembler
 from src import RichardsonSolver, ILU0Preconditioner, ExactSparseSolver, ILUTPreconditioner
 
 import sys
@@ -23,10 +23,10 @@ from krylov import right_pcg_matfree
 # here nxs represents # subdomains not subdomain size
 # nxe, nxs = 256, 64
 # nxe, nxs = 128, 64 # even works pretty well with small 2x2 subdomains for higher DOF problems! 4x4 fine too..
-nxe, nxs = 128, 32 # 4x4 works well also
+# nxe, nxs = 128, 32 # 4x4 works well also
 # nxe, nxs = 128, 16
 # nxe, nxs = 128, 8
-# nxe, nxs = 64, 16
+nxe, nxs = 64, 16
 # nxe, nxs = 64, 8
 # nxe, nxs = 32, 4
 # nxe, nxs = 32, 8
@@ -37,6 +37,16 @@ nxe, nxs = 128, 32 # 4x4 works well also
 # thick = 1e-1
 # thick = 1e-2
 thick = 1e-3
+# thick = 1e-4
+
+# extra constraints
+# edge_averages = False
+edge_averages = True
+
+if edge_averages:
+    ASSEMBLER = BDDC_EdgeAvg_Assembler
+else:
+    ASSEMBLER = BDDC_Assembler
 
 
 # m, n = 2, 2
@@ -51,7 +61,7 @@ def load_fcn(_x,_y):
 ELEMENT = MITCPlateElement(
     prolong_mode='standard',
 )
-assembler = BDDC_Assembler(
+assembler = ASSEMBLER(
     ELEMENT=ELEMENT,
     thick=thick,
     nxe=nxe, nxs=nxs, nys=nxs,
