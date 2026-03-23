@@ -183,7 +183,9 @@ def standard_csr_coarsening(A_csr:sp.csr_matrix, threshold:float=0.25):
             F[j] = True
             U[j] = False
             F_neighbors = np.array([kk for kk in STRENGTH[j] if U[kk]])
-            LAM[F_neighbors] += 2 # increases by 2 here to promote standard coarsening (instead of 1 for Ruge-Stuben)
+            # print(f"{F_neighbors.shape=}")
+            if F_neighbors.size != 0:
+                LAM[F_neighbors] += 2 # increases by 2 here to promote standard coarsening (instead of 1 for Ruge-Stuben)
         
         # step 6: decrement LAM (num strong neighbors) for the added C point
         C_neighbors = np.array([jj for jj in STRENGTH[i] if U[jj]])

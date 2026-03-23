@@ -1,6 +1,6 @@
 
 import sys
-sys.path.append("../../milu")
+sys.path.append("../../../milu")
 from __src import get_tacs_matrix, sort_vis_maps
 from __src import random_ordering, reorder_bsr6_nofill, gen_cylinder_mesh
 from __ilu import q_ordering

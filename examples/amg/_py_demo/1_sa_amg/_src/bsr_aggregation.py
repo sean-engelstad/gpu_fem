@@ -2,6 +2,8 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
+import sys
+sys.path.append("../1_sa_amg/_src")
 from _smoothers import block_gauss_seidel_6dof, block_gauss_seidel_6dof_transpose
 
 def strength_matrix_bsr(A:sp.bsr_matrix, threshold:float=0.25):
@@ -471,6 +473,7 @@ def smooth_prolongator_bsr(T: sp.bsr_matrix, A: sp.bsr_matrix, Bc: np.ndarray,
 def smooth_prolongator_bsr_iterative(
     T: sp.bsr_matrix,
     A: sp.bsr_matrix,
+    B : np.ndarray,
     Bc: np.ndarray,
     bc_flags: np.ndarray = None,
     omega: float = None,
@@ -503,7 +506,8 @@ def smooth_prolongator_bsr_iterative(
 
     # --- default mask from A*T, not T ---
     if mask is None:
-        mask = (A @ T).tobsr(blocksize=T.blocksize)
+        # mask = (A @ T).tobsr(blocksize=T.blocksize)
+        mask = (A @ A @ T).tobsr(blocksize=T.blocksize)
 
     if not sp.isspmatrix_bsr(mask):
         raise TypeError("mask must be a scipy.sparse.bsr_matrix")
@@ -557,9 +561,25 @@ def smooth_prolongator_bsr_iterative(
         Mcsr = mask.tocsr()
         Ycsr = Xcsr.multiply(Mcsr != 0)
         return Ycsr.tobsr(blocksize=mask.blocksize)
+    
+    def get_trace_functional(_P):
+        coarse = _P.T @ (A @ _P)
+        # print(f"{coarse.shape=}")
+        return np.trace(coarse.tocsr().toarray()) * 0.5
+    
+    B_flat = np.reshape(B, (6*B.shape[0], 6))
+    Bc_flat = np.reshape(Bc, (6*Bc.shape[0], 6))
+
+    def rbm_error(_P):
+        # print(f"{_P.shape=} {Bc.shape=} {B.shape=}")
+        _R = _P @ Bc_flat - B_flat
+        return np.linalg.norm(_R)
 
     # start from T, but immediately enforce target sparsity
     P = filter_to_mask_bsr(T, mask)
+    trace0 = get_trace_functional(P)
+    rbm_err0 = rbm_error(P)
+    print(f"{trace0=:.4e} {rbm_err0=:.4e}")
 
     for _ in range(niter):
         # dP = D^{-1} A P
@@ -572,6 +592,10 @@ def smooth_prolongator_bsr_iterative(
 
         P = P - omega * dP
         P = filter_to_mask_bsr(P, mask)
+
+        trace = get_trace_functional(P)
+        rbm_err = rbm_error(P)
+        print(f"step {_+1} : {trace=:.4e} {rbm_err=:.4e}")
 
     return P
 
@@ -813,7 +837,7 @@ def apply_asw_blocks_bsr(rhs: np.ndarray,
     return z
 
 
-class AMG_BSRSolver:
+class AggregationAMG_BSRSolver:
     """general multilevel AMG solver..."""
 
     def __init__(self,
@@ -828,6 +852,7 @@ class AMG_BSRSolver:
                  smoother: str = "gs",
                  asw_overlap:int=0,
                  omegaSmooth: float = 0.7,
+                 nmatrix:int=1,
                  asw_sd_size: int = None):
         assert sp.isspmatrix_bsr(A_free)
         assert sp.isspmatrix_bsr(A)
@@ -858,10 +883,10 @@ class AMG_BSRSolver:
         block_dim = A.data.shape[-1]
         self.T, self.Bc = tentative_prolongator_bsr(self.B, aggregate_ind, bc_flags, vpn=block_dim)
         self.P = smooth_prolongator_bsr_iterative(
-            self.T, A, self.Bc, bc_flags,
+            self.T, A, self.B, self.Bc, bc_flags,
             omega=omega,
             near_kernel=near_kernel,
-            niter=1
+            niter=nmatrix
         )
         self.R = self.P.T
 
@@ -899,7 +924,7 @@ class AMG_BSRSolver:
             self.coarse_solver = DirectCSRSolver(self.Ac)
         else:
             print(f"level {level+1} building AMG solver")
-            self.coarse_solver = AMG_BSRSolver(
+            self.coarse_solver = AggregationAMG_BSRSolver(
                 self.Ac_free,
                 self.Ac,
                 self.Bc,
@@ -911,6 +936,7 @@ class AMG_BSRSolver:
                 smoother=smoother,
                 omegaSmooth=omegaSmooth,
                 asw_sd_size=asw_sd_size,
+                nmatrix=nmatrix,
             )
 
         if level == 0:
@@ -983,7 +1009,7 @@ class AMG_BSRSolver:
 
     @property
     def total_nnz(self) -> int:
-        if isinstance(self.coarse_solver, AMG_BSRSolver):
+        if isinstance(self.coarse_solver, AggregationAMG_BSRSolver):
             return self.fine_nnz + self.coarse_solver.total_nnz
         else:
             return self.fine_nnz + self.coarse_nnz
@@ -994,7 +1020,7 @@ class AMG_BSRSolver:
 
     @property
     def num_levels(self) -> int:
-        if isinstance(self.coarse_solver, AMG_BSRSolver):
+        if isinstance(self.coarse_solver, AggregationAMG_BSRSolver):
             return self.coarse_solver.num_levels + 1
         else:
             return 2
@@ -1004,7 +1030,7 @@ class AMG_BSRSolver:
         bs = self.A.data.shape[-1]
         nnodes_f = self.A.shape[0] // bs
         nnodes_c = self.Ac.shape[0] // bs
-        if isinstance(self.coarse_solver, AMG_BSRSolver):
+        if isinstance(self.coarse_solver, AggregationAMG_BSRSolver):
             return str(nnodes_f) + "," + self.coarse_solver.num_nodes_list
         else:
             return f"{nnodes_f},{nnodes_c}"

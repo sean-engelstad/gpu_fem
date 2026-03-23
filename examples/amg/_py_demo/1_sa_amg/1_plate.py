@@ -8,12 +8,12 @@ import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 import sys
 # plate case imports from milu python cases
-sys.path.append("../../milu/")
+sys.path.append("../../../milu/")
 from _plate import make_plate_case
 from __src import plot_plate_vec, sort_vis_maps
 # from __linalg import right_pgmres, right_pcg
 
-sys.path.append("../../adv_elem/1_beam/src/")
+sys.path.append("../../../adv_elem/1_beam/src/")
 from smoothers import right_pcg2, right_pgmres2
 
 # AMG imports
@@ -21,7 +21,7 @@ sys.path.append("_src/")
 from csr_aggregation import plot_plate_aggregation
 from bsr_aggregation import greedy_serial_aggregation_bsr, tentative_prolongator_bsr, smooth_prolongator_bsr
 from _smoothers import block_gauss_seidel_6dof
-from bsr_aggregation import AMG_BSRSolver, enforce_symmetric_dirichlet_bcs_bsr
+from bsr_aggregation import AggregationAMG_BSRSolver, enforce_symmetric_dirichlet_bcs_bsr
 
 # ====================================================
 # 1) make plate case
@@ -29,20 +29,24 @@ from bsr_aggregation import AMG_BSRSolver, enforce_symmetric_dirichlet_bcs_bsr
 
 import argparse
 parser = argparse.ArgumentParser()
+# AMG settings
+parser.add_argument("--nmatrix", type=int, default=1, help="num energy-opt iters (if iter == 1 same as SA-AMG)")
+parser.add_argument("--nsmooth", type=int, default=2, help="num Jacobi ML smoothing steps (multilevel/multigrid-like)")
+parser.add_argument("--threshold", type=float, default=0.13, help="aggregation sparsity threshold, higher threshold increases operator complexity and takes fewer GMRES iters, but inc memory and more time per iteration (tradeoff)")
+parser.add_argument("--omega", type=float, default=0.5, help="jacobi smoother update coeff, default is None and uses spectral radius")
+
+# parser.add_argument("--nxe", type=int, default=32, help="num elems each direction x and y")
+parser.add_argument("--nxe", type=int, default=8, help="num elems each direction x and y")
+
 parser.add_argument("--random", action=argparse.BooleanOptionalAction, default=False, help="Whether to do random ordering or not")
 parser.add_argument("--noplot", action=argparse.BooleanOptionalAction, default=False, help="Plot matrices and residual")
 parser.add_argument("--noprec", action=argparse.BooleanOptionalAction, default=False, help="remove preconditioner in GMRES")
-parser.add_argument("--thick", type=float, default=1e-2) # 2e-3
+parser.add_argument("--thick", type=float, default=1e-3) # 2e-3
 parser.add_argument("--justpc", action=argparse.BooleanOptionalAction, default=False, help="yes: just use pc one vec, no: solve with GMRES")
 parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=False, help="whether to debug multilevel process")
 parser.add_argument("--nokernel", action=argparse.BooleanOptionalAction, default=False, help="whether to turnoff kernel or not")
 # it can even do thin plate quite well! maybe even better than multigrid?
-parser.add_argument("--nxe", type=int, default=32, help="num elems each direction x and y")
 parser.add_argument("--fill", type=int, default=0, help="ILU(k) fill level")
-parser.add_argument("--iters", type=int, default=1, help="num energy-opt iters (if iter == 1 same as SA-AMG)")
-parser.add_argument("--nsmooth", type=int, default=2, help="num Jacobi ML smoothing steps (multilevel/multigrid-like)")
-parser.add_argument("--threshold", type=float, default=0.13, help="aggregation sparsity threshold, higher threshold increases operator complexity and takes fewer GMRES iters, but inc memory and more time per iteration (tradeoff)")
-parser.add_argument("--omega", type=float, default=0.5, help="jacobi smoother update coeff, default is None and uses spectral radius")
 args = parser.parse_args()
 
 complex_load = True
@@ -334,7 +338,7 @@ smoother, omegas, overlap = 'gs', 0.8, 0
 # smoother, omegas, overlap = 'asw', 0.5, 0
 # smoother, omegas, overlap = 'asw', 0.3, 1
 
-pc = AMG_BSRSolver(
+pc = AggregationAMG_BSRSolver(
     A_free, A, B, threshold=args.threshold, omega=args.omega, 
     near_kernel=not(args.nokernel),
     smoother=smoother,
@@ -344,8 +348,8 @@ pc = AMG_BSRSolver(
     asw_overlap=overlap,
     # asw_sd_size=4,
     # asw_sd_size=3,
-    asw_sd_size=2
-    # asw_sd_size=1,
+    asw_sd_size=2,
+    nmatrix=args.nmatrix,
 )
 
 # # check V-cycle symmetry

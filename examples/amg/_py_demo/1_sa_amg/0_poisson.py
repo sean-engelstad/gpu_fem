@@ -5,14 +5,14 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 import sys
-sys.path.append("../../milu/")
+sys.path.append("../../../milu/")
 # from __src import right_pgmres
 from __linalg import right_pcg
 sys.path.append("_src/")
 from poisson import poisson_2d_csr, plot_poisson_surface, poisson_apply_bcs
 from csr_aggregation import greedy_serial_aggregation_csr, plot_plate_aggregation
 from csr_aggregation import tentative_prolongator_csr, smooth_prolongator_csr
-from csr_aggregation import AMGSolver, gauss_seidel_csr
+from csr_aggregation import AggregationAMGSolver, gauss_seidel_csr
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -124,7 +124,7 @@ if args.debug:
 # precond = None
 # threshold = 0.25 is default..
 # needed a lower threshold to get the coarsening to work right on one of the levels.. (would coarsen from 454 to 454 nodes... then next time would work better)
-precond = AMGSolver(A_free, A, threshold=0.1, omega=0.7, pre_smooth=1, post_smooth=1, near_kernel=args.kernel)
+precond = AggregationAMGSolver(A_free, A, threshold=0.1, omega=0.7, pre_smooth=1, post_smooth=1, near_kernel=args.kernel)
 
 if args.justpc:
     u2 = precond.solve(f)

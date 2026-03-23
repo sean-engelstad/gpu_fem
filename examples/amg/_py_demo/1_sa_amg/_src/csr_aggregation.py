@@ -250,7 +250,7 @@ class DirectCSRSolver:
 
 
 
-class AMGSolver:
+class AggregationAMGSolver:
     """general multilevel AMG solver..."""
     def __init__(self, A_free:sp.csr_matrix, A:sp.csr_matrix, threshold:float=0.25,
                  omega:float=0.7, pre_smooth=1, post_smooth=1, level:int=0, 
@@ -315,7 +315,7 @@ class AMGSolver:
             self.coarse_solver = DirectCSRSolver(self.Ac)
         else:
             print(f"level {level+1} building AMG solver")
-            self.coarse_solver = AMGSolver(self.Ac_free, self.Ac, threshold, omega, pre_smooth, post_smooth, level+1, near_kernel=near_kernel)
+            self.coarse_solver = AggregationAMGSolver(self.Ac_free, self.Ac, threshold, omega, pre_smooth, post_smooth, level+1, near_kernel=near_kernel)
 
         if level == 0:
             print(f"Multilevel AMG with {self.num_levels=} and {self.operator_complexity=}")
@@ -324,7 +324,7 @@ class AMGSolver:
     @property
     def total_nnz(self) -> int:
         # get total nnz across all levels
-        if isinstance(self.coarse_solver, AMGSolver):
+        if isinstance(self.coarse_solver, AggregationAMGSolver):
             return self.fine_nnz + self.coarse_solver.total_nnz
         else: # direct solver
             return self.fine_nnz + self.coarse_nnz
@@ -335,14 +335,14 @@ class AMGSolver:
 
     @property
     def num_levels(self) -> int:
-        if isinstance(self.coarse_solver, AMGSolver):
+        if isinstance(self.coarse_solver, AggregationAMGSolver):
             return self.coarse_solver.num_levels + 1
         else: # direct solver
             return 2
         
     @property
     def num_nodes_list(self) -> str:
-        if isinstance(self.coarse_solver, AMGSolver):
+        if isinstance(self.coarse_solver, AggregationAMGSolver):
             return str(self.A.shape[0]) + "," + self.coarse_solver.num_nodes_list
         else: # direct solver
             return f"{self.A.shape[0]},{self.Ac.shape[0]}"

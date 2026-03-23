@@ -5,13 +5,16 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 import sys
-sys.path.append("../../milu/")
+sys.path.append("../../../milu/")
 # from __src import right_pgmres
 from __linalg import right_pcg
-sys.path.append("_src/")
-from poisson import poisson_2d_csr, plot_poisson_surface, poisson_apply_bcs
-from cf_coarsening import RS_csr_coarsening, standard_csr_coarsening, aggressive_A2_csr_coarsening, aggressive_A1_csr_coarsening
 
+sys.path.append("../1_sa_amg/_src")
+from poisson import poisson_2d_csr, plot_poisson_surface, poisson_apply_bcs
+
+sys.path.append("_src/")
+from cf_coarsening import RS_csr_coarsening, standard_csr_coarsening, aggressive_A2_csr_coarsening, aggressive_A1_csr_coarsening
+from cf_amg import build_initial_FC_matrix, direct_csr_interpolation
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -68,6 +71,19 @@ elif args.crs == "A2":
     C_mask, F_mask = aggressive_A2_csr_coarsening(A_free, threshold=0.25)
 
 
+# A_FC = build_initial_FC_matrix(A_free, C_mask, F_mask)
+direct_FC = direct_csr_interpolation(A_free, C_mask, F_mask)
+
+print(f"{direct_FC.shape=}")
+
+# print(f"{A_FC=}")
+fig, ax = plt.subplots(1, 2, figsize=(10, 8))
+ax[0].spy(A_free)
+ax[1].spy(direct_FC)
+plt.show()
+
+
+
 # C_mask, F_mask = C1_csr_coarsening(A, threshold=0.25)
 
 # Acc = A_free[C_mask,:][:,C_mask]
@@ -107,21 +123,21 @@ ax.legend()
 
 plt.show()
 
-# TODO : Not quite done with this demo yet
+# # TODO : Not quite done with this demo yet
 
 
-# # ------------------------------------------------------------
-# # GMRES Solve
-# # ------------------------------------------------------------
+# # # ------------------------------------------------------------
+# # # GMRES Solve
+# # # ------------------------------------------------------------
 
-# precond = None
+# # precond = None
 
-# # u2 = precond.solve(f)
-# # u2 = right_pgmres(A, b=f, x0=None, restart=500, max_iter=500, M=precond)
-# u2 = right_pcg(A, b=f, x0=None, M=precond)
+# # # u2 = precond.solve(f)
+# # # u2 = right_pgmres(A, b=f, x0=None, restart=500, max_iter=500, M=precond)
+# # u2 = right_pcg(A, b=f, x0=None, M=precond)
 
 
-# # ------------------------------------------------------------
-# # Plot
-# # ------------------------------------------------------------
-# plot_poisson_surface(u, u2, nx, ny, Lx, Ly)
+# # # ------------------------------------------------------------
+# # # Plot
+# # # ------------------------------------------------------------
+# # plot_poisson_surface(u, u2, nx, ny, Lx, Ly)
