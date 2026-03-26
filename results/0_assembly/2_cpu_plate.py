@@ -6,10 +6,14 @@
 #   1) factorization time
 #   2) triangular solve time
 #   3) matrix-vector product time
+#
+# MPI timing notes:
+#   - place barriers before/after each timed region
+#   - measure with MPI.Wtime()
+#   - report the maximum time across all ranks
 
 import numpy as np
 import os
-import time
 import csv
 from mpi4py import MPI
 from tacs import TACS, elements, constitutive
@@ -50,17 +54,39 @@ def get_ordering(name):
     raise ValueError(f"Unknown ordering {name}")
 
 
+def timed_max(comm, func):
+    """
+    Time a callable with MPI barriers before and after.
+    Return the maximum elapsed wall time across all ranks.
+    """
+    comm.Barrier()
+    t0 = MPI.Wtime()
+    func()
+    comm.Barrier()
+    dt_local = MPI.Wtime() - t0
+    dt_max = comm.allreduce(dt_local, op=MPI.MAX)
+    return dt_max
+
+
+# ------------------------------------------------------------
+# MPI setup
+# ------------------------------------------------------------
+tacs_comm = MPI.COMM_WORLD
+rank = tacs_comm.rank
+
 # ------------------------------------------------------------
 # Mesh generation
 # ------------------------------------------------------------
-os.system(f"python _gen_plate_mesh.py --nxe {args.nxe}")
+if rank == 0:
+    ret = os.system(f"python _gen_plate_mesh.py --nxe {args.nxe}")
+    if ret != 0:
+        raise RuntimeError("Mesh generation failed: _gen_plate_mesh.py")
+tacs_comm.Barrier()
 
 # ------------------------------------------------------------
 # Load structural mesh from BDF file
 # ------------------------------------------------------------
 bdfFile = "plate.bdf"
-tacs_comm = MPI.COMM_WORLD
-rank = tacs_comm.rank
 
 struct_mesh = TACS.MeshLoader(tacs_comm)
 struct_mesh.scanBDFFile(bdfFile)
@@ -120,13 +146,19 @@ ans = tacs.createVec()
 # ------------------------------------------------------------
 ordering = get_ordering(args.ordering)
 
-mat_start = time.time()
-mat = tacs.createSchurMat(ordering)
-mat_create_time = time.time() - mat_start
+def create_mat():
+    global mat
+    mat = tacs.createSchurMat(ordering)
 
-pc_start = time.time()
-pc = TACS.Pc(mat, lev_fill=args.fill)
-pc_create_time = time.time() - pc_start
+mat = None
+mat_create_time = timed_max(tacs_comm, create_mat)
+
+def create_pc():
+    global pc
+    pc = TACS.Pc(mat, lev_fill=args.fill)
+
+pc = None
+pc_create_time = timed_max(tacs_comm, create_pc)
 
 # ------------------------------------------------------------
 # Assemble Jacobian
@@ -135,31 +167,26 @@ alpha = 1.0
 beta = 0.0
 gamma = 0.0
 
-asm_start = time.time()
-tacs.zeroVariables()
-tacs.assembleJacobian(alpha, beta, gamma, res, mat)
-assembly_time = time.time() - asm_start
+def assemble_jacobian():
+    tacs.zeroVariables()
+    tacs.assembleJacobian(alpha, beta, gamma, res, mat)
+
+assembly_time = timed_max(tacs_comm, assemble_jacobian)
 
 # ------------------------------------------------------------
 # Factorization timing
 # ------------------------------------------------------------
-factor_start = time.time()
-pc.factor()
-factor_time = time.time() - factor_start
+factor_time = timed_max(tacs_comm, lambda: pc.factor())
 
 # ------------------------------------------------------------
 # Triangular solve timing
 # ------------------------------------------------------------
-tri_start = time.time()
-pc.applyFactor(forces, ans)
-tri_solve_time = time.time() - tri_start
+tri_solve_time = timed_max(tacs_comm, lambda: pc.applyFactor(forces, ans))
 
 # ------------------------------------------------------------
 # Matrix-vector product timing
 # ------------------------------------------------------------
-matvec_start = time.time()
-mat.mult(ans, res)
-mat_vec_time = time.time() - matvec_start
+mat_vec_time = timed_max(tacs_comm, lambda: mat.mult(ans, res))
 
 # ------------------------------------------------------------
 # Optional output for visualization
@@ -173,6 +200,8 @@ flag = (
     | TACS.OUTPUT_EXTRAS
     | TACS.OUTPUT_LOADS
 )
+
+# avoid every rank writing the same file unless ToFH5 requires collective behavior
 f5 = TACS.ToFH5(tacs, TACS.BEAM_OR_SHELL_ELEMENT, flag)
 f5.writeToFile("plate.f5")
 
@@ -190,11 +219,10 @@ if rank == 0:
     print(f"nproc           = {tacs_comm.size}")
     print(f"nxe             = {args.nxe}")
     print(f"dof             = {dof}")
-    # print(f"ordering        = {args.ordering}")
     print(f"fill            = {fill_name}")
-    # print(f"create mat      = {mat_create_time:.6e} s")
-    # print(f"create pc       = {pc_create_time:.6e} s")
-    # print(f"assembly        = {assembly_time:.6e} s")
+    print(f"create mat      = {mat_create_time:.6e} s")
+    print(f"create pc       = {pc_create_time:.6e} s")
+    print(f"assembly        = {assembly_time:.6e} s")
     print(f"factor          = {factor_time:.6e} s")
     print(f"tri solve       = {tri_solve_time:.6e} s")
     print(f"mat vec         = {mat_vec_time:.6e} s")
