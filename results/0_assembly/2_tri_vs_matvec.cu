@@ -72,8 +72,13 @@ void direct_plate_solve(int nxe, double SR, int time_mode = 0) {
     double fillin = 10.0;  // 10.0
     bool print = true;
     if (time_mode < 2) {
-        bsr_data.AMD_reordering();
-        bsr_data.compute_full_LU_pattern(fillin, print);
+        // bsr_data.AMD_reordering();
+        // bsr_data.compute_full_LU_pattern(fillin, print);
+
+        // does ILU(0) here..
+        bsr_data.RCM_reordering();
+        bsr_data.qorder_reordering(0.5);
+        bsr_data.compute_nofill_pattern();
     } else {
         bsr_data.compute_nofill_pattern();
     }
