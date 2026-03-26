@@ -5,11 +5,11 @@ import niceplots
 
 plt.style.use(niceplots.get_style())
 
-filename = "csv/tri_matvec.csv"
-savefig = "out/tri_vs_all_times.svg"
+# filename = "csv/tri_matvec.csv"
+# savefig = "out/tri_vs_all_times.svg"
 
-# filename = "csv/tri_ilu0_matvec.csv"
-# savefig = "out/tri_ilu0_vs_all_times.svg"
+filename = "csv/tri_ilu0_matvec.csv"
+savefig = "out/tri_ilu0_vs_all_times.svg"
 
 df = pd.read_csv(filename)
 
@@ -50,7 +50,7 @@ for i, gpu in enumerate(gpus):
 
     x = sub["dof"].to_numpy()
 
-    line_fact, = ax.plot(x, sub["fact_ms"], "o-", linewidth=3, markersize=8, label="ILU factor")
+    line_fact, = ax.plot(x, sub["fact_ms"], "o-", linewidth=3, markersize=8, label="Factor")
     line_tri,  = ax.plot(x, sub["tri_solve_ms"], "s-", linewidth=3, markersize=8, label="Tri solve")
     line_mv,   = ax.plot(x, sub["mat_vec_ms"], "^-", linewidth=3, markersize=8, label="SpMV")
 
@@ -107,7 +107,9 @@ for i, gpu in enumerate(gpus):
         add_callout(callout_row["tri_solve_ms"], line_tri, 1.18, mode=1)
         add_callout(callout_row["mat_vec_ms"], line_mv, 1.35, mode=2)
 
-axes[0].legend()
+axes[0].legend(
+    loc="upper left"
+)
 
 plt.tight_layout()
 plt.savefig(savefig, dpi=400)
