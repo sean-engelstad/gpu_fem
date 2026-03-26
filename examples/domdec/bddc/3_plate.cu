@@ -244,7 +244,8 @@ int main(int argc, char **argv) {
     cusparseHandle_t cusparseHandle = nullptr;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    bool print_timing = true; // profiling
+    // bool print_timing = true; // profiling
+    bool print_timing = false;
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
     bool close_hoop = false; // true for cylinder case (not cylindrical panel)
