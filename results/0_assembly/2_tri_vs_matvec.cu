@@ -50,7 +50,7 @@ void to_lowercase(char *str) {
 
 
 template <typename T, class Assembler>
-void direct_plate_solve(int nxe, double SR, bool just_tri_solve = true) {
+void direct_plate_solve(int nxe, double SR, int time_mode = 0) {
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
     using LUsolver = CusparseMGDirectLU<T, Assembler>;
@@ -71,7 +71,7 @@ void direct_plate_solve(int nxe, double SR, bool just_tri_solve = true) {
     auto& bsr_data = assembler.getBsrData();
     double fillin = 10.0;  // 10.0
     bool print = true;
-    if (just_tri_solve) {
+    if (time_mode < 2) {
         bsr_data.AMD_reordering();
         bsr_data.compute_full_LU_pattern(fillin, print);
     } else {
@@ -106,8 +106,13 @@ void direct_plate_solve(int nxe, double SR, bool just_tri_solve = true) {
     CHECK_CUDA(cudaDeviceSynchronize());
     auto start1 = std::chrono::high_resolution_clock::now();
 
-    lu_solver->printTriSolveVsMatVecTiming(loads, soln, 3, 
-        just_tri_solve, !just_tri_solve);
+    // lu_solver->printTriSolveVsMatVecTiming(loads, soln, 3, 
+    //     just_tri_solve, !just_tri_solve);
+
+    lu_solver->printTriSolveVsMatVecTiming_host(loads, soln, 3, 
+        time_mode == 0, time_mode == 1, time_mode == 2);
+
+        
 
     // solve the linear system
     // CUSPARSE::direct_LU_solve(kmat, loads, soln);
@@ -208,8 +213,9 @@ int main(int argc, char **argv) {
     using Quad = QuadLinearQuadrature<T>;
     using Basis = LagrangeQuadBasis<T, Quad, 1>;
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
-    direct_plate_solve<T, Assembler>(nxe, SR, true);
-    direct_plate_solve<T, Assembler>(nxe, SR, false);
+    direct_plate_solve<T, Assembler>(nxe, SR, 0);
+    direct_plate_solve<T, Assembler>(nxe, SR, 1);
+    direct_plate_solve<T, Assembler>(nxe, SR, 2);
     
 
     return 0;
