@@ -77,11 +77,12 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
         this->temp_lam2 = Vec(this->lam_nnodes * this->block_dim);
     }
 
-    void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1) {
+    void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
+                                         T wrap_frac = 1.0) {
         // call base FETI-DP setup
         bool compute_jump = false;
         FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_tacs_component_subdomains(
-            nxse_, nyse_, MOD_WRAPAROUND, compute_jump);
+            nxse_, nyse_, MOD_WRAPAROUND, wrap_frac, compute_jump);
 
         // TODO: BDDC unique maps/weights for edge averaging
         // printf("\tdone with BDDC outer setup wing subdomains\n");

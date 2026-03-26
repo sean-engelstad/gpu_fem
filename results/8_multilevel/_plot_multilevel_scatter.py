@@ -22,11 +22,11 @@ rows = [
     ("EP-GMG", True, 0.205, np.nan),
     ("ASW-ILU", True, np.nan, np.nan),
     ("SA-AMG", True, 0.089, np.nan),
-    ("CF-AMG", True, np.nan, np.nan),
+    ("CF-AMG", True, 0.104, np.nan),
     ("RN-AMG", True, np.nan, np.nan),
     ("AMGe", True, np.nan, np.nan),
     ("ML-ASW", True, 0.067, np.nan),
-    ("FETI-DP", True, 0.562, np.nan),
+    ("FETI-DP/BDDC", True, 0.562, np.nan),
     ("BDDC", True, np.nan, np.nan),
 ]
 
@@ -158,14 +158,15 @@ for txt, (x, y) in zip(texts, points):
             arrowprops=dict(arrowstyle="-", color="black", lw=0.5),
         )
 
-plt.xlabel("S_h (h-independence)")
-plt.ylabel("S_t (thickness-independence)")
-plt.title("Solver Independence Comparison")
+plt.xlabel(r"$S_h\; (h-scalability)$")
+plt.ylabel(r"$S_t\; (thickness-independence)$")
+# plt.title("Solver Independence Comparison")
 
 plt.xlim(0.25,1.05)
-plt.ylim(0.0,1.05)
+plt.ylim(-0.05,1.05)
 
 plt.grid(True)
+# plt.margins(x=0.1, y=0.)
 
 plt.savefig("solver_scatter.png", dpi=200, bbox_inches="tight")
 # plt.show()

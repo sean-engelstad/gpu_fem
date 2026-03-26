@@ -3,6 +3,7 @@
 #include "solvers/_solvers.h"
 #include "mesh/TACSMeshLoader.h"
 #include "mesh/vtk_writer.h"
+// #include "mesh/exploded_vtk_writer.h"
 
 // shell imports
 #include "assembler.h"
@@ -268,17 +269,18 @@ int main(int argc, char **argv) {
         // if this then subdomains do wraparound subdomains
         // mod wraparound maybe should also be settable, but generally you want it to match nxe nodes per component / 2
         // not same as nxe_subdomain_size, maybe for structured meshes like this could set it differently
-        if (level == 0) {
-            MOD_WRAPAROUND = 2;
-        } else if (level == 1) {
-            MOD_WRAPAROUND = 4;
-        } else if (level == 2) {
-            MOD_WRAPAROUND = 8;
-        } else if (level == 3) {
-            MOD_WRAPAROUND = 16;
-        } else if (level == 4) {
-            MOD_WRAPAROUND = 32;
-        }
+        // if (level == 0) {
+        //     MOD_WRAPAROUND = 2;
+        // } else if (level == 1) {
+        //     MOD_WRAPAROUND = 4;
+        // } else if (level == 2) {
+        //     MOD_WRAPAROUND = 8;
+        // } else if (level == 3) {
+        //     MOD_WRAPAROUND = 16;
+        // } else if (level == 4) {
+        //     MOD_WRAPAROUND = 32;
+        // }
+        MOD_WRAPAROUND = nxe_subdomain_size / 2;
         printf("BUILDING subdomains that wraparound patch-to-patch junctions with element modulo %d, can help stabilize thin shell BDDC convergence\n", MOD_WRAPAROUND);
     } else {
         printf("BUILDING subdomains that do not wraparound but line up with junctions. This has worse thin shell performance in BDDC typically. call --wraparound 1 to turn on\n");
@@ -523,6 +525,11 @@ int main(int argc, char **argv) {
 
     auto h_soln = soln.createHostVec();
     printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/fuse_bddc.vtk");
+
+    // // then print out lower skin, upper skin, and internal structure
+    // explodedPrintToVTK<Assembler, HostVec<T>, LOWER_SKIN>(assembler, h_soln, "out/fuse_lskin.vtk");
+    // explodedPrintToVTK<Assembler, HostVec<T>, UPPER_SKIN>(assembler, h_soln, "out/fuse_uskin.vtk");
+    // explodedPrintToVTK<Assembler, HostVec<T>, INT_STRUCT>(assembler, h_soln, "out/fuse_intstruct.vtk");
 
     // compare to direct solver (the solution)
     bool compare_direct = true;

@@ -42,15 +42,15 @@ parser.add_argument("--crs", type=str, default="standard", help="string: type of
 parser.add_argument("--interp", type=str, default="standard", help="string: type of coarsening [rs, standard, A1, A2]")
 parser.add_argument("--threshold", type=float, default=0.13, help="aggregation sparsity threshold, higher threshold increases operator complexity and takes fewer GMRES iters, but inc memory and more time per iteration (tradeoff)")
 
+parser.add_argument("--nxe", type=int, default=32, help="num elems each direction x and y")
+parser.add_argument("--thick", type=float, default=1e-2) # 2e-3
 
 parser.add_argument("--random", action=argparse.BooleanOptionalAction, default=False, help="Whether to do random ordering or not")
 parser.add_argument("--noplot", action=argparse.BooleanOptionalAction, default=False, help="Plot matrices and residual")
 parser.add_argument("--noprec", action=argparse.BooleanOptionalAction, default=False, help="remove preconditioner in GMRES")
-parser.add_argument("--thick", type=float, default=1e-2) # 2e-3
 parser.add_argument("--justpc", action=argparse.BooleanOptionalAction, default=False, help="yes: just use pc one vec, no: solve with GMRES")
 parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=False, help="whether to debug multilevel process")
 # it can even do thin plate quite well! maybe even better than multigrid?
-parser.add_argument("--nxe", type=int, default=32, help="num elems each direction x and y")
 parser.add_argument("--fill", type=int, default=0, help="ILU(k) fill level")
 parser.add_argument("--iters", type=int, default=1, help="num energy-opt iters (if iter == 1 same as SA-AMG)")
 parser.add_argument("--nsmooth", type=int, default=2, help="num Jacobi ML smoothing steps (multilevel/multigrid-like)")

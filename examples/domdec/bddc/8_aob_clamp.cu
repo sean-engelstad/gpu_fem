@@ -122,6 +122,7 @@ int main(int argc, char **argv) {
     // bool print_mem = false;
     bool print_mem = true;
     T mag = 1.0;
+    T wrapfrac = 1.0; // what percentage of subdomains are wrapped around (to gen plot of best performance)
     // whether to wrap subdomains around junctions
     int wraparound = 1; // 1 is true, 0 is false
     
@@ -178,6 +179,13 @@ int main(int argc, char **argv) {
                 wraparound = std::atoi(argv[++i]);
             } else {
                 std::cerr << "Missing value for --wraparound\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--wrapfrac") == 0) {
+            if (i + 1 < argc) {
+                wrapfrac = std::atof(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --wrapfrac\n";
                 return 1;
             }
         } else if (strcmp(arg, "--fill") == 0) {
@@ -272,21 +280,21 @@ int main(int argc, char **argv) {
         // if this then subdomains do wraparound subdomains
         // mod wraparound maybe should also be settable, but generally you want it to match nxe nodes per component / 2
         // not same as nxe_subdomain_size, maybe for structured meshes like this could set it differently
-        if (level == 0) {
-            MOD_WRAPAROUND = 2;
-        } else if (level == 1) {
-            MOD_WRAPAROUND = 4;
-        } else if (level == 2) {
-            MOD_WRAPAROUND = 8;
-        } else if (level == 3) {
-            MOD_WRAPAROUND = 16;
-            // MOD_WRAPAROUND = nxe_subdomain_size / 2;
-        } else if (level == 4) {
-            MOD_WRAPAROUND = 32;
-            // MOD_WRAPAROUND = 16;
-            // MOD_WRAPAROUND = 8;
-            // MOD_WRAPAROUND = nxe_subdomain_size / 2;
-        }
+        // if (level == 0) {
+        //     MOD_WRAPAROUND = 2;
+        // } else if (level == 1) {
+        //     MOD_WRAPAROUND = 4;
+        // } else if (level == 2) {
+        //     MOD_WRAPAROUND = 8;
+        // } else if (level == 3) {
+        //     MOD_WRAPAROUND = 16;
+        //     // MOD_WRAPAROUND = nxe_subdomain_size / 2;
+        // } else if (level == 4) {
+        //     MOD_WRAPAROUND = 32;
+        //     // MOD_WRAPAROUND = 16;
+        //     // MOD_WRAPAROUND = 8;
+        //     // MOD_WRAPAROUND = nxe_subdomain_size / 2;
+        // }
 
         // should really be half the subdomain size for modulo..
         MOD_WRAPAROUND = nxe_subdomain_size / 2;
@@ -299,7 +307,7 @@ int main(int argc, char **argv) {
     }
 
     // printf("setup wing subdomains\n");
-    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size, MOD_WRAPAROUND);
+    bddc->setup_tacs_component_subdomains(nxe_subdomain_size, nxe_subdomain_size, MOD_WRAPAROUND, wrapfrac);
     // printf("ONLY DEBUG : wing_setup_subdomains at the moment\n");
     // return;
 
@@ -388,7 +396,7 @@ int main(int argc, char **argv) {
         // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
         SolverOptions ki_opts;
         ki_opts.ncycles = 50;
-        // opts.ncycles = 500;
+        // ki_opts.ncycles = 500;
         ki_opts.print = true;
         ki_opts.print_freq = 5;
         ki_opts.debug = true;
@@ -411,8 +419,8 @@ int main(int argc, char **argv) {
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
     // opts.ncycles = 50;
-    opts.ncycles = 150;
-    // opts.ncycles = 500;
+    // opts.ncycles = 150;
+    opts.ncycles = 1000;
     opts.print = true;
     opts.print_freq = 5;
     opts.debug = true;

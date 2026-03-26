@@ -263,6 +263,110 @@ class CusparseMGDirectLU : public BaseSolver {
         printf("coarse solver rel conv %.8e\n", rel_conv);
         return rel_conv >= 1e-6;
     }
+    void printTriSolveVsMatVecTiming(DeviceVec<T> rhs, DeviceVec<T> x, int nrepeat = 3,
+                                     bool do_tri = true, bool do_matvec = true) {
+        if (MULTI_SMOOTH) {
+            printf("WARNING: timing intended for direct/ILU path but MULTI_SMOOTH is on\n");
+        }
+
+        const double alpha = 1.0;
+        T a = 1.0;
+        T b = 0.0;
+
+        cudaEvent_t ev_start, ev_stop;
+        CHECK_CUDA(cudaEventCreate(&ev_start));
+        CHECK_CUDA(cudaEventCreate(&ev_stop));
+
+        float triL_ms_total = 0.0f;
+        float triU_ms_total = 0.0f;
+        float matvec_ms_total = 0.0f;
+
+        // -------------------
+        // Warm-up (guarded)
+        // -------------------
+        if (do_tri) {
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &alpha,
+                                                 descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_L, rhs.getPtr(), d_temp, policy_L, pBuffer));
+
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &alpha,
+                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_U, d_temp, x.getPtr(), policy_U, pBuffer));
+        }
+
+        if (do_matvec) {
+            CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
+                nnzb, &a, descrK, d_vals, d_rowp, d_cols, block_dim, x.getPtr(), &b, d_temp));
+        }
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        for (int k = 0; k < nrepeat; k++) {
+            float ms = 0.0f;
+
+            if (do_tri) {
+                // L solve
+                CHECK_CUDA(cudaEventRecord(ev_start));
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_L, rhs.getPtr(), d_temp, policy_L, pBuffer));
+                CHECK_CUDA(cudaEventRecord(ev_stop));
+                CHECK_CUDA(cudaEventSynchronize(ev_stop));
+                CHECK_CUDA(cudaEventElapsedTime(&ms, ev_start, ev_stop));
+                triL_ms_total += ms;
+
+                // U solve
+                CHECK_CUDA(cudaEventRecord(ev_start));
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_U, d_temp, x.getPtr(), policy_U, pBuffer));
+                CHECK_CUDA(cudaEventRecord(ev_stop));
+                CHECK_CUDA(cudaEventSynchronize(ev_stop));
+                CHECK_CUDA(cudaEventElapsedTime(&ms, ev_start, ev_stop));
+                triU_ms_total += ms;
+            }
+
+            if (do_matvec) {
+                CHECK_CUDA(cudaEventRecord(ev_start));
+                CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                              CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a,
+                                              descrK, d_vals, d_rowp, d_cols, block_dim, x.getPtr(),
+                                              &b, d_temp));
+                CHECK_CUDA(cudaEventRecord(ev_stop));
+                CHECK_CUDA(cudaEventSynchronize(ev_stop));
+                CHECK_CUDA(cudaEventElapsedTime(&ms, ev_start, ev_stop));
+                matvec_ms_total += ms;
+            }
+        }
+
+        CHECK_CUDA(cudaEventDestroy(ev_start));
+        CHECK_CUDA(cudaEventDestroy(ev_stop));
+
+        printf("\nTiming breakdown:\n");
+
+        if (do_tri) {
+            const float triL_ms = triL_ms_total / nrepeat;
+            const float triU_ms = triU_ms_total / nrepeat;
+            const float tri_ms = triL_ms + triU_ms;
+
+            printf("  forward triangular (L) : %.6f ms\n", triL_ms);
+            printf("  backward triangular (U): %.6f ms\n", triU_ms);
+            printf("  total triangular       : %.6f ms\n", tri_ms);
+        }
+
+        if (do_matvec) {
+            const float matvec_ms = matvec_ms_total / nrepeat;
+            printf("  mat-vec (A*x)          : %.6f ms\n", matvec_ms);
+
+            if (do_tri) {
+                const float tri_ms = (triL_ms_total + triU_ms_total) / nrepeat;
+                printf("  ratio (tri/mv)         : %.6f\n", tri_ms / matvec_ms);
+            }
+        }
+
+        printf("  repeats                : %d\n", nrepeat);
+    }
 
     void free() {
         if (is_free) return;

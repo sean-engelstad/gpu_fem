@@ -1,12 +1,54 @@
-# Devel tasks
 
-## Current Task
+## Current Tasks
 
-BPX preconditioners on shells or surface meshes?
+1. [x] demo BDDC on wing and multi-component intersections
+   * developed a novel BDDC wrapraound subdomain method that stabilizes Krylov convergence on wing
+2. [ ] finish writing the thesis
+   * can be partially complete (missing a few results)
+   - [x] intro, send to Dr. K
+   - [ ] multigrid chapter (except for some opt results), send to Dr. K
+   - [ ] element type chapter, send to Dr. K
+3. develop multiple GPUs on wing
+   - [ ] do multilevel BDDC first
+   - [ ] then multi GPU
+4. optimization cases (may not need to do all cases on HPC)
+   - [ ] linear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] nonlinear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] linear cylinder with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] linear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] nonlinear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] linear HSCT unstiffened wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+      - [ ] need to dec # ribs + spars and make it curved so equal # edges and fully structured
+   - [ ] linear or nonlinear stiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+      - [ ] verify stiffened panel buckling loads to CPU..
+5. Finish multilevel study
+   - [ ] demo RN-AMG and AMGe, python then maybe GPU
+   - [ ] regen the scatter plot of each S_h, S_t score (and fillin table too)
+6. Element multigrid study (curved shells)
+   - [ ] implement Kirchoff shell multigrid/BPX like this + its elements, [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
+   - [ ] subd surf. for Kirchoff multigrid! [https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf](https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf)
+      - [ ] related ref [SUBDIVISION SURFACES: A NEW PARADIGM FOR THIN-SHELL FINITE-ELEMENT ANALYSIS](https://multires.caltech.edu/pubs/thinshell.pdf)
+   - [ ] other potential relevant papers
+      - [ ] [Multilevel solvers for unstructured surface meshes, SIAM J. Sci. Comput., 26 (2005), pp. 1146–1165.]
+      - [ ] [Bernstein–Bézier polynomials on spheres and sphere‐like surfaces, Comput. Aided Geom. Design, 13 (1996), pp. 333–349.]
+      - [ ] [𝐶1‐hierarchical bases, J]
+   - [ ] try to combine these methods with DRIG maybe to get RM-multigrid solve like Kirchoff-multigrid on cylinder then wing
+7. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
+   - [ ] make interface that constructs GPU assembler and classes from CPU assembler
+   - [ ] then runs the GPU code as usual
+
+
+
+
+## older tasks
+
+BPX preconditioners on shells or surface meshes? (some other potential papers)
 - [ ] [Multilevel solvers for unstructured surface meshes, SIAM J. Sci. Comput., 26 (2005), pp. 1146–1165.]
 - [ ] [Bernstein–Bézier polynomials on spheres and sphere‐like surfaces, Comput. Aided Geom. Design, 13 (1996), pp. 333–349.]
 - [ ] [𝐶1‐hierarchical bases, J]
 - [ ] [Multilevel Preconditioning, Phd thesis]
+
+
 
 BDDC preconditioners
 1. [ ] [BDDC preconditioners for Naghdi shell problems and MITC9 elements](https://www.sciencedirect.com/science/article/pii/S004579491200082X)
@@ -42,51 +84,9 @@ vorkonditionierung iterativer verfahren zur l¨osung von platten- und schalenpro
    - [ ] another thesis on domain decomp multilevel methods and biharmonic Dirichlet (Zhang) [Studies in domain decomposition: multilevel methods and the biharmonic Dirichlet
 problem](https://onlinelibrary.wiley.com/doi/epdf/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7?saml_referrer)
 
+- [ ] [Reissner-Mindlin shell theory based on tangential differential calculus](https://arxiv.org/abs/1812.05596)
+- [ ] [https://kluedo.ub.rptu.de/frontdoor/deliver/index/docId/4447/file/Dornisch+et+al.+-+Isogeometric+Reissner-Mindlin+shell+analysis+with+exactly+calculated+director+vectors.pdf]
 
-
-## Secondary / Next Tasks
-
-
-* put in my thesis that the BDDC may be much stronger and general preconditioner than AMG for thin shells (similar idea to thick-ind ASW)
-* can give thickness-ind and h-independent performance for shells
-* my task maybe is to show it is highly scalable on GPU for wing problems (using MITC9 / MITC4 elems)?
-* implement this BDDC preconditioner for Naghdi shell, it claims mesh and thickness-indepence!
-* more on BDDC method
-* then look at AMG and compare BDDC to AMG for shells on GPUs (scalability comparison)
-   * SA-AMG, AMGe, CF-AMG, RN-AMG
-* for elements, I could say that I have a method that kind of works for cylinders but requires IGA (limited practicality + still some gap there, but maybe we just show how it may not be as good as MITC)
-* maybe do SPAI to solve the coarse subdomain problems? How to do it?
-* cite FETI in thesis it's similar to BDDC
-* here's the reading list (in order)
-
-
-2. [ ] [Robust BDDC preconditioners for Reissner–Mindlin plate bending problems and MITC elements](https://epubs.siam.org/doi/10.1137/080717729)
-3. [ ] BDDC method, [A Preconditioner for Substructuring Based on Constrained Energy Minimization](https://epubs.siam.org/doi/abs/10.1137/S1064827502412887)
-4. [ ] [Multispace and multilevel BDDC](https://link.springer.com/article/10.1007/s00607-008-0014-7)
-5. [ ] [Adaptive-Multilevel BDDC and its parallel implementation](https://arxiv.org/pdf/1301.0191v1)
-6. [ ] [A method of finite element tearing and interconnecting and its parallel solution algorithm](https://onlinelibrary.wiley.com/doi/10.1002/nme.1620320604?msockid=23acff188a4965cd21b2ebae8ba76408)
-7. [ ] [Isogeometric BDDC preconditioners with deluxe scaling](https://epubs.siam.org/doi/10.1137/130917399)
-8. [ ] [A comparative study of scalable multilevel preconditioners for cardiac mechanics](https://www.sciencedirect.com/science/article/pii/S0021999123005168)
-9. [ ] [BDDC preconditioning on GPUs for Cardiac Simulations](https://arxiv.org/html/2410.14786v1)
-10. [ ] BDD method for plates (precursor) [BALANCING DOMAIN DECOMPOSITION FOR NONCONFORMING PLATE ELEMENTS](https://conservancy.umn.edu/server/api/core/bitstreams/34ce78b1-1206-4a43-87b4-f2ea46bbe873/content)
-11. [ ] [The two-level FETI method for static and dynamic plate problems Part I: An optimal iterative solver for biharmonic systems](https://www.sciencedirect.com/science/article/pii/S0045782597001461)
-12. [ ] [A Neumann--Neumann Domain Decomposition Algorithm for Solving Plate and Shell Problems](https://epubs.siam.org/doi/10.1137/S0036142995291019)
-13. [ ] [Balancing domain decomposition method for large-scale analysis of an assembly structure having millions of multipoint constraints](https://www.sciencedirect.com/science/article/pii/S0045782522008027)
-14. [ ] BDD for plates [Balancing Domain Decomposition for Plates](https://www.bing.com/ck/a?!&&p=6353b886f484c62d61d41a929dbaaee579ab842d7a670e7024a82b7ea43f97b4JmltdHM9MTc3MjY2ODgwMA&ptn=3&ver=2&hsh=4&fclid=23acff18-8a49-65cd-21b2-ebae8ba76408&psq=Balancing+domain+decomposition+for+plates&u=a1aHR0cHM6Ly9kbC5hY20ub3JnL2RvaS9ib29rLzEwLjU1NTUvODY1NzA0)
-15. [ ] BDDC for elasticity [A Substructuring Preconditioner for Nearly Incompressible Elasticity Prob-lems]()
-16. [ ] [Fast and Robust Multilevel Schwarz Methods using Tensor Structure for High-Order Finite Elements ](https://archiv.ub.uni-heidelberg.de/volltextserver/32404/)
-
-BPX preconditioners for shells
-1. [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
-2. [ ] [BPX preconditioners for isogeometric analysis using (truncated) hierarchical B-splines](https://www.sciencedirect.com/science/article/pii/S0045782521000785)
-3. [ ] [BPX‐type Preconditioners for Second and Fourth Order Elliptic Problems on the Sphere](https://epubs.siam.org/doi/10.1137/050647414)
-4. [ ] [Direct optimization of BPX preconditioners](https://arxiv.org/abs/2205.06158)
-5. [ ] [Nonlinear Analysis on Manifolds. Monge-Ampère Equations ](https://link.springer.com/book/10.1007/978-1-4612-5734-9)
-
-
-MAS: Multilevel additive schwarz
-- [x] [A GPU-based multilevel additive schwarz preconditioner for cloth and deformable body simulation](https://dl.acm.org/doi/10.1145/3528223.3530085)
-   - [x] Nicolaides coarsening [Deflation of Conjugate Gradients with Applications to Boundary Value Problems](https://epubs.siam.org/doi/abs/10.1137/0724027?journalCode=sjnaam)
 
 ## Next Tasks
 
@@ -208,6 +208,52 @@ NEW SHELL ELEMENTS
    - [ ] [AN ENERGY-MINIMIZING INTERPOLATION FOR ROBUST MULTIGRID METHODS](https://cs.uwaterloo.ca/~jwlwan/papers/WanChanSmith00.pdf)
    - [ ] [A GENERAL INTERPOLATION STRATEGY FOR ALGEBRAIC MULTIGRID USING ENERGY-MINIMIZATION](https://www.unm.edu/~jbschroder/docs/OlSc2011.pdf)
 - [ ] look at AMGe again?
+
+
+## Secondary / Next Tasks
+
+
+* put in my thesis that the BDDC may be much stronger and general preconditioner than AMG for thin shells (similar idea to thick-ind ASW)
+* can give thickness-ind and h-independent performance for shells
+* my task maybe is to show it is highly scalable on GPU for wing problems (using MITC9 / MITC4 elems)?
+* implement this BDDC preconditioner for Naghdi shell, it claims mesh and thickness-indepence!
+* more on BDDC method
+* then look at AMG and compare BDDC to AMG for shells on GPUs (scalability comparison)
+   * SA-AMG, AMGe, CF-AMG, RN-AMG
+* for elements, I could say that I have a method that kind of works for cylinders but requires IGA (limited practicality + still some gap there, but maybe we just show how it may not be as good as MITC)
+* maybe do SPAI to solve the coarse subdomain problems? How to do it?
+* cite FETI in thesis it's similar to BDDC
+* here's the reading list (in order)
+
+
+2. [ ] [Robust BDDC preconditioners for Reissner–Mindlin plate bending problems and MITC elements](https://epubs.siam.org/doi/10.1137/080717729)
+3. [ ] BDDC method, [A Preconditioner for Substructuring Based on Constrained Energy Minimization](https://epubs.siam.org/doi/abs/10.1137/S1064827502412887)
+4. [ ] [Multispace and multilevel BDDC](https://link.springer.com/article/10.1007/s00607-008-0014-7)
+5. [ ] [Adaptive-Multilevel BDDC and its parallel implementation](https://arxiv.org/pdf/1301.0191v1)
+6. [ ] [A method of finite element tearing and interconnecting and its parallel solution algorithm](https://onlinelibrary.wiley.com/doi/10.1002/nme.1620320604?msockid=23acff188a4965cd21b2ebae8ba76408)
+7. [ ] [Isogeometric BDDC preconditioners with deluxe scaling](https://epubs.siam.org/doi/10.1137/130917399)
+8. [ ] [A comparative study of scalable multilevel preconditioners for cardiac mechanics](https://www.sciencedirect.com/science/article/pii/S0021999123005168)
+9. [ ] [BDDC preconditioning on GPUs for Cardiac Simulations](https://arxiv.org/html/2410.14786v1)
+10. [ ] BDD method for plates (precursor) [BALANCING DOMAIN DECOMPOSITION FOR NONCONFORMING PLATE ELEMENTS](https://conservancy.umn.edu/server/api/core/bitstreams/34ce78b1-1206-4a43-87b4-f2ea46bbe873/content)
+11. [ ] [The two-level FETI method for static and dynamic plate problems Part I: An optimal iterative solver for biharmonic systems](https://www.sciencedirect.com/science/article/pii/S0045782597001461)
+12. [ ] [A Neumann--Neumann Domain Decomposition Algorithm for Solving Plate and Shell Problems](https://epubs.siam.org/doi/10.1137/S0036142995291019)
+13. [ ] [Balancing domain decomposition method for large-scale analysis of an assembly structure having millions of multipoint constraints](https://www.sciencedirect.com/science/article/pii/S0045782522008027)
+14. [ ] BDD for plates [Balancing Domain Decomposition for Plates](https://www.bing.com/ck/a?!&&p=6353b886f484c62d61d41a929dbaaee579ab842d7a670e7024a82b7ea43f97b4JmltdHM9MTc3MjY2ODgwMA&ptn=3&ver=2&hsh=4&fclid=23acff18-8a49-65cd-21b2-ebae8ba76408&psq=Balancing+domain+decomposition+for+plates&u=a1aHR0cHM6Ly9kbC5hY20ub3JnL2RvaS9ib29rLzEwLjU1NTUvODY1NzA0)
+15. [ ] BDDC for elasticity [A Substructuring Preconditioner for Nearly Incompressible Elasticity Prob-lems]()
+16. [ ] [Fast and Robust Multilevel Schwarz Methods using Tensor Structure for High-Order Finite Elements ](https://archiv.ub.uni-heidelberg.de/volltextserver/32404/)
+
+BPX preconditioners for shells
+1. [ ] [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
+2. [ ] [BPX preconditioners for isogeometric analysis using (truncated) hierarchical B-splines](https://www.sciencedirect.com/science/article/pii/S0045782521000785)
+3. [ ] [BPX‐type Preconditioners for Second and Fourth Order Elliptic Problems on the Sphere](https://epubs.siam.org/doi/10.1137/050647414)
+4. [ ] [Direct optimization of BPX preconditioners](https://arxiv.org/abs/2205.06158)
+5. [ ] [Nonlinear Analysis on Manifolds. Monge-Ampère Equations ](https://link.springer.com/book/10.1007/978-1-4612-5734-9)
+
+
+MAS: Multilevel additive schwarz
+- [x] [A GPU-based multilevel additive schwarz preconditioner for cloth and deformable body simulation](https://dl.acm.org/doi/10.1145/3528223.3530085)
+   - [x] Nicolaides coarsening [Deflation of Conjugate Gradients with Applications to Boundary Value Problems](https://epubs.siam.org/doi/abs/10.1137/0724027?journalCode=sjnaam)
+
 
 ## Put TACS GPU into main TACS
 

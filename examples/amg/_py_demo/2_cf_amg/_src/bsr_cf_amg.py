@@ -300,6 +300,9 @@ def standard_bsr_interpolation(A_bsr: sp.bsr_matrix, C_nodes, F_nodes):
         A_FF W = -A_FC
 
     followed by optional block row normalization.
+
+    better explained in matrix form from this book, https://arxiv.org/pdf/1611.01917
+    But there is a mistake, need extra RHS term than what is shown in paper
     """
     bs, n_block_rows = _check_bsr(A_bsr)
 
