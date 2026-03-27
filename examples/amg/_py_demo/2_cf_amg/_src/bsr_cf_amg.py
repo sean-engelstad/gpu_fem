@@ -225,44 +225,109 @@ def direct_bsr_interpolation(A_bsr: sp.bsr_matrix, C_nodes, F_nodes):
     P_bsr = _assemble_bsr_prolongation(W, C_nodes, F_nodes, n_block_rows, bs)
     return P_bsr
 
-
-def standard_bsr_interpolation(A_bsr: sp.bsr_matrix, C_nodes, F_nodes):
+def _extract_block_diag(A_bsr: sp.bsr_matrix):
     """
-    BSR/block version of your standard CSR interpolation.
-
-    This mirrors:
-        W1 = D^{-1} A_FC
-        W  = W1 - D^{-1} A_FF W1
-        W2 = D2^{-1} W
-    but in block form.
+    Extract block diagonal from a square BSR matrix.
 
     Returns
     -------
-    P_bsr : sp.bsr_matrix
-        Block prolongation of shape (n_block*bs, nC*bs).
+    D : ndarray of shape (nb, bs, bs)
+        D[i] is the diagonal block A[i,i].
+    """
+    if not sp.isspmatrix_bsr(A_bsr):
+        raise TypeError("A_bsr must be BSR")
+
+    bs = A_bsr.blocksize[0]
+    nb = A_bsr.shape[0] // bs
+
+    D = np.zeros((nb, bs, bs), dtype=A_bsr.data.dtype)
+
+    for i in range(nb):
+        start = A_bsr.indptr[i]
+        end = A_bsr.indptr[i + 1]
+        cols = A_bsr.indices[start:end]
+
+        hit = np.where(cols == i)[0]
+        if hit.size == 0:
+            raise RuntimeError(f"Missing diagonal block in row {i}")
+        D[i, :, :] = A_bsr.data[start + hit[0]]
+
+    return D
+
+# def standard_bsr_interpolation(A_bsr: sp.bsr_matrix, C_nodes, F_nodes):
+#     """
+#     BSR/block version of your standard CSR interpolation.
+
+#     This mirrors:
+#         W1 = D^{-1} A_FC
+#         W  = W1 - D^{-1} A_FF W1
+#         W2 = D2^{-1} W
+#     but in block form.
+
+#     Returns
+#     -------
+#     P_bsr : sp.bsr_matrix
+#         Block prolongation of shape (n_block*bs, nC*bs).
+#     """
+#     bs, n_block_rows = _check_bsr(A_bsr)
+
+#     A_FC = _submatrix_bsr(A_bsr, F_nodes, C_nodes)
+#     A_FF = _submatrix_bsr(A_bsr, F_nodes, F_nodes)
+
+#     # First get direct interpolation
+#     D_FF = _block_row_sum(A_FC)
+#     Dinv_FF = _invert_blocks(D_FF)
+#     W1 = _left_scale_block_rows(A_FC, Dinv_FF)
+
+#     # Then standard interpolation
+#     W = (W1 - _left_scale_block_rows(A_FF @ W1, Dinv_FF)).tobsr(blocksize=(bs, bs))
+
+#     # Rescale again to preserve blockwise constants
+#     D2_FF = _block_row_sum(W)
+#     Dinv2_FF = _invert_blocks(D2_FF)
+#     W2 = _left_scale_block_rows(W, Dinv2_FF)
+
+#     # Full prolongation
+#     P_bsr = _assemble_bsr_prolongation(W2, C_nodes, F_nodes, n_block_rows, bs)
+#     return P_bsr
+
+
+def standard_bsr_interpolation(A_bsr: sp.bsr_matrix, C_nodes, F_nodes):
+    """
+    Block version of standard / approximate ideal interpolation using
+    two block-Jacobi sweeps on
+
+        A_FF W = -A_FC
+
+    followed by optional block row normalization.
+
+    better explained in matrix form from this book, https://arxiv.org/pdf/1611.01917
+    But there is a mistake, need extra RHS term than what is shown in paper
     """
     bs, n_block_rows = _check_bsr(A_bsr)
 
     A_FC = _submatrix_bsr(A_bsr, F_nodes, C_nodes)
     A_FF = _submatrix_bsr(A_bsr, F_nodes, F_nodes)
 
-    # First get direct interpolation
-    D_FF = _block_row_sum(A_FC)
+    # block diagonal of A_FF, shape (nF, bs, bs)
+    D_FF = _extract_block_diag(A_FF)
     Dinv_FF = _invert_blocks(D_FF)
-    W1 = _left_scale_block_rows(A_FC, Dinv_FF)
 
-    # Then standard interpolation
-    W = (W1 - _left_scale_block_rows(A_FF @ W1, Dinv_FF)).tobsr(blocksize=(bs, bs))
+    # sweep 1: W1 = -D^{-1} A_FC
+    W1 = -_left_scale_block_rows(A_FC, Dinv_FF)
 
-    # Rescale again to preserve blockwise constants
-    D2_FF = _block_row_sum(W)
+    # sweep 2: W2 = W1 + D^{-1}(-A_FC - A_FF W1)
+    residual = (-A_FC - A_FF @ W1).tobsr(blocksize=(bs, bs))
+    W2 = (W1 + _left_scale_block_rows(residual, Dinv_FF)).tobsr(blocksize=(bs, bs))
+
+    # optional block row normalization to preserve blockwise constants / RBMs
+    D2_FF = _block_row_sum(W2)
     Dinv2_FF = _invert_blocks(D2_FF)
-    W2 = _left_scale_block_rows(W, Dinv2_FF)
+    W = _left_scale_block_rows(W2, Dinv2_FF).tobsr(blocksize=(bs, bs))
 
-    # Full prolongation
-    P_bsr = _assemble_bsr_prolongation(W2, C_nodes, F_nodes, n_block_rows, bs)
+    # assemble full prolongation
+    P_bsr = _assemble_bsr_prolongation(W, C_nodes, F_nodes, n_block_rows, bs)
     return P_bsr
-
 
 
 def build_asw_block_inverses_bsr(A: sp.bsr_matrix,

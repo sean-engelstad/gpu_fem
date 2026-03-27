@@ -11,6 +11,7 @@
 #include "element/shell/_shell.cuh"
 #include "linalg/bsr_data.h"
 #include "linalg/svd_utils.h"
+#include "mesh/exploded_vtk_writer.h"
 #include "mesh/vtk_writer.h"
 #include "multigrid/smoothers/_wingbox_coloring.h"
 #include "multigrid/solvers/solve_utils.h"
@@ -725,7 +726,7 @@ class FetidpSolver : public BaseSolver {
     }
 
     void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
-                                         bool compute_jump = true) {
+                                         T wrap_frac = 1.0, bool compute_jump = true) {
         clear_structured_host_data();
 
         // printf("SETUP_WING_SUBDOMAINS : get_nodal_geom_indices\n");
@@ -1591,8 +1592,15 @@ class FetidpSolver : public BaseSolver {
             // now use this sparse element list to more cheaply join together subdomain groups
             // printf("orig elem_sd_ind: ");
             // printVec<int>(num_elements, elem_sd_ind);
+            int ct = 0;
+            int n_wrap =
+                sd_groups.size() * wrap_frac;  // how many subdomains we're going to wrap (ideal is
+                                               // all of them, but allow fraction here to show in
+                                               // paper that this is huge affect on runtime)
             for (auto group : sd_groups) {
                 int first_sd_ind = group[0];
+                if (ct >= n_wrap) continue;  // if more than n_wrap then we exit
+                ct++;
 
                 // for middle cases: adjust first_sd_ind in case it was changed previously
                 int isd0 = group[0];
@@ -1666,6 +1674,15 @@ class FetidpSolver : public BaseSolver {
                                                             "subdomains", "out/comp_sd.vtk");
         printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, debug_lelem_sd_ind,
                                                             "subdomains", "out/comp_lsd.vtk");
+
+        // for visualization of exploded subdomain divisions (to show method in ppt slides and
+        // thesis)
+        explodedSubdomainsPrintToVTK<ShellAssembler, HostVec<T>, LOWER_SKIN>(
+            assembler, h_vars, "out/comp_lskin.vtk", num_subdomains, elem_sd_ind);
+        explodedSubdomainsPrintToVTK<ShellAssembler, HostVec<T>, UPPER_SKIN>(
+            assembler, h_vars, "out/comp_uskin.vtk", num_subdomains, elem_sd_ind);
+        explodedSubdomainsPrintToVTK<ShellAssembler, HostVec<T>, INT_STRUCT>(
+            assembler, h_vars, "out/comp_intstruct.vtk", num_subdomains, elem_sd_ind);
         // printf("\tdone printToVTK elemVec");
 
         // -----------------------------------------
@@ -2083,6 +2100,19 @@ class FetidpSolver : public BaseSolver {
 
         d_Vc_nodes = HostVec<int>(Vc_nnodes, Vc_nodes_vec.data()).createDeviceVec().getPtr();
         Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
+
+        // compute what fraction of nodes are wrapped around multi-patch junctions
+        int nwrap_nodes = 0;
+        for (int ivc = 0; ivc < Vc_nnodes; ivc++) {
+            int glob_node = Vc_nodes[ivc];
+            int wing_node_class = node_wing_geom_ind[glob_node];
+            if (wing_node_class == 0) {
+                nwrap_nodes++;  // then on interior
+            }
+        }
+        T wrap_node_frac = 1.0 * nwrap_nodes / Vc_nnodes;
+        printf("frac of nodes on interior (for wrap subdomains): %d/%d = %.4f\n", nwrap_nodes,
+               Vc_nnodes, wrap_node_frac);
 
         // printf("post move to device of Vc_nodes\n");
 

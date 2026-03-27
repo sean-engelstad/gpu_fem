@@ -34,30 +34,40 @@ def direct_csr_interpolation(A_csr:sp.csr_matrix, C_nodes, F_nodes):
 
 def standard_csr_interpolation(A_csr:sp.csr_matrix, C_nodes, F_nodes):
     """from multigrid book,
-    better explained in matrix form from this book, https://arxiv.org/pdf/1611.01917"""
-    
-    
+    better explained in matrix form from this book, https://arxiv.org/pdf/1611.01917
+    But there is a mistake, need extra RHS term in the standard CSR interp"""
     A_FC = build_initial_FC_matrix(A_csr, C_nodes, F_nodes)
     A_FF = A_csr[F_nodes, :][:, F_nodes]
 
-    # first get direct interpolation
-    diag_FF = A_FC.dot(np.ones(A_FC.shape[1]))
-    Dinv_FF = np.diag(1.0 / diag_FF) # matrix form
-    W1 = Dinv_FF @ A_FC
+    # diagonal of A_FF
+    diag_FF = A_FF.diagonal()
+    Dinv_FF = np.diag(1.0 / diag_FF)
 
-    # then get standard interpolation
-    W = W1 - Dinv_FF @ A_FF @ W1
-    # then rescale for constant RBMs of CSR case
-    diag2_FF = W.dot(np.ones(W.shape[-1]))
-    Dinv2_FF = np.diag(1.0 / diag2_FF)
-    W2 = Dinv2_FF @ W
+    # Jacobi sweep 1 for A_FF W = -A_FC
+    W1 = -Dinv_FF @ A_FC
+
+    # Jacobi sweep 2
+    W2 = W1 + Dinv_FF @ (-A_FC - A_FF @ W1)
+    # equivalently:
+    # W2 = 2.0 * W1 - Dinv_FF @ A_FF @ W1
+    # print(f"{W2.shape=}")
+
+    # optional normalization to preserve constants
+    row_sum = W2 @ np.ones((W2.shape[1], 1))
+    # row_sum2 = row_sum[:, 0]
+    row_sum = np.asarray(row_sum).ravel()   # shape (12,)
+    # print(f'{row_sum.shape=} {row_sum2.shape=}')
+    Dinv2 = np.diag(1.0 / row_sum)
+    # print(f"{Dinv2.shape=} {W2.shape=}")
+    W = Dinv2 @ W2
 
     P = A_csr[:, C_nodes]
     # FC part is from direct interp
-    P[F_nodes, :] = W2[:, :]
+    P[F_nodes, :] = W[:, :]
     # CC part is injection
     P[C_nodes, :] = np.eye(A_FC.shape[-1])
     return P
+
 
 
 class DirectCSRSolver:

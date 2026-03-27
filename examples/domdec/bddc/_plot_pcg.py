@@ -4,6 +4,21 @@ import niceplots
 import math
 
 
+
+# BIG fonts (publication / slides)
+fs = 24
+
+plt.rcParams.update({
+    "font.size": fs,
+    "axes.titlesize": fs + 4,
+    "axes.labelsize": fs + 2,
+    "xtick.labelsize": fs - 2,
+    "ytick.labelsize": fs - 2,
+    "legend.fontsize": fs - 2,
+    "axes.linewidth": 2.5,
+})
+
+
 def build_hist_from_sparse_log(points, final_iter=None, final_val=None):
     """
     Build a full per-iteration history from sparse log points using
@@ -58,7 +73,7 @@ def plot_histories(histories, title=None, y_floor=1e-16, save_png=None):
         ymin_global = min(ymin_global, np.min(y))
         ymax_global = max(ymax_global, np.max(y))
 
-        ax.semilogy(it, y, label=h["label"], linewidth=2)
+        ax.semilogy(it, y, label=h["label"], linewidth=2.5)
 
     ax.set_xlabel("PCG iteration")
     ax.set_ylabel("Residual norm")
@@ -83,7 +98,7 @@ def plot_histories(histories, title=None, y_floor=1e-16, save_png=None):
     ax.set_ylim(10.0 ** pmin, 10.0 ** pmax)
 
     ax.legend(
-        fontsize=9,
+        fontsize=18,
         loc="lower center",
         bbox_to_anchor=(0.5, 1.02),
         ncol=2,
@@ -244,5 +259,5 @@ if __name__ == "__main__":
     plot_histories(
         histories,
         title="BDDC Krylov convergence: wraparound vs no wraparound",
-        save_png="bddc_wraparound_thickness_compare.png",
+        save_png="out/bddc_wraparound_thickness_compare.svg",
     )

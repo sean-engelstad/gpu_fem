@@ -1,4 +1,6 @@
 #pragma once
+#include <chrono>
+
 #include "../solve_utils.h"
 
 // cusparse directLU solves with multigrid (V-cycle style preconditioner for two levels)
@@ -262,6 +264,279 @@ class CusparseMGDirectLU : public BaseSolver {
         T rel_conv = fin_norm / init_norm;
         printf("coarse solver rel conv %.8e\n", rel_conv);
         return rel_conv >= 1e-6;
+    }
+    void printTriSolveVsMatVecTiming(DeviceVec<T> rhs, DeviceVec<T> x, int nrepeat = 3,
+                                     bool do_tri = true, bool do_matvec = true) {
+        if (MULTI_SMOOTH) {
+            printf("WARNING: timing intended for direct/ILU path but MULTI_SMOOTH is on\n");
+        }
+
+        const double alpha = 1.0;
+        T a = 1.0;
+        T b = 0.0;
+
+        cudaEvent_t ev_start, ev_stop;
+        CHECK_CUDA(cudaEventCreate(&ev_start));
+        CHECK_CUDA(cudaEventCreate(&ev_stop));
+
+        float triL_ms_total = 0.0f;
+        float triU_ms_total = 0.0f;
+        float matvec_ms_total = 0.0f;
+
+        // -------------------
+        // Warm-up (guarded)
+        // -------------------
+        if (do_tri) {
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_L, mb, nnzb, &alpha,
+                                                 descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_L, rhs.getPtr(), d_temp, policy_L, pBuffer));
+
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandle, dir, trans_U, mb, nnzb, &alpha,
+                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_U, d_temp, x.getPtr(), policy_U, pBuffer));
+        }
+
+        if (do_matvec) {
+            CHECK_CUSPARSE(cusparseDbsrmv(
+                cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb,
+                nnzb, &a, descrK, d_vals, d_rowp, d_cols, block_dim, x.getPtr(), &b, d_temp));
+        }
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        for (int k = 0; k < nrepeat; k++) {
+            float ms = 0.0f;
+
+            if (do_tri) {
+                // L solve
+                CHECK_CUDA(cudaEventRecord(ev_start));
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_L, rhs.getPtr(), d_temp, policy_L, pBuffer));
+                CHECK_CUDA(cudaEventRecord(ev_stop));
+                CHECK_CUDA(cudaEventSynchronize(ev_stop));
+                CHECK_CUDA(cudaEventElapsedTime(&ms, ev_start, ev_stop));
+                triL_ms_total += ms;
+
+                // U solve
+                CHECK_CUDA(cudaEventRecord(ev_start));
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_U, d_temp, x.getPtr(), policy_U, pBuffer));
+                CHECK_CUDA(cudaEventRecord(ev_stop));
+                CHECK_CUDA(cudaEventSynchronize(ev_stop));
+                CHECK_CUDA(cudaEventElapsedTime(&ms, ev_start, ev_stop));
+                triU_ms_total += ms;
+            }
+
+            if (do_matvec) {
+                CHECK_CUDA(cudaEventRecord(ev_start));
+                CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                              CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a,
+                                              descrK, d_vals, d_rowp, d_cols, block_dim, x.getPtr(),
+                                              &b, d_temp));
+                CHECK_CUDA(cudaEventRecord(ev_stop));
+                CHECK_CUDA(cudaEventSynchronize(ev_stop));
+                CHECK_CUDA(cudaEventElapsedTime(&ms, ev_start, ev_stop));
+                matvec_ms_total += ms;
+            }
+        }
+
+        CHECK_CUDA(cudaEventDestroy(ev_start));
+        CHECK_CUDA(cudaEventDestroy(ev_stop));
+
+        printf("\nTiming breakdown:\n");
+
+        if (do_tri) {
+            const float triL_ms = triL_ms_total / nrepeat;
+            const float triU_ms = triU_ms_total / nrepeat;
+            const float tri_ms = triL_ms + triU_ms;
+
+            printf("  forward triangular (L) : %.6f ms\n", triL_ms);
+            printf("  backward triangular (U): %.6f ms\n", triU_ms);
+            printf("  total triangular       : %.6f ms\n", tri_ms);
+        }
+
+        if (do_matvec) {
+            const float matvec_ms = matvec_ms_total / nrepeat;
+            printf("  mat-vec (A*x)          : %.6f ms\n", matvec_ms);
+
+            if (do_tri) {
+                const float tri_ms = (triL_ms_total + triU_ms_total) / nrepeat;
+                printf("  ratio (tri/mv)         : %.6f\n", tri_ms / matvec_ms);
+            }
+        }
+
+        printf("  repeats                : %d\n", nrepeat);
+    }
+
+#include <chrono>
+
+    void printTriSolveVsMatVecTiming_host(DeviceVec<T> rhs, DeviceVec<T> x, int nrepeat = 10,
+                                          bool do_fact = false, bool do_tri = true,
+                                          bool do_matvec = true) {
+        if (MULTI_SMOOTH) {
+            printf("WARNING: timing intended for direct/ILU path but MULTI_SMOOTH is on\n");
+        }
+
+        const double alpha = 1.0;
+        T a = 1.0;
+        T b = 0.0;
+
+        double fact_total = 0.0;
+        double triL_total = 0.0;
+        double triU_total = 0.0;
+        double matvec_total = 0.0;
+
+        cusparseStatus_t status;
+        int numerical_zero;
+
+        // -------------------
+        // Warm-up
+        // -------------------
+        for (int k = 0; k < 3; k++) {
+            if (do_fact) {
+                CHECK_CUDA(cudaMemcpy(d_vals_ILU0, d_vals, nnzb * block_dim * block_dim * sizeof(T),
+                                      cudaMemcpyDeviceToDevice));
+
+                CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M,
+                                                 d_vals_ILU0, d_rowp, d_cols, block_dim, info_M,
+                                                 policy_M, pBuffer));
+
+                status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
+                if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+                    printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
+                }
+            }
+
+            if (do_tri) {
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_L, rhs.getPtr(), d_temp, policy_L, pBuffer));
+
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_U, d_temp, x.getPtr(), policy_U, pBuffer));
+            }
+
+            if (do_matvec) {
+                CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                              CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a,
+                                              descrK, d_vals, d_rowp, d_cols, block_dim, x.getPtr(),
+                                              &b, d_temp));
+            }
+        }
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+
+        // -------------------
+        // Timing loop
+        // -------------------
+        for (int k = 0; k < nrepeat; k++) {
+            if (do_fact) {
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto t0 = std::chrono::high_resolution_clock::now();
+
+                // restore original matrix values before each numeric factorization
+                CHECK_CUDA(cudaMemcpy(d_vals_ILU0, d_vals, nnzb * block_dim * block_dim * sizeof(T),
+                                      cudaMemcpyDeviceToDevice));
+
+                CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M,
+                                                 d_vals_ILU0, d_rowp, d_cols, block_dim, info_M,
+                                                 policy_M, pBuffer));
+
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto t1 = std::chrono::high_resolution_clock::now();
+
+                fact_total += std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+                status = cusparseXbsrilu02_zeroPivot(cusparseHandle, info_M, &numerical_zero);
+                if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+                    printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
+                }
+            }
+
+            if (do_tri) {
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto t0 = std::chrono::high_resolution_clock::now();
+
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_L, mb, nnzb, &alpha, descr_L, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_L, rhs.getPtr(), d_temp, policy_L, pBuffer));
+
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto t1 = std::chrono::high_resolution_clock::now();
+
+                triL_total += std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+                CHECK_CUDA(cudaDeviceSynchronize());
+                t0 = std::chrono::high_resolution_clock::now();
+
+                CHECK_CUSPARSE(cusparseDbsrsv2_solve(
+                    cusparseHandle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_vals_ILU0, d_rowp,
+                    d_cols, block_dim, info_U, d_temp, x.getPtr(), policy_U, pBuffer));
+
+                CHECK_CUDA(cudaDeviceSynchronize());
+                t1 = std::chrono::high_resolution_clock::now();
+
+                triU_total += std::chrono::duration<double, std::milli>(t1 - t0).count();
+            }
+
+            if (do_matvec) {
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto t0 = std::chrono::high_resolution_clock::now();
+
+                CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                              CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb, &a,
+                                              descrK, d_vals, d_rowp, d_cols, block_dim, x.getPtr(),
+                                              &b, d_temp));
+
+                CHECK_CUDA(cudaDeviceSynchronize());
+                auto t1 = std::chrono::high_resolution_clock::now();
+
+                matvec_total += std::chrono::duration<double, std::milli>(t1 - t0).count();
+            }
+        }
+
+        printf("\nTiming breakdown (host sync):\n");
+
+        if (do_fact) {
+            double fact = fact_total / nrepeat;
+            printf("  ILU numeric factor     : %.6f ms\n", fact);
+        }
+
+        if (do_tri) {
+            double triL = triL_total / nrepeat;
+            double triU = triU_total / nrepeat;
+            double tri = triL + triU;
+
+            printf("  forward triangular (L) : %.6f ms\n", triL);
+            printf("  backward triangular (U): %.6f ms\n", triU);
+            printf("  total triangular       : %.6f ms\n", tri);
+        }
+
+        if (do_matvec) {
+            double mv = matvec_total / nrepeat;
+            printf("  mat-vec (A*x)          : %.6f ms\n", mv);
+
+            if (do_tri) {
+                double tri = (triL_total + triU_total) / nrepeat;
+                printf("  ratio (tri/mv)         : %.6f\n", tri / mv);
+            }
+
+            if (do_fact) {
+                double fact = fact_total / nrepeat;
+                printf("  ratio (fact/mv)        : %.6f\n", fact / mv);
+            }
+        }
+
+        if (do_fact && do_tri) {
+            double fact = fact_total / nrepeat;
+            double tri = (triL_total + triU_total) / nrepeat;
+            printf("  ratio (fact/tri)       : %.6f\n", fact / tri);
+        }
+
+        printf("  repeats                : %d\n", nrepeat);
     }
 
     void free() {
