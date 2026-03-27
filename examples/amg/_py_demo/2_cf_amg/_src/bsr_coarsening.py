@@ -239,13 +239,13 @@ def aggressive_A2_bsr_coarsening(A_bsr: sp.bsr_matrix, threshold: float = 0.25):
           Updated Boolean masks for coarse and fine nodes in the original ordering.
     """
     # FIRST STAGE: Standard coarsening.
-    C, F = standard_csr_coarsening(A_bsr, threshold)
+    C, F = standard_bsr_coarsening(A_bsr, threshold)
     N = A_bsr.shape[0]
     block_dim = A_bsr.data.shape[-1]
     nnodes = N // block_dim
     
     # Get first-level strength-of-connection info.
-    STRENGTH, STRENGTH_TR = strength_of_connections_csr(A_bsr, threshold)
+    STRENGTH, STRENGTH_TR = strength_of_connections_bsr(A_bsr, threshold)
     
     # Build second-level strength-of-connection maps for coarse nodes only.
     # Here we count the number of distinct (C=>F=>C) paths.
