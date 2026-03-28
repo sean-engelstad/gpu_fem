@@ -30,12 +30,12 @@ Implementing SA-AMG:
 - [x] demo cylinder SA-AMG in python
 
 Implement CF-AMG
-- [ ] [Algebraic multigrid methods](https://arxiv.org/pdf/1611.01917)
+- [x] [Algebraic multigrid methods](https://arxiv.org/pdf/1611.01917)
     * explains how to do classical AMG much better and in matrix form with direct, standard and multipass interpolation
     * other ref was my Trottenburg book on Google play, but that didn't explain it nearly as well as this ref. 
 
 Implement RN-AMG
-- [ ] [A ROOT-NODE BASED ALGEBRAIC MULTIGRID METHOD](https://arxiv.org/pdf/1610.03154)
+- [x] [A ROOT-NODE BASED ALGEBRAIC MULTIGRID METHOD](https://arxiv.org/pdf/1610.03154)
 
 
 Optional:

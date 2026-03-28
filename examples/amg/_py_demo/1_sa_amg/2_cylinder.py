@@ -15,7 +15,7 @@ from __src import plot_cylinder_vec, sort_vis_maps
 # from __linalg import right_pgmres, right_pcg
 
 
-sys.path.append("../../adv_elem/1_beam/src/")
+sys.path.append("../../../adv_elem/1_beam/src/")
 from smoothers import right_pcg2, right_pgmres2
 
 # AMG imports
@@ -220,7 +220,7 @@ if args.debug:
 from bsr_aggregation import get_rigid_body_modes #, get_coarse_rigid_body_modes
 B = get_rigid_body_modes(xpts0)
 
-pc = AggregationAMG_BSRSolver(A_free, A, B, threshold=args.threshold, omega=args.omega, pre_smooth=args.nsmooth, post_smooth=args.nsmooth) #, near_kernel=args.kernel)
+pc = AggregationAMG_BSRSolver(A_free, A, B, threshold=args.threshold, omega=args.omega, nsmooth=args.nsmooth) #, near_kernel=args.kernel)
 
 # # check V-cycle symmetry
 # x = np.random.rand(N)
