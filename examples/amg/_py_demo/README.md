@@ -35,7 +35,7 @@ Implement CF-AMG
     * other ref was my Trottenburg book on Google play, but that didn't explain it nearly as well as this ref. 
 
 Implement RN-AMG
-- [ ] [A ROOT-NODE BASED ALGEBRAIC MULTIGRID METHOD](https://arxiv.org/pdf/1610.03154)
+- [x] [A ROOT-NODE BASED ALGEBRAIC MULTIGRID METHOD](https://arxiv.org/pdf/1610.03154)
 
 
 Optional:
