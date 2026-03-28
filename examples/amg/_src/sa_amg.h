@@ -31,20 +31,25 @@ class SmoothAggregationAMG : public BaseSolver {
 
     SmoothAggregationAMG(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
                          Smoother *smoother_, int nnodes_, BsrMat<DeviceVec<T>> kmat_,
-                         DeviceVec<T> rigid_body_modes_, int coarse_node_threshold_ = 6000,
-                         T sparse_threshold_ = 0.15, T omegaJac_ = 0.3, int nsmooth_ = 1)
+                         BsrMat<DeviceVec<T>> kmat_free_, DeviceVec<T> rigid_body_modes_,
+                         DeviceVec<int> d_bcs_, int coarse_node_threshold_ = 6000,
+                         T sparse_threshold_ = 0.15, T omegaJac_ = 0.3, int nsmooth_ = 1,
+                         int level_ = 0)
         : cublasHandle(cublasHandle_),
           cusparseHandle(cusparseHandle_),
           smoother(smoother_),
           kmat(kmat_),
+          kmat_free(kmat_free_),
           nnodes(nnodes_),
           rigid_body_modes(rigid_body_modes_),
           coarse_node_threshold(coarse_node_threshold_),
           sparse_threshold(sparse_threshold_),
+          level(level_),
           nsmooth(nsmooth_) {
         // get data out of kmat
         auto d_kmat_bsr_data = kmat.getBsrData();
         d_kmat_vals = kmat.getVec().getPtr();
+        d_kmat_free_vals = kmat_free.getVec().getPtr();
         d_kmat_rowp = d_kmat_bsr_data.rowp;
         d_kmat_rows = d_kmat_bsr_data.rows;
         d_kmat_cols = d_kmat_bsr_data.cols;
@@ -54,33 +59,39 @@ class SmoothAggregationAMG : public BaseSolver {
         N = nnodes * block_dim;
         omegaJac = omegaJac_;
 
+        d_bcs = d_bcs_;
+
         // setup phase (first version)
         printf("1 - AMG initCuda() with nnodes = %d\n", nnodes);
         initCuda();
         printf("2 - AMG form node aggregates\n");
         form_node_aggregates();
+
+        is_coarse_mg = num_aggregates > coarse_node_threshold;
+        printf("\tis_coarse_mg %d: num_agg %d vs coarse threshold %d\n", is_coarse_mg,
+               num_aggregates, coarse_node_threshold);
+
         printf("3 - AMG get prolong nz pattern\n");
         compute_prolongation_nz_pattern();
         printf("4 - AMG compute coarse grid nz pattern\n");
         compute_coarse_grid_nz_pattern();
         printf("\tdone with AMG init\n");
-        _done_post_apply_bcs = false;
-
-        d_bcs = DeviceVec<int>(0);  // no bcs default
-
-        is_coarse_mg = num_aggregates > coarse_node_threshold;
+        // _done_post_apply_bcs = false;
+        compute_coarse_problem();
+        // d_bcs = DeviceVec<int>(0);  // no bcs default
     }
 
-    void post_apply_bcs(DeviceVec<int> d_bcs_) {
+    void compute_coarse_problem() {
         // after applying BCs on kmat now compute the tentative prolongator and other values
         // meaning kmat no bcs used for aggregate formation
-        d_bcs = d_bcs_;
-        printf("\nPOST_APPLY_BCS\n");
+        // old arg: DeviceVec<int> d_bcs_
+        // d_bcs = d_bcs_;
+        // printf("\nPOST_APPLY_BCS\n");
         printf("1 - AMG compute prolong values\n");
         compute_prolongator_values();
         printf("2 - AMG compute coarse grid values\n");
         compute_coarse_grid_values();
-        _done_post_apply_bcs = true;
+        // _done_post_apply_bcs = true;
     }
 
     void update_after_assembly(DeviceVec<T> &vars) {
@@ -92,11 +103,15 @@ class SmoothAggregationAMG : public BaseSolver {
     int get_num_iterations() { return 0; }
     void set_print(bool print) {}
     void free() {}  // TBD on this one
+    void set_cycle_type(std::string cycle_) {}
 
     void build_coarse_system(Assembler coarse_assembler, Smoother *coarse_smoother) {
         // need to build the coarse smoother from coarse_kmat and then pass that in here..
 
-        assert(_done_post_apply_bcs);  // make sure you call post_apply_bcs method after doing bcs
+        printf("level %d, building coarse system %d=is_coarse_mg\n", level, is_coarse_mg);
+
+        // assert(_done_post_apply_bcs);  // make sure you call post_apply_bcs method after doing
+        // bcs
         printf("build coarse grid system with num_aggregates %d\n", num_aggregates);
         // pointer for either solver and store bool of which one we use
         if (!is_coarse_mg) {
@@ -107,11 +122,13 @@ class SmoothAggregationAMG : public BaseSolver {
         } else {
             // then build coarse AMG solver and new coarse smoother
             printf("\tbuild coarse AMG solver\n");
-            coarse_mg = new CoarseMG(cublasHandle, cusparseHandle, coarse_smoother, num_aggregates,
-                                     coarse_kmat, d_Bc_vec, coarse_node_threshold, sparse_threshold,
-                                     omegaJac, nsmooth);
             auto no_bcs = DeviceVec<int>(0);
-            coarse_mg->post_apply_bcs(no_bcs);
+            coarse_mg =
+                new CoarseMG(cublasHandle, cusparseHandle, coarse_smoother, num_aggregates,
+                             coarse_kmat, coarse_free_kmat, d_Bc_vec, no_bcs, coarse_node_threshold,
+                             sparse_threshold, omegaJac, nsmooth, level + 1);
+            //
+            // coarse_mg->post_apply_bcs(no_bcs);
         }
     }
 
@@ -198,6 +215,7 @@ class SmoothAggregationAMG : public BaseSolver {
 
     BsrData get_coarse_bsr_data() { return coarse_kmat_bsr_data; }
     int get_num_aggregates() { return num_aggregates; }
+    bool get_coarse_mg() { return is_coarse_mg; }
     BsrMat<DeviceVec<T>> get_coarse_kmat() { return coarse_kmat; }
 
     // public data
@@ -249,16 +267,40 @@ class SmoothAggregationAMG : public BaseSolver {
     }
 
     void form_node_aggregates() {
+        // if (level > 0) {
+        //     printf("\n\n");
+        //     printf("CHECK fine grid kmat values\n");
+        //     T *h_Avals = DeviceVec<T>(kmat_nnzb * 36, d_kmat_vals).createHostVec().getPtr();
+        //     // printf("tentative prolongator: ");
+        //     // printVec<T>(36 * P_nnzb, h_prolong_vals);
+        //     for (int inode = 0; inode < nnodes; inode++) {
+        //         for (int jp = h_kmat_rowp[inode]; jp < h_kmat_rowp[inode + 1]; jp++) {
+        //             int jnode = h_kmat_cols[jp];
+        //             printf("A mat on (node %d, node %d): \n", inode, jnode);
+        //             for (int irow = 0; irow < 6; irow++) {
+        //                 printVec<T>(6, &h_Avals[36 * jp + 6 * irow]);
+        //             }
+        //         }
+        //     }
+        // }
+
         // 1) compute strength pattern on GPU
         k_get_diag_norms<T>
-            <<<nnodes, 32>>>(nnodes, d_kmat_diagp, block_dim, d_kmat_vals, d_diag_norms);
+            <<<nnodes, 32>>>(nnodes, d_kmat_diagp, block_dim, d_kmat_free_vals, d_diag_norms);
+        // CHECK_CUDA(cudaGetLastError());
+
         k_compute_strength_bools<T><<<kmat_nnzb, 32>>>(kmat_nnzb, block_dim, d_diag_norms,
-                                                       d_kmat_rows, d_kmat_cols, d_kmat_vals,
+                                                       d_kmat_rows, d_kmat_cols, d_kmat_free_vals,
                                                        sparse_threshold, d_strength_indicator);
+
+        // CHECK_CUDA(cudaGetLastError());
+        CHECK_CUDA(cudaDeviceSynchronize());
 
         // 2) compute strength indices to host
         h_strength_indicator =
             DeviceVec<bool>(kmat_nnzb, d_strength_indicator).createHostVec().getPtr();
+        // printf("h_strength_indicator: ");
+        // printVec<bool>(kmat_nnzb, h_strength_indicator);
         int strength_nnz = 0;
         for (int iblock = 0; iblock < kmat_nnzb; iblock++) {
             if (h_strength_indicator[iblock]) strength_nnz++;
@@ -744,6 +786,8 @@ class SmoothAggregationAMG : public BaseSolver {
     void _apply_dirichlet_bcs() {
         dim3 block(32);
         int nbcs = d_bcs.getSize();
+        printf("nbcs = %d\n", nbcs);
+        if (nbcs == 0) return;
         dim3 grid((nbcs + 31) / 32);
         // printf("applying dirichlet bcs with %d #bcs\n", nbcs);
         // int *h_bcs = d_bcs.createHostVec().getPtr();
@@ -1055,7 +1099,7 @@ class SmoothAggregationAMG : public BaseSolver {
         h_prolong_tr_rowp = HostVec<int>(num_aggregates + 1).getPtr();
         h_prolong_tr_cols = HostVec<int>(P_nnzb).getPtr();
 
-        // printf("coarse_grid_nz 1 - get P^T pattern\n");
+        printf("coarse_grid_nz 1 - get P^T pattern\n");
 
         for (int i = 0; i < nnodes; i++) {
             // loop through cols
@@ -1139,8 +1183,8 @@ class SmoothAggregationAMG : public BaseSolver {
         }
 
         // 3) compute P^T * (AP) nz pattern now
-        // printf("coarse_grid_nz 3 - compute P^T * A * P pattern\n");
-        // printf("\tnum agg = %d\n", num_aggregates);
+        printf("coarse_grid_nz 3 - compute P^T * A * P pattern\n");
+        printf("\tnum agg = %d\n", num_aggregates);
         int num_coarse = num_aggregates;
         std::vector<int> PTAP_rowp(num_coarse + 1, 0);
         std::vector<int> PTAP_cols;
@@ -1175,10 +1219,21 @@ class SmoothAggregationAMG : public BaseSolver {
 
         // now compute LU fillin for direct solve if necessary..
         if (!is_coarse_mg) {
-            printf("MAKING coarse LU pattern for direct solve\n");
+            // printf("MAKING coarse LU pattern for direct solve\n");
             auto c_bsr_data = BsrData(num_aggregates, block_dim, PTAP_nnzb, h_PTAP_rowp,
                                       h_PTAP_cols, nullptr, nullptr, true);
             c_bsr_data.compute_full_LU_pattern(10.0, false);
+            // now get new nnzb, rowp and cols
+            delete[] h_PTAP_rowp;
+            delete[] h_PTAP_cols;
+            PTAP_nnzb = c_bsr_data.nnzb;
+            h_PTAP_rowp = c_bsr_data.rowp;
+            h_PTAP_cols = c_bsr_data.cols;
+        } else {
+            // is coarse MG
+            auto c_bsr_data = BsrData(num_aggregates, block_dim, PTAP_nnzb, h_PTAP_rowp,
+                                      h_PTAP_cols, nullptr, nullptr, true);
+            c_bsr_data.compute_nofill_pattern();
             // now get new nnzb, rowp and cols
             delete[] h_PTAP_rowp;
             delete[] h_PTAP_cols;
@@ -1192,9 +1247,11 @@ class SmoothAggregationAMG : public BaseSolver {
         // assign Kc or PTAP coarse grid matrix values
         d_PTAP_vec = DeviceVec<T>(block_dim2 * PTAP_nnzb);
         d_PTAP_vals = d_PTAP_vec.getPtr();
+        d_PTAP_free_vec = DeviceVec<T>(block_dim2 * PTAP_nnzb);
+        d_PTAP_free_vals = d_PTAP_free_vec.getPtr();
 
         // 4) compute nonzero product block pattern..
-        // printf("coarse_grid_nz 4 - compute P^T * A * P 6x6 block triple-mat prod patterns\n");
+        printf("coarse_grid_nz 4 - compute P^T * A * P 6x6 block triple-mat prod patterns\n");
         PTAP_nnzb_prod = 0;
         for (int i = 0; i < num_aggregates; i++) {
             for (int jp = h_prolong_tr_rowp[i]; jp < h_prolong_tr_rowp[i + 1]; jp++) {
@@ -1209,6 +1266,7 @@ class SmoothAggregationAMG : public BaseSolver {
                 }
             }
         }
+        printf("\tPTAP_nnzb_prod = %d\n", PTAP_nnzb_prod);
         h_PTAP_Kc_blocks = HostVec<int>(PTAP_nnzb_prod).getPtr();
         h_PTAP_P1_blocks = HostVec<int>(PTAP_nnzb_prod).getPtr();
         h_PTAP_K_blocks = HostVec<int>(PTAP_nnzb_prod).getPtr();
@@ -1231,6 +1289,14 @@ class SmoothAggregationAMG : public BaseSolver {
                             if (m == l) {
                                 _mp = mp;
                             }
+                        }
+                        if (_mp < 0) {
+                            printf(
+                                "BAD PTAP MAP: coarse row %d missing coarse col %d (j=%d k=%d "
+                                "lp=%d kp=%d jp=%d)\n",
+                                i, l, j, k, lp, kp, jp);
+                            fflush(stdout);
+                            abort();
                         }
                         int jp_untr =
                             h_prolong_tr_map[jp];  // P^T to P storage since we don't store P^T
@@ -1296,12 +1362,23 @@ class SmoothAggregationAMG : public BaseSolver {
         // h_PTAP_P2_blocks[0] = 4;
 
         // printf("coarse grid product pattern with nnzb_prod %d\n", PTAP_nnzb_prod);
-        // printf("\tnote also P_nnzb %d, K_nnzb %d, Kc_nnzb %d\n", P_nnzb, kmat_nnzb,
-        // PTAP_nnzb); printf("h_PTAP_Kc_blocks: "); printVec<int>(PTAP_nnzb_prod,
-        // h_PTAP_Kc_blocks); printf("h_PTAP_P1_blocks: "); printVec<int>(PTAP_nnzb_prod,
-        // h_PTAP_P1_blocks); printf("h_PTAP_K_blocks: "); printVec<int>(PTAP_nnzb_prod,
-        // h_PTAP_K_blocks); printf("h_PTAP_P2_blocks: "); printVec<int>(PTAP_nnzb_prod,
-        // h_PTAP_P2_blocks);
+        // printf("\tnote also P_nnzb %d, K_nnzb %d, Kc_nnzb %d\n", P_nnzb, kmat_nnzb, PTAP_nnzb);
+        // printf("h_PTAP_Kc_blocks: ");
+        // printVec<int>(PTAP_nnzb_prod, h_PTAP_Kc_blocks);
+        // printf("h_PTAP_P1_blocks: ");
+        // printVec<int>(PTAP_nnzb_prod, h_PTAP_P1_blocks);
+        // printf("h_PTAP_K_blocks: ");
+        // printVec<int>(PTAP_nnzb_prod, h_PTAP_K_blocks);
+        // printf("h_PTAP_P2_blocks: ");
+        // printVec<int>(PTAP_nnzb_prod, h_PTAP_P2_blocks);
+        // printf("h_PTAP_Kc_blocks: ");
+        // printVec<int>(100, h_PTAP_Kc_blocks);
+        // printf("h_PTAP_P1_blocks: ");
+        // printVec<int>(100, h_PTAP_P1_blocks);
+        // printf("h_PTAP_K_blocks: ");
+        // printVec<int>(100, h_PTAP_K_blocks);
+        // printf("h_PTAP_P2_blocks: ");
+        // printVec<int>(100, h_PTAP_P2_blocks);
 
         // printf("h_Ac_rowp: ");
         // printVec<int>(num_aggregates + 1, h_PTAP_rowp);
@@ -1319,9 +1396,59 @@ class SmoothAggregationAMG : public BaseSolver {
             HostVec<int>(PTAP_nnzb_prod, h_PTAP_P2_blocks).createDeviceVec().getPtr();
     }
 
+    // void _debug_device_prodmap() {
+    //     // convert all necessary vecs to host..
+
+    //     int *h_PTAP_Kc_blocks2 =
+    //         DeviceVec<int>(PTAP_nnzb, h_PTAP_Kc_blocks).createHostVec().getPtr();
+    //     int *h_PTAP_P1_blocks2 =
+    //         DeviceVec<int>(PTAP_nnzb, d_PTAP_P1_blocks).createHostVec().getPtr();
+    //     int *h_PTAP_K_blocks2 = DeviceVec<int>(PTAP_nnzb,
+    //     d_PTAP_K_blocks).createHostVec().getPtr(); int *h_PTAP_P2_blocks2 =
+    //         DeviceVec<int>(PTAP_nnzb, d_PTAP_P2_blocks).createHostVec().getPtr();
+    // }
+
     void compute_coarse_grid_values() {
-        // 1) compute coarse grid Galerkin product Ac = P^T * A * P
+        // 1) compute coarse grid Galerkin product Ac = P^T * A * P, and Ac_free = P^T * Afree * Ap
         cudaMemset(d_PTAP_vals, 0.0, PTAP_nnzb * block_dim2 * sizeof(T));
+        cudaMemset(d_PTAP_free_vals, 0.0, PTAP_nnzb * block_dim2 * sizeof(T));
+
+        cudaPointerAttributes attr;
+
+        //         auto check_ptr = [&](const char *name, const void *ptr) {
+        //             auto err = cudaPointerGetAttributes(&attr, ptr);
+        //             printf("%s ptr=%p  err=%s", name, ptr, cudaGetErrorString(err));
+        // #if CUDART_VERSION >= 10000
+        //             if (err == cudaSuccess)
+        //                 printf(" type=%d\n", (int)attr.type);
+        //             else
+        //                 printf("\n");
+        // #else
+        //             if (err == cudaSuccess)
+        //                 printf(" memoryType=%d\n", (int)attr.memoryType);
+        //             else
+        //                 printf("\n");
+        // #endif
+        //             fflush(stdout);
+        //         };
+
+        // check_ptr("d_PTAP_Kc_blocks", d_PTAP_Kc_blocks);
+        // check_ptr("d_PTAP_P1_blocks", d_PTAP_P1_blocks);
+        // check_ptr("d_PTAP_K_blocks", d_PTAP_K_blocks);
+        // check_ptr("d_PTAP_P2_blocks", d_PTAP_P2_blocks);
+        // check_ptr("d_prolong_vals", d_prolong_vals);
+        // check_ptr("d_kmat_vals", d_kmat_vals);
+        // check_ptr("d_PTAP_vals", d_PTAP_vals);
+
+        // cudaDeviceProp prop;
+        // cudaGetDeviceProperties(&prop, 0);
+        // printf("maxThreadsPerBlock = %d\n", prop.maxThreadsPerBlock);
+        // printf("maxGridSize = %d %d %d\n", prop.maxGridSize[0], prop.maxGridSize[1],
+        //        prop.maxGridSize[2]);
+        // printf("sharedMemPerBlock = %zu\n", prop.sharedMemPerBlock);
+        // fflush(stdout);
+
+        // _debug_device_prodmap();
 
         // printf("\tcompute coarse grid Galerkin product with nprod %d\n", PTAP_nnzb_prod);
         // k_compute_PTAP_product6<T><<<PTAP_nnzb_prod, 64>>>(
@@ -1329,11 +1456,48 @@ class SmoothAggregationAMG : public BaseSolver {
         //     d_PTAP_P2_blocks, d_prolong_vals, d_kmat_vals, d_PTAP_vals);
         // CHECK_CUDA(cudaDeviceSynchronize());
 
+        // printf("compute matmat prod to Ac\n");
+
+        // k_compute_PTAP_product6_v2<T><<<PTAP_nnzb_prod, 216>>>(
+        //     PTAP_nnzb_prod, block_dim, d_PTAP_Kc_blocks, d_PTAP_P1_blocks, d_PTAP_K_blocks,
+        //     d_PTAP_P2_blocks, d_prolong_vals, d_kmat_vals, d_PTAP_vals);
+        // CHECK_CUDA(cudaDeviceSynchronize());
+
+        printf("[AMG L%d] PTAP launch: nnodes=%d aggs=%d PTAP_nnzb=%d PTAP_prod=%d\n", level,
+               nnodes, num_aggregates, PTAP_nnzb, PTAP_nnzb_prod);
+        fflush(stdout);
+
+        cudaError_t old_err = cudaGetLastError();  // clears stale error
+        printf("[AMG L%d] cleared pre-launch err = %s\n", level, cudaGetErrorString(old_err));
+        fflush(stdout);
+
+        // k_compute_PTAP_product6_v2<T><<<PTAP_nnzb_prod, 216>>>(
+        //     PTAP_nnzb_prod, block_dim, d_PTAP_Kc_blocks, d_PTAP_P1_blocks, d_PTAP_K_blocks,
+        //     d_PTAP_P2_blocks, d_prolong_vals, d_kmat_vals, d_PTAP_vals);
+
         k_compute_PTAP_product6_v2<T><<<PTAP_nnzb_prod, 216>>>(
             PTAP_nnzb_prod, block_dim, d_PTAP_Kc_blocks, d_PTAP_P1_blocks, d_PTAP_K_blocks,
             d_PTAP_P2_blocks, d_prolong_vals, d_kmat_vals, d_PTAP_vals);
+
+        auto err = cudaPeekAtLastError();
+        printf("[AMG L%d] PTAP post-launch err = %s\n", level, cudaGetErrorString(err));
+        fflush(stdout);
+
         CHECK_CUDA(cudaDeviceSynchronize());
-        // printf("\tdone with coarse grid Galerkin product\n");
+        printf("[AMG L%d] PTAP sync done\n", level);
+        fflush(stdout);
+
+        printf("compute matmat prod to Ac_free\n");
+
+        // temp just
+        k_compute_PTAP_product6_v2<T><<<PTAP_nnzb_prod, 216>>>(
+            PTAP_nnzb_prod, block_dim, d_PTAP_Kc_blocks, d_PTAP_P1_blocks, d_PTAP_K_blocks,
+            d_PTAP_P2_blocks, d_prolong_vals, d_kmat_free_vals, d_PTAP_free_vals);
+        CHECK_CUDA(cudaDeviceSynchronize());
+        // CHECK_CUDA(cudaMemcpy(d_PTAP_free_vals, d_PTAP_vals, PTAP_nnzb * block_dim2 * sizeof(T),
+        //                       cudaMemcpyDeviceToDevice));
+        // CHECK_CUDA(cudaDeviceSynchronize());
+        printf("\tdone with coarse grid free Galerkin product\n");
 
         // printf("\n\n");
         // printf("CHECK fine grid kmat values\n");
@@ -1365,10 +1529,23 @@ class SmoothAggregationAMG : public BaseSolver {
         //     }
         // }
 
+        // get the rows for coarse kmat
+        h_PTAP_rows = new int[PTAP_nnzb];
+        memset(h_PTAP_rows, 0, PTAP_nnzb * sizeof(int));
+        for (int i = 0; i < num_aggregates; i++) {
+            for (int jp = h_PTAP_rowp[i]; jp < h_PTAP_rowp[i + 1]; jp++) {
+                int j = h_PTAP_cols[jp];
+                h_PTAP_rows[jp] = i;
+            }
+        }
+        d_PTAP_rows = HostVec<int>(PTAP_nnzb, h_PTAP_rows).createDeviceVec().getPtr();
+
         // now make a coarse grid galerkin matrix
         coarse_kmat_bsr_data = BsrData(num_aggregates, block_dim, PTAP_nnzb, d_PTAP_rowp,
                                        d_PTAP_cols, nullptr, nullptr, false);
+        coarse_kmat_bsr_data.rows = d_PTAP_rows;
         coarse_kmat = BsrMat<DeviceVec<T>>(coarse_kmat_bsr_data, d_PTAP_vec);
+        coarse_free_kmat = BsrMat<DeviceVec<T>>(coarse_kmat_bsr_data, d_PTAP_free_vec);
     }
 
     // References to CUDA library handles.
@@ -1377,19 +1554,21 @@ class SmoothAggregationAMG : public BaseSolver {
     cusparseMatDescr_t descrKmat = 0;
 
     // for kmat
-    BsrMat<DeviceVec<T>> kmat, coarse_kmat;
+    BsrMat<DeviceVec<T>> kmat, kmat_free, coarse_kmat, coarse_free_kmat;
     BsrData coarse_kmat_bsr_data;
     DeviceVec<T> rigid_body_modes;
-    T *d_kmat_vals;
+    T *d_kmat_vals, *d_kmat_free_vals;
     int *d_kmat_rowp, *d_kmat_rows, *d_kmat_cols;
     int *h_kmat_rowp, *h_kmat_cols, kmat_nnzb;
     int *h_kmat_diagp, *d_kmat_diagp;
     int nsmooth;
+    int *d_PTAP_rows, *h_PTAP_rows;
 
     // settings for Smooth aggregation AMG
     int N, block_dim, nnodes;
     int block_dim2;
     int coarse_node_threshold;
+    int level;
 
     // strength matrix (CSR pattern)
     T sparse_threshold;
@@ -1459,8 +1638,8 @@ class SmoothAggregationAMG : public BaseSolver {
     int PTAP_nnzb_prod;
     int *h_PTAP_Kc_blocks, *h_PTAP_P1_blocks, *h_PTAP_K_blocks, *h_PTAP_P2_blocks;
     int *d_PTAP_Kc_blocks, *d_PTAP_P1_blocks, *d_PTAP_K_blocks, *d_PTAP_P2_blocks;
-    T *d_PTAP_vals;
-    DeviceVec<T> d_PTAP_vec;
+    T *d_PTAP_vals, *d_PTAP_free_vals;
+    DeviceVec<T> d_PTAP_vec, d_PTAP_free_vec;
 
     // smoothed prolongation and projectors
     T *d_Z_vals;

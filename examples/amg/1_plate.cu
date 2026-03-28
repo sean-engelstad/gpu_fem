@@ -51,7 +51,7 @@ void to_lowercase(char *str) {
 }
 
 template <typename T, class Assembler>
-void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER) {
+void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold = 0.05) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -88,6 +88,7 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
     auto kmat = createBsrMat<Assembler, VecType<T>>(assembler);
+    auto kmat_free = createBsrMat<Assembler, VecType<T>>(assembler); // for now use kmat without BCs to help form better node aggregates (may not be needed later version)
     auto soln = assembler.createVarsVec();
     int N = soln.getSize();
     int block_dim = bsr_data.block_dim; // should be 6 here
@@ -97,6 +98,8 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
 
     // assemble the kmat
     assembler.add_jacobian_fast(kmat);
+    assembler.add_jacobian_fast(kmat_free);
+    assembler.apply_bcs(kmat);
     // delay bcs until after forming SA-aggregates
 
     auto start0 = std::chrono::high_resolution_clock::now();
@@ -114,8 +117,9 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
 
     // make fine grid AMG solver
     // TODO : add coarse_node_th and sparse_th as command line inputs also
-    int coarse_node_th = 600; // this value is problem dependent
-    T sparse_th = 0.13;
+    int coarse_node_th = 200; // this value is problem dependent
+    T sparse_th = threshold;
+    // T sparse_th = 0.05; // needs to be slightly lower to go to high DOF, otherwise PTAP_nnzb_prod explodes sometimes?
     // omegaJac is not omegap input
     // T omegaJac = 0.3;
     // T omegaJac = 0.6; // for smooth prolongator (smaller is sometimes better, this should be another input)
@@ -123,16 +127,16 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     // T omegaJac = 0.8631319920631012;
     // T sparse_th = 0.15; // instead of 0.25 for strength of connections
     printf("MAIN: build fine AMG solver\n");
-    AMG *fine_amg = new AMG(cublasHandle, cusparseHandle, fine_smoother, nnodes, kmat, fine_rbm, coarse_node_th, sparse_th, omegap, nsmooth);
-    assembler.apply_bcs(kmat); // now apply bcs after tentative aggregate pattern formed
-    fine_amg->post_apply_bcs(d_bcs);
+    AMG *fine_amg = new AMG(cublasHandle, cusparseHandle, fine_smoother, nnodes, kmat, kmat_free, 
+        fine_rbm, d_bcs,coarse_node_th, sparse_th, omegap, nsmooth);
+    // fine_amg->post_apply_bcs(d_bcs);
     auto end0 = std::chrono::high_resolution_clock::now();
 
     // assist in making smoothers at coarser levels
     printf("MAIN: build fine AMG solver\n");
     AMG *c_amg = fine_amg;
-    bool first = true;
-    while (c_amg != nullptr && c_amg->is_coarse_mg || first) {
+    bool built_direct = false;
+    while (c_amg != nullptr && (c_amg->is_coarse_mg || !built_direct)) {
         // build smoother for coarser problem (but it can't use assembler though..)
         auto c_bsr_data = c_amg->get_coarse_bsr_data();
         auto coarse_kmat = c_amg->get_coarse_kmat();
@@ -146,14 +150,18 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
         c_amg->build_coarse_system(fake_c_assembler, c_smoother);
         printf("\tMAIN: done building coarse system\n");
 
-        if (!c_amg->is_coarse_mg) {
+        if (!c_amg->get_coarse_mg()) {
             // factor coarse direct problem
+            printf("factoring coarse direct solver\n");
             c_amg->coarse_direct->factor();
+            built_direct = true;
+            break;
+        } else {
+            printf("not factoring\n");
         }
 
         // then set current amg (c_amg) to coarser problem
         c_amg = c_amg->coarse_mg;
-        first = false;
     }
 
     // build prolongation and fine grid also (unnecessary but required arg of PCG solver right now for some reason)
@@ -174,8 +182,8 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     using GMRES = GMRESSolver<T, GRID, N_SUBSPACE>;
     int MAX_ITER = 2000;
     auto pc = fine_amg;
-    auto linear_solver = new GMRES(cublasHandle, cusparseHandle, grid, pc, options, MAX_ITER);
-    // auto linear_solver = new PCG(cublasHandle, cusparseHandle, grid, pc, options, level);
+    // auto linear_solver = new GMRES(cublasHandle, cusparseHandle, grid, pc, options, MAX_ITER);
+    auto linear_solver = new PCG(cublasHandle, cusparseHandle, grid, pc, options, level);
     T init_resid = linear_solver->getResidualNorm(loads, soln);
     
     // out settings
@@ -358,9 +366,9 @@ void solve_direct(int nxe, double SR) {
 }
 
 template <typename T, class Assembler>
-void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER) {
+void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold) {
     if (solver_type != "direct") {
-        amg_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER);
+        amg_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
     } else {
         solve_direct<T, Assembler>(nxe, SR);
     }
@@ -373,6 +381,7 @@ int main(int argc, char **argv) {
     double omegas = 0.3; // omega for smoother
     double omegap = 0.3; // omega for smooth prolongation
     int ORDER = 8; // for chebyshev
+    double threshold = 0.05;
 
     int nsmooth = 1; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle
@@ -409,6 +418,13 @@ int main(int argc, char **argv) {
                 omegap = std::atof(argv[++i]);
             } else {
                 std::cerr << "Missing value for --omegap\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--threshold") == 0) {
+            if (i + 1 < argc) {
+                threshold = std::atof(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --threshold\n";
                 return 1;
             }
         } else if (strcmp(arg, "--sr") == 0) {
@@ -460,7 +476,7 @@ int main(int argc, char **argv) {
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
 
     printf("cylinder mesh with MITC4 elements, nxe %d and SR %.2e\n------------\n", nxe, SR);
-    gatekeeper_method<T, Assembler>(solver_type, nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER);
+    gatekeeper_method<T, Assembler>(solver_type, nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
 
     return 0;
 
