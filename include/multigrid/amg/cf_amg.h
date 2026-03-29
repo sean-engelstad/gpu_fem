@@ -94,8 +94,8 @@ class ClassicalCFAMG : public BaseSolver {
         compute_matmat_prod_nz_pattern();
         _compute_diag_vals<true>();
 
-        // compute_prolongator_values();
-        compute_prolongator_values_debug();
+        compute_prolongator_values();
+        // compute_prolongator_values_debug();
         // printf("2 - AMG compute coarse grid values\n");
         compute_coarse_grid_values();
         // _done_post_apply_bcs = true;
@@ -1173,7 +1173,7 @@ class ClassicalCFAMG : public BaseSolver {
         h_prolong_tr_rowp = HostVec<int>(num_aggregates + 1).getPtr();
         h_prolong_tr_cols = HostVec<int>(P_nnzb).getPtr();
 
-        printf("coarse_grid_nz 1 - get P^T pattern\n");
+        // printf("coarse_grid_nz 1 - get P^T pattern\n");
 
         for (int i = 0; i < nnodes; i++) {
             // loop through cols
@@ -1257,8 +1257,8 @@ class ClassicalCFAMG : public BaseSolver {
         }
 
         // 3) compute P^T * (AP) nz pattern now
-        printf("coarse_grid_nz 3 - compute P^T * A * P pattern\n");
-        printf("\tnum agg = %d\n", num_aggregates);
+        // printf("coarse_grid_nz 3 - compute P^T * A * P pattern\n");
+        // printf("\tnum agg = %d\n", num_aggregates);
         int num_coarse = num_aggregates;
         std::vector<int> PTAP_rowp(num_coarse + 1, 0);
         std::vector<int> PTAP_cols;
@@ -1325,7 +1325,7 @@ class ClassicalCFAMG : public BaseSolver {
         d_PTAP_free_vals = d_PTAP_free_vec.getPtr();
 
         // 4) compute nonzero product block pattern..
-        printf("coarse_grid_nz 4 - compute P^T * A * P 6x6 block triple-mat prod patterns\n");
+        // printf("coarse_grid_nz 4 - compute P^T * A * P 6x6 block triple-mat prod patterns\n");
         PTAP_nnzb_prod = 0;
         for (int i = 0; i < num_aggregates; i++) {
             for (int jp = h_prolong_tr_rowp[i]; jp < h_prolong_tr_rowp[i + 1]; jp++) {
@@ -1340,7 +1340,7 @@ class ClassicalCFAMG : public BaseSolver {
                 }
             }
         }
-        printf("\tPTAP_nnzb_prod = %d\n", PTAP_nnzb_prod);
+        // printf("\tPTAP_nnzb_prod = %d\n", PTAP_nnzb_prod);
         h_PTAP_Kc_blocks = HostVec<int>(PTAP_nnzb_prod).getPtr();
         h_PTAP_P1_blocks = HostVec<int>(PTAP_nnzb_prod).getPtr();
         h_PTAP_K_blocks = HostVec<int>(PTAP_nnzb_prod).getPtr();

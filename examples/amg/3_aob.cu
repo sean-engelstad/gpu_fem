@@ -354,7 +354,7 @@ int main(int argc, char **argv) {
     MPI_Comm comm = MPI_COMM_WORLD;
 
     // DEFAULTS
-    int level = 1; // level mesh to solve.. level 4 also a good starting setting (big case)
+    int level = 0; // level mesh to solve.. level 4 also a good starting setting (big case)
     double SR = 100.0; // default
     double omegas = 0.3; // omega for smoother
     double omegap = 0.3; // omega for smooth prolongation

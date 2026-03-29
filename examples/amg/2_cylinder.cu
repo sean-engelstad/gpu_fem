@@ -53,7 +53,8 @@ void to_lowercase(char *str) {
 }
 
 template <typename T, class Assembler, class AMG>
-void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold = 0.05) {
+void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, 
+    int ORDER, T threshold = 0.05, int nmat_smooth = 2) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -392,27 +393,29 @@ void solve_direct(int nxe, double SR) {
     }
 }
 
+
 template <typename T, class Assembler>
-void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold) {
+void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth, int ninnercyc, 
+    T omegas, T omegap, int ORDER, T threshold, int nmat_smooth) {
     if (solver_type == "sa_amg") {
         // const bool ORTHOG_PROJECTOR = true;
         const bool ORTHOG_PROJECTOR = false;
         using FAssembler = FakeAssembler<T>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
         using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
-        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
+        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "cf_amg") {
         using FAssembler = FakeAssembler<T>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
         using AMG = ClassicalCFAMG<T, Smoother>;
-        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
+        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "rn_amg") {
         const bool ORTHOG_PROJECTOR = true;
         // const bool ORTHOG_PROJECTOR = false;
         using FAssembler = FakeAssembler<T>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
         using AMG = RootNodeAMG<T, Smoother, ORTHOG_PROJECTOR>;
-        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
+        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "direct") {
         solve_direct<T, Assembler>(nxe, SR);
     }
@@ -421,12 +424,15 @@ void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth,
 
 int main(int argc, char **argv) {
     // input ----------
-    int nxe = 50; // default value
-    double SR = 100.0; // default
-    double omegas = 0.3; // omega for smoother
-    double omegap = 0.3; // omega for smooth prolongation
+    int nxe = 128; // default value
+    double SR = 1e3; // default
+    double omegas = 0.35; // omega for smoother
+    double omegap = 0.35; // omega for smooth prolongation
     int ORDER = 8; // for chebyshev
-    double threshold = 0.05;
+    // double threshold = 0.05;
+    double threshold = 1e-3; // helps it be aggressive coarsening enough for RN-AMG
+    // the threshold looks worse probably because the 
+    int nmat_smooth = 2; // for some reason this # of mat-smooth often best
 
     int nsmooth = 1; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle
@@ -449,6 +455,13 @@ int main(int argc, char **argv) {
                 nxe = std::atoi(argv[++i]);
             } else {
                 std::cerr << "Missing value for --nxe\n";
+                return 1;
+            }
+        } else if (strcmp(arg, "--nmat_smooth") == 0) {
+            if (i + 1 < argc) {
+                nmat_smooth = std::atoi(argv[++i]);
+            } else {
+                std::cerr << "Missing value for --nmat_smooth\n";
                 return 1;
             }
         } else if (strcmp(arg, "--omegas") == 0) {
@@ -521,8 +534,8 @@ int main(int argc, char **argv) {
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
 
     printf("cylinder mesh with MITC4 elements, nxe %d and SR %.2e\n------------\n", nxe, SR);
-    gatekeeper_method<T, Assembler>(solver_type, nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
-
+    gatekeeper_method<T, Assembler>(solver_type, nxe, SR, nsmooth, ninnercyc, 
+        omegas, omegap, ORDER, threshold, nmat_smooth);
     return 0;
 
     

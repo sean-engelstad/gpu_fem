@@ -53,7 +53,8 @@ void to_lowercase(char *str) {
 }
 
 template <typename T, class Assembler, class AMG>
-void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold = 0.05, int nmat_smooth = 1) {
+void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, 
+    T threshold = 0.05, int nmat_smooth = 1) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
@@ -409,13 +410,15 @@ void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth,
 
 int main(int argc, char **argv) {
     // input ----------
-    int nxe = 50; // default value
-    double SR = 100.0; // default
-    double omegas = 0.3; // omega for smoother
-    double omegap = 0.3; // omega for smooth prolongation
+    int nxe = 128; // default value
+    double SR = 1e3; // default
+    double omegas = 0.35; // omega for smoother
+    double omegap = 0.35; // omega for smooth prolongation
     int ORDER = 8; // for chebyshev
-    double threshold = 0.05;
-    int nmat_smooth = 2;
+    // double threshold = 0.05;
+    double threshold = 1e-3; // helps it be aggressive coarsening enough for RN-AMG
+    // the threshold looks worse probably because the 
+    int nmat_smooth = 2; // for some reason this # of mat-smooth often best
 
     int nsmooth = 1; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle
