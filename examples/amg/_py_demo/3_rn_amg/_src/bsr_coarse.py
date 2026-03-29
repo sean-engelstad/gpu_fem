@@ -354,6 +354,13 @@ def tentative_rootnode_prolongator_bsr(
             # minimum-Frobenius-norm solve: Ti * Bc[a] ~= B[i]
             data[inode] = B[inode] @ np.linalg.pinv(Bc[iagg], rcond=rcond)
 
+        # print(f"node {inode}, B block")
+        # print(B[inode])
+        # print(f"agg {iagg}, Bc block")
+        # print(Bc[iagg])
+        # print(f"node {inode}, T block")
+        # print(data[inode])
+
     T = sp.bsr_matrix((data, cols, rowp), shape=(nnodes * b, num_agg * nmodes))
     return T, Bc
 
@@ -392,8 +399,17 @@ def orthog_nullspace_projector_bsr_rootnode(
         U_list = [Bc[bcol] for bcol in bcols]
 
         PU = sum(P.data[start + j] @ U_list[j] for j in range(ncols))
+
+        # print(f"SU(i {brow}")
+        # for row in PU:
+        #     print(row)
+
         UTU = sum(U_list[j].T @ U_list[j] for j in range(ncols))
         UTU_inv = np.linalg.pinv(UTU)
+
+        # print(f"UTU(i {brow}")
+        # for row in UTU:
+        #     print(row)
 
         for j in range(ncols):
             Pnew.data[start + j] -= PU @ UTU_inv @ U_list[j].T
@@ -501,10 +517,19 @@ def smooth_prolongator_bsr_rootnode(
         mask.eliminate_zeros()
 
     P = T.copy()
+    # root_nodes = np.array([6, 8, 16, 18])
 
     for _ in range(nsmooth):
         AP = (A @ P).tobsr(blocksize=T.blocksize)
         AP = enforce_bsr_sparsity_mask(AP, mask)
+
+        # for i in range(AP.shape[0]//6):
+        #     for jp in range(AP.indptr[i], AP.indptr[i+1]):
+        #         jc = AP.indices[jp]
+        #         j = int(root_nodes[jc])
+        #         print(f"A*P(i {i}, j {j})")
+        #         for row in AP.data[jp]:
+        #             print(row)
 
         if near_kernel:
             AP = orthog_nullspace_projector_bsr_rootnode(AP, Bc)
@@ -602,20 +627,60 @@ class RootNodeAMG_BSRSolver:
 
         # 1) coarse/fine split on block graph
         self.C_nodes, self.F_nodes = coarsening_fcn(A_free, threshold=threshold)
+        # print(f"{self.C_nodes=} {self.F_nodes=}")
 
         # 2) root-node aggregation
         self.aggregate_ind = aggregation_fcn(A_free, self.C_nodes, threshold=threshold)
         self.num_agg = np.max(self.aggregate_ind) + 1
 
+        # temporarily change the aggregate ind (for DEBUGGING)
+        # print("DEBUG warning: changed aggregate ind")
+        # self.aggregate_ind = np.array([
+        #     0, 0, 1, 1, 1,
+        #     0, 0, 0, 1, 1,
+        #     2, 2, 3, 3, 3,
+        #     2, 2, 2, 3, 3,
+        #     2, 2, 3, 3, 3
+        # ], dtype=np.int32)
+
+        # for i in range(self.nfine_nodes):
+        #     print(f"B0[{i=}]:")
+        #     print(B[i])
+
         # 3) smooth fine-grid candidates with block Jacobi
+        # print(f"energy smooth {rbm_omega=:.4f}")
         self.B = energy_smooth_candidates_bsr(
             B, A, omega=rbm_omega, nsmooth=rbm_nsmooth
         )
+
+        # for i in range(self.nfine_nodes):
+        #     print(f"B[{i=}]:")
+        #     print(self.B[i])
 
         # 4) tentative prolongator + coarse candidates
         self.T, self.Bc = tentative_rootnode_prolongator_bsr(
             self.aggregate_ind, self.C_nodes, self.B
         )
+
+        # for iagg in range(self.num_agg):
+        #     print(f"Bc[{iagg=}]:")
+        #     print(self.Bc[iagg])
+
+        root_nodes = np.zeros(self.num_agg)
+        iagg = 0
+        for i in range(self.nfine_nodes):
+            if self.F_nodes[i]: continue
+            root_nodes[iagg] = i; iagg += 1
+        # print(f"{root_nodes=}")
+
+        # for i in range(self.T.shape[0]//6):
+        #     for jp in range(self.T.indptr[i], self.T.indptr[i+1]):
+        #         jc = self.T.indices[jp]
+        #         j = int(root_nodes[jc])
+        #         print(f"T(i {i}, j {j})")
+        #         for row in self.T.data[jp]:
+        #             print(row)
+        
 
         if verbose:
             B_flat = self.B.reshape(self.nfine_nodes * b, b)

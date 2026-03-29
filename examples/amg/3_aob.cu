@@ -31,8 +31,9 @@
 #include <type_traits>
 
 // new multigrid imports for K-cycles, etc.
-#include "_src/sa_amg.h"
-#include "_src/_rigid_modes.cuh"
+#include "multigrid/amg/sa_amg.h"
+// #include "multigrid/amg/cf_amg.h"
+#include "multigrid/amg/_rigid_modes.cuh"
 #include "multigrid/solvers/krylov/bsr_gmres.h"
 #include "multigrid/solvers/krylov/bsr_pcg.h"
 

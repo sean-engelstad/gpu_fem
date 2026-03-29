@@ -89,6 +89,8 @@ x_direct = sp.linalg.spsolve(A.copy(), rhs.copy())
 
 from bsr_aggregation import get_rigid_body_modes #, get_coarse_rigid_body_modes
 B = get_rigid_body_modes(xpts0)
+# for i in range(nnodes):
+#     print(f"xpt[{i=}] : {xpts0[3*i:(3*i+3)]}")
 
 # Gauss-Seidel actually performs better than block-Jacobi style non-overlapping ASWs smoother (not quite elem-based + hence, not much better prob)
 smoother, omegas, overlap = 'gs', 0.8, 0
@@ -178,6 +180,7 @@ pc = RootNodeAMG_BSRSolver(
     asw_sd_size=2,
     # nmatrix=args.nmatrix,
     # rbm_nsmooth=3,
+    rbm_nsmooth=2,
     # rbm_nsmooth=1,
     # rbm_nsmooth=0,
 )

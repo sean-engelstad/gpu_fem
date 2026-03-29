@@ -287,7 +287,8 @@ def sort_vis_maps(nxe, xpts, free_dof):
         nx = nx_plate
         x, y = xpts[0::3], xpts[1::3]
         # sort primarily along x, then y
-        node_sort_map = np.lexsort((y, x))
+        # node_sort_map = np.lexsort((y, x))
+        node_sort_map = np.lexsort((x, y))
     elif npts == nx_cyl * (nxe + 1):
         # Cylinder
         shape = "cylinder"
@@ -389,7 +390,7 @@ def write_80(fout, line):
 
 import numpy
 
-def gen_plate_mesh(nxe:int=10, lx:float=1.0, ly:float=1.0, name="plate", apply_bcs:bool=True):
+def gen_plate_mesh(nxe:int=10, lx:float=1.0, ly:float=1.0, name="plate", apply_bcs:bool=True, flip_xy:bool=False):
     # Overall plate dimensions lx, ly
     # Number of components in each direction
     ncx = 1
@@ -414,13 +415,22 @@ def gen_plate_mesh(nxe:int=10, lx:float=1.0, ly:float=1.0, name="plate", apply_b
     nid = numpy.zeros((nx, ny), dtype="intc")
     bcnodes = []
     count = 1
-    for i in range(ny):
+    if not flip_xy:
+        for i in range(ny):
+            for j in range(nx):
+                nid[j, i] = count
+                if j == 0 or j == nx - 1 or i == 0 or i == (ny-1):
+                    if apply_bcs:
+                        bcnodes.append(count)
+                count += 1
+    else:
         for j in range(nx):
-            nid[j, i] = count
-            if j == 0 or j == nx - 1 or i == 0 or i == (ny-1):
-                if apply_bcs:
-                    bcnodes.append(count)
-            count += 1
+            for i in range(ny):
+                nid[j, i] = count
+                if j == 0 or j == nx - 1 or i == 0 or i == (ny-1):
+                    if apply_bcs:
+                        bcnodes.append(count)
+                count += 1
 
     # Connectivity
     nex = nx - 1

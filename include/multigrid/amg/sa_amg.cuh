@@ -125,6 +125,8 @@ __global__ void k_copy_rbm_into_tentative_prolongator(const int nnodes,
     P_block[inn_ind] = B_block[inn_ind];
 }
 
+
+
 template <typename T>
 __global__ void k_compute_aggregate_norms2(const int imode, const int nnodes,  
     const int block_dim, const int *d_aggregate_ind, const int *d_tentative_block_map, 

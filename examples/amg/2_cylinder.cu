@@ -30,8 +30,10 @@
 #include <type_traits>
 
 // new multigrid imports for K-cycles, etc.
-#include "_src/sa_amg.h"
-#include "_src/_rigid_modes.cuh"
+#include "multigrid/amg/sa_amg.h"
+#include "multigrid/amg/cf_amg.h"
+#include "multigrid/amg/rn_amg.h"
+#include "multigrid/amg/_rigid_modes.cuh"
 #include "multigrid/solvers/krylov/bsr_gmres.h"
 #include "multigrid/solvers/krylov/bsr_pcg.h"
 
@@ -50,20 +52,17 @@ void to_lowercase(char *str) {
     }
 }
 
-template <typename T, class Assembler>
-void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold) {
+template <typename T, class Assembler, class AMG>
+void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold = 0.05) {
     // geometric multigrid method here..
     // need to make a number of grids..
 
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
     const SCALER scaler  = LINE_SEARCH;
-    using Prolongation = StructuredProlongation<Assembler, CYLINDER>; // prolongation unused here (just need for grid, TODO is to remove this dependency)
     using FAssembler = FakeAssembler<T>;
     using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
-    // const bool ORTHOG_PROJECTOR = true;
-    const bool ORTHOG_PROJECTOR = false;
-    using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
+    using Prolongation = StructuredProlongation<Assembler, PLATE>;
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, LINE_SEARCH>;
     using PCG = PCGSolver<T, GRID>;
 
@@ -123,11 +122,14 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     // printf("h_xpts: ");
     // printVec<T>(3 * nnodes, h_xpts);
 
+    std::string coarsening_type = "standard";
+    // std::string coarsening_type = "aggressive";
+
     // make fine grid AMG solver
     // TODO : add coarse_node_th and sparse_th as command line inputs also
     int coarse_node_th = 200; // this value is problem dependent
-    // T sparse_th = 0.13;
     T sparse_th = threshold;
+    // T sparse_th = 0.05; // needs to be slightly lower to go to high DOF, otherwise PTAP_nnzb_prod explodes sometimes?
     // omegaJac is not omegap input
     // T omegaJac = 0.3;
     // T omegaJac = 0.6; // for smooth prolongator (smaller is sometimes better, this should be another input)
@@ -135,14 +137,20 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     // T omegaJac = 0.8631319920631012;
     // T sparse_th = 0.15; // instead of 0.25 for strength of connections
     printf("MAIN: build fine AMG solver\n");
+    int rbm_nsmooth = 2;
     AMG *fine_amg = new AMG(cublasHandle, cusparseHandle, fine_smoother, nnodes, kmat, kmat_free, 
-        fine_rbm, d_bcs,coarse_node_th, sparse_th, omegap, nsmooth);
-    // assembler.apply_bcs(kmat); // now apply bcs after tentative aggregate pattern formed
+        fine_rbm, d_bcs,coarse_node_th, sparse_th, omegap, nsmooth, 0, rbm_nsmooth, nmat_smooth, coarsening_type);
+    // int nmat_smooth = 1;
+    // fine_amg->set_matrix_nsmooth(nmat_smooth);
+    // // fine_amg->set_rbm_nsmooth(0);
+    // // fine_amg->set_rbm_nsmooth(1);
+    // fine_amg->set_rbm_nsmooth(2);
+    // fine_amg->set_rbm_nsmooth(3);
     // fine_amg->post_apply_bcs(d_bcs);
     auto end0 = std::chrono::high_resolution_clock::now();
 
     // assist in making smoothers at coarser levels
-    printf("MAIN: build fine AMG solver\n");
+    // printf("MAIN: build fine AMG solver\n");
     AMG *c_amg = fine_amg;
     bool built_direct = false;
     while (c_amg != nullptr && (c_amg->is_coarse_mg || !built_direct)) {
@@ -155,22 +163,24 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
         Smoother *c_smoother = new Smoother(cublasHandle, cusparseHandle, fake_c_assembler, coarse_kmat, omegas, ORDER, nsmooth);
 
         // build coarser system
-        printf("MAIN: build coarse system\n");
+        // printf("MAIN: build coarse system\n");
         c_amg->build_coarse_system(fake_c_assembler, c_smoother);
-        printf("\tMAIN: done building coarse system\n");
+        // printf("\tMAIN: done building coarse system\n");
 
         if (!c_amg->get_coarse_mg()) {
             // factor coarse direct problem
-            printf("factoring coarse direct solver\n");
+            printf("\tfactoring coarse direct solver\n");
             c_amg->coarse_direct->factor();
             built_direct = true;
             break;
-        } else {
-            printf("not factoring\n");
-        }
+        } 
+        // else {
+            // printf("\tnot factoring\n");
+        // }
 
         // then set current amg (c_amg) to coarser problem
         c_amg = c_amg->coarse_mg;
+        // if (c_amg != nullptr) c_amg->set_matrix_nsmooth(nmat_smooth);
     }
 
     // build prolongation and fine grid also (unnecessary but required arg of PCG solver right now for some reason)
@@ -384,12 +394,30 @@ void solve_direct(int nxe, double SR) {
 
 template <typename T, class Assembler>
 void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omegap, int ORDER, T threshold) {
-    if (solver_type != "direct") {
-        amg_solve<T, Assembler>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
-    } else {
+    if (solver_type == "sa_amg") {
+        // const bool ORTHOG_PROJECTOR = true;
+        const bool ORTHOG_PROJECTOR = false;
+        using FAssembler = FakeAssembler<T>;
+        using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
+        using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
+        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
+    } else if (solver_type == "cf_amg") {
+        using FAssembler = FakeAssembler<T>;
+        using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
+        using AMG = ClassicalCFAMG<T, Smoother>;
+        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
+    } else if (solver_type == "rn_amg") {
+        const bool ORTHOG_PROJECTOR = true;
+        // const bool ORTHOG_PROJECTOR = false;
+        using FAssembler = FakeAssembler<T>;
+        using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
+        using AMG = RootNodeAMG<T, Smoother, ORTHOG_PROJECTOR>;
+        amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
+    } else if (solver_type == "direct") {
         solve_direct<T, Assembler>(nxe, SR);
     }
 }
+
 
 int main(int argc, char **argv) {
     // input ----------
@@ -402,7 +430,7 @@ int main(int argc, char **argv) {
 
     int nsmooth = 1; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle
-    std::string solver_type = "multigrid";
+    std::string solver_type = "sa_amg";
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -493,7 +521,7 @@ int main(int argc, char **argv) {
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
 
     printf("cylinder mesh with MITC4 elements, nxe %d and SR %.2e\n------------\n", nxe, SR);
-    gatekeeper_method<T, Assembler>(solver_type, nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER);
+    gatekeeper_method<T, Assembler>(solver_type, nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold);
 
     return 0;
 
