@@ -428,12 +428,14 @@ int main(int argc, char **argv) {
     int nxe = 128; // default value
     double SR = 1e3; // default
     double omegas = 0.25; // omega for smoother
-    double omegap = 0.2; // omega for smooth prolongation
+    // double omegap = 0.2; // omega for smooth prolongation
+    double omegap = 0.3; // omega for smooth prolongation
     int ORDER = 8; // for chebyshev
     // double threshold = 0.05;
     double threshold = 1e-3; // helps it be aggressive coarsening enough for RN-AMG
     // the threshold looks worse probably because the 
-    int nmat_smooth = 3; // for some reason this # of mat-smooth often best
+    // int nmat_smooth = 3; // for some reason this # of mat-smooth often best
+    int nmat_smooth = 1; // for some reason this # of mat-smooth often best
 
     int nsmooth = 1; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle
@@ -522,7 +524,7 @@ int main(int argc, char **argv) {
     }
 
     if (solver_type == "cf_amg") {
-        printf("WARNING: CF-AMG often needs omegas = 0.3, omegap = 0.3, threshold = 0.1 to work.\n");
+        printf("WARNING: CF-AMG often needs omegas <= 0.3, omegap <= 0.3, threshold = 0.1 (or 1e-3) to work.\n");
     } else {
         printf("NOTE : AMG methods sometimes better with like 4 smoothing steps and omegas = 0.2, omegap = 0.2 (about 2/3 as much as max omegas)");
     }

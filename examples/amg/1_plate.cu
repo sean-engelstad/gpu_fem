@@ -124,7 +124,8 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
 
     // make fine grid AMG solver
     // TODO : add coarse_node_th and sparse_th as command line inputs also
-    int coarse_node_th = 200; // this value is problem dependent
+    // int coarse_node_th = 300; // this value is problem dependent
+    int coarse_node_th = 100; // this value is problem dependent
     T sparse_th = threshold;
     // T sparse_th = 0.05; // needs to be slightly lower to go to high DOF, otherwise PTAP_nnzb_prod explodes sometimes?
     // omegaJac is not omegap input
@@ -412,13 +413,13 @@ int main(int argc, char **argv) {
     // input ----------
     int nxe = 128; // default value
     double SR = 1e3; // default
-    double omegas = 0.35; // omega for smoother
-    double omegap = 0.35; // omega for smooth prolongation
+    double omegas = 0.25; // omega for smoother
+    double omegap = 0.3; // omega for smooth prolongation
     int ORDER = 8; // for chebyshev
     // double threshold = 0.05;
     double threshold = 1e-3; // helps it be aggressive coarsening enough for RN-AMG
     // the threshold looks worse probably because the 
-    int nmat_smooth = 2; // for some reason this # of mat-smooth often best
+    int nmat_smooth = 1; // for some reason this # of mat-smooth often best
 
     int nsmooth = 1; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle
@@ -507,7 +508,7 @@ int main(int argc, char **argv) {
     }
 
     if (solver_type == "cf_amg") {
-        printf("WARNING: CF-AMG often needs omegas = 0.3, omegap = 0.3, threshold = 0.1 to work.\n");
+        printf("WARNING: CF-AMG often needs omegas <= 0.3, omegap <= 0.3, threshold = 0.1 (or 1e-3) to work.\n");
     }
 
     // type specifications here

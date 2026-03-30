@@ -2193,6 +2193,7 @@ class RootNodeAMG : public BaseSolver {
 
    private:
     bool print_timing = true;
+    // bool print_timing = false;
 
     using clock_type = std::chrono::steady_clock;
 
