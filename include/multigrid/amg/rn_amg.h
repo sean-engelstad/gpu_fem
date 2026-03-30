@@ -3,6 +3,7 @@
 #include <lapacke.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -316,6 +317,8 @@ class RootNodeAMG : public BaseSolver {
           rbm_nsmooth(rbm_nsmooth_),
           prol_nsmooth(prol_nsmooth_),
           coarsening_type(coarsening_type_) {
+        auto ctor_t0 = clock_type::now();
+
         auto d_kmat_bsr_data = kmat.getBsrData();
         d_kmat_vals = kmat.getVec().getPtr();
         d_kmat_free_vals = kmat_free.getVec().getPtr();
@@ -330,19 +333,74 @@ class RootNodeAMG : public BaseSolver {
         d_bcs = d_bcs_;
         coarsening_type = "standard";
 
-        initCuda();
-        build_cf_pattern();
-        build_rootnode_aggregates();
+        // initCuda();
+        // build_cf_pattern();
+        // build_rootnode_aggregates();
+
+        // is_coarse_mg = num_aggregates > coarse_node_threshold;
+        // compute_prolongation_nz_pattern();
+        // compute_coarse_grid_nz_pattern();
+        // compute_coarse_problem();
+
+        {
+            auto t0 = clock_type::now();
+            initCuda();
+            sync_if_needed();
+            print_setup_time("initCuda", elapsed_sec(t0, clock_type::now()));
+        }
+
+        {
+            auto t0 = clock_type::now();
+            build_cf_pattern();
+            sync_if_needed();
+            print_setup_time("build_cf_pattern", elapsed_sec(t0, clock_type::now()));
+        }
+
+        {
+            auto t0 = clock_type::now();
+            build_rootnode_aggregates();
+            sync_if_needed();
+            print_setup_time("build_rootnode_aggregates", elapsed_sec(t0, clock_type::now()));
+        }
 
         is_coarse_mg = num_aggregates > coarse_node_threshold;
-        compute_prolongation_nz_pattern();
-        compute_coarse_grid_nz_pattern();
-        compute_coarse_problem();
+
+        {
+            auto t0 = clock_type::now();
+            compute_prolongation_nz_pattern();
+            sync_if_needed();
+            print_setup_time("compute_prolongation_nz_pattern", elapsed_sec(t0, clock_type::now()));
+        }
+
+        {
+            auto t0 = clock_type::now();
+            compute_coarse_grid_nz_pattern();
+            sync_if_needed();
+            print_setup_time("compute_coarse_grid_nz_pattern", elapsed_sec(t0, clock_type::now()));
+        }
+
+        {
+            auto t0 = clock_type::now();
+            compute_coarse_problem();
+            sync_if_needed();
+            print_setup_time("compute_coarse_problem", elapsed_sec(t0, clock_type::now()));
+        }
+
+        print_setup_time("constructor total", elapsed_sec(ctor_t0, clock_type::now()));
     }
 
     void compute_coarse_problem() {
+        // compute_prolongator_values();
+        // compute_coarse_grid_values();
+        auto t0 = clock_type::now();
         compute_prolongator_values();
+        sync_if_needed();
+        print_setup_time("compute_prolongator_values", elapsed_sec(t0, clock_type::now()));
+
+        t0 = clock_type::now();
         compute_coarse_grid_values();
+        sync_if_needed();
+        print_setup_time("compute_coarse_grid_values", elapsed_sec(t0, clock_type::now()));
     }
 
     void update_after_assembly(DeviceVec<T> &vars) {
@@ -1805,6 +1863,117 @@ class RootNodeAMG : public BaseSolver {
             HostVec<int>(PTAP_nnzb_prod, h_PTAP_P2_blocks).createDeviceVec().getPtr();
     }
 
+    // void compute_coarse_grid_nz_pattern_v2() {
+    //     /* compute coarse grid NZ pattern using two separate matrix-matrix products this time */
+
+    //     // this one intends to get P^T * A * P triple product blocks for kernel
+    //     // but we still call it first as it also computes Ac pattern
+    //     compute_coarse_grid_nz_pattern();
+
+    //     // 1) first compute pattern of A * P
+    //     std::vector<int> AP_rowp(nnodes + 1, 0);
+    //     std::vector<int> AP_cols;
+    //     for (int i = 0; i < nnodes; i++) {
+    //         std::set<int> unique_cols;
+
+    //         for (int jp = h_kmat_rowp[i]; jp < h_kmat_rowp[i + 1]; jp++) {
+    //             int j = h_kmat_cols[jp];
+    //             for (int kp = h_prolong_rowp[j]; kp < h_prolong_rowp[j + 1]; kp++) {
+    //                 int k = h_prolong_cols[kp];
+    //                 unique_cols.insert(k);
+    //             }
+    //         }
+
+    //         AP_rowp[i + 1] = AP_rowp[i] + static_cast<int>(unique_cols.size());
+    //         for (int col : unique_cols) {
+    //             AP_cols.push_back(col);
+    //         }
+    //     }
+
+    //     AP_nnzb = static_cast<int>(prolong_cols.size());
+
+    //     h_AP_rowp = HostVec<int>(nnodes + 1).getPtr();
+    //     h_AP_rows = HostVec<int>(AP_nnzb).getPtr();
+    //     h_AP_cols = HostVec<int>(AP_nnzb).getPtr();
+
+    //     memcpy(h_AP_rowp, AP_rowp.data(), (nnodes + 1) * sizeof(int));
+    //     memcpy(h_AP_cols, AP_cols.data(), AP_nnzb * sizeof(int));
+
+    //     for (int i = 0; i < nnodes; i++) {
+    //         for (int jp = h_AP_rowp[i]; jp < h_AP_rowp[i + 1]; jp++) {
+    //             h_AP_rows[jp] = i;
+    //         }
+    //     }
+    //     d_AP_rowp = HostVec<int>(nnodes + 1, h_AP_rowp).createDeviceVec().getPtr();
+    //     d_AP_rows = HostVec<int>(AP_nnzb, h_AP_rows).getPtr();
+    //     d_AP_cols = HostVec<int>(AP_nnzb, h_AP_cols).getPtr();
+
+    //     // 2) now compute mat-mat product patterns of K*P into KP pattern matrix Z
+    //     nnzb_prod = 0;
+    //     for (int i = 0; i < nnodes; i++) {
+    //         for (int jp = h_prolong_rowp[i]; jp < h_prolong_rowp[i + 1]; jp++) {
+    //             int j = h_prolong_cols[jp];  // (P_F)_{ij} output
+    //             // now inner loop k for K_{ik} * P_{kj}
+    //             for (int kp = h_kmat_rowp[i]; kp < h_kmat_rowp[i + 1]; kp++) {
+    //                 int k = h_kmat_cols[kp];
+
+    //                 // check P_{kj} nz
+    //                 bool nz_Pkj = false;  // now also use PF = -K*P sparsity for P cause we add
+    //                 K*P
+    //                                       // fillin (for better prolong)
+    //                 for (int jp2 = h_prolong_rowp[k]; jp2 < h_prolong_rowp[k + 1]; jp2++) {
+    //                     int j2 = h_prolong_cols[jp2];
+    //                     if (j2 == j) {
+    //                         nz_Pkj = true;
+    //                     }
+    //                 }
+    //                 if (!nz_Pkj) continue;
+    //                 // otherwise, we do have a valid nz product here
+    //                 nnzb_prod++;
+    //             }
+    //         }
+    //     }
+    //     // printf("nnzb_prod = %d\n", nnzb_prod);
+    //     // now allocate the block indices of the product
+    //     int *h_PF_blocks = new int[nnzb_prod];
+    //     int *h_K_blocks = new int[nnzb_prod];
+    //     int *h_P_blocks = new int[nnzb_prod];
+    //     memset(h_PF_blocks, 0, nnzb_prod * sizeof(int));
+    //     memset(h_K_blocks, 0, nnzb_prod * sizeof(int));
+    //     memset(h_P_blocks, 0, nnzb_prod * sizeof(int));
+    //     int inz_prod = 0;
+    //     for (int i = 0; i < nnodes; i++) {
+    //         for (int jp = h_prolong_rowp[i]; jp < h_prolong_rowp[i + 1]; jp++) {
+    //             int j = h_prolong_cols[jp];  // (P_F)_{ij} output
+    //             // now inner loop k for K_{ik} * P_{kj}
+    //             for (int kp = h_kmat_rowp[i]; kp < h_kmat_rowp[i + 1]; kp++) {
+    //                 int k = h_kmat_cols[kp];
+
+    //                 // check P_{kj} nz
+    //                 bool nz_Pkj = false;
+    //                 int _jp2 = -1;
+    //                 for (int jp2 = h_prolong_rowp[k]; jp2 < h_prolong_rowp[k + 1]; jp2++) {
+    //                     int j2 = h_prolong_cols[jp2];
+    //                     if (j2 == j) {
+    //                         nz_Pkj = true;
+    //                         _jp2 = jp2;
+    //                     }
+    //                 }
+    //                 if (!nz_Pkj) continue;
+    //                 // otherwise, we do have a valid nz product here
+    //                 h_PF_blocks[inz_prod] = jp;
+    //                 h_K_blocks[inz_prod] = kp;
+    //                 h_P_blocks[inz_prod] = _jp2;
+    //                 inz_prod++;
+    //             }
+    //         }
+    //     }
+    //     // now allocate onto the device
+    //     d_Z_prodBlocks = HostVec<int>(nnzb_prod, h_PF_blocks).createDeviceVec().getPtr();
+    //     d_K_prodBlocks = HostVec<int>(nnzb_prod, h_K_blocks).createDeviceVec().getPtr();
+    //     d_P_prodBlocks = HostVec<int>(nnzb_prod, h_P_blocks).createDeviceVec().getPtr();
+    // }
+
     void compute_matmat_prod_nz_pattern() {
         // get pointers
 
@@ -2023,6 +2192,23 @@ class RootNodeAMG : public BaseSolver {
     CoarseDirect *coarse_direct = nullptr;
 
    private:
+    bool print_timing = true;
+
+    using clock_type = std::chrono::steady_clock;
+
+    static double elapsed_sec(const clock_type::time_point &t0, const clock_type::time_point &t1) {
+        return std::chrono::duration<double>(t1 - t0).count();
+    }
+
+    static void sync_if_needed() { CHECK_CUDA(cudaDeviceSynchronize()); }
+
+    void print_setup_time(const char *name, double tsec) const {
+        if (print_timing) {
+            printf("\t[RootNodeAMG L%d] %-32s %.6e s\n", level, name, tsec);
+        }
+    }
+
+   private:
     cublasHandle_t &cublasHandle;
     cusparseHandle_t &cusparseHandle;
     BsrMat<DeviceVec<T>> kmat, kmat_free, coarse_kmat, coarse_free_kmat;
@@ -2097,6 +2283,12 @@ class RootNodeAMG : public BaseSolver {
     DeviceVec<T> d_SU_vec, d_UTU_vec, d_UTUinv_vec;
     T *d_SU_vals, *d_UTU_vals, *d_UTUinv_vals;
     T *d_temp2, *d_resid;
+
+    // new pointers for new mat-mat prod
+    int AP_nnzb, *h_AP_rowp, *h_AP_cols, *h_AP_rows;
+    int *d_AP_rowp, *d_AP_cols, *d_AP_rows;
+    int nnzb_left_prod, *d_Z_leftProdBlocks, *d_K_leftProdBlocks, *d_P_leftProdBlocks;
+    int nnzb_right_prod, *d_Z_rightProdBlocks, *d_K_rightProdBlocks, *d_P_rightProdBlocks;
 };
 
 // }  // namespace rootnode_amg
