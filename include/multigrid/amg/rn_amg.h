@@ -289,7 +289,7 @@ static void compute_rootnode_dense_blocks_host(int nnodes, int block_dim,
     }
 }
 
-template <typename T, class Smoother, bool ORTHOG_PROJECTOR = true>
+template <typename T, class Smoother, bool ORTHOG_PROJECTOR = true, bool LINE_SEARCH = false>
 class RootNodeAMG : public BaseSolver {
    public:
     using Assembler = FakeAssembler<T>;
@@ -436,8 +436,10 @@ class RootNodeAMG : public BaseSolver {
         cudaMemcpy(d_rhs, rhs.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
         cudaMemset(d_inner_soln, 0, N * sizeof(T));
 
+        // pre-smooth
         this->smoother->smoothDefect(d_rhs_vec, d_inner_soln_vec, nsmooth);
 
+        // restrict residual/defect to coarse grid
         d_coarse_rhs_vec.zeroValues();
         int nprods = P_nnzb * block_dim2;
         dim3 block0(32), grid0((nprods + 31) / 32);
@@ -446,28 +448,57 @@ class RootNodeAMG : public BaseSolver {
                                                 d_coarse_rhs_vec.getPtr());
         CHECK_CUDA(cudaDeviceSynchronize());
 
+        // coarse solve
         if (!is_coarse_mg) {
             coarse_direct->solve(d_coarse_rhs_vec, d_coarse_soln_vec);
         } else {
             coarse_mg->solve(d_coarse_rhs_vec, d_coarse_soln_vec);
         }
 
+        // prolong coarse correction: d_temp = P * e_c
         T a = 1.0, b = 0.0;
         CHECK_CUSPARSE(cusparseDbsrmv(
             cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes,
             num_aggregates, P_nnzb, &a, descrKmat, d_prolong_vals, d_prolong_rowp, d_prolong_cols,
             block_dim, d_coarse_soln_vec.getPtr(), &b, d_temp));
-        a = 1.0;
-        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_inner_soln, 1));
 
-        a = -1.0;
-        b = 1.0;
+        // compute K * d_temp into d_temp2
+        a = 1.0;
+        b = 0.0;
         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
                                       CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, kmat_nnzb,
                                       &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
-                                      block_dim, d_temp, &b, d_rhs));
+                                      block_dim, d_temp, &b, d_temp2));
 
+        // optional 1D line search on coarse correction
+        T omega = 1.0;
+        if constexpr (LINE_SEARCH) {
+            T sT_rhs = 0.0;
+            CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_rhs, 1, d_temp, 1, &sT_rhs));
+
+            T sT_Ks = 0.0;
+            CHECK_CUBLAS(cublasDdot(cublasHandle, N, d_temp2, 1, d_temp, 1, &sT_Ks));
+
+            // avoid divide-by-zero / pathological tiny denominator
+            if (fabs(sT_Ks) > 1e-30) {
+                omega = sT_rhs / sT_Ks;
+                // omega = std::clamp(omega, omega_min, omega_max);
+            } else {
+                omega = 1.0;
+            }
+        }
+
+        // apply coarse correction to solution
+        a = omega;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_inner_soln, 1));
+
+        // update defect: r <- r - omega * K * d_temp
+        a = -omega;
+        CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp2, 1, d_rhs, 1));
+
+        // post-smooth
         this->smoother->smoothDefect(d_rhs_vec, d_inner_soln_vec, nsmooth);
+
         cudaMemcpy(soln.getPtr(), d_inner_soln, N * sizeof(T), cudaMemcpyDeviceToDevice);
         return false;
     }
