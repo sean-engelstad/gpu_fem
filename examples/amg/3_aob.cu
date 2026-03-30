@@ -67,8 +67,8 @@ void amg_solve(MPI_Comm &comm, int level, double SR, int nsmooth, int ninnercyc,
     using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, LINE_SEARCH>;
 
-    // const bool ORTHOG_PROJECTOR = true;
-    const bool ORTHOG_PROJECTOR = false;
+    const bool ORTHOG_PROJECTOR = true;
+    // const bool ORTHOG_PROJECTOR = false;
     using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
     using PCG = PCGSolver<T, GRID>;
 

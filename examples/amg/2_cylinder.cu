@@ -398,8 +398,8 @@ template <typename T, class Assembler>
 void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth, int ninnercyc, 
     T omegas, T omegap, int ORDER, T threshold, int nmat_smooth) {
     if (solver_type == "sa_amg") {
-        // const bool ORTHOG_PROJECTOR = true;
-        const bool ORTHOG_PROJECTOR = false;
+        const bool ORTHOG_PROJECTOR = true;
+        // const bool ORTHOG_PROJECTOR = false;
         using FAssembler = FakeAssembler<T>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
         using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
