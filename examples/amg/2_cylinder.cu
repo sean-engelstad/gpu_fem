@@ -520,6 +520,10 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (solver_type == "cf_amg") {
+        printf("WARNING: CF-AMG often needs omegas = 0.3, omegap = 0.3, threshold = 0.1 to work.\n");
+    }
+
     // type specifications here
     using T = double;   
     using Quad = QuadLinearQuadrature<T>;
