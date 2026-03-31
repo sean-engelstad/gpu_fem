@@ -1,6 +1,51 @@
 
 ## Current Tasks
 
+1. [ ] multilevel BDDC
+   - [ ] add new ML-BDDC category to scatter plots, table and bar chart
+
+2. [ ] do wing optimization cases
+   - [ ] linear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] nonlinear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] linear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] nonlinear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] linear stiffened AOB wing with: etc..
+   - [ ] add to writing / wing section
+
+3. [ ] Element multigrid study (curved shells)
+   - [ ] implement Kirchoff shell multigrid/BPX like this + its elements, [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
+   - [ ] subd surf. for Kirchoff multigrid! [https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf](https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf)
+      - [ ] related ref [SUBDIVISION SURFACES: A NEW PARADIGM FOR THIN-SHELL FINITE-ELEMENT ANALYSIS](https://multires.caltech.edu/pubs/thinshell.pdf)
+   - [ ] other potential relevant papers
+      - [ ] [Multilevel solvers for unstructured surface meshes, SIAM J. Sci. Comput., 26 (2005), pp. 1146–1165.]
+      - [ ] [Bernstein–Bézier polynomials on spheres and sphere‐like surfaces, Comput. Aided Geom. Design, 13 (1996), pp. 333–349.]
+      - [ ] [𝐶1‐hierarchical bases, J]
+   - [ ] try to combine these methods with DRIG maybe to get RM-multigrid solve like Kirchoff-multigrid on cylinder then wing 
+
+4. [ ] finish writing the element study chapter
+
+
+5. develop multiple GPUs on wing
+   - [ ] do multilevel BDDC
+      - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
+   - [ ] then multi GPU
+   - [ ] writeup of multi GPU section
+   
+6. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
+   - [ ] make interface that constructs GPU assembler and classes from CPU assembler
+   - [ ] then runs the GPU code as usual
+
+
+
+
+
+## OPTIONAL
+4. optimization cases (may not need to do all cases on HPC)
+   - [ ] linear cylinder with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] linear HSCT unstiffened wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+      - [ ] need to dec # ribs + spars and make it curved so equal # edges and fully structured
+   - [ ] linear or nonlinear stiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+      - [ ] verify stiffened panel buckling loads to CPU..
 
 2. [ ] finish writing the thesis
    * can be partially complete (missing a few results)
@@ -11,35 +56,6 @@
       - [x] finish writing multilevel compare section
       - [ ] finish writing optimization section
    - [ ] element type chapter, send to Dr. K
-3. develop multiple GPUs on wing
-   - [ ] do multilevel BDDC
-      - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
-   - [ ] then multi GPU
-   - [ ] writeup of multi GPU section
-4. optimization cases (may not need to do all cases on HPC)
-   - [ ] linear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] nonlinear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] linear cylinder with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] linear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] nonlinear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] linear HSCT unstiffened wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-      - [ ] need to dec # ribs + spars and make it curved so equal # edges and fully structured
-   - [ ] linear or nonlinear stiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-      - [ ] verify stiffened panel buckling loads to CPU..
-6. Element multigrid study (curved shells)
-   - [ ] implement Kirchoff shell multigrid/BPX like this + its elements, [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
-   - [ ] subd surf. for Kirchoff multigrid! [https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf](https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf)
-      - [ ] related ref [SUBDIVISION SURFACES: A NEW PARADIGM FOR THIN-SHELL FINITE-ELEMENT ANALYSIS](https://multires.caltech.edu/pubs/thinshell.pdf)
-   - [ ] other potential relevant papers
-      - [ ] [Multilevel solvers for unstructured surface meshes, SIAM J. Sci. Comput., 26 (2005), pp. 1146–1165.]
-      - [ ] [Bernstein–Bézier polynomials on spheres and sphere‐like surfaces, Comput. Aided Geom. Design, 13 (1996), pp. 333–349.]
-      - [ ] [𝐶1‐hierarchical bases, J]
-   - [ ] try to combine these methods with DRIG maybe to get RM-multigrid solve like Kirchoff-multigrid on cylinder then wing
-7. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
-   - [ ] make interface that constructs GPU assembler and classes from CPU assembler
-   - [ ] then runs the GPU code as usual
-
-
 
 ## DONE
 1. [x] demo BDDC on wing and multi-component intersections
