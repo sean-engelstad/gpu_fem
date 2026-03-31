@@ -209,7 +209,7 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     
     // out settings
     linear_solver->set_rel_tol(1e-6);
-    linear_solver->set_abs_tol(1e-6);
+    linear_solver->set_abs_tol(1e-10);
     linear_solver->set_print(true);
 
     // perform the Krylov linear solve
@@ -527,6 +527,7 @@ int main(int argc, char **argv) {
         printf("WARNING: CF-AMG often needs omegas <= 0.3, omegap <= 0.3, threshold = 0.1 (or 1e-3) to work.\n");
     } else {
         printf("NOTE : AMG methods sometimes better with like 4 smoothing steps and omegas = 0.2, omegap = 0.2 (about 2/3 as much as max omegas)");
+        printf("\talso for higher DOF nxe = 512, RN-AMG needed lower threshold = 1e-4 (< 1e-3). Setup time probably could be improved with two-step P^T K P\n");
     }
 
     // type specifications here

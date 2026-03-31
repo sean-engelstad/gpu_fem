@@ -8,17 +8,17 @@ import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 import sys
 # plate case imports from milu python cases
-sys.path.append("../../../milu/")
+sys.path.append("../../milu/")
 from __src import plot_cylinder_vec, sort_vis_maps
 # from __linalg import right_pgmres, right_pcg
-sys.path.append("../../../adv_elem/1_beam/src/")
+sys.path.append("../../adv_elem/1_beam/src/")
 from smoothers import right_pcg2, right_pgmres2
 # AMG imports
-sys.path.append("../../../amg/_py_demo/_src/")
+sys.path.append("../../amg/_py_demo/1_sa_amg/_src/")
 from csr_aggregation import plot_plate_aggregation
 # , tentative_prolongator_bsr, smooth_prolongator_bsr
 from _smoothers import block_gauss_seidel_6dof
-sys.path.append("../../../amg/_py_demo/")
+sys.path.append("../../amg/_py_demo/1_sa_amg/")
 from _cylinder import make_cylinder_case
 
 sys.path.append("src/")

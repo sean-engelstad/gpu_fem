@@ -146,7 +146,7 @@ void chebyshev_polynomial_solve(int nxe, double SR, int nsmooth, T omegaMC = 1.5
     options.print_freq = 10;
     auto pcg_solver = new PCG(cublasHandle, cusparseHandle, grid, pc, options);
     pcg_solver->set_rel_tol(1e-6);
-    pcg_solver->set_abs_tol(1e-6);
+    pcg_solver->set_abs_tol(1e-10);
     pcg_solver->set_print(true);
 
 

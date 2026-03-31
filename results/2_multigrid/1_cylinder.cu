@@ -200,7 +200,7 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
     int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     bool print = true;
     // bool print = false;
-    T atol = 1e-6, rtol = 1e-6;
+    T atol = 1e-10, rtol = 1e-6;
     bool double_smooth = false;
     // bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
 

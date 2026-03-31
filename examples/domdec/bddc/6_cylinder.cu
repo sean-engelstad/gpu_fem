@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
     T thick = 1e-3;
     // bool print_mem = false;
     bool print_mem = true;
-    T mag = 1.0;
+    T mag = 1.0e2;
     
     // optional smoothing
     // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
@@ -249,7 +249,8 @@ int main(int argc, char **argv) {
     cusparseHandle_t cusparseHandle = nullptr;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    bool print_timing = true; // profiling
+    // bool print_timing = true; // profiling
+    bool print_timing = false;
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
     bool close_hoop = true; // true for cylinder case here, not if just a portion of cylinder

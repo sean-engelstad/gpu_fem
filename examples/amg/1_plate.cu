@@ -205,7 +205,7 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     
     // out settings
     linear_solver->set_rel_tol(1e-6);
-    linear_solver->set_abs_tol(1e-6);
+    linear_solver->set_abs_tol(1e-10);
     linear_solver->set_print(true);
 
     // perform the Krylov linear solve
@@ -329,7 +329,7 @@ void solve_direct(int nxe, double SR) {
 
     // out settings
     linear_solver->set_rel_tol(1e-6);
-    linear_solver->set_abs_tol(1e-6);
+    linear_solver->set_abs_tol(1e-10);
     linear_solver->set_print(true);
 
     auto endstartup = std::chrono::high_resolution_clock::now();

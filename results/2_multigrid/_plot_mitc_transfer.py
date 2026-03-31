@@ -103,9 +103,9 @@ col_x = "tab:green"    # gamma_23 / e_22
 col_c = "tab:purple"   # gamma_12
 
 # coarse markers
-ax.scatter(c_y[:, 0], c_y[:, 1], s=130, color=col_y, zorder=5, label=r"$\gamma_{13},\,e_{11}$ tying points")
-ax.scatter(c_x[:, 0], c_x[:, 1], s=130, color=col_x, zorder=5, label=r"$\gamma_{23},\,e_{22}$ tying points")
-ax.scatter(c_c[:, 0], c_c[:, 1], s=150, color=col_c, marker="s", zorder=5, label=r"$\gamma_{12}$ tying points")
+ax.scatter(c_y[:, 0], c_y[:, 1], s=130, color=col_y, zorder=5, label=r"$\gamma_{13},\,e_{11}$")
+ax.scatter(c_x[:, 0], c_x[:, 1], s=130, color=col_x, zorder=5, label=r"$\gamma_{23},\,e_{22}$")
+ax.scatter(c_c[:, 0], c_c[:, 1], s=150, color=col_c, marker="s", zorder=5, label=r"$\gamma_{12}$")
 
 # fine markers
 ax.scatter(f_y[:, 0], f_y[:, 1], s=90, color=col_y, zorder=5)
@@ -113,17 +113,18 @@ ax.scatter(f_x[:, 0], f_x[:, 1], s=90, color=col_x, zorder=5)
 ax.scatter(f_c[:, 0], f_c[:, 1], s=110, color=col_c, marker="s", zorder=5)
 
 # titles above each patch
-ax.text(xL + 0.5 * L, 1.10, "Coarse element", ha="center", va="bottom", fontsize=18)
-ax.text(xR + 0.5 * L, 1.10, "2×2 fine elements", ha="center", va="bottom", fontsize=18)
+ax.text(xL + 0.5 * L, 1.10, "Coarse element", ha="center", va="bottom", fontsize=22)
+ax.text(xR + 0.5 * L, 1.10, "2×2 fine elements", ha="center", va="bottom", fontsize=22)
 
 # annotations for coarse element only
-ax.text(xL + 0.58, yL - 0.08, r"$\gamma_{13},\,e_{11}$", color=col_y, fontsize=16, ha="left", va="top")
-ax.text(xL + 0.58, yL + 1.03, r"$\gamma_{13},\,e_{11}$", color=col_y, fontsize=16, ha="left", va="bottom")
+ax.text(xL + 0.52, yL - 0.04, r"$\gamma_{13},\,e_{11}$", color=col_y, fontsize=20, ha="left", va="top")
+# ax.text(xL + 0.58, yL + 1.03, r"$\gamma_{13},\,e_{11}$", color=col_y, fontsize=20, ha="left", va="bottom")
 
-ax.text(xL - 0.05, yL + 0.58, r"$\gamma_{23},\,e_{22}$", color=col_x, fontsize=16, ha="right", va="bottom")
-ax.text(xL + 1.05, yL + 0.58, r"$\gamma_{23},\,e_{22}$", color=col_x, fontsize=16, ha="left", va="bottom")
+ax.text(xL - 0.03, yL + 0.54, r"$\gamma_{23},$", color=col_x, fontsize=20, ha="right", va="bottom")
+ax.text(xL - 0.07, yL + 0.43, r"$e_{22}$", color=col_x, fontsize=20, ha="right", va="bottom")
+# ax.text(xL + 1.05, yL + 0.58, r"$\gamma_{23},\,e_{22}$", color=col_x, fontsize=20, ha="left", va="bottom")
 
-ax.text(xL + 0.56, yL + 0.56, r"$\gamma_{12}$", color=col_c, fontsize=16, ha="left", va="bottom")
+ax.text(xL + 0.5, yL + 0.56, r"$\gamma_{12}$", color=col_c, fontsize=20, ha="left", va="bottom")
 
 # arrow indicating transfer comparison
 ax.annotate(
@@ -132,7 +133,47 @@ ax.annotate(
     xytext=(xL + 1.18, 0.5),
     arrowprops=dict(arrowstyle="->", lw=2.0, color="0.35")
 )
-ax.text(xL + 1.08 + 0.5 * gap, 0.56, r"intergrid transfer $\mathbf{P}$", ha="center", va="bottom", fontsize=14, color="0.25")
+ax.text(xL + 1.03 + 0.5 * gap, 0.56, r"intergrid transfer $\mathbf{P}$", ha="center", va="bottom", fontsize=18, color="0.25")
+
+# coarse tying points marked on fine mesh
+cR_y, cR_x, cR_c = coarse_points(xR, yR, L)
+ax.scatter(cR_y[:, 0], cR_y[:, 1], s=220, facecolors="none", edgecolors=col_y, linewidths=2.5, zorder=6)
+ax.scatter(cR_x[:, 0], cR_x[:, 1], s=220, facecolors="none", edgecolors=col_x, linewidths=2.5, zorder=6)
+ax.scatter(cR_c[:, 0], cR_c[:, 1], s=240, facecolors="none", edgecolors=col_c, linewidths=2.5, marker="s", zorder=6)
+
+# pick one coarse-on-fine point (e.g., bottom red point)
+px, py = cR_y[0]
+
+ax.annotate(
+    r"coarse tying",
+    xy=(px+0.01, py-0.01),                     # point being labeled
+    xytext=(px -0.06, py - 0.08),   # text location
+    fontsize=16,
+    color="0.25",
+    ha="left", va="top",
+    arrowprops=dict(
+        arrowstyle="->",
+        lw=1.5,
+        color="0.25"
+    )
+)
+
+# pick one fine tying point (e.g., bottom red fine point)
+fx, fy = f_y[1]
+
+ax.annotate(
+    r"fine tying",
+    xy=(fx + 0.01, fy - 0.01),                     # point being labeled
+    xytext=(fx + 0.02, fy - 0.07),   # text location (adjust if needed)
+    fontsize=16,
+    color="0.25",
+    ha="left", va="top",
+    arrowprops=dict(
+        arrowstyle="->",
+        lw=1.5,
+        color="0.25"
+    )
+)
 
 # styling
 ax.set_aspect("equal")
@@ -140,7 +181,7 @@ ax.set_xlim(-0.35, xR + 1.25)
 ax.set_ylim(-0.18, 1.22)
 ax.axis("off")
 
-ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False, fontsize=12)
+ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.15), ncol=3, frameon=False, fontsize=24)
 
 plt.tight_layout()
 plt.savefig("mitc_tying_points.svg", dpi=400)

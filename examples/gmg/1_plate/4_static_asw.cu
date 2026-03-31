@@ -317,7 +317,7 @@ int main(int argc, char **argv) {
     // int n_vcycles = 50;
     double omega = 0.2; // smaller omega for ASW
 
-    int nsmooth = 4; // typically faster right now
+    int nsmooth = 2; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle (ends up being a bit faster here..)
     std::string cycle_type = "K"; // "V", "F", "W", "K"
     // std::string cycle_type = "V"; // "V", "F", "W", "K"

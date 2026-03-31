@@ -1,16 +1,21 @@
 
 ## Current Tasks
 
-1. [x] demo BDDC on wing and multi-component intersections
-   * developed a novel BDDC wrapraound subdomain method that stabilizes Krylov convergence on wing
+
 2. [ ] finish writing the thesis
    * can be partially complete (missing a few results)
    - [x] intro, send to Dr. K
    - [ ] multigrid chapter (except for some opt results), send to Dr. K
+      - [x] finish writing AMG section
+      - [x] finish writing dom-dec section
+      - [ ] finish writing multilevel compare section
+      - [ ] finish writing optimization section
    - [ ] element type chapter, send to Dr. K
 3. develop multiple GPUs on wing
-   - [ ] do multilevel BDDC first
+   - [ ] do multilevel BDDC
+      - [ ] update some tables and scatter plot by adding multilevel BDDC (not just single level)
    - [ ] then multi GPU
+   - [ ] writeup of multi GPU section
 4. optimization cases (may not need to do all cases on HPC)
    - [ ] linear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
    - [ ] nonlinear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
@@ -21,9 +26,6 @@
       - [ ] need to dec # ribs + spars and make it curved so equal # edges and fully structured
    - [ ] linear or nonlinear stiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
       - [ ] verify stiffened panel buckling loads to CPU..
-5. Finish multilevel study
-   - [x] demo RN-AMG and AMGe, python then maybe GPU
-   - [ ] regen the scatter plot of each S_h, S_t score (and fillin table too)
 6. Element multigrid study (curved shells)
    - [ ] implement Kirchoff shell multigrid/BPX like this + its elements, [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
    - [ ] subd surf. for Kirchoff multigrid! [https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf](https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf)
@@ -38,6 +40,13 @@
    - [ ] then runs the GPU code as usual
 
 
+
+## DONE
+1. [x] demo BDDC on wing and multi-component intersections
+   * developed a novel BDDC wrapraound subdomain method that stabilizes Krylov convergence on wing
+5. Finish multilevel study
+   - [x] demo RN-AMG and AMGe, python then maybe GPU
+   - [x] regen the scatter plot of each S_h, S_t score (and fillin table too)
 
 
 ## older tasks
