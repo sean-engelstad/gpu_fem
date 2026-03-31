@@ -30,8 +30,13 @@
       - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
    - [ ] then multi GPU
    - [ ] writeup of multi GPU section
+
+6. do unstructured wing problems with BDDC wraparound method
+   - [ ] develop so METIS or general nominal subdomain splitting
+   - [ ] combine subdomains along patch boundaries (checking any violations)
+   - [ ] do all quad-element HSCT mesh..
    
-6. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
+7. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
    - [ ] make interface that constructs GPU assembler and classes from CPU assembler
    - [ ] then runs the GPU code as usual
 
