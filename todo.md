@@ -8,12 +8,12 @@
    - [ ] multigrid chapter (except for some opt results), send to Dr. K
       - [x] finish writing AMG section
       - [x] finish writing dom-dec section
-      - [ ] finish writing multilevel compare section
+      - [x] finish writing multilevel compare section
       - [ ] finish writing optimization section
    - [ ] element type chapter, send to Dr. K
 3. develop multiple GPUs on wing
    - [ ] do multilevel BDDC
-      - [ ] update some tables and scatter plot by adding multilevel BDDC (not just single level)
+      - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
    - [ ] then multi GPU
    - [ ] writeup of multi GPU section
 4. optimization cases (may not need to do all cases on HPC)

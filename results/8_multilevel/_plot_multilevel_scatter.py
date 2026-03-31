@@ -98,7 +98,7 @@ for txt, (x, y) in zip(texts, points):
 # ax.legend()
 ax.legend(frameon=True, facecolor="white", framealpha=1.0, loc="center right")
 
-ax.set_xlabel(r"$S_h\; (h\mathrm{-}independence)$")
+ax.set_xlabel(r"$S_h\; (h\mathrm{-}scalability)$")
 ax.set_ylabel(r"$S_t\; (t\mathrm{-}independence)$")
 
 ax.set_xlim(0.45, 1.75)
@@ -108,5 +108,6 @@ ax.tick_params(axis='both', labelsize=fs)
 
 ax.grid(True)
 
-plt.savefig("solver_scatter.png", dpi=200, bbox_inches="tight")
+# plt.savefig("solver_scatter.png", dpi=200, bbox_inches="tight")
+plt.savefig("solver_scatter.svg", dpi=200, bbox_inches="tight")
 plt.show()
