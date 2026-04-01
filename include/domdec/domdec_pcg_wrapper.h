@@ -23,7 +23,7 @@ class DomDecKrylovWrapper : public BaseSolver {
         // res_IEV (FETI-DP case) and still want to use same original call structure in
         // inexact_newton
 
-        // fetidp->set_global_rhs(rhs);
+        fetidp->set_global_rhs(rhs);
         // don't think set global rhs and then solving different linear system each time works?
         // cause needs element-level loads.. right? not equiv linear system cause rhs
         fetidp->get_lam_rhs(lam_rhs);

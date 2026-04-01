@@ -289,11 +289,13 @@ static void compute_rootnode_dense_blocks_host(int nnodes, int block_dim,
     }
 }
 
-template <typename T, class Smoother, bool ORTHOG_PROJECTOR = true, bool LINE_SEARCH = false>
+template <typename T, class FAKE_ASSEMBLER, class Smoother, bool ORTHOG_PROJECTOR = true,
+          bool LINE_SEARCH = false>
 class RootNodeAMG : public BaseSolver {
    public:
-    using Assembler = FakeAssembler<T>;
-    using CoarseMG = RootNodeAMG<T, Smoother, ORTHOG_PROJECTOR>;
+    // using Assembler = FakeAssembler<T>;
+    using Assembler = FAKE_ASSEMBLER;
+    using CoarseMG = RootNodeAMG<T, FAKE_ASSEMBLER, Smoother, ORTHOG_PROJECTOR>;
     using CoarseDirect = CusparseMGDirectLU<T, Assembler>;
 
     RootNodeAMG(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,

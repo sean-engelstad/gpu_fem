@@ -16,6 +16,8 @@
 #include "multigrid/solvers/direct/cusp_directLU.h"
 
 #include "domdec/bddc_assembler.h"
+#include "domdec/coarse_bddc.h"
+#include "domdec/domdec_pcg_wrapper.h"
 #include "multigrid/grid.h"
 #include "multigrid/solvers/krylov/bsr_pcg.h"
 #include "multigrid/solvers/krylov/bsr_pcg_matfree.h"
@@ -67,25 +69,6 @@ struct UniformPressure {
     }
 };
 
-
-template <typename T>
-struct ObliqueCylinderLoad {
-
-    __HOST_DEVICE__
-    T operator()(T x, T y, T z) const {
-        T x_hat = x / 1.0; // assumes L = 1.0
-        T th = atan2(y, z);
-        T th_hat = th / 2 / M_PI;
-        T mag = 1.0e2 *
-                (0.3 * cos(5 * th + 2.0 * M_PI * x_hat) +
-                    0.7 * cos(10 * th + 3.14159 / 6.0 + 5.3 * M_PI * x_hat)) *
-                sin(5 * M_PI * x_hat + 0.5 * 2.0 * x_hat * x_hat);
-        return mag;
-    }
-};
-
-
-
 template <typename T>
 struct ObliqueShearSineLoad {
     __HOST_DEVICE__
@@ -119,19 +102,23 @@ int main(int argc, char **argv) {
 
     using Assembler = MITCShellAssembler<T, Director, Basis, Physics, VecType, BsrMat>;
     using BDDC = BddcSolver<T, Assembler, VecType, BsrMat>;
+    using CoarseBDDC = CoarseBddcSolver<T, Assembler, VecType, BsrMat>;
     using InnerSolver = CusparseMGDirectLU<T, Assembler>;
     using InnerSolver_JUSTLU = CusparseMGDirectLU<T, Assembler, true>;
     using DUMMY = InnerSolver;
     using GRID = SingleGrid<Assembler, DUMMY, DUMMY, NONE>; // GRID class largely unused
     using KIPCG = PCGSolver<T, GRID>;
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
+    using CoarseGamPCG = MatrixFreePCGSolver<T, CoarseBDDC>; // BDDC is the operator and preconditioner
+    
+    using CoarseBDDCWrapper = DomDecKrylovWrapper<T, CoarseBDDC, CoarseGamPCG>;
+
 
     // can't run this small a problem (1 vertex with S_VV coarse solver for some reason)
     // int nxe = 4, nxe_subdomain_size = 2;
-    // int nxe = 6, nxe_subdomain_size = 2;
+    int nxe = 12, nxe_subdomain_size = 2;
     // int nxe = 128, nxe_subdomain_size = 4; // this problem has optimal runtime for 4x4 subdomains
     // int nxe = 128, nxe_subdomain_size = 8;
-    int nxe = 256, nxe_subdomain_size = 4; // 8 subdomains slightly faster (cause shrinks coarse problem) for local + HPC
     // int nxe = 256, nxe_subdomain_size = 8; // 8 subdomains slightly faster (cause shrinks coarse problem) for local + HPC
     // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
     // for the coarse problem..
@@ -140,7 +127,7 @@ int main(int argc, char **argv) {
     T thick = 1e-3;
     // bool print_mem = false;
     bool print_mem = true;
-    T mag = 1.0e2;
+    T mag = 1.0;
     
     // optional smoothing
     // 1) if ILU(k) here, ability to do multiple smoothing steps (Richardson)
@@ -228,17 +215,13 @@ int main(int argc, char **argv) {
     int nye = nxe;
     int nxs = nxe / nxe_subdomain_size;
     int nys = nxe / nxe_subdomain_size;
-    
-    double SR = 1e3;
-    double Lx = 1.0;
+    double Lx = 1.0, Ly = 1.0;
     double E = 70e9, nu = 0.3, rho = 2500, ys = 350e6;
-    int nxe_per_comp = nxe, nye_per_comp = nye;
-    double R = 0.5;
-    // double rho = 2500, ys = 350e6;
-    bool imperfection = false; // option for geom imperfection
-    int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
-    auto assembler = createCylinderAssembler<Assembler>(nxe, nye, Lx, R, E, nu, thick, 
-        imperfection, imp_x, imp_hoop);
+    // int nxe_per_comp = nxe, nye_per_comp = nye;
+    int nxe_per_comp = nxe / 2, nye_per_comp = nye / 2;
+
+    auto assembler = createPlateClampedAssembler<Assembler>(
+        nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
     // auto assembler = createPlateAssembler<Assembler>(nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
@@ -272,29 +255,31 @@ int main(int argc, char **argv) {
     bool print_timing = false;
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
 
-    bool close_hoop = true; // true for cylinder case here, not if just a portion of cylinder
+    bool close_hoop = false; // true for cylinder case (not cylindrical panel)
+
+    // 2x2 subdomains on coarse BDDC problem
+    int nxs2 = nxs / 2; // num subdomains in x-direction (2x fewer on coarse problem)
+    int nys2 = nys / 2;
+    int coarse_num_elements, coarse_num_nodes, coarse_elem_nnz;
+    int *coarse_elem_ptr, *coarse_elem_conn, *coarse_elem_sd_ind;
+    printf("setup coarse structured subdomains\n");
+    bddc->setup_coarse_structured_subdomains(nxe, nye, nxs, nys, nxs2, nys2, close_hoop, 
+        coarse_num_elements, coarse_num_nodes, coarse_elem_nnz, coarse_elem_ptr, 
+        coarse_elem_conn, coarse_elem_sd_ind);
+    printf("\tdone with setup coarse structured subdomains\n");
+
+    // build subdomains and sparsity
+    printf("setup fine structured subdomains\n");
     bddc->setup_structured_subdomains(nxe, nye, nxs, nys, close_hoop);
+    printf("\tdone with setup fine structured subdomains\n");
 
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
     auto &IE_bsr_data = bddc->IE_bsr_data;
-    if (fill_level != -1) { 
-        I_bsr_data.RCM_reordering();
-        I_bsr_data.qorder_reordering(0.5);
-        I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        I_bsr_data.AMD_reordering(); 
-        I_bsr_data.compute_full_LU_pattern(10.0);
-    }
-
-    if (fill_level != -1) { 
-        IE_bsr_data.RCM_reordering();
-        IE_bsr_data.qorder_reordering(0.5);
-        IE_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        IE_bsr_data.AMD_reordering(); 
-        IE_bsr_data.compute_full_LU_pattern(10.0);
-    }
+    I_bsr_data.AMD_reordering(); 
+    I_bsr_data.compute_full_LU_pattern(10.0);
+    IE_bsr_data.AMD_reordering(); 
+    IE_bsr_data.compute_full_LU_pattern(10.0);
 
     // now compute matrix sparsity, copy maps
     // printf("setup matrix sparsity\n");
@@ -303,82 +288,167 @@ int main(int argc, char **argv) {
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
-    if (fill_level != -1) { 
-        Svv_bsr_data.RCM_reordering();
-        Svv_bsr_data.qorder_reordering(0.5);
-        Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        Svv_bsr_data.AMD_reordering();
-        Svv_bsr_data.compute_full_LU_pattern(10.0);
-    }
+    // Svv_bsr_data.AMD_reordering();
+    // Svv_bsr_data.compute_full_LU_pattern(10.0);
+    Svv_bsr_data.compute_nofill_pattern(); // since using 3-level BDDC no fillin needed! uses iterative solver
 
     bddc->setup_coarse_matrix_sparsity();
 
+
+    // ===========================================
+    // build coarse bddc
+    // ===========================================
+
+    auto S_VV_mat = bddc->getCoarseSVVmat();
+    printf("make coarse grid BDDC\n");
+    using FAssembler = FakeAssembler<T, Assembler>;
+    auto fake_assembler = FAssembler(Svv_bsr_data, coarse_num_nodes, coarse_num_elements);
+    auto c_bddc = new CoarseBDDC(cublasHandle, cusparseHandle, fake_assembler, *S_VV_mat, 
+        coarse_elem_nnz, coarse_elem_ptr, coarse_elem_conn,
+        coarse_elem_sd_ind, false, false);
+    printf("\tdone with make coarse grid BDDC\n");
+
+    printf("setup matrix sparsity on coarse bddc\n");
+    c_bddc->setup_matrix_sparsity(); // must 
+    printf("\tdone with setup matrix sparsity on coarse bddc\n");
+
+    int *coarse_IEV_nodes = c_bddc->getIEVnodes();
+
+    // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
+    SolverOptions ki_opts;
+    ki_opts.ncycles = 50;
+    // opts.ncycles = 500;
+    ki_opts.print = true;
+    ki_opts.print = false;
+    ki_opts.print_freq = 5;
+    ki_opts.debug = true;
+    // ki_opts.rtol = 1e-4;
+    ki_opts.rtol = 1e-6;
+    ki_opts.atol = 1e-30;
+    // coarse solver is matrix-free Krylov with CoarseBDDC preconditioner
+    auto v_krylov =
+        new CoarseGamPCG(cublasHandle, c_bddc, c_bddc, ki_opts, c_bddc->getLambdaSize(), 0);
+
+    // now make inner solver wrapper (that restricts to interface)
+    auto v_solver = new CoarseBDDCWrapper(c_bddc, v_krylov); 
+
+    auto &coarse_I_bsr_data = c_bddc->I_bsr_data;
+    auto &coarse_IE_bsr_data = c_bddc->IE_bsr_data;
+    coarse_I_bsr_data.AMD_reordering(); 
+    coarse_I_bsr_data.compute_full_LU_pattern(10.0);
+    coarse_IE_bsr_data.AMD_reordering(); 
+    coarse_IE_bsr_data.compute_full_LU_pattern(10.0);
+
+    // is the IEV matrix of coarse BDDC problem
+    auto S_VV_MLIEV = c_bddc->getKmatIEV();
+    printf("setup multilevel coarse matrix sparsity\n");
+    bddc->setup_MLIEV_coarse_matrix_sparsity(S_VV_MLIEV, coarse_IEV_nodes);
+    printf("\tdone with setup multilevel coarse matrix sparsity\n");
+
+    // ==============================================
+    // current multilevel BDDC progress
+    // return; 
+    // ==============================================
+
+    // bddc->setup_wing_subdomains(nxe_subdomain_size, nxe_subdomain_size); // debug this method (for wing case)
+
+    
     // assemble local FETI-DP blocks
+    printf("bddc assemble subdomains\n");
     bddc->assemble_subdomains();
+    printf("\tdone with bddc assemble subdomains\n");
 
     // external load (can add internally)
-    ObliqueCylinderLoad<T> load;
+    ObliqueShearSineLoad<T> load;
     bddc->add_subdomain_fext(load, mag);
 
     bddc->set_IEV_residual(1.0, 0.0, vars);
 
     // ----------------------------------------
-    // you still need actual solver objects here
+    // fine grid BDDC solvers + setup
     // ----------------------------------------
     //
     // Example sketch only; replace with your actual solver classes:
-    
-    if (fill_level == -1) {
-        // setup direct solver
-        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
-        auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-        auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
-    
-        // factor each solver
-        ie_solver->factor();
-        i_solver->factor();
+    // setup direct solver
+    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
+    // not using direct solver on coarse problem anymore
+    // auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
 
-        bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
+    // factor each solver
+    ie_solver->factor();
+    i_solver->factor();
 
-        bddc->assemble_coarse_problem();
-        v_solver->factor();    
+    bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
 
-    } else {
-        // setup incomplete solvers
-        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
-        auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-        auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
-       
-        // factor each solver
-        ie_solver->factor();
-        i_solver->factor();
+    // must be done before CoarseBDDC (since only uses IEV matrix and IE solver here)
+    // and need SVV in IEV-splitting on CoarseBDDC
+    printf("bddc assemble coarse problem\n");
+    bddc->assemble_coarse_problem();
+    printf("\tdone with bddc assemble coarse problem\n");
 
-        // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
-        SolverOptions ki_opts;
-        ki_opts.ncycles = 50;
-        // opts.ncycles = 500;
-        ki_opts.print = true;
-        ki_opts.print_freq = 5;
-        ki_opts.debug = true;
-        ki_opts.rtol = 1e-15;
-        ki_opts.atol = 1e-30;
+    // ================================================
+    // make patterns + solvers for CoarseBDDC (3-level BDDC)
+    // ================================================
 
-        auto grid = new GRID(assembler, nullptr, nullptr, *bddc->getKmatI(), loads, cublasHandle, cusparseHandle);
-        auto i_krylov = new KIPCG(cublasHandle, cusparseHandle, grid, i_solver, ki_opts, 0, bddc->getInvars());
-        bddc->set_inner_solvers(ie_solver, i_solver, v_solver, i_krylov);
+    // then perform coarse matrix fillin and compute sparsity
+    // since 3-levels, this is coarsest level, so do need 
+    auto &coarse_Svv_bsr_data = c_bddc->Svv_bsr_data;
+    coarse_Svv_bsr_data.AMD_reordering();
+    coarse_Svv_bsr_data.compute_full_LU_pattern(10.0);
 
-        bddc->assemble_coarse_problem();
-        v_solver->factor();    
-    }    
+
+    printf("coarse bddc coarse matrix sparsity\n");
+    c_bddc->setup_coarse_matrix_sparsity();
+    printf("\tdone with coarse bddc coarse matrix sparsity\n");
+
+    // copies coarseBddc IEV matrix to IE and I subdomain parallel matrices
+    c_bddc->assemble_coarse_subdomains();
+
+    // setup direct solver
+    auto *coarse_ie_solver = new InnerSolver(cublasHandle, cusparseHandle, fake_assembler, 
+        *c_bddc->kmat_IE, omega, nsmooth);
+    auto *coarse_i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, fake_assembler, 
+        *c_bddc->kmat_I, omega, nsmooth);
+    auto *coarse_v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, fake_assembler, 
+        *c_bddc->S_VV, omega, nsmooth);
+
+    // factor each solver
+    coarse_ie_solver->factor();
+    coarse_i_solver->factor();
+
+    c_bddc->set_inner_solvers(coarse_ie_solver, coarse_i_solver, coarse_v_solver);
+
+    // this part is done after the IE solver of coarseBDDC is setup
+    printf("coarse bddc assemble coarse problem\n");
+    c_bddc->assemble_coarse_problem();
+    printf("\tdone with coarse bddc assemble coarse problem\n");
+
+    // this part must be done after coarse problem is assembled
+    coarse_v_solver->factor();
+
+    // TODO : do test linear solve of c_bddc here..
+
+    // =====================================
+    // setup fine grid RHS
+    // =====================================
+
+    // on two-level BDDC this part is performed once coarse solver is setup
+    // on 3-level BDDC here, must wait until after c_bddc is setup too
 
     // lambda rhs
     VecType<T> gam_rhs(bddc->getLambdaSize());
     VecType<T> gam(bddc->getLambdaSize());
     bddc->get_lam_rhs(gam_rhs);
 
+
+    // =============================================
+    // NOW SETUP fine grid Krylov solver
+    // =============================================
+
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
+    // opts.ncycles = 2;
     opts.ncycles = 50;
     // opts.ncycles = 500;
     opts.print = true;
@@ -410,7 +480,6 @@ int main(int argc, char **argv) {
     auto start1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> IEV_factor_time = start1 - start0;
 
-
     bool gam_fail = gam_solver->solve(gam_rhs, gam, true);
     bddc->get_global_soln(gam, soln);
 
@@ -434,13 +503,15 @@ int main(int argc, char **argv) {
     printf("  --------------------------------\n");
     printf("  total setup + solve   : %.4e s\n\n", total_time.count());
 
+    int kmat_nnzb;
+
     if (print_mem) {
         // get memory usage
         size_t bytes_per_double = sizeof(double);
         double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
 
         // nnzb counts
-        int kmat_nnzb   = kmat.getBsrData().nnzb;
+        kmat_nnzb   = kmat.getBsrData().nnzb;
         int IEV_nnzb    = bddc->kmat_IEV->getBsrData().nnzb;
         int IE_nnzb     = IE_bsr_data.nnzb;
         int I_nnzb      = I_bsr_data.nnzb;
@@ -494,6 +565,7 @@ int main(int argc, char **argv) {
         printf("  K:%d | IEV:%d | IE:%d(%.2f) | I:%d(%.2f) | SVV:%d(%.2f)\n",
             kmat_nnzb, IEV_nnzb, IE_nnzb, IE_fill_ratio,
             I_nnzb, I_fill_ratio, coarse_nnzb, coarse_fill_ratio);
+
     }
 
 
@@ -502,7 +574,7 @@ int main(int argc, char **argv) {
     }
 
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/cylinder_bddc.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc.vtk");
 
     // compare to direct solver (the solution)
     bool compare_direct = true;
@@ -512,9 +584,9 @@ int main(int argc, char **argv) {
         auto loads = assembler.createVarsVec();
         assembler.add_fext_fast(load, mag, loads);
         assembler.apply_bcs(loads);
-        
-        auto assembler2 = createCylinderAssembler<Assembler>(nxe, nye, Lx, R, E, nu, thick, 
-            imperfection, imp_x, imp_hoop);
+
+        auto assembler2 = createPlateClampedAssembler<Assembler>(
+            nxe, nye, Lx, Ly, E, nu, thick, rho, ys, nxe_per_comp, nye_per_comp);
 
         // BSR factorization (need to change it to )
         auto& bsr_data = assembler2.getBsrData();
@@ -538,18 +610,27 @@ int main(int argc, char **argv) {
         auto end3 = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> solve_time_dir = end3 - start3;
 
+        size_t bytes_per_double = sizeof(double);
+        double bytes_per_block = static_cast<double>(bytes_per_double) * 36.0;
+        int LU_nnzb = kmat2.getBsrData().nnzb;
+        double LU_mat_mem   = bytes_per_block * static_cast<double>(LU_nnzb)   / 1024.0 / 1024.0;
+        double LU_fill = LU_nnzb * 1.0 / kmat_nnzb;
+        int nvars = assembler2.get_num_vars();
+
         printf("BDDC solve time in %.4e sec, direct in %.4e sec\n", total_time.count(), solve_time_dir.count());
+        printf("\tLU mat mem %.2f MB (nnzb=%d, fill=%.2f)\n", LU_mat_mem, LU_nnzb, LU_fill);
+        printf("\t#DOF = %d\n", nvars);
 
         // T lin_max_disp = get_max_disp(soln2);
         auto h_soln3 = soln2.createHostVec();
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/cylinder_lin.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_soln3, "out/plate_lin.vtk");
 
         // now also compute solution error on host and print to VTK
         auto h_err = HostVec<T>(h_soln3.getSize());
         for (int i = 0; i < h_soln3.getSize(); i++) {
             h_err[i] = h_soln3[i] - h_soln[i];
         }
-        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/cylinder_err.vtk");
+        printToVTK<Assembler,HostVec<T>>(assembler2, h_err, "out/plate_err.vtk");
 
         // for (int idof = 0; idof < 6; idof++) {
         //     T orig_nrm = get_max_disp(h_soln, idof);
@@ -559,7 +640,6 @@ int main(int argc, char **argv) {
         // }
         
         // now compute the residuals of each..
-        int nvars = assembler2.get_num_vars();
         assembler2.set_variables(soln2);
         assembler2.add_residual_fast(res);
         T a = -1.0;

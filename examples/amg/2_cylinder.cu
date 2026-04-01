@@ -58,10 +58,11 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     // geometric multigrid method here..
     // need to make a number of grids..
 
+    using Data = typename Assembler::Data;
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
     const SCALER scaler  = LINE_SEARCH;
-    using FAssembler = FakeAssembler<T>;
+    using FAssembler = FakeAssembler<T, Assembler>;
     using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
     using Prolongation = StructuredProlongation<Assembler, PLATE>;
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, LINE_SEARCH>;

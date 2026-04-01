@@ -21,12 +21,12 @@
 #include "fake_assembler.h"
 #include "sa_amg.cuh"
 
-template <typename T, class Smoother, bool ORTHOG_PROJECTOR = true>
+template <typename T, class FAKE_ASSEMBLER, class Smoother, bool ORTHOG_PROJECTOR = true>
 class SmoothAggregationAMG : public BaseSolver {
     /* based on python code in _py_demo/_src/bsr_aggregation.py */
    public:
-    using Assembler = FakeAssembler<T>;
-    using CoarseMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
+    using Assembler = FAKE_ASSEMBLER;
+    using CoarseMG = SmoothAggregationAMG<T, FAKE_ASSEMBLER, Smoother, ORTHOG_PROJECTOR>;
     using CoarseDirect = CusparseMGDirectLU<T, Assembler>;
 
     SmoothAggregationAMG(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
