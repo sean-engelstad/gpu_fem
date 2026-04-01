@@ -160,7 +160,8 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, int nsmooth
         auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, 
             omega, nsmooth);
         int ORDER = 1; // equiv to Jacobi-prolong smoother
-        T omega_p = 0.9;
+        // T omega_p = 0.9;
+        T omega_p = 0.5;
         auto prolong_smoother = new ProlongSmoother(cublasHandle, cusparseHandle, assembler, kmat, omega_p, ORDER);
         int ELEM_MAX = 10;
         auto prolongation = new Prolongation(cusparseHandle, assembler, prolong_smoother, ELEM_MAX, nsmooth_mat);
@@ -201,6 +202,8 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, int nsmooth
     if (is_kcycle) {
         int n_krylov = 500;
         kmg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, double_smooth);    
+        // V-cycle precond CG
+        kmg->set_cycle_type("V");
     }
 
     CHECK_CUDA(cudaDeviceSynchronize());
@@ -211,6 +214,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, int nsmooth
         for (int i = 0; i < nlevels; i++) {
             kmg->grids[i].smoother->factor();
         } 
+        kmg->coarse_solver->factor();
     } else {
         int nlevels = mg->grids.size();
         for (int i = 0; i < nlevels; i++) {

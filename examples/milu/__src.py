@@ -121,36 +121,76 @@ def plot_plate_vec(nxe, vec, ax, sort_fw, nodal_dof:int=2, cmap='viridis'):
     ax.plot_surface(X, Y, VALS, cmap=cmap)
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
-    ax.set_title('Plate')
+    # ax.set_title('Plate')
 
-def plot_cylinder_vec(nxe, vec, ax, sort_fw, nodal_dof:int=2, cmap='viridis'):
-    """Plot cylinder displacement or field (assumes 1 DOF per node)"""
+def plot_cylinder_vec(nxe, vec, ax, sort_fw, nodal_dof: int = 2,
+                      cmap='viridis', flat: bool = False):
+    """Plot cylinder field on either the wrapped cylinder or an unwrapped flat sheet."""
     ntheta = nxe
     nz = nxe + 1
     N = ntheta * nz
 
-    plot_vec = np.zeros((6*N,))
+    plot_vec = np.zeros((6 * N,))
     plot_vec[sort_fw] = vec[:]
     plot_vec = plot_vec[nodal_dof::6]
 
-    # Build node coordinates
-    theta = np.linspace(0, 2*np.pi, ntheta+1)[:-1]
+    theta = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
     z = np.linspace(0, 1.0, nz)
-    X = np.zeros((nz, ntheta))
-    Y = np.zeros_like(X)
-    Z = np.zeros_like(X)
-    for iz, zi in enumerate(z):
-        for it, ti in enumerate(theta):
-            idx = iz*ntheta + it
-            X[iz,it] = np.cos(ti)
-            Y[iz,it] = np.sin(ti)
-            Z[iz,it] = zi
+
     VALS = np.reshape(plot_vec, (nz, ntheta))
-    ax.plot_surface(X, Y, Z + VALS*0.0, facecolors=plt.cm.get_cmap(cmap)(VALS/np.max(np.abs(VALS)+1e-12)), rstride=1, cstride=1)
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_title('Cylinder')
+
+    # close periodic seam
+    theta_plot = np.hstack([theta, theta[:1] + 2 * np.pi])
+    VALS_plot = np.hstack([VALS, VALS[:, :1]])
+
+    norm = np.max(np.abs(VALS_plot)) + 1e-12
+    colors = plt.cm.get_cmap(cmap)(0.5 + 0.5 * VALS_plot / norm)
+
+    if flat:
+        # flat sheet in xy-plane
+        X_plot = np.repeat(theta_plot[None, :], nz, axis=0)
+        Y_plot = np.repeat(z[:, None], ntheta + 1, axis=1)
+        Z_plot = np.zeros_like(X_plot)
+
+        ax.plot_surface(
+            X_plot, Y_plot, Z_plot,
+            facecolors=colors,
+            rstride=1,
+            cstride=1,
+            linewidth=0,
+            antialiased=False,
+            shade=False
+        )
+
+        ax.set_xlabel(r'$\theta$')
+        ax.set_ylabel('z')
+        ax.set_zlabel('')
+        ax.set_zticks([])
+        # ax.set_title('Cylinder')
+        ax.view_init(elev=90, azim=-90)
+
+    else:
+        # wrapped cylinder
+        X_plot = np.cos(theta_plot)[None, :] * np.ones((nz, 1))
+        Y_plot = np.sin(theta_plot)[None, :] * np.ones((nz, 1))
+        Z_plot = np.repeat(z[:, None], ntheta + 1, axis=1)
+
+        ax.plot_surface(
+            X_plot, Y_plot, Z_plot,
+            facecolors=colors,
+            rstride=1,
+            cstride=1,
+            linewidth=0,
+            antialiased=False,
+            shade=False
+        )
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        # ax.set_title('Cylinder')
+        
+    plt.tight_layout()
 
 def plot_vec_generic(nxe, vec, ax, sort_fw, nodal_dof:int=2, cmap='viridis'):
     """
@@ -247,7 +287,8 @@ def sort_vis_maps(nxe, xpts, free_dof):
         nx = nx_plate
         x, y = xpts[0::3], xpts[1::3]
         # sort primarily along x, then y
-        node_sort_map = np.lexsort((y, x))
+        # node_sort_map = np.lexsort((y, x))
+        node_sort_map = np.lexsort((x, y))
     elif npts == nx_cyl * (nxe + 1):
         # Cylinder
         shape = "cylinder"
@@ -349,7 +390,7 @@ def write_80(fout, line):
 
 import numpy
 
-def gen_plate_mesh(nxe:int=10, lx:float=1.0, ly:float=1.0, name="plate", apply_bcs:bool=True):
+def gen_plate_mesh(nxe:int=10, lx:float=1.0, ly:float=1.0, name="plate", apply_bcs:bool=True, flip_xy:bool=False):
     # Overall plate dimensions lx, ly
     # Number of components in each direction
     ncx = 1
@@ -374,13 +415,22 @@ def gen_plate_mesh(nxe:int=10, lx:float=1.0, ly:float=1.0, name="plate", apply_b
     nid = numpy.zeros((nx, ny), dtype="intc")
     bcnodes = []
     count = 1
-    for i in range(ny):
+    if not flip_xy:
+        for i in range(ny):
+            for j in range(nx):
+                nid[j, i] = count
+                if j == 0 or j == nx - 1 or i == 0 or i == (ny-1):
+                    if apply_bcs:
+                        bcnodes.append(count)
+                count += 1
+    else:
         for j in range(nx):
-            nid[j, i] = count
-            if j == 0 or j == nx - 1 or i == 0 or i == (ny-1):
-                if apply_bcs:
-                    bcnodes.append(count)
-            count += 1
+            for i in range(ny):
+                nid[j, i] = count
+                if j == 0 or j == nx - 1 or i == 0 or i == (ny-1):
+                    if apply_bcs:
+                        bcnodes.append(count)
+                count += 1
 
     # Connectivity
     nex = nx - 1

@@ -10,7 +10,7 @@ template <typename T, class GRID, int N_SUBSPACE = 50>
 class GMRESSolver : public BaseSolver {
    public:
     GMRESSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_, GRID *grid_,
-                BaseSolver *pc_, SolverOptions options, int MAX_ITER_ = 200)
+                BaseSolver *pc_, SolverOptions options, int MAX_ITER_ = 200, int N_ = 0)
         : grid(grid_),
           pc(pc_),
           options(options),
@@ -36,7 +36,11 @@ class GMRESSolver : public BaseSolver {
         // cublasHandle = grid->cublasHandle;
         // cusparseHandle = grid->cusparseHandle;
 
-        N = grid->N;
+        if (N_ == 0) {
+            N = grid->N;
+        } else {
+            N = N_;
+        }
         d_x = DeviceVec<T>(N).getPtr();  // needs to be separate vec than soln in grid
 
         // printf("PCG Krylov solver made with options ncycl %d and print %d, with problem size

@@ -178,9 +178,9 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omega, st
     int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     bool print = true;
     // bool print = false;
-    T atol = 1e-6, rtol = 1e-6;
-    // bool double_smooth = false;
-    bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
+    T atol = 1e-10, rtol = 1e-6;
+    bool double_smooth = false;
+    // bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
 
     int n_cycles = 500; // max # cycles
     int print_freq = 3;
@@ -301,8 +301,8 @@ int main(int argc, char **argv) {
     // int n_vcycles = 50;
     double omega = 0.2; // smaller omega for ASW
 
-    int nsmooth = 4; // typically faster right now
-    int ninnercyc = 2; // inner V-cycles to precond K-cycle (ends up being a bit faster here..)
+    int nsmooth = 2; // typically faster right now
+    int ninnercyc = 1; // inner V-cycles to precond K-cycle (ends up being a bit faster here..)
     std::string cycle_type = "K"; // "V", "F", "W", "K"
 
     std::string elem_type = "MITC4"; // 'MITC4', 'CFI4', 'CFI9'

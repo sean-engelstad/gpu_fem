@@ -5,6 +5,7 @@
 ============================================================================================================================================================
 
 
+
 Main kinds of AMG:
 1. Root-node AMG (more recent) [RN-AMG]
 2. Coarse-fine AMG [CF-AMG]
@@ -25,19 +26,24 @@ Implementing SA-AMG:
     * main paper, ref 4 from SA-AMG (GPU-accelerated AMG)
     * coarsenings from ref. 10, 11 of SA-AMG also [serial + parallel versions]
 - [x] demo with Reissner-mindlin plate
-- [ ] implement orthogonal projector from ref. 1 of SA-AMG (energy-opt multigrid)
-- [ ] demo cylinder SA-AMG in python
-- [ ] demo wing SA-AMG in python (~20k node mesh AOB)
-- [ ] demo mat-free SA-AMG, ref. 
-- [ ] if successful, port over to GPUs! just serial aggregation first (for small problems)
-- [ ] try to do nonlinear structures with 
+- [x] implement orthogonal projector from ref. 1 of SA-AMG (energy-opt multigrid)
+- [x] demo cylinder SA-AMG in python
+
+Implement CF-AMG
+- [x] [Algebraic multigrid methods](https://arxiv.org/pdf/1611.01917)
+    * explains how to do classical AMG much better and in matrix form with direct, standard and multipass interpolation
+    * other ref was my Trottenburg book on Google play, but that didn't explain it nearly as well as this ref. 
+
+Implement RN-AMG
+- [x] [A ROOT-NODE BASED ALGEBRAIC MULTIGRID METHOD](https://arxiv.org/pdf/1610.03154)
+
 
 Optional:
 - [ ] implement other types of coarsening CLJP, PMIS, HMIS (see coarsening.py)
 
 
 High-level remaining tasks (to implement first in python):
-- [ ] SA-AMG
+- [x] SA-AMG
 - [ ] CF-AMG
 - [ ] RN-AMG
 - [ ] AMGe

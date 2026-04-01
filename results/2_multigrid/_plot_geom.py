@@ -13,11 +13,11 @@ toverR = 1.0 / SR
 # plt.rcParams.update({
 #     # 'font.family': 'Courier New',  # monospace font
 #     # 'font.family' : 'monospace', # since Courier new not showing up?
-#     'font.size': 20,
-#     'axes.titlesize': 20,
-#     'axes.labelsize': 20,
-#     'xtick.labelsize': 20,
-#     'ytick.labelsize': 20,
+#     'font.size': 18,
+#     'axes.titlesize': 18,
+#     'axes.labelsize': 18,
+#     'xtick.labelsize': 18,
+#     'ytick.labelsize': 18,
 #     'legend.fontsize': 18,
 #     'figure.titlesize': 20
 # })
@@ -26,8 +26,8 @@ plt.style.use(niceplots.get_style())
 ms = 7 # marker size
 # ms = 8
 
-# fs = 24
-fs = 20
+fs = 24
+# fs = 20
 # fs = 22
 
 # text_fs = 12
@@ -141,7 +141,7 @@ for _i in range(4):
         y_pt * y_off,
         f"{y_pt:.1f}" + r"$\times$",
         color=colors[i],
-        fontsize=12,
+        fontsize=18,
         fontweight="bold",
         ha="left",
         va="bottom"
@@ -232,7 +232,7 @@ for _i in range(4):
         y_pt * y_off,
         f"{y_pt:.1f}" + r"$\times$",
         color=colors[i],
-        fontsize=12,
+        fontsize=18,
         fontweight="bold",
         ha="left",
         va="bottom"
@@ -258,7 +258,7 @@ for _i in range(4):
         y_pt * y_off,
         f"{y_pt:.1f}" + r"$\times$",
         color=colors[i],
-        fontsize=12,
+        fontsize=18,
         fontweight="bold",
         ha="left",
         va="bottom"

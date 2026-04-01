@@ -94,7 +94,7 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
     cusparseHandle_t cusparseHandle = NULL;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
-    int pre_nxe_min = nxe > 32 ? 32 : 4;
+    int pre_nxe_min = nxe > 32 ? 32 : 8;
     int nxe_min = pre_nxe_min;
     for (int c_nxe = nxe; c_nxe >= pre_nxe_min; c_nxe /= 2) {
         nxe_min = c_nxe;
@@ -200,7 +200,7 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
     int pre_smooth = nsmooth, post_smooth = nsmooth; // need a little extra smoothing on cylinder (compare to plate).. (cause of curvature I think..)
     bool print = true;
     // bool print = false;
-    T atol = 1e-6, rtol = 1e-6;
+    T atol = 1e-10, rtol = 1e-6;
     bool double_smooth = false;
     // bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
 
@@ -457,7 +457,7 @@ int main(int argc, char **argv) {
 
     // chebyshev, jacobi, gsmc, direct 
     std::string smoother_type = "asw";
-    std::string cycle_type = "K"; // K-cycle (other options, 'V', 'W', 'F')
+    std::string cycle_type = "VK"; // K-cycle (other options, 'V', 'W', 'F')
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {

@@ -5,10 +5,10 @@ from __ilu import q_ordering
 from _fillin import ilu_k_pattern_bsr
 import numpy as np
 
-def make_plate_case(args, qorder_p:float=1.0, complex_load:bool=True, apply_bcs:bool=True):
+def make_plate_case(args, qorder_p:float=1.0, complex_load:bool=True, apply_bcs:bool=True, flip_xy:bool=False):
     """make plate case helper function (to be used in this script for single-level ILU and the next script for multilevel ILU)"""
 
-    gen_plate_mesh(nxe=args.nxe, lx=1.0, ly=1.0, apply_bcs=apply_bcs)
+    gen_plate_mesh(nxe=args.nxe, lx=1.0, ly=1.0, apply_bcs=apply_bcs, flip_xy=flip_xy)
 
     # ====================================================
     # 1) create and assemble FEA problem

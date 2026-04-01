@@ -66,7 +66,7 @@ void spai_solve(int nxe, double SR, int fill_level, int optim, T pressure = 5.0e
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
     const SCALER scaler  = LINE_SEARCH;
-    using Smoother = SPAI<T, Assembler>;
+    using Smoother = SPAI<T>;
     using Prolongation = StructuredProlongation<Assembler, CYLINDER>;
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, scaler>;
 
@@ -130,7 +130,7 @@ void spai_solve(int nxe, double SR, int fill_level, int optim, T pressure = 5.0e
     // build smoother and prolongations..
     // auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, h_color_rowp, omegaMC, false, nsmooth);
     printf("making SPAI smoother\n");
-    auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, fill_level, optim);
+    auto smoother = new Smoother(cublasHandle, cusparseHandle, kmat, fill_level, optim);
     printf("\tdone making SPAI smoother\n");
     auto prolongation = new Prolongation(assembler);
     auto grid = new GRID(assembler, prolongation, smoother, kmat, loads, cublasHandle, cusparseHandle);

@@ -7,11 +7,11 @@
 #include <string>
 
 #include "mesh/vtk_writer.h"
-#include "newton.h"
+//#include "newton.h"
 #include "solvers/linear_static/_utils.h"
 
 template <typename T, class Mat, class Vec, class Assembler, class Solver,
-          bool DO_LINE_SEARCH = true>
+          bool DO_LINE_SEARCH = true, bool USE_FETI_IEV = false>
 class InexactNewtonSolver {
    public:
     InexactNewtonSolver(cublasHandle_t &cublasHandle_, Assembler &assembler_, Mat &kmat_,
@@ -98,11 +98,25 @@ class InexactNewtonSolver {
                 linSolveRtol = zeta_star < 0.1 ? zeta : max(zeta, zeta_star);
                 linSolveRtol =
                     std::clamp(linSolveRtol, minLinSolveTol, maxLinSolveTol);  // clip the rtol
+
+                // if (USE_FETI_IEV) {
+                //     linSolveRtol *=
+                //         1e-3;  // need to solve a little deeper than normal cause not solving
+                //         kmat
+                //                // directly (extra numerical error in thin shell)
+                // }
             }
             linear_solver->set_rel_tol(linSolveRtol);
 
             // do an iterative linear solve here
             // ---------------------------------
+
+            // assemble FETI res_IEV = lambda * fext_IEV - (1.0) * fint_IEV where fint_IEV =
+            // kmat_IEV(u_IEV) * u_IEV. Assumed sign is -1 on fint_IEV for IEV resid
+            // then flipped sign here because r(u) = fint - lam * fext in INK convention
+            if constexpr (USE_FETI_IEV) {
+                linear_solver->compute_feti_residual(-lambda, -1.0, vars);
+            }
 
             // NOTE : res and update are held in VIS (visualization) order
             // in this class, while the linear solver expects everything
@@ -120,6 +134,12 @@ class InexactNewtonSolver {
                 continue;
             }
 
+            // FETI-DP debug
+            // char filename[256];
+            // std::snprintf(filename, sizeof(filename), "out/plate_debug_%d.vtk", inewton);
+            // auto h_soln = update.createHostVec();
+            // printToVTK<Assembler, HostVec<T>>(assembler, h_soln, filename);
+
             // flip sign of update since rhs should have really been -res
             T a = -1.0;
             CHECK_CUBLAS(cublasDscal(cublasHandle, nvars, &a, update.getPtr(), 1));
@@ -134,6 +154,13 @@ class InexactNewtonSolver {
                 cublasDaxpy(cublasHandle, nvars, &alpha, update.getPtr(), 1, vars.getPtr(), 1));
             assembler.set_variables(vars);
             prev_res_nrm = res_nrm;
+
+            // DEBUG
+            // T res_nrm2 = computeResidual(lambda);
+            // printf("\t\tres_nrm2 with alpha %.4e: %.4e\n", alpha, res_nrm2);
+
+            // // compare with solution from direct solver
+            // CUSPARSE::direct_LU_solve(kmat, res, update);
 
             // DEBUG prints here
             // ========================================
@@ -367,6 +394,13 @@ class InexactNewtonSolver {
         // where fint in res (temporarily)
         assembler.add_residual_fast(res);  // automatically zeros res
         assembler.apply_bcs(res);
+
+        // assemble FETI res_IEV = fint_IEV here (-1 cause assumed signage is lamE * fext_IEV - lamI
+        // * fint_IEV)
+        if constexpr (USE_FETI_IEV) {
+            linear_solver->compute_feti_residual(0.0, -1.0, vars);
+        }
+
         // then do linear solve dUi = Kinv * Fi
         res.permuteData(block_dim, d_iperm);  // res from VIS => SOLVE order
         linear_solver->solve(res, update, true);
@@ -383,6 +417,12 @@ class InexactNewtonSolver {
 
         // 2) compute dUe = Kinv * Fe
         // keep res = Fe in solve order from last block
+
+        // assemble FETI res_IEV = fext_IEV here (since above lambda = 1 is used not lambda guess))
+        if constexpr (USE_FETI_IEV) {
+            linear_solver->compute_feti_residual(1.0, 0.0, vars);
+        }
+
         linear_solver->solve(res, update, true);
         // keep update (aka Ue) in SOLVE order
         // now do inner product <Fe, dUe>
@@ -416,6 +456,12 @@ class InexactNewtonSolver {
 
         linear_solver->set_rel_tol(failedRtol);  // set to same as what failed here
         printf("setting lin solve to failed rtol %.4e\n", failedRtol);
+
+        // assemble FETI res_IEV = fint_IEV here (-1 cause assumed signage is lamE * fext_IEV - lamI
+        // * fint_IEV)
+        if constexpr (USE_FETI_IEV) {
+            linear_solver->compute_feti_residual(lambda, 1.0, vars);
+        }
 
         // run linear solve (with debug flag on?)
         printf("calling linear solver in DEBUG SOLVE\n");

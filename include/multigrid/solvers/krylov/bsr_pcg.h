@@ -10,7 +10,7 @@ template <typename T, class GRID>
 class PCGSolver : public BaseSolver {
    public:
     PCGSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_, GRID *grid_,
-              BaseSolver *pc_, SolverOptions options, int ilevel_ = -1)
+              BaseSolver *pc_, SolverOptions options, int ilevel_ = -1, int N_ = 0)
         : grid(grid_),
           pc(pc_),
           options(options),
@@ -34,7 +34,12 @@ class PCGSolver : public BaseSolver {
         cublasHandle = grid->cublasHandle;
         cusparseHandle = grid->cusparseHandle;
 
-        N = grid->N;
+        if (N_ == 0) {
+            N = grid->N;
+        } else {
+            N = N_;
+        }
+
         d_rhs = DeviceVec<T>(N).getPtr();
         d_x = DeviceVec<T>(N).getPtr();  // needs to be separate vec than soln in grid
 
@@ -88,6 +93,8 @@ class PCGSolver : public BaseSolver {
         // assumes rhs_in and soln_out are in permutation for solve (not natural order)
         // performs full K-cycle with left-precond flexible PCG (note this shows true resid even
         // though it is left precond, unlike GMRES)!
+
+        // printf("in regular PCG solve\n");
 
         // copy rhs from method into internal rhs and set soln to zero cause this is like a defect
         // solve

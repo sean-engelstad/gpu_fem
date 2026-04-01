@@ -76,7 +76,8 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, T ome
     // int ORDER = 8; 
 
     // some important settings
-    T omegaLS_min = 0.25, omegaLS_max = 2.0;
+    // T omegaLS_min = 0.25, omegaLS_max = 2.0;
+    T omegaLS_min = 1e-2, omegaLS_max = 4.0;
 
     cublasHandle_t cublasHandle = NULL;
     CHECK_CUBLAS(cublasCreate(&cublasHandle));
@@ -172,13 +173,14 @@ void multigrid_plate_solve(int nxe, double SR, int nsmooth, int ninnercyc, T ome
     bool print = true;
     // bool print = false;omegaLS_min
     T atol = 1e-10, rtol = 1e-6;
-    bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
+    // bool double_smooth = true; // twice as many smoothing steps at lower levels (similar cost, better conv?)
+    bool double_smooth = false;
 
-    int n_cycles = 500; // max # cycles
+    int n_cycles = 1000; // max # cycles
     int print_freq = 3;
 
     if (is_kcycle) {
-        int n_krylov = 500;
+        int n_krylov = 1000;
         kmg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, double_smooth);    
         kmg->coarse_solver->factor();
     } else {
