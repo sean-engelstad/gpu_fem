@@ -17,8 +17,16 @@
 
 #include "domdec/bddc_assembler.h"
 #include "multigrid/grid.h"
+#include "multigrid/smoothers/cheb4_poly.h"
+#include "multigrid/prolongation/structured.h"
 #include "multigrid/solvers/krylov/bsr_pcg.h"
 #include "multigrid/solvers/krylov/bsr_pcg_matfree.h"
+
+// AMG multigrid
+#include "multigrid/amg/sa_amg.h"
+#include "multigrid/amg/rn_amg.h"
+#include "multigrid/amg/_rigid_modes.cuh"
+#include "multigrid/solvers/krylov/bsr_pcg.h"
 
 void to_lowercase(char *str) {
     for (; *str; ++str) {
@@ -67,6 +75,24 @@ struct UniformPressure {
 };
 
 template <typename T>
+struct ObliqueCylinderLoad {
+
+    __HOST_DEVICE__
+    T operator()(T x, T y, T z) const {
+        T x_hat = x / 1.0; // assumes L = 1.0
+        T th = atan2(y, z);
+        T th_hat = th / 2 / M_PI;
+        T mag = 1.0e2 *
+                (0.3 * cos(5 * th + 2.0 * M_PI * x_hat) +
+                    0.7 * cos(10 * th + 3.14159 / 6.0 + 5.3 * M_PI * x_hat)) *
+                sin(5 * M_PI * x_hat + 0.5 * 2.0 * x_hat * x_hat);
+        return mag;
+    }
+};
+
+
+
+template <typename T>
 struct ObliqueShearSineLoad {
     __HOST_DEVICE__
     T operator()(T x, T y, T z) const {
@@ -85,7 +111,6 @@ int main(int argc, char **argv) {
     // Intialize MPI and declare communicator
     MPI_Init(&argc, &argv);
     MPI_Comm comm = MPI_COMM_WORLD;
-
 
     using T = double;
     using Director = LinearizedRotation<T>;
@@ -111,17 +136,33 @@ int main(int argc, char **argv) {
     using KIPCG = PCGSolver<T, GRID>;
     using GamPCG = MatrixFreePCGSolver<T, BDDC>; // BDDC is the operator and preconditioner
 
+    // AMG
+    using FAssembler = FakeAssembler<T, Assembler>;
+    using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
+    const bool ORTHOG_PROJECTOR = true;
+    // using AMG = SmoothAggregationAMG<T, FAssembler, Smoother, ORTHOG_PROJECTOR>;
+    using AMG = RootNodeAMG<T, FAssembler, Smoother, ORTHOG_PROJECTOR>;
+    using Prolongation = StructuredProlongation<Assembler, CYLINDER>;
+    using GRID2 = SingleGrid<FAssembler, Prolongation, Smoother, LINE_SEARCH>;
+    using PCG = PCGSolver<T, GRID2>;
 
+    // can't run this small a problem (1 vertex with S_VV coarse solver for some reason)
+    // int nxe = 4, nxe_subdomain_size = 2;
+    // int nxe = 6, nxe_subdomain_size = 2;
+    // int nxe = 128, nxe_subdomain_size = 4; // this problem has optimal runtime for 4x4 subdomains
+    // int nxe = 128, nxe_subdomain_size = 8;
     int level = 2; // wing mesh level
-    // int level = 1;
-    // int nxe_subdomain_size = 4;
-    int nxe_subdomain_size = 8;
+    int nxe_subdomain_size = 4;
+    // int nxe = 256, nxe_subdomain_size = 8; // 8 subdomains slightly faster (cause shrinks coarse problem) for local + HPC
+    // NOTE : full fillin with fill_level = -1, but lower fill results in less ILU(k) factor time
+    // for the coarse problem..
     T omega;
     int nsmooth, fill_level;
     T thick = 1e-3;
     // bool print_mem = false;
     bool print_mem = true;
-    T mag = 1.0;
+    T mag = 1.0e2;
+    
     T wrapfrac = 1.0; // what percentage of subdomains are wrapped around (to gen plot of best performance)
     // whether to wrap subdomains around junctions
     int wraparound = 1; // 1 is true, 0 is false
@@ -134,6 +175,10 @@ int main(int argc, char **argv) {
     // 2) or if full LU fillin
     // think I actually need to run with full direct fillin (cause otherwise solution recovery is wrong)
     omega = 1.0, nsmooth = 1, fill_level = -1; // -1 indicates full LU fillin
+
+    // if (!MULTI_SMOOTH) {
+    //     printf("NOTE: MULTI_SMOOTH is false, so omega, nsmooth inputs are ignored.\n");
+    // }
 
     for (int i = 1; i < argc; ++i) {
         char* arg = argv[i];
@@ -219,7 +264,7 @@ int main(int argc, char **argv) {
 
     // =================
 
-    if (nxe_subdomain_size == 8 && level == 0) {
+     if (nxe_subdomain_size == 8 && level == 0) {
         printf("subdomain size %d too large for level 0, changing to 2\n", nxe_subdomain_size);
         nxe_subdomain_size = 2;
     }
@@ -271,9 +316,8 @@ int main(int argc, char **argv) {
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
 
     // bool print_timing = true; // profiling
-    bool print_timing = false; // profiling
+    bool print_timing = false;
     auto bddc = new BDDC(cublasHandle, cusparseHandle, assembler, kmat, print_timing);
-
 
     int MOD_WRAPAROUND = -1;
     if (wraparound) {
@@ -314,23 +358,10 @@ int main(int argc, char **argv) {
     // perform LU fillin and reordering (optional)
     auto &I_bsr_data = bddc->I_bsr_data;
     auto &IE_bsr_data = bddc->IE_bsr_data;
-    if (fill_level != -1) { 
-        I_bsr_data.RCM_reordering();
-        I_bsr_data.qorder_reordering(0.5);
-        I_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        I_bsr_data.AMD_reordering(); 
-        I_bsr_data.compute_full_LU_pattern(10.0);
-    }
-
-    if (fill_level != -1) { 
-        IE_bsr_data.RCM_reordering();
-        IE_bsr_data.qorder_reordering(0.5);
-        IE_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        IE_bsr_data.AMD_reordering(); 
-        IE_bsr_data.compute_full_LU_pattern(10.0);
-    }
+    I_bsr_data.AMD_reordering(); 
+    I_bsr_data.compute_full_LU_pattern(10.0);
+    IE_bsr_data.AMD_reordering(); 
+    IE_bsr_data.compute_full_LU_pattern(10.0);
 
     // now compute matrix sparsity, copy maps
     // printf("setup matrix sparsity\n");
@@ -339,25 +370,19 @@ int main(int argc, char **argv) {
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
-    if (fill_level != -1) { 
-        Svv_bsr_data.RCM_reordering();
-        Svv_bsr_data.qorder_reordering(0.5);
-        Svv_bsr_data.compute_ILUk_pattern(fill_level, 10.0);
-    } else {
-        Svv_bsr_data.AMD_reordering();
-        Svv_bsr_data.compute_full_LU_pattern(10.0);
-    }
+    // since using AMG
+    Svv_bsr_data.compute_nofill_pattern();
+    // Svv_bsr_data.AMD_reordering();
+    // Svv_bsr_data.compute_full_LU_pattern(10.0);
 
-    // printf("setup coarse matrix sparsity\n");
     bddc->setup_coarse_matrix_sparsity();
-    // printf("\tdone with setup coarse matrix sparsity\n");
 
     // assemble local FETI-DP blocks
     bddc->assemble_subdomains();
 
     // external load (can add internally)
-    // ObliqueShearSineLoad<T> load;
     UniformPressure<T> load;
+    // ObliqueShearSineLoad<T> load;
     bddc->add_subdomain_fext(load, mag);
 
     bddc->set_IEV_residual(1.0, 0.0, vars);
@@ -368,48 +393,123 @@ int main(int argc, char **argv) {
     //
     // Example sketch only; replace with your actual solver classes:
     
-    if (fill_level == -1) {
-        // setup direct solver
-        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
-        auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-        auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+    // setup direct solver
+    auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
+    auto *i_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
+    // auto *v_solver  = new InnerSolver_JUSTLU(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
+
+    // factor each solver
+    ie_solver->factor();
+    i_solver->factor();
+
+    // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
+    SolverOptions amg_krylov_opts;
+    amg_krylov_opts.ncycles = 100;
+    // opts.ncycles = 500;
+    amg_krylov_opts.print = true;
+    // amg_krylov_opts.print = false;
+    amg_krylov_opts.print_freq = 10;
+    amg_krylov_opts.debug = true;
+    // amg_krylov_opts.rtol = 1e-6;
+    // amg_krylov_opts.rtol = 1e-2;
+    amg_krylov_opts.rtol = 1e-3;
+    amg_krylov_opts.atol = 1e-30;
+
+    auto temp_v = nullptr;
+
+    bddc->set_inner_solvers(ie_solver, i_solver, temp_v);
+    // v_solver->factor();    
+
+    // this builds Schur complement matrix
+    bddc->assemble_coarse_problem();
+
+    // NOW right here built the AMG problem
+    // ===========================================
+
+    T omegas = 0.2;
+    int nsmooth_amg = 1;
+    int ORDER = 4;
+
+    auto Svv_mat = bddc->getCoarseSVVmat();
+    int nnodes_coarse = Svv_bsr_data.nnodes;
+    auto fake_coarse_assembler = FAssembler(Svv_bsr_data, nnodes_coarse);
+    Smoother *coarse_smoother = new Smoother(cublasHandle, cusparseHandle, fake_coarse_assembler, 
+        *Svv_mat, omegas, ORDER, nsmooth_amg);
+
+    // get rigid body modes from coarse xpts
+    auto d_coarse_xpts = bddc->getCoarseXpts();
+    auto coarse_rbm = DeviceVec<T>(36 * nnodes_coarse); // each of 6 rigid body modes
+    int block_dim = 6;
+    k_compute_linear_rigid_body_modes<T><<<(nnodes_coarse + 31) / 32, 32>>>(nnodes_coarse, block_dim, 
+        d_coarse_xpts.getPtr(), coarse_rbm.getPtr());
     
-        // factor each solver
-        ie_solver->factor();
-        i_solver->factor();
+    int coarse_node_th = 100; // this value is problem dependent
+    // T sparse_th = 1e-2;
+    T sparse_th = 1e-3;
+    // T sparse_th = 1e-4;
+    auto d_bcs = DeviceVec<int>(0); // no bcs on interior vertex nodes
+    int rbm_nsmooth = 2;
+    T omegap = 0.25;
+    // int nmat_smooth = 1;
+    int nmat_smooth = 1;
+    std::string coarsening_type = "standard"; // inactive for SA-AMG
 
-        bddc->set_inner_solvers(ie_solver, i_solver, v_solver);
+    // top-level AMG solver (for solving coarse BDDC problem)
+    // Svv_mat used for both kmat and kmat_free (cause no BCs, and only one instance of matrix, 
+    //  this is fine, though matrix is duplicated unnecessarily)
+    AMG *top_amg = new AMG(cublasHandle, cusparseHandle, coarse_smoother, nnodes_coarse, 
+        *Svv_mat, *Svv_mat, coarse_rbm, d_bcs, 
+        coarse_node_th, sparse_th, omegap, nsmooth, 0, 
+        rbm_nsmooth, nmat_smooth, coarsening_type);
 
-        bddc->assemble_coarse_problem();
-        v_solver->factor();    
+    // assist in making smoothers at coarser levels
+    // printf("MAIN: build fine AMG solver\n");
+    AMG *c_amg = top_amg;
+    bool built_direct = false;
+    while (c_amg != nullptr && (c_amg->is_coarse_mg || !built_direct)) {
+        // build smoother for coarser problem (but it can't use assembler though..)
+        auto c_bsr_data = c_amg->get_coarse_bsr_data();
+        auto coarse_kmat = c_amg->get_coarse_kmat();
+        int c_nnodes = c_amg->get_num_aggregates();
+        printf("MAIN: build coarse system with %d aggregates\n", c_nnodes);
+        auto fake_c_assembler = FAssembler(c_bsr_data, c_nnodes);
+        Smoother *c_smoother = new Smoother(cublasHandle, cusparseHandle, fake_c_assembler, 
+            coarse_kmat, omegas, ORDER, nsmooth);
 
-    } else {
-        // setup incomplete solvers
-        auto *ie_solver = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_IE, omega, nsmooth);
-        auto *i_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->kmat_I, omega, nsmooth);
-        auto *v_solver  = new InnerSolver(cublasHandle, cusparseHandle, assembler, *bddc->S_VV, omega, nsmooth);
-       
-        // factor each solver
-        ie_solver->factor();
-        i_solver->factor();
+        // build coarser system
+        // printf("MAIN: build coarse system\n");
+        c_amg->build_coarse_system(fake_c_assembler, c_smoother);
+        // printf("\tMAIN: done building coarse system\n");
 
-        // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
-        SolverOptions ki_opts;
-        ki_opts.ncycles = 50;
-        // ki_opts.ncycles = 500;
-        ki_opts.print = true;
-        ki_opts.print_freq = 5;
-        ki_opts.debug = true;
-        ki_opts.rtol = 1e-15;
-        ki_opts.atol = 1e-30;
+        if (!c_amg->get_coarse_mg()) {
+            // factor coarse direct problem
+            printf("\tfactoring coarse direct solver\n");
+            c_amg->coarse_direct->factor();
+            built_direct = true;
+            break;
+        } 
 
-        auto grid = new GRID(assembler, nullptr, nullptr, *bddc->getKmatI(), loads, cublasHandle, cusparseHandle);
-        auto i_krylov = new KIPCG(cublasHandle, cusparseHandle, grid, i_solver, ki_opts, 0, bddc->getInvars());
-        bddc->set_inner_solvers(ie_solver, i_solver, v_solver, i_krylov);
+        // then set current amg (c_amg) to coarser problem
+        c_amg = c_amg->coarse_mg;
+        // if (c_amg != nullptr) c_amg->set_matrix_nsmooth(nmat_smooth);
+    }
 
-        bddc->assemble_coarse_problem();
-        v_solver->factor();    
-    }   
+    auto coarse_loads = fake_coarse_assembler.createVarsVec();
+
+    // build prolongation and fine grid also (unnecessary but required arg of PCG solver right now for some reason)
+    auto prolongation = new Prolongation(fake_coarse_assembler);
+    auto grid2 = new GRID2(fake_coarse_assembler, prolongation, coarse_smoother, *Svv_mat, 
+        coarse_loads, cublasHandle, cusparseHandle);
+    auto pc = top_amg; // topamg level used as preconditioner for AMG krylov
+    int amg_level = 0;
+    auto v_amg_krylov = new PCG(cublasHandle, cusparseHandle, grid2, pc, amg_krylov_opts, amg_level);
+    
+
+    // now set the last solver in (v_amg_krylov)
+    bddc->set_inner_solvers(ie_solver, i_solver, v_amg_krylov);
+
+    // =============================================
+
 
     // lambda rhs
     VecType<T> gam_rhs(bddc->getLambdaSize());
@@ -418,9 +518,10 @@ int main(int argc, char **argv) {
 
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
+    // opts.ncycles = 2;
     // opts.ncycles = 50;
-    // opts.ncycles = 150;
-    opts.ncycles = 1000;
+    opts.ncycles = 150;
+    // opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
     opts.debug = true;
@@ -450,6 +551,7 @@ int main(int argc, char **argv) {
     auto start1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> IEV_factor_time = start1 - start0;
 
+
     bool gam_fail = gam_solver->solve(gam_rhs, gam, true);
     bddc->get_global_soln(gam, soln);
 
@@ -474,6 +576,7 @@ int main(int argc, char **argv) {
     printf("  total setup + solve   : %.4e s\n\n", total_time.count());
 
     int kmat_nnzb;
+
     if (print_mem) {
         // get memory usage
         size_t bytes_per_double = sizeof(double);
@@ -484,7 +587,8 @@ int main(int argc, char **argv) {
         int IEV_nnzb    = bddc->kmat_IEV->getBsrData().nnzb;
         int IE_nnzb     = IE_bsr_data.nnzb;
         int I_nnzb      = I_bsr_data.nnzb;
-        int coarse_nnzb = Svv_bsr_data.nnzb;
+        // int coarse_nnzb = Svv_bsr_data.nnzb;
+        int coarse_nnzb = top_amg->get_total_nnzb();
 
         // no-fill counts (must already exist in your code)
         int IE_nofill_nnzb     = bddc->IE_nofill_nnzb;
@@ -543,11 +647,10 @@ int main(int argc, char **argv) {
     }
 
     auto h_soln = soln.createHostVec();
-    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/wing_bddc.vtk");
+    printToVTK<Assembler, HostVec<T>>(assembler, h_soln, "out/plate_bddc.vtk");
 
     // compare to direct solver (the solution)
     bool compare_direct = true;
-    // bool compare_direct = false;
     if (level >= 4) compare_direct = false; // too high DOF for direct solve on single GPU
     if (compare_direct) {
         // and need it globally too..
