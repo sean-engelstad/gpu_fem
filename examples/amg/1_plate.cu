@@ -391,19 +391,19 @@ void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth,
         // const bool ORTHOG_PROJECTOR = false;
         using FAssembler = FakeAssembler<T, Assembler>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
-        using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
+        using AMG = SmoothAggregationAMG<T, FAssembler, Smoother, ORTHOG_PROJECTOR>;
         amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "cf_amg") {
         using FAssembler = FakeAssembler<T, Assembler>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
-        using AMG = ClassicalCFAMG<T, Smoother>;
+        using AMG = ClassicalCFAMG<T, FAssembler, Smoother>;
         amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "rn_amg") {
         const bool ORTHOG_PROJECTOR = true;
         // const bool ORTHOG_PROJECTOR = false;
         using FAssembler = FakeAssembler<T, Assembler>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
-        using AMG = RootNodeAMG<T, Smoother, ORTHOG_PROJECTOR>;
+        using AMG = RootNodeAMG<T, FAssembler, Smoother, ORTHOG_PROJECTOR>;
         amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "direct") {
         solve_direct<T, Assembler>(nxe, SR);

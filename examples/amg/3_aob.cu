@@ -69,7 +69,7 @@ void amg_solve(MPI_Comm &comm, int level, double SR, int nsmooth, int ninnercyc,
 
     const bool ORTHOG_PROJECTOR = true;
     // const bool ORTHOG_PROJECTOR = false;
-    using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
+    using AMG = SmoothAggregationAMG<T, FAssembler, Smoother, ORTHOG_PROJECTOR>;
     using PCG = PCGSolver<T, GRID>;
 
     cublasHandle_t cublasHandle = NULL;

@@ -282,9 +282,9 @@ int main(int argc, char **argv) {
     IE_bsr_data.compute_full_LU_pattern(10.0);
 
     // now compute matrix sparsity, copy maps
-    // printf("setup matrix sparsity\n");
+    printf("setup matrix sparsity\n");
     bddc->setup_matrix_sparsity();
-    // printf("\tdone with setup matrix sparsity\n");
+    printf("\tdone with setup matrix sparsity\n");
 
     // then perform coarse matrix fillin and compute sparsity
     auto &Svv_bsr_data = bddc->Svv_bsr_data;
@@ -313,6 +313,8 @@ int main(int argc, char **argv) {
     printf("\tdone with setup matrix sparsity on coarse bddc\n");
 
     int *coarse_IEV_nodes = c_bddc->getIEVnodes();
+    int *coarse_IEV_sd_ptr = c_bddc->getIEVsdPtr();
+    int *coarse_IEV_sd_ind = c_bddc->getIEVsdInd();
 
     // also build the new K_II Krylov solver (subdomain parallel + needed for set rhs and soln recovery)
     SolverOptions ki_opts;
@@ -342,7 +344,7 @@ int main(int argc, char **argv) {
     // is the IEV matrix of coarse BDDC problem
     auto S_VV_MLIEV = c_bddc->getKmatIEV();
     printf("setup multilevel coarse matrix sparsity\n");
-    bddc->setup_MLIEV_coarse_matrix_sparsity(S_VV_MLIEV, coarse_IEV_nodes);
+    bddc->setup_MLIEV_coarse_matrix_sparsity(S_VV_MLIEV, coarse_IEV_nodes, coarse_IEV_sd_ptr, coarse_IEV_sd_ind, coarse_elem_sd_ind);
     printf("\tdone with setup multilevel coarse matrix sparsity\n");
 
     // ==============================================

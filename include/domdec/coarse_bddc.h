@@ -387,6 +387,8 @@ class CoarseBddcSolver : public BddcSolver<T, FakeAssembler<T, ShellAssembler_>,
     BsrMat<DeviceVec<T>> *getKmatIEV() { return this->kmat_IEV; }
     BsrMat<DeviceVec<T>> *getSVVmat() { return this->S_VV; }
     int *getIEVnodes() { return this->IEV_nodes; }
+    int *getIEVsdPtr() { return this->IEV_sd_ptr; }
+    int *getIEVsdInd() { return this->IEV_sd_ind; }
 
     void assemble_coarse_subdomains() {
         // assemble subdomains without assembly of S_VV (or this fine grid matrix)

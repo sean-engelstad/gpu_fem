@@ -2305,12 +2305,15 @@ class FetidpSolver : public BaseSolver {
 
         // then build coarse_elem_sd_ind
         coarse_elem_sd_ind = new int[coarse_num_elements];
+        // int coarse_num_subdomains = this->num_subdomains;
+        // coarse_fine_sd_map = new int[coarse_num_subdomains];
         for (int i = 0; i < num_elements; i++) {
             int celem = elem_sd_ind1[i];
             int c_subdomain = elem_sd_ind2[i];
             // all elements in a subdomain have same value (hierarchical, so don't need unique
             // checks here) fine to overwrite (from fine grid)
             coarse_elem_sd_ind[celem] = c_subdomain;
+            // coarse_fine_sd_map[c_subdomain] = celem;
         }
         printf("coarse_elem_sd_ind: ");
         printVec<int>(coarse_num_elements, coarse_elem_sd_ind);
@@ -3046,7 +3049,10 @@ class FetidpSolver : public BaseSolver {
         d_IEV_bcs = HostVec<int>(IEV_bcs_vec.size(), IEV_bcs_vec.data()).createDeviceVec();
     }
 
-    void setup_MLIEV_coarse_matrix_sparsity(BsrMatType *S_VV_MLIEV_, int *coarse_IEV_nodes) {
+    void setup_MLIEV_coarse_matrix_sparsity(BsrMatType *S_VV_MLIEV_, const int *coarse_IEV_nodes,
+                                            const int *coarse_IEV_sd_ptr,
+                                            const int *coarse_IEV_sd_ind,
+                                            const int *coarse_elem_sd_ind) {
         // setup multilevel IEV coarse matrix sparsity (for 3-levels and coarse matrix with
         // IEV-splitting)
 
@@ -3063,13 +3069,47 @@ class FetidpSolver : public BaseSolver {
         this->SVV_MLIEV_perm = this->Svv_MLIEV_bsr_data.perm;
         this->SVV_MLIEV_iperm = this->Svv_MLIEV_bsr_data.iperm;
 
-        // printf("coarse IEV nodes (%d): ", coarse_IEV_nnodes);
-        // printVec<int>(coarse_IEV_nnodes, coarse_IEV_nodes);
+        // -------------------------------------------------------------------------
+        // Build matched fine-IEV <-> coarse-IEV pairs.
+        //
+        // Not every fine IEV node has a coarse IEV match.
+        // Multiple fine IEV nodes may map to the same coarse IEV node.
+        // -------------------------------------------------------------------------
+        std::vector<int> fine_match_iev;
+        std::vector<int> coarse_match_iev;
 
-        // printf("Svv_rowp with nnzb %d: ", Svv_MLIEV_nnzb);
-        // printVec<int>(coarse_IEV_nnodes + 1, Svv_MLIEV_rowp);
-        // printf("Svv_cols: ");
-        // printVec<int>(Svv_MLIEV_nnzb, Svv_MLIEV_cols);
+        for (int IEV_ind = 0; IEV_ind < this->IEV_nnodes; IEV_ind++) {
+            int fine_glob_node = this->IEV_nodes[IEV_ind];
+            int fine_subdomain = this->IEV_sd_ind[IEV_ind];
+            int coarse_subdomain = coarse_elem_sd_ind[fine_subdomain];
+
+            for (int coarse_IEV_ind = coarse_IEV_sd_ptr[coarse_subdomain];
+                 coarse_IEV_ind < coarse_IEV_sd_ptr[coarse_subdomain + 1]; coarse_IEV_ind++) {
+                int coarse_glob_node = this->Vc_nodes[coarse_IEV_nodes[coarse_IEV_ind]];
+
+                if (fine_glob_node == coarse_glob_node) {
+                    fine_match_iev.push_back(IEV_ind);
+                    coarse_match_iev.push_back(coarse_IEV_ind);
+                    break;
+                }
+            }
+        }
+
+        // now report all matches
+        for (int imatch = 0; imatch < fine_match_iev.size(); imatch++) {
+            int fine_iev = fine_match_iev[imatch];
+            int fine_glob = IEV_nodes[fine_iev];
+            int coarse_iev = coarse_match_iev[imatch];
+            int coarse_glob = this->Vc_nodes[coarse_IEV_nodes[coarse_iev]];
+            printf("fine iev %d, fine glob %d, coarse iev %d, coarse_glob %d\n", fine_iev,
+                   fine_glob, coarse_iev, coarse_glob);
+        }
+
+        // lookup only for matched fine IEV nodes
+        std::unordered_map<int, int> fine_to_coarse_match_lookup;
+        for (int match_ind = 0; match_ind < static_cast<int>(fine_match_iev.size()); match_ind++) {
+            fine_to_coarse_match_lookup[fine_match_iev[match_ind]] = coarse_match_iev[match_ind];
+        }
 
         // recompute rows after potential fillin
         delete[] this->Svv_MLIEV_rows;
@@ -3081,55 +3121,22 @@ class FetidpSolver : public BaseSolver {
         }
         this->Svv_MLIEV_bsr_data.rows = this->Svv_MLIEV_rows;
 
-        // sparsity after the permutation
-        // printf("\nSvv_MLIEV SPARSITY AFTER PERMUTATION\n");
-        // for (int inode = 0; inode < coarse_IEV_nnodes; inode++) {
-        //     printf("(");
-        //     int IEV_row = this->SVV_MLIEV_perm[inode];
-        //     int grow = this->Vc_nodes[coarse_IEV_nodes[IEV_row]];
-        //     printf("%d, ", grow);
-        //     for (int jp = this->Svv_MLIEV_rowp[inode]; jp < this->Svv_MLIEV_rowp[inode + 1];
-        //     jp++) {
-        //         int j = this->Svv_MLIEV_cols[jp];
-        //         int IEV_col = this->SVV_MLIEV_perm[j];
-        //         int gcol = this->Vc_nodes[coarse_IEV_nodes[IEV_col]];
-        //         printf("%d ", gcol);
-        //     }
-        //     printf(")\n");
-        // }
-        // printf("\n\n");
-
         // -------------------------------------------------------------------------
-        // Decode the MLIEV coarse matrix exactly the same way as the print loop above.
-        // This avoids any ambiguity about how perm/iperm should be interpreted later.
+        // Decode coarse S_VV_MLIEV block map using coarse IEV row/col indices directly.
         // -------------------------------------------------------------------------
-        struct MLBlockEntry {
-            int glob_row;
-            int glob_col;
-            int block_ind;  // jp in Svv_MLIEV
+        auto pair_key = [](int i, int j) -> long long {
+            return (static_cast<long long>(i) << 32) | static_cast<unsigned int>(j);
         };
 
-        std::vector<MLBlockEntry> ml_blocks;
-        std::unordered_map<int, std::vector<int>>
-            ml_blocks_by_row;  // glob_row -> ml_blocks indices
+        std::unordered_map<long long, int> ml_block_lookup;
 
         for (int inode = 0; inode < coarse_IEV_nnodes; inode++) {
             int coarse_IEV_row = this->SVV_MLIEV_perm[inode];
-            int glob_row = this->Vc_nodes[coarse_IEV_nodes[coarse_IEV_row]];
 
             for (int jp = this->Svv_MLIEV_rowp[inode]; jp < this->Svv_MLIEV_rowp[inode + 1]; jp++) {
                 int j = this->Svv_MLIEV_cols[jp];
                 int coarse_IEV_col = this->SVV_MLIEV_perm[j];
-                int glob_col = this->Vc_nodes[coarse_IEV_nodes[coarse_IEV_col]];
-
-                MLBlockEntry entry;
-                entry.glob_row = glob_row;
-                entry.glob_col = glob_col;
-                entry.block_ind = jp;
-
-                int idx = static_cast<int>(ml_blocks.size());
-                ml_blocks.push_back(entry);
-                ml_blocks_by_row[glob_row].push_back(idx);
+                ml_block_lookup[pair_key(coarse_IEV_row, coarse_IEV_col)] = jp;
             }
         }
 
@@ -3137,34 +3144,35 @@ class FetidpSolver : public BaseSolver {
         this->d_SVV_MLIEV_iperm = this->d_Svv_MLIEV_bsr_data.iperm;
 
         // -----------------------------------------
-        // IEV => V kmat block copy map (for A_{VV} copy in S_{VV}^{MLIEV})
+        // IEV => coarse-IEV kmat block copy map
+        // (for A_VV copy into S_VV^{MLIEV})
         // -----------------------------------------
-
         this->Svv_MLIEV_copy_nnzb = 0;
         std::vector<int> Svv_IEV_copyBlocks;
         std::vector<int> Svv_Vc_copyBlocks;
 
         for (int IEV_row = 0; IEV_row < this->IEV_nnodes; IEV_row++) {
             int glob_row = this->IEV_nodes[IEV_row];
-            int row_class = this->node_class_ind[glob_row];
-            if (row_class != VERTEX) continue;
+            if (this->node_class_ind[glob_row] != VERTEX) continue;
 
-            auto row_it = ml_blocks_by_row.find(glob_row);
-            if (row_it == ml_blocks_by_row.end()) continue;
+            auto row_it = fine_to_coarse_match_lookup.find(IEV_row);
+            if (row_it == fine_to_coarse_match_lookup.end()) continue;
+            int coarse_IEV_row = row_it->second;
 
             for (int jp = this->IEV_rowp[IEV_row]; jp < this->IEV_rowp[IEV_row + 1]; jp++) {
                 int IEV_col = this->IEV_cols[jp];
                 int glob_col = this->IEV_nodes[IEV_col];
-                int col_class = this->node_class_ind[glob_col];
-                if (col_class != VERTEX) continue;
+                if (this->node_class_ind[glob_col] != VERTEX) continue;
 
-                for (int ml_idx : row_it->second) {
-                    const MLBlockEntry &entry = ml_blocks[ml_idx];
-                    if (entry.glob_col == glob_col) {
-                        Svv_IEV_copyBlocks.push_back(jp);
-                        Svv_Vc_copyBlocks.push_back(entry.block_ind);
-                        this->Svv_MLIEV_copy_nnzb++;
-                    }
+                auto col_it = fine_to_coarse_match_lookup.find(IEV_col);
+                if (col_it == fine_to_coarse_match_lookup.end()) continue;
+                int coarse_IEV_col = col_it->second;
+
+                auto it = ml_block_lookup.find(pair_key(coarse_IEV_row, coarse_IEV_col));
+                if (it != ml_block_lookup.end()) {
+                    Svv_IEV_copyBlocks.push_back(jp);
+                    Svv_Vc_copyBlocks.push_back(it->second);
+                    this->Svv_MLIEV_copy_nnzb++;
                 }
             }
         }
@@ -3178,6 +3186,35 @@ class FetidpSolver : public BaseSolver {
                 .createDeviceVec()
                 .getPtr();
 
+        // -------------------------------------------------------------------------
+        // Build coarse-subdomain local slot lookup
+        // -------------------------------------------------------------------------
+        std::vector<int> coarse_IEV_local_slot(coarse_IEV_nnodes, -1);
+
+        int num_coarse_subdomains = 0;
+        for (int isd = 0; isd < this->num_subdomains; isd++) {
+            if (coarse_elem_sd_ind[isd] + 1 > num_coarse_subdomains) {
+                num_coarse_subdomains = coarse_elem_sd_ind[isd] + 1;
+            }
+        }
+
+        printf("num_coarse_subdomains %d\n", num_coarse_subdomains);
+        // debug print all the coarse_IEV_sd_ptr (to see if any have more than 4 vertices)
+        // for (int csd = 0; csd < num_coarse_subdomains; csd++) {
+        //     int slot = 0;
+        //     for (int coarse_IEV_ind = coarse_IEV_sd_ptr[csd];
+        //          coarse_IEV_ind < coarse_IEV_sd_ptr[csd + 1]; coarse_IEV_ind++) {
+        //         coarse_IEV_local_slot[coarse_IEV_ind] = slot;
+        //         slot++;
+        //     }
+
+        //     if (slot > this->MAX_NUM_VERTEX_PER_SUBDOMAIN) {
+        //         printf("ERROR: coarse subdomain %d has %d coarse IEV slots (>%d)\n", csd, slot,
+        //                this->MAX_NUM_VERTEX_PER_SUBDOMAIN);
+        //         exit(-1);
+        //     }
+        // }
+
         // CONSTRUCT coarse Schur complement mat-invmat-mat maps
         for (int k = 0; k < this->MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
             this->ML_IEVset_nnzb[k] = 0;
@@ -3187,71 +3224,68 @@ class FetidpSolver : public BaseSolver {
             this->d_ML_IEVtoSVV_blocks[k] = nullptr;
         }
 
-        std::vector<int> ML_IEVset_blocks_host[6];
-        std::vector<int> ML_IEVout_blocks_host[6];
-        std::vector<int> ML_IEVtoSVV_blocks_host[6];
+        std::vector<std::vector<int>> ML_IEVset_blocks_host(this->MAX_NUM_VERTEX_PER_SUBDOMAIN);
+        std::vector<std::vector<int>> ML_IEVout_blocks_host(this->MAX_NUM_VERTEX_PER_SUBDOMAIN);
+        std::vector<std::vector<int>> ML_IEVtoSVV_blocks_host(this->MAX_NUM_VERTEX_PER_SUBDOMAIN);
 
         for (int isd = 0; isd < this->num_subdomains; isd++) {
-            std::vector<int> sd_iev_vertex_blocks;  // repeated IEV block ids for THIS subdomain
-            std::vector<int> sd_glob_nodes;  // corresponding global vertex nodes for THIS subdomain
+            std::vector<int> sd_iev_vertex_blocks;   // fine IEV block ids on this fine subdomain
+            std::vector<int> sd_coarse_iev_blocks;   // mapped coarse IEV ids
+            std::vector<int> sd_coarse_local_slots;  // local slot index on parent coarse subdomain
 
-            // collect repeated vertex nodes on this subdomain in local IEV order
+            int coarse_subdomain = coarse_elem_sd_ind[isd];
+
+            // collect repeated fine-grid vertex IEV blocks on this fine subdomain
             for (int jp = this->IEV_sd_ptr[isd]; jp < this->IEV_sd_ptr[isd + 1]; jp++) {
                 int gnode = this->IEV_nodes[jp];
-                if (this->node_class_ind[gnode] == VERTEX) {
-                    sd_iev_vertex_blocks.push_back(jp);
-                    sd_glob_nodes.push_back(gnode);
+                if (this->node_class_ind[gnode] != VERTEX) continue;
+
+                auto it_match = fine_to_coarse_match_lookup.find(jp);
+                if (it_match == fine_to_coarse_match_lookup.end()) continue;
+
+                int coarse_IEV_ind = it_match->second;
+                int kslot = coarse_IEV_local_slot[coarse_IEV_ind];
+
+                if (kslot < 0) {
+                    printf(
+                        "ERROR: fine sd %d, fine IEV block %d maps to coarse IEV %d with no local "
+                        "slot on coarse sd %d\n",
+                        isd, jp, coarse_IEV_ind, coarse_subdomain);
+                    exit(-1);
                 }
+
+                sd_iev_vertex_blocks.push_back(jp);
+                sd_coarse_iev_blocks.push_back(coarse_IEV_ind);
+                sd_coarse_local_slots.push_back(kslot);
             }
 
             const int nsv = static_cast<int>(sd_iev_vertex_blocks.size());
             if (nsv == 0) continue;
 
-            if (nsv > this->MAX_NUM_VERTEX_PER_SUBDOMAIN) {
-                printf("ERROR: subdomain %d has %d local vertex slots (>%d)\n", isd, nsv,
-                       this->MAX_NUM_VERTEX_PER_SUBDOMAIN);
-                exit(-1);
-            }
+            for (int a = 0; a < nsv; a++) {
+                const int iev_block_row = sd_iev_vertex_blocks[a];
+                const int coarse_IEV_row = sd_coarse_iev_blocks[a];
+                const int k = sd_coarse_local_slots[a];
 
-            for (int k = 0; k < nsv; k++) {
-                const int iev_block = sd_iev_vertex_blocks[k];
-                const int glob_row = sd_glob_nodes[k];
+                // set-list: this fine IEV block contributes to coarse local slot k
+                ML_IEVset_blocks_host[k].push_back(iev_block_row);
 
-                // set-list: one basis injection per subdomain-local slot
-                ML_IEVset_blocks_host[k].push_back(iev_block);
+                // output/matrix map
+                for (int b = 0; b < nsv; b++) {
+                    const int iev_block_col = sd_iev_vertex_blocks[b];
+                    const int coarse_IEV_col = sd_coarse_iev_blocks[b];
 
-                auto row_it = ml_blocks_by_row.find(glob_row);
-                if (row_it == ml_blocks_by_row.end()) {
-                    printf(
-                        "ERROR: could not find any Svv_MLIEV row for subdomain %d, glob_row %d\n",
-                        isd, glob_row);
-                    exit(-1);
-                }
-
-                // output/matrix map:
-                // only couple to other local vertex slots on THIS SAME subdomain
-                for (int kk = 0; kk < nsv; kk++) {
-                    const int iev_block2 = sd_iev_vertex_blocks[kk];
-                    const int glob_col = sd_glob_nodes[kk];
-
-                    bool found_any = false;
-
-                    for (int ml_idx : row_it->second) {
-                        const MLBlockEntry &entry = ml_blocks[ml_idx];
-                        if (entry.glob_col == glob_col) {
-                            ML_IEVout_blocks_host[k].push_back(iev_block2);
-                            ML_IEVtoSVV_blocks_host[k].push_back(entry.block_ind);
-                            found_any = true;
-                        }
-                    }
-
-                    if (!found_any) {
+                    auto it = ml_block_lookup.find(pair_key(coarse_IEV_row, coarse_IEV_col));
+                    if (it == ml_block_lookup.end()) {
                         printf(
-                            "ERROR: could not find global Svv_MLIEV block for subdomain %d, "
-                            "glob_row %d, glob_col %d\n",
-                            isd, glob_row, glob_col);
+                            "ERROR: could not find coarse Svv_MLIEV block for fine sd %d "
+                            "(coarse sd %d), coarse row %d, coarse col %d\n",
+                            isd, coarse_subdomain, coarse_IEV_row, coarse_IEV_col);
                         exit(-1);
                     }
+
+                    ML_IEVout_blocks_host[k].push_back(iev_block_col);
+                    ML_IEVtoSVV_blocks_host[k].push_back(it->second);
                 }
             }
         }

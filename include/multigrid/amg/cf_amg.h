@@ -21,12 +21,12 @@
 #include "cf_amg.cuh"
 #include "fake_assembler.h"
 
-template <typename T, class Smoother>
+template <typename T, class FAKE_ASSEMBLER, class Smoother>
 class ClassicalCFAMG : public BaseSolver {
     /* based on python code in _py_demo/_src/bsr_aggregation.py */
    public:
-    using Assembler = FakeAssembler<T>;
-    using CoarseMG = ClassicalCFAMG<T, Smoother>;
+    using Assembler = FAKE_ASSEMBLER;
+    using CoarseMG = ClassicalCFAMG<T, FAKE_ASSEMBLER, Smoother>;
     using CoarseDirect = CusparseMGDirectLU<T, Assembler>;
 
     ClassicalCFAMG(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
