@@ -17,10 +17,10 @@ plt.style.use(niceplots.get_style())
 
 # --- data ---
 solvers_no = ["Direct-LU", "DJ", "MCGS", "CP", "ILU(0)", "ILU(1)", "ILU(2)", "ASW"]
-overall_no = [0.818, 0.125, 0.114, 0.128, 0.003, 0.003, 0.003, 0.458]
+overall_no = [0.859, 0.184, 0.171, 0.188, 0.004, 0.004, 0.004, 0.552]
 
 solvers_yes = ["GMG-CP", "GMG-ASW", "SA-AMG", "RN-AMG", "BDDC-LU", "BDDC-AMG"]
-overall_yes = [0.063, 0.178, 0.087, 0.115, 1.091, 0.239]
+overall_yes = [0.070, 0.188, 0.109, 0.125, 1.164, 0.239]
 
 # --- sort each group (descending = better visually) ---
 no_sorted = sorted(zip(overall_no, solvers_no), reverse=True)
@@ -78,6 +78,7 @@ ax.grid(True, axis="y")
 
 # tighten
 plt.tight_layout()
+plt.margins(x=0.02, y=0.04)
 
 # plt.savefig("solver_bar.png", dpi=200, bbox_inches="tight")
 plt.savefig("solver_bar.svg", dpi=200, bbox_inches="tight")

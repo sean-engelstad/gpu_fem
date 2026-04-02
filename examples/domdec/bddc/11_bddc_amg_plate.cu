@@ -326,7 +326,8 @@ int main(int argc, char **argv) {
     amg_krylov_opts.print_freq = 10;
     amg_krylov_opts.debug = true;
     // amg_krylov_opts.rtol = 1e-6;
-    amg_krylov_opts.rtol = 1e-2;
+    // amg_krylov_opts.rtol = 1e-2;
+    amg_krylov_opts.rtol = 1e-3;
     amg_krylov_opts.atol = 1e-30;
 
     auto temp_v = nullptr;
@@ -432,7 +433,8 @@ int main(int argc, char **argv) {
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
     // opts.ncycles = 2;
-    opts.ncycles = 50;
+    // opts.ncycles = 50;
+    opts.ncycles = 150;
     // opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
