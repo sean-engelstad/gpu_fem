@@ -93,6 +93,7 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     // build the kmat
     auto &bsr_data = assembler.getBsrData();
     bsr_data.compute_nofill_pattern();
+    int nofill_nnzb = bsr_data.nnzb;
     assembler.moveBsrDataToDevice();
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
@@ -196,6 +197,10 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     auto options = SolverOptions();
     options.ncycles = 800; // number of max PCG cycles
     options.print_freq = 10;
+
+
+    T operator_complexity = fine_amg->get_operator_complexity(nofill_nnzb);
+    printf("AMG operator complexity %.4e\n", operator_complexity);
 
     printf("MAIN: build KRYLOV\n");
 

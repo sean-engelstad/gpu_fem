@@ -391,6 +391,19 @@ class RootNodeAMG : public BaseSolver {
         print_setup_time("constructor total", elapsed_sec(ctor_t0, clock_type::now()));
     }
 
+    int get_total_nnzb() {
+        int c_nnzb = P_nnzb * 2 + kmat_nnzb;
+        if (is_coarse_mg) {
+            c_nnzb += coarse_mg->get_total_nnzb();
+        } else {
+            c_nnzb += coarse_direct->get_nnzb();
+        }
+        return c_nnzb;
+    }
+    T get_operator_complexity(int nofill_nnzb) {
+        return T(get_total_nnzb()) * 1.0 / T(nofill_nnzb);
+    }
+
     void compute_coarse_problem() {
         // compute_prolongator_values();
         // compute_coarse_grid_values();

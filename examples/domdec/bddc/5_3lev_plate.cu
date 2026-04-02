@@ -303,9 +303,10 @@ int main(int argc, char **argv) {
     printf("make coarse grid BDDC\n");
     using FAssembler = FakeAssembler<T, Assembler>;
     auto fake_assembler = FAssembler(Svv_bsr_data, coarse_num_nodes, coarse_num_elements);
+    int MAX_NUM_VERTEX_PER_SUBDOMAIN = 4; // for plates (change to 6 for wing)
     auto c_bddc = new CoarseBDDC(cublasHandle, cusparseHandle, fake_assembler, *S_VV_mat, 
         coarse_elem_nnz, coarse_elem_ptr, coarse_elem_conn,
-        coarse_elem_sd_ind, false, false);
+        coarse_elem_sd_ind, false, false, MAX_NUM_VERTEX_PER_SUBDOMAIN);
     printf("\tdone with make coarse grid BDDC\n");
 
     printf("setup matrix sparsity on coarse bddc\n");

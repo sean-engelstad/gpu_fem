@@ -45,7 +45,7 @@ class CoarseBddcSolver : public BddcSolver<T, FakeAssembler<T, ShellAssembler_>,
     CoarseBddcSolver(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
                      FAssembler &fassembler, BsrMatType &kmat_, int elem_nnz_, int *h_elem_ptr_,
                      int *h_elem_conn_, int *h_elem_sd_ind_, bool print_timing_ = false,
-                     bool warnings_ = true)
+                     bool warnings_ = true, int MAX_NUM_VERTEX_PER_SUBDOMAIN_ = 6)
         : FineBDDC(cublasHandle_, cusparseHandle_, fassembler, kmat_, print_timing_, warnings_) {
         // auto _bsr_data = kmat_.getBsrData();
         // auto fake_assembler = FAssembler(_bsr_data, num_nodes_, num_elements_);
@@ -67,7 +67,7 @@ class CoarseBddcSolver : public BddcSolver<T, FakeAssembler<T, ShellAssembler_>,
         this->num_subdomains = unique_sd.size();
 
         // default max num vertex per subdomain (for plate + wing problems)
-        this->MAX_NUM_VERTEX_PER_SUBDOMAIN = 6;
+        this->MAX_NUM_VERTEX_PER_SUBDOMAIN = MAX_NUM_VERTEX_PER_SUBDOMAIN_;
 
         // since we have elem_sd_ind, this is doable now immediately
         // and no Dirichlet nodes on coarse problem (with current problems)

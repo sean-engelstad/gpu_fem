@@ -82,6 +82,19 @@ class SmoothAggregationAMG : public BaseSolver {
         // d_bcs = DeviceVec<int>(0);  // no bcs default
     }
 
+    int get_total_nnzb() {
+        int c_nnzb = P_nnzb * 2 + kmat_nnzb;
+        if (is_coarse_mg) {
+            c_nnzb += coarse_mg->get_total_nnzb();
+        } else {
+            c_nnzb += coarse_direct->get_nnzb();
+        }
+        return c_nnzb;
+    }
+    T get_operator_complexity(int nofill_nnzb) {
+        return T(get_total_nnzb()) * 1.0 / T(nofill_nnzb);
+    }
+
     void compute_coarse_problem() {
         // after applying BCs on kmat now compute the tentative prolongator and other values
         // meaning kmat no bcs used for aggregate formation

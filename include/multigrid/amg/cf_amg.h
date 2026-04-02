@@ -101,6 +101,19 @@ class ClassicalCFAMG : public BaseSolver {
         // _done_post_apply_bcs = true;
     }
 
+    int get_total_nnzb() {
+        int c_nnzb = P_nnzb * 2 + kmat_nnzb;
+        if (is_coarse_mg) {
+            c_nnzb += coarse_mg->get_total_nnzb();
+        } else {
+            c_nnzb += coarse_direct->get_nnzb();
+        }
+        return c_nnzb;
+    }
+    T get_operator_complexity(int nofill_nnzb) {
+        return T(get_total_nnzb()) * 1.0 / T(nofill_nnzb);
+    }
+
     void update_after_assembly(DeviceVec<T> &vars) {
         // TODO
     }

@@ -19,8 +19,8 @@ plt.style.use(niceplots.get_style())
 solvers_no = ["Direct-LU", "DJ", "MCGS", "CP", "ILU(0)", "ILU(1)", "ILU(2)", "ASW"]
 overall_no = [0.818, 0.125, 0.114, 0.128, 0.003, 0.003, 0.003, 0.458]
 
-solvers_yes = ["GMG-CP", "GMG-ASW", "SA-AMG", "RN-AMG", "BDDC"]
-overall_yes = [0.063, 0.178, 0.087, 0.115, 1.091]
+solvers_yes = ["GMG-CP", "GMG-ASW", "SA-AMG", "RN-AMG", "BDDC-LU", "BDDC-AMG"]
+overall_yes = [0.063, 0.178, 0.087, 0.115, 1.091, 0.239]
 
 # --- sort each group (descending = better visually) ---
 no_sorted = sorted(zip(overall_no, solvers_no), reverse=True)

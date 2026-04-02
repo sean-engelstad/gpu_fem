@@ -30,7 +30,8 @@ rows = [
     ("GMG-ASW",   True,  0.412, 0.065, 1.641),
     ("SA-AMG",    True,  1.871, 0.082, 0.910),
     ("RN-AMG",    True,  1.423, 0.088, 0.948),
-    ("BDDC",      True,  1.507, 0.845, 1.027),
+    ("BDDC-LU",      True,  1.507, 0.845, 1.027),
+    ("BDDC-AMG",      True,  1.293, 0.167, 1.124),
 ]
 
 df = pd.DataFrame(rows, columns=["solver", "multilevel", "base_runtime", "S_t", "S_h"])
@@ -46,7 +47,7 @@ fig, ax = plt.subplots(figsize=(8, 6))
 # Define groups
 single_level = df[~df["multilevel"]]
 multigrid = df[df["solver"].str.contains("GMG|AMG")]
-domain_decomp = df[df["solver"] == "BDDC"]
+domain_decomp = df[df["solver"].str.contains("BDDC")]
 
 # Plot each group with different colors
 ax.scatter(single_level["S_h"], single_level["S_t"],

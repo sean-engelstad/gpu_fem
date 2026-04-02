@@ -519,7 +519,8 @@ int main(int argc, char **argv) {
         int IEV_nnzb    = bddc->kmat_IEV->getBsrData().nnzb;
         int IE_nnzb     = IE_bsr_data.nnzb;
         int I_nnzb      = I_bsr_data.nnzb;
-        int coarse_nnzb = Svv_bsr_data.nnzb;
+        // int coarse_nnzb = Svv_bsr_data.nnzb;
+        int coarse_nnzb = top_amg->get_total_nnzb();
 
         // no-fill counts (must already exist in your code)
         int IE_nofill_nnzb     = bddc->IE_nofill_nnzb;

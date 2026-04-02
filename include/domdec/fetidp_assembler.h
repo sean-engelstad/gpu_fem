@@ -2792,26 +2792,6 @@ class FetidpSolver : public BaseSolver {
         Svv_bsr_data.rows = Svv_rows;
         this->d_coarse_vars = DeviceVec<T>(block_dim * Vc_nnodes);
 
-        // printf("Svv_rowp with nnzb %d: ", Svv_nnzb);
-        // printVec<int>(Vc_nnodes + 1, Svv_rowp);
-        // printf("Svv_cols: ");
-        // printVec<int>(Svv_nnzb, Svv_cols);
-
-        // sparsity before the permutation
-        // printf("\nSvv SPARSITY AFTER PERMUTATION\n");
-        // for (int inode = 0; inode < Vc_nnodes; inode++) {
-        //     printf("(");
-        //     int grow = Vc_nodes[SVV_perm[inode]];
-        //     printf("%d, ", grow);
-        //     for (int jp = Svv_rowp[inode]; jp < Svv_rowp[inode + 1]; jp++) {
-        //         int j = Svv_cols[jp];
-        //         int gcol = Vc_nodes[SVV_perm[j]];
-        //         printf("%d ", gcol);
-        //     }
-        //     printf(")\n");
-        // }
-        // printf("\n\n");
-
         d_Svv_bsr_data = Svv_bsr_data.createDeviceBsrData();
         d_Svv_vals = DeviceVec<T>(block_dim2 * Svv_nnzb);
         S_VV = new BsrMatType(d_Svv_bsr_data, d_Svv_vals);
@@ -2837,7 +2817,6 @@ class FetidpSolver : public BaseSolver {
                 int col_class = node_class_ind[glob_col];
                 if (col_class == VERTEX) {
                     int Vc_col = Vc_node_imap[glob_col];
-                    // find matching Vc block ind (will exist)
                     for (int kp = Svv_rowp[Vc_rowperm]; kp < Svv_rowp[Vc_rowperm + 1]; kp++) {
                         int k_perm = Svv_cols[kp];
                         int k = SVV_perm[k_perm];
@@ -2864,18 +2843,14 @@ class FetidpSolver : public BaseSolver {
             d_IEVtoSVV_blocks[k] = nullptr;
         }
 
-        // printf("Vc_nodes: ");
-        // printVec<int>(Vc_nnodes, Vc_nodes);
-
         std::vector<int> IEVset_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
         std::vector<int> IEVout_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
         std::vector<int> IEVtoSVV_blocks_host[MAX_NUM_VERTEX_PER_SUBDOMAIN];
 
         for (int isd = 0; isd < num_subdomains; isd++) {
-            std::vector<int> sd_iev_vertex_blocks;  // repeated IEV block ids for THIS subdomain
-            std::vector<int> sd_vc_nodes;           // coarse vertex ids for THIS subdomain
+            std::vector<int> sd_iev_vertex_blocks;
+            std::vector<int> sd_vc_nodes;
 
-            // collect repeated vertex nodes on this subdomain in local IEV order
             for (int jp = IEV_sd_ptr[isd]; jp < IEV_sd_ptr[isd + 1]; jp++) {
                 int gnode = IEV_nodes[jp];
                 if (node_class_ind[gnode] == VERTEX) {
@@ -2890,10 +2865,8 @@ class FetidpSolver : public BaseSolver {
                     }
 
                     if (vc_node < 0) {
-                        printf(
-                            "ERROR: vertex gnode %d on subdomain %d not found in "
-                            "Vc_nodes\n",
-                            gnode, isd);
+                        printf("ERROR: vertex gnode %d on subdomain %d not found in Vc_nodes\n",
+                               gnode, isd);
                         exit(-1);
                     }
 
@@ -2901,15 +2874,9 @@ class FetidpSolver : public BaseSolver {
                 }
             }
 
-            // printf("i_sd %d, sd_iev_vertex_blocks: ", isd);
-            // printVec<int>(sd_iev_vertex_blocks.size(), sd_iev_vertex_blocks.data());
-            // printf("i_sd %d, sd_vc_nodes: ", isd);
-            // printVec<int>(sd_vc_nodes.size(), sd_vc_nodes.data());
-
             const int nsv = static_cast<int>(sd_iev_vertex_blocks.size());
             if (nsv == 0) continue;
 
-            // optional sanity check for structured quad subdomains
             if (nsv > MAX_NUM_VERTEX_PER_SUBDOMAIN) {
                 printf("ERROR: subdomain %d has %d local vertex slots (>%d)\n", isd, nsv,
                        MAX_NUM_VERTEX_PER_SUBDOMAIN);
@@ -2917,23 +2884,15 @@ class FetidpSolver : public BaseSolver {
             }
 
             for (int k = 0; k < nsv; k++) {
-                const int iev_block =
-                    sd_iev_vertex_blocks[k];        // repeated IEV block on THIS subdomain
-                const int vc_row = sd_vc_nodes[k];  // global coarse row
-
+                const int iev_block = sd_iev_vertex_blocks[k];
+                const int vc_row = sd_vc_nodes[k];
                 const int vc_row_perm = SVV_iperm[vc_row];
 
-                // set-list: one basis injection per subdomain-local slot
                 IEVset_blocks_host[k].push_back(iev_block);
-                // printf("IEVset sd %d, k %d, iev_block %d, gnode %d\n", isd, k, iev_block,
-                //        IEV_nodes[iev_block]);
 
-                // output/matrix map:
-                // only couple to other local vertex slots on THIS SAME subdomain
                 for (int kk = 0; kk < nsv; kk++) {
-                    const int iev_block2 =
-                        sd_iev_vertex_blocks[kk];        // repeated IEV block on THIS subdomain
-                    const int vc_col = sd_vc_nodes[kk];  // still THIS SAME subdomain
+                    const int iev_block2 = sd_iev_vertex_blocks[kk];
+                    const int vc_col = sd_vc_nodes[kk];
 
                     int svv_block = -1;
                     for (int jp = Svv_rowp[vc_row_perm]; jp < Svv_rowp[vc_row_perm + 1]; jp++) {
@@ -2947,27 +2906,98 @@ class FetidpSolver : public BaseSolver {
 
                     if (svv_block < 0) {
                         printf(
-                            "ERROR: could not find global Svv block for subdomain %d, row "
-                            "%d, "
-                            "col "
+                            "ERROR: could not find global Svv block for subdomain %d, row %d, col "
                             "%d\n",
                             isd, vc_row, vc_col);
                         exit(-1);
                     }
 
-                    // duplicate iev_block once for each local coarse destination in THIS
-                    // subdomain row
                     IEVout_blocks_host[k].push_back(iev_block2);
                     IEVtoSVV_blocks_host[k].push_back(svv_block);
+                }
+            }
+        }
 
-                    // printf("IEVout sd %d, k %d, iev_block %d, gnode %d\n", isd, k,
-                    // iev_block2,
-                    //        IEV_nodes[iev_block2]);
+        // ------------------------------------------------------------
+        // DEBUG: validate regular Schur complement maps on host
+        // ------------------------------------------------------------
+        printf("DEBUG regular coarse Schur maps\n");
+        for (int k = 0; k < MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
+            printf("DEBUG regular slot %d: set nnzb host %d, out nnzb host %d, svv nnzb host %d\n",
+                   k, (int)IEVset_blocks_host[k].size(), (int)IEVout_blocks_host[k].size(),
+                   (int)IEVtoSVV_blocks_host[k].size());
 
-                    // debug print if needed
-                    // printf("isd=%d slot k=%d kk=%d iev_block=%d -> svv_block=%d (row=%d
-                    // col=%d)\n",
-                    //        isd, k, kk, iev_block, svv_block, vc_row, vc_col);
+            if ((int)IEVout_blocks_host[k].size() != (int)IEVtoSVV_blocks_host[k].size()) {
+                printf(
+                    "ERROR: regular slot %d mismatch before device copy: out size %d != svv size "
+                    "%d\n",
+                    k, (int)IEVout_blocks_host[k].size(), (int)IEVtoSVV_blocks_host[k].size());
+                exit(-1);
+            }
+
+            for (int p = 0; p < (int)IEVset_blocks_host[k].size(); p++) {
+                int iev_set_block = IEVset_blocks_host[k][p];
+                if (iev_set_block < 0 || iev_set_block >= IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid regular set block at slot %d, p %d: iev block %d not in "
+                        "[0,%d)\n",
+                        k, p, iev_set_block, IEV_nnodes);
+                    exit(-1);
+                }
+            }
+
+            for (int p = 0; p < (int)IEVout_blocks_host[k].size(); p++) {
+                int iev_out_block = IEVout_blocks_host[k][p];
+                int svv_block = IEVtoSVV_blocks_host[k][p];
+
+                if (iev_out_block < 0 || iev_out_block >= IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid regular out block at slot %d, p %d: iev block %d not in "
+                        "[0,%d)\n",
+                        k, p, iev_out_block, IEV_nnodes);
+                    exit(-1);
+                }
+
+                if (svv_block < 0 || svv_block >= Svv_nnzb) {
+                    printf(
+                        "ERROR: invalid regular svv block at slot %d, p %d: svv block %d not in "
+                        "[0,%d)\n",
+                        k, p, svv_block, Svv_nnzb);
+                    exit(-1);
+                }
+
+                int row = Svv_rows[svv_block];
+                if (row < 0 || row >= Vc_nnodes) {
+                    printf(
+                        "ERROR: invalid regular svv row decode at slot %d, p %d: block %d -> row "
+                        "%d\n",
+                        k, p, svv_block, row);
+                    exit(-1);
+                }
+
+                if (!(Svv_rowp[row] <= svv_block && svv_block < Svv_rowp[row + 1])) {
+                    printf(
+                        "ERROR: invalid regular svv storage location at slot %d, p %d: "
+                        "block %d not in decoded row %d range [%d,%d)\n",
+                        k, p, svv_block, row, Svv_rowp[row], Svv_rowp[row + 1]);
+                    exit(-1);
+                }
+
+                int col = Svv_cols[svv_block];
+                if (col < 0 || col >= Vc_nnodes) {
+                    printf(
+                        "ERROR: invalid regular svv col decode at slot %d, p %d: block %d -> col "
+                        "%d\n",
+                        k, p, svv_block, col);
+                    exit(-1);
+                }
+            }
+
+            if (!IEVout_blocks_host[k].empty()) {
+                printf("  first few regular host blocks for slot %d:\n", k);
+                for (int p = 0; p < (int)IEVout_blocks_host[k].size() && p < 12; p++) {
+                    printf("    p %d: iev %d, svv %d\n", p, IEVout_blocks_host[k][p],
+                           IEVtoSVV_blocks_host[k][p]);
                 }
             }
         }
@@ -2998,31 +3028,73 @@ class FetidpSolver : public BaseSolver {
                         .createDeviceVec()
                         .getPtr();
             }
+        }
 
-            // printf("IEVset_nnzb[%d] = %d\n", k, IEVset_nnzb[k]);
-            // if (IEVset_nnzb[k] > 0) {
-            //     printVec<int>(IEVset_nnzb[k], IEVset_blocks_host[k].data());
-            // }
+        // ------------------------------------------------------------
+        // DEBUG: validate regular Schur complement maps on device
+        // ------------------------------------------------------------
+        for (int k = 0; k < MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
+            printf(
+                "DEBUG regular slot %d final: IEVset_nnzb %d, IEVtoSVV_nnzb %d, d_set %p, d_out "
+                "%p, d_svv %p\n",
+                k, IEVset_nnzb[k], IEVtoSVV_nnzb[k], (void *)d_IEVset_blocks[k],
+                (void *)d_IEVout_blocks[k], (void *)d_IEVtoSVV_blocks[k]);
 
-            // printf("IEVtoSVV_nnzb[%d] = %d\n", k, IEVtoSVV_nnzb[k]);
-            // if (IEVtoSVV_nnzb[k] > 0) {
-            //     printf("IEVout_blocks_host[%d]:\n", k);
-            //     printVec<int>(IEVtoSVV_nnzb[k], IEVout_blocks_host[k].data());
+            if (IEVset_nnzb[k] > 0) {
+                std::vector<int> h_dbg_set(IEVset_nnzb[k]);
+                CHECK_CUDA(cudaMemcpy(h_dbg_set.data(), d_IEVset_blocks[k],
+                                      IEVset_nnzb[k] * sizeof(int), cudaMemcpyDeviceToHost));
 
-            //     printf("IEVtoSVV_blocks_host[%d]:\n", k);
-            //     printVec<int>(IEVtoSVV_nnzb[k], IEVtoSVV_blocks_host[k].data());
-            // }
+                for (int p = 0; p < IEVset_nnzb[k]; p++) {
+                    if (h_dbg_set[p] < 0 || h_dbg_set[p] >= IEV_nnodes) {
+                        printf(
+                            "ERROR: device regular set block invalid at slot %d, p %d: %d not in "
+                            "[0,%d)\n",
+                            k, p, h_dbg_set[p], IEV_nnodes);
+                        exit(-1);
+                    }
+                }
+            }
+
+            if (IEVtoSVV_nnzb[k] > 0) {
+                std::vector<int> h_dbg_out(IEVtoSVV_nnzb[k]);
+                std::vector<int> h_dbg_svv(IEVtoSVV_nnzb[k]);
+
+                CHECK_CUDA(cudaMemcpy(h_dbg_out.data(), d_IEVout_blocks[k],
+                                      IEVtoSVV_nnzb[k] * sizeof(int), cudaMemcpyDeviceToHost));
+                CHECK_CUDA(cudaMemcpy(h_dbg_svv.data(), d_IEVtoSVV_blocks[k],
+                                      IEVtoSVV_nnzb[k] * sizeof(int), cudaMemcpyDeviceToHost));
+
+                for (int p = 0; p < IEVtoSVV_nnzb[k]; p++) {
+                    if (h_dbg_out[p] < 0 || h_dbg_out[p] >= IEV_nnodes) {
+                        printf(
+                            "ERROR: device regular out block invalid at slot %d, p %d: %d not in "
+                            "[0,%d)\n",
+                            k, p, h_dbg_out[p], IEV_nnodes);
+                        exit(-1);
+                    }
+                    if (h_dbg_svv[p] < 0 || h_dbg_svv[p] >= Svv_nnzb) {
+                        printf(
+                            "ERROR: device regular svv block invalid at slot %d, p %d: %d not in "
+                            "[0,%d)\n",
+                            k, p, h_dbg_svv[p], Svv_nnzb);
+                        exit(-1);
+                    }
+                }
+
+                printf("  first few regular device blocks for slot %d:\n", k);
+                for (int p = 0; p < IEVtoSVV_nnzb[k] && p < 12; p++) {
+                    printf("    p %d: iev %d, svv %d\n", p, h_dbg_out[p], h_dbg_svv[p]);
+                }
+            }
         }
 
         // compute the BC indices needed for kmat_IEV
         auto d_bcs = assembler.getBCs();
         int n_orig_bcs = d_bcs.getSize();
         int *h_bcs = d_bcs.createHostVec().getPtr();
-        // printf("h_bcs: ");
-        // printVec<int>(n_orig_bcs, h_bcs);
 
         std::vector<int> IEV_bcs_vec;
-        // get new num bcs
         for (int IEV_node = 0; IEV_node < IEV_nnodes; IEV_node++) {
             int gnode = IEV_nodes[IEV_node];
             for (int ibc = 0; ibc < n_orig_bcs; ibc++) {
@@ -3036,16 +3108,6 @@ class FetidpSolver : public BaseSolver {
             }
         }
 
-        // printf("IEV_bcs_vec:\n");
-        // printVec<int>(IEV_bcs_vec.size(), IEV_bcs_vec.data());
-        // for (int ibc = 0; ibc < IEV_bcs_vec.size(); ibc++) {
-        //     int bc = IEV_bcs_vec[ibc];
-        //     if (ibc % 6 == 0) {
-        //         int bc_node = bc / 6;
-        //         int glob_node = IEV_nodes[bc_node];
-        //         printf("IEV bc node %d, glob node %d\n", bc_node, glob_node);
-        //     }
-        // }
         d_IEV_bcs = HostVec<int>(IEV_bcs_vec.size(), IEV_bcs_vec.data()).createDeviceVec();
     }
 
@@ -3093,16 +3155,6 @@ class FetidpSolver : public BaseSolver {
                     break;
                 }
             }
-        }
-
-        // now report all matches
-        for (int imatch = 0; imatch < fine_match_iev.size(); imatch++) {
-            int fine_iev = fine_match_iev[imatch];
-            int fine_glob = IEV_nodes[fine_iev];
-            int coarse_iev = coarse_match_iev[imatch];
-            int coarse_glob = this->Vc_nodes[coarse_IEV_nodes[coarse_iev]];
-            printf("fine iev %d, fine glob %d, coarse iev %d, coarse_glob %d\n", fine_iev,
-                   fine_glob, coarse_iev, coarse_glob);
         }
 
         // lookup only for matched fine IEV nodes
@@ -3186,35 +3238,6 @@ class FetidpSolver : public BaseSolver {
                 .createDeviceVec()
                 .getPtr();
 
-        // -------------------------------------------------------------------------
-        // Build coarse-subdomain local slot lookup
-        // -------------------------------------------------------------------------
-        std::vector<int> coarse_IEV_local_slot(coarse_IEV_nnodes, -1);
-
-        int num_coarse_subdomains = 0;
-        for (int isd = 0; isd < this->num_subdomains; isd++) {
-            if (coarse_elem_sd_ind[isd] + 1 > num_coarse_subdomains) {
-                num_coarse_subdomains = coarse_elem_sd_ind[isd] + 1;
-            }
-        }
-
-        printf("num_coarse_subdomains %d\n", num_coarse_subdomains);
-        // debug print all the coarse_IEV_sd_ptr (to see if any have more than 4 vertices)
-        // for (int csd = 0; csd < num_coarse_subdomains; csd++) {
-        //     int slot = 0;
-        //     for (int coarse_IEV_ind = coarse_IEV_sd_ptr[csd];
-        //          coarse_IEV_ind < coarse_IEV_sd_ptr[csd + 1]; coarse_IEV_ind++) {
-        //         coarse_IEV_local_slot[coarse_IEV_ind] = slot;
-        //         slot++;
-        //     }
-
-        //     if (slot > this->MAX_NUM_VERTEX_PER_SUBDOMAIN) {
-        //         printf("ERROR: coarse subdomain %d has %d coarse IEV slots (>%d)\n", csd, slot,
-        //                this->MAX_NUM_VERTEX_PER_SUBDOMAIN);
-        //         exit(-1);
-        //     }
-        // }
-
         // CONSTRUCT coarse Schur complement mat-invmat-mat maps
         for (int k = 0; k < this->MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
             this->ML_IEVset_nnzb[k] = 0;
@@ -3229,63 +3252,128 @@ class FetidpSolver : public BaseSolver {
         std::vector<std::vector<int>> ML_IEVtoSVV_blocks_host(this->MAX_NUM_VERTEX_PER_SUBDOMAIN);
 
         for (int isd = 0; isd < this->num_subdomains; isd++) {
-            std::vector<int> sd_iev_vertex_blocks;   // fine IEV block ids on this fine subdomain
-            std::vector<int> sd_coarse_iev_blocks;   // mapped coarse IEV ids
-            std::vector<int> sd_coarse_local_slots;  // local slot index on parent coarse subdomain
+            // EXACTLY like old method: collect all fine-grid local vertex slots first
+            std::vector<int>
+                sd_iev_vertex_blocks;  // repeated fine IEV vertex blocks on this subdomain
+            std::vector<int>
+                sd_coarse_iev_blocks;  // coarse IEV match for that fine local slot, or -1
 
-            int coarse_subdomain = coarse_elem_sd_ind[isd];
-
-            // collect repeated fine-grid vertex IEV blocks on this fine subdomain
             for (int jp = this->IEV_sd_ptr[isd]; jp < this->IEV_sd_ptr[isd + 1]; jp++) {
                 int gnode = this->IEV_nodes[jp];
                 if (this->node_class_ind[gnode] != VERTEX) continue;
 
-                auto it_match = fine_to_coarse_match_lookup.find(jp);
-                if (it_match == fine_to_coarse_match_lookup.end()) continue;
-
-                int coarse_IEV_ind = it_match->second;
-                int kslot = coarse_IEV_local_slot[coarse_IEV_ind];
-
-                if (kslot < 0) {
-                    printf(
-                        "ERROR: fine sd %d, fine IEV block %d maps to coarse IEV %d with no local "
-                        "slot on coarse sd %d\n",
-                        isd, jp, coarse_IEV_ind, coarse_subdomain);
-                    exit(-1);
-                }
-
                 sd_iev_vertex_blocks.push_back(jp);
-                sd_coarse_iev_blocks.push_back(coarse_IEV_ind);
-                sd_coarse_local_slots.push_back(kslot);
+
+                auto it_match = fine_to_coarse_match_lookup.find(jp);
+                if (it_match == fine_to_coarse_match_lookup.end()) {
+                    sd_coarse_iev_blocks.push_back(-1);  // unmatched fine vertex slot
+                } else {
+                    sd_coarse_iev_blocks.push_back(it_match->second);
+                }
             }
 
             const int nsv = static_cast<int>(sd_iev_vertex_blocks.size());
             if (nsv == 0) continue;
 
-            for (int a = 0; a < nsv; a++) {
-                const int iev_block_row = sd_iev_vertex_blocks[a];
-                const int coarse_IEV_row = sd_coarse_iev_blocks[a];
-                const int k = sd_coarse_local_slots[a];
+            // keep k as the ORIGINAL fine local vertex slot
+            for (int k = 0; k < nsv; k++) {
+                const int iev_block_row = sd_iev_vertex_blocks[k];
+                const int coarse_IEV_row = sd_coarse_iev_blocks[k];
 
-                // set-list: this fine IEV block contributes to coarse local slot k
+                // if this local fine-vertex slot has no coarse match, skip it
+                if (coarse_IEV_row < 0) continue;
+
+                // one basis injection for this fine-subdomain-local slot
                 ML_IEVset_blocks_host[k].push_back(iev_block_row);
 
-                // output/matrix map
-                for (int b = 0; b < nsv; b++) {
-                    const int iev_block_col = sd_iev_vertex_blocks[b];
-                    const int coarse_IEV_col = sd_coarse_iev_blocks[b];
+                // only couple to other local fine-vertex slots on THIS SAME fine subdomain
+                // that also have a coarse match
+                for (int kk = 0; kk < nsv; kk++) {
+                    const int iev_block_col = sd_iev_vertex_blocks[kk];
+                    const int coarse_IEV_col = sd_coarse_iev_blocks[kk];
+
+                    if (coarse_IEV_col < 0) continue;
 
                     auto it = ml_block_lookup.find(pair_key(coarse_IEV_row, coarse_IEV_col));
                     if (it == ml_block_lookup.end()) {
                         printf(
-                            "ERROR: could not find coarse Svv_MLIEV block for fine sd %d "
-                            "(coarse sd %d), coarse row %d, coarse col %d\n",
-                            isd, coarse_subdomain, coarse_IEV_row, coarse_IEV_col);
+                            "ERROR: could not find coarse Svv_MLIEV block for fine sd %d, "
+                            "fine local slots (%d,%d), coarse row %d, coarse col %d\n",
+                            isd, k, kk, coarse_IEV_row, coarse_IEV_col);
                         exit(-1);
                     }
 
                     ML_IEVout_blocks_host[k].push_back(iev_block_col);
                     ML_IEVtoSVV_blocks_host[k].push_back(it->second);
+                }
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // DEBUG CHECKS:
+        // 1) every Svv block index must be a valid BSR storage location in S_VV_MLIEV
+        // 2) every out-block index must be a valid fine IEV block id
+        // -------------------------------------------------------------------------
+        for (int k = 0; k < this->MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
+            if (ML_IEVout_blocks_host[k].size() != ML_IEVtoSVV_blocks_host[k].size()) {
+                printf("ERROR: slot %d mismatch before device copy: out size %d != svv size %d\n",
+                       k, (int)ML_IEVout_blocks_host[k].size(),
+                       (int)ML_IEVtoSVV_blocks_host[k].size());
+                exit(-1);
+            }
+
+            for (int p = 0; p < (int)ML_IEVtoSVV_blocks_host[k].size(); p++) {
+                int svv_block = ML_IEVtoSVV_blocks_host[k][p];
+                int out_block = ML_IEVout_blocks_host[k][p];
+
+                if (svv_block < 0 || svv_block >= this->Svv_MLIEV_nnzb) {
+                    printf("ERROR: invalid Svv block index at slot %d, p %d: %d not in [0,%d)\n", k,
+                           p, svv_block, this->Svv_MLIEV_nnzb);
+                    exit(-1);
+                }
+
+                if (out_block < 0 || out_block >= this->IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid fine IEV out block index at slot %d, p %d: %d not in "
+                        "[0,%d)\n",
+                        k, p, out_block, this->IEV_nnodes);
+                    exit(-1);
+                }
+
+                // extra debug: verify the BSR block index really belongs to a valid row/col entry
+                int bsr_row = this->Svv_MLIEV_rows[svv_block];
+                if (bsr_row < 0 || bsr_row >= coarse_IEV_nnodes) {
+                    printf("ERROR: invalid Svv row decode at slot %d, p %d: block %d -> row %d\n",
+                           k, p, svv_block, bsr_row);
+                    exit(-1);
+                }
+
+                if (!(this->Svv_MLIEV_rowp[bsr_row] <= svv_block &&
+                      svv_block < this->Svv_MLIEV_rowp[bsr_row + 1])) {
+                    printf(
+                        "ERROR: Svv block %d at slot %d, p %d is not inside decoded row %d range "
+                        "[%d,%d)\n",
+                        svv_block, k, p, bsr_row, this->Svv_MLIEV_rowp[bsr_row],
+                        this->Svv_MLIEV_rowp[bsr_row + 1]);
+                    exit(-1);
+                }
+
+                int bsr_col = this->Svv_MLIEV_cols[svv_block];
+                if (bsr_col < 0 || bsr_col >= coarse_IEV_nnodes) {
+                    printf("ERROR: invalid Svv col decode at slot %d, p %d: block %d -> col %d\n",
+                           k, p, svv_block, bsr_col);
+                    exit(-1);
+                }
+            }
+
+            for (int p = 0; p < (int)ML_IEVset_blocks_host[k].size(); p++) {
+                int set_block = ML_IEVset_blocks_host[k][p];
+                if (set_block < 0 || set_block >= this->IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid fine IEV set block index at slot %d, p %d: %d not in "
+                        "[0,%d)\n",
+                        k, p, set_block, this->IEV_nnodes);
+                    exit(-1);
                 }
             }
         }
@@ -3317,6 +3405,81 @@ class FetidpSolver : public BaseSolver {
                     HostVec<int>(this->ML_IEVtoSVV_nnzb[k], ML_IEVtoSVV_blocks_host[k].data())
                         .createDeviceVec()
                         .getPtr();
+            }
+        }
+
+        // ------------------------------------------------------------
+        // DEBUG: validate ML Schur complement maps before device copy
+        // ------------------------------------------------------------
+        for (int k = 0; k < this->MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
+            printf("DEBUG ML slot %d: set nnzb host %d, out nnzb host %d, svv nnzb host %d\n", k,
+                   (int)ML_IEVset_blocks_host[k].size(), (int)ML_IEVout_blocks_host[k].size(),
+                   (int)ML_IEVtoSVV_blocks_host[k].size());
+
+            if (ML_IEVout_blocks_host[k].size() != ML_IEVtoSVV_blocks_host[k].size()) {
+                printf("ERROR: ML slot %d mismatch: out size %d != svv size %d\n", k,
+                       (int)ML_IEVout_blocks_host[k].size(),
+                       (int)ML_IEVtoSVV_blocks_host[k].size());
+                exit(-1);
+            }
+
+            for (int p = 0; p < (int)ML_IEVset_blocks_host[k].size(); p++) {
+                int iev_set_block = ML_IEVset_blocks_host[k][p];
+                if (iev_set_block < 0 || iev_set_block >= this->IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid ML set block at slot %d, p %d: iev block %d not in "
+                        "[0,%d)\n",
+                        k, p, iev_set_block, this->IEV_nnodes);
+                    exit(-1);
+                }
+            }
+
+            for (int p = 0; p < (int)ML_IEVout_blocks_host[k].size(); p++) {
+                int iev_out_block = ML_IEVout_blocks_host[k][p];
+                int svv_block = ML_IEVtoSVV_blocks_host[k][p];
+
+                if (iev_out_block < 0 || iev_out_block >= this->IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid ML out block at slot %d, p %d: iev block %d not in "
+                        "[0,%d)\n",
+                        k, p, iev_out_block, this->IEV_nnodes);
+                    exit(-1);
+                }
+
+                if (svv_block < 0 || svv_block >= this->Svv_MLIEV_nnzb) {
+                    printf(
+                        "ERROR: invalid ML svv block at slot %d, p %d: svv block %d not in "
+                        "[0,%d)\n",
+                        k, p, svv_block, this->Svv_MLIEV_nnzb);
+                    exit(-1);
+                }
+
+                int row = this->Svv_MLIEV_rows[svv_block];
+                if (row < 0 || row >= coarse_IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid ML svv row decode at slot %d, p %d: block %d -> row %d\n",
+                        k, p, svv_block, row);
+                    exit(-1);
+                }
+
+                if (!(this->Svv_MLIEV_rowp[row] <= svv_block &&
+                      svv_block < this->Svv_MLIEV_rowp[row + 1])) {
+                    printf(
+                        "ERROR: invalid ML svv storage location at slot %d, p %d: "
+                        "block %d not in decoded row %d range [%d,%d)\n",
+                        k, p, svv_block, row, this->Svv_MLIEV_rowp[row],
+                        this->Svv_MLIEV_rowp[row + 1]);
+                    exit(-1);
+                }
+
+                int col = this->Svv_MLIEV_cols[svv_block];
+                if (col < 0 || col >= coarse_IEV_nnodes) {
+                    printf(
+                        "ERROR: invalid ML svv col decode at slot %d, p %d: "
+                        "block %d -> col %d\n",
+                        k, p, svv_block, col);
+                    exit(-1);
+                }
             }
         }
     }
@@ -3959,6 +4122,7 @@ class FetidpSolver : public BaseSolver {
         // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
         // Krylov step so this is similar expense to like 8 Krylov steps (not too bad, but
         // not trivial)
+        printf("MAX_NUM_VERTEX_PER_SUBDOMAIN %d\n", MAX_NUM_VERTEX_PER_SUBDOMAIN);
         int ncols = MAX_NUM_VERTEX_PER_SUBDOMAIN * block_dim;
         for (int icol = 0; icol < ncols; icol++) {
             u_IEV.zeroValues();
@@ -3968,99 +4132,20 @@ class FetidpSolver : public BaseSolver {
             addVecIEVtoIE(f_IEV, f_IE, 1.0, 0.0);
             solveSubdomainIE(f_IE, u_IE);
             addVecIEtoIEV(u_IE, u_IEV, 1.0, 0.0);
-            sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
 
+            sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            printf("after sparseMatVec #2 icol %d\n", icol);
+
+            CHECK_CUDA(cudaDeviceSynchronize());
+            printf("computeSvvInverseTerm pre-addMat sync ok icol %d\n", icol);
+
+            printf("computeSvvInverseTerm entering addMat_IEVtoV_vals icol %d\n", icol);
             addMat_IEVtoV_vals(icol, f_IEV);
+            CHECK_CUDA(cudaDeviceSynchronize());
+            printf("computeSvvInverseTerm finished addMat_IEVtoV_vals icol %d\n", icol);
         }
     }
-
-    // void computeSvvInverseTerm() {
-    //     // need 24 IE subdomain solves (tops) for quad-macro elements of struct mesh
-    //     // to compute the -A_{V,IE} * A_{IE,IE}^{-1} * A_{IE,V} += > S_{VV} second Schur
-    //     complement
-    //     // inverse term as part of coarse matrix assembly for vertices
-
-    //     // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve
-    //     per Krylov
-    //     // step so this is similar expense to like 8 Krylov steps (not too bad, but not
-    //     trivial)
-    //     // TODO : maybe I can find faster way to do sparse mat-mat triangular solves
-    //     instead later?
-
-    //     cudaEvent_t start, stop, e1, e2, e3, e4;
-    //     float total_ms = 0.0f, spmv_ms = 0.0f, solve_ms = 0.0f;
-    //     float t = 0.0f;
-
-    //     if (print_timing) {
-    //         CHECK_CUDA(cudaEventCreate(&start));
-    //         CHECK_CUDA(cudaEventCreate(&stop));
-    //         CHECK_CUDA(cudaEventCreate(&e1));
-    //         CHECK_CUDA(cudaEventCreate(&e2));
-    //         CHECK_CUDA(cudaEventCreate(&e3));
-    //         CHECK_CUDA(cudaEventCreate(&e4));
-    //         CHECK_CUDA(cudaEventRecord(start));
-    //     }
-
-    //     int ncols = 4 * block_dim;
-    //     for (int icol = 0; icol < ncols; icol++) {
-    //         u_IEV.zeroValues();
-    //         setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else
-    //         0
-
-    //         if (print_timing) CHECK_CUDA(cudaEventRecord(e1));
-    //         sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
-    //         if (print_timing) {
-    //             CHECK_CUDA(cudaEventRecord(e2));
-    //             CHECK_CUDA(cudaEventSynchronize(e2));
-    //             CHECK_CUDA(cudaEventElapsedTime(&t, e1, e2));
-    //             spmv_ms += t;
-    //         }
-
-    //         addVecIEVtoIE(f_IEV, f_IE, 1.0, 0.0);
-
-    //         if (print_timing) CHECK_CUDA(cudaEventRecord(e2));
-    //         solveSubdomainIE(f_IE, u_IE);
-    //         if (print_timing) {
-    //             CHECK_CUDA(cudaEventRecord(e3));
-    //             CHECK_CUDA(cudaEventSynchronize(e3));
-    //             CHECK_CUDA(cudaEventElapsedTime(&t, e2, e3));
-    //             solve_ms += t;
-    //         }
-
-    //         addVecIEtoIEV(u_IE, u_IEV, 1.0, 0.0);
-
-    //         if (print_timing) CHECK_CUDA(cudaEventRecord(e3));
-    //         sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
-    //         if (print_timing) {
-    //             CHECK_CUDA(cudaEventRecord(e4));
-    //             CHECK_CUDA(cudaEventSynchronize(e4));
-    //             CHECK_CUDA(cudaEventElapsedTime(&t, e3, e4));
-    //             spmv_ms += t;
-    //         }
-
-    //         addMat_IEVtoV_vals(icol, f_IEV);
-    //     }
-
-    //     if (print_timing) {
-    //         CHECK_CUDA(cudaEventRecord(stop));
-    //         CHECK_CUDA(cudaEventSynchronize(stop));
-    //         CHECK_CUDA(cudaEventElapsedTime(&total_ms, start, stop));
-    //         CHECK_CUDA(cudaDeviceSynchronize());
-
-    //         printf("\tcomputeSvvInverseTerm: %.6f ms\n", total_ms);
-    //         printf("\t\t2 sparseMatVec total : %.6f ms\n", spmv_ms);
-    //         printf("\t\tsolveSubdomainIE total: %.6f ms\n", solve_ms);
-    //         printf("\t\tother total          : %.6f ms\n", total_ms - spmv_ms -
-    //         solve_ms); printf("\t\tacross %d cols or steps here\n", ncols);
-
-    //         CHECK_CUDA(cudaEventDestroy(start));
-    //         CHECK_CUDA(cudaEventDestroy(stop));
-    //         CHECK_CUDA(cudaEventDestroy(e1));
-    //         CHECK_CUDA(cudaEventDestroy(e2));
-    //         CHECK_CUDA(cudaEventDestroy(e3));
-    //         CHECK_CUDA(cudaEventDestroy(e4));
-    //     }
-    // }
 
     void setVec_IEVtoV_vals(DeviceVec<T> &vec_IEV, int irow, T val) {
         int block_row = irow / block_dim;
@@ -4073,7 +4158,106 @@ class FetidpSolver : public BaseSolver {
             <<<grid, block>>>(set_nnzb, block_dim, irow, d_blocks, vec_IEV.getPtr(), val);
     }
 
+    // void addMat_IEVtoV_vals(const int icol, DeviceVec<T> hvec) {
+    //     // -----------------------------------------
+    //     // standard 2-level BDDC assembly into S_VV
+    //     // -----------------------------------------
+    //     int block_col = icol / block_dim;
+    //     int set_nnzb = IEVtoSVV_nnzb[block_col];
+    //     int *d_svv_blocks = d_IEVtoSVV_blocks[block_col];
+    //     int *d_iev_blocks = d_IEVout_blocks[block_col];
+
+    //     dim3 block(32);
+    //     dim3 grid((set_nnzb * block_dim + 31) / 32);
+    //     k_addMat_IEVtoV_vals<T><<<grid, block>>>(set_nnzb, block_dim, icol, d_iev_blocks,
+    //                                              d_svv_blocks, hvec.getPtr(),
+    //                                              d_Svv_vals.getPtr());
+
+    //     // -----------------------------------------
+    //     // for 3+ BDDC levels, also assemble into
+    //     // S_VV_MLIEV using the MLIEV sparsity pattern
+    //     // -----------------------------------------
+    //     // if (S_VV_MLIEV != nullptr) {
+    //     //     CHECK_CUDA(cudaDeviceSynchronize());
+    //     //     printf("addMat_IEVtoV_vals: MLIEV part icol %d\n", icol);
+
+    //     //     int ML_block_col = icol / block_dim;
+    //     //     int ML_set_nnzb = ML_IEVtoSVV_nnzb[ML_block_col];
+    //     //     int *d_ML_svv_blocks = d_ML_IEVtoSVV_blocks[ML_block_col];
+    //     //     int *d_ML_iev_blocks = d_ML_IEVout_blocks[ML_block_col];
+    //     //     // printf("uses MLIEV_set_nnzb %d\n", ML_set_nnzb);
+
+    //     //     dim3 ML_grid((ML_set_nnzb * block_dim + 31) / 32);
+    //     //     k_addMat_IEVtoV_vals<T><<<ML_grid, block>>>(ML_set_nnzb, block_dim, icol,
+    //     //                                                 d_ML_iev_blocks, d_ML_svv_blocks,
+    //     //                                                 hvec.getPtr(),
+    //     //                                                 d_Svv_MLIEV_vals.getPtr());
+
+    //     //     CHECK_CUDA(cudaDeviceSynchronize());
+    //     //     printf("\tdone with addMat_IEVtoV_vals: MLIEV part icol %d\n", icol);
+    //     // }
+
+    //     if (S_VV_MLIEV != nullptr) {
+    //         CHECK_CUDA(cudaDeviceSynchronize());
+    //         printf("addMat_IEVtoV_vals: MLIEV part icol %d\n", icol);
+
+    //         int ML_block_col = icol / block_dim;
+    //         int ML_set_nnzb = ML_IEVtoSVV_nnzb[ML_block_col];
+    //         int *d_ML_svv_blocks = d_ML_IEVtoSVV_blocks[ML_block_col];
+    //         int *d_ML_iev_blocks = d_ML_IEVout_blocks[ML_block_col];
+
+    //         printf("  ML_block_col %d, ML_set_nnzb %d, d_ML_iev_blocks %p, d_ML_svv_blocks %p\n",
+    //                ML_block_col, ML_set_nnzb, (void *)d_ML_iev_blocks, (void *)d_ML_svv_blocks);
+
+    //         if (ML_set_nnzb > 0) {
+    //             std::vector<int> h_dbg_iev(ML_set_nnzb);
+    //             std::vector<int> h_dbg_svv(ML_set_nnzb);
+
+    //             CHECK_CUDA(cudaMemcpy(h_dbg_iev.data(), d_ML_iev_blocks, ML_set_nnzb *
+    //             sizeof(int),
+    //                                   cudaMemcpyDeviceToHost));
+    //             CHECK_CUDA(cudaMemcpy(h_dbg_svv.data(), d_ML_svv_blocks, ML_set_nnzb *
+    //             sizeof(int),
+    //                                   cudaMemcpyDeviceToHost));
+
+    //             for (int i = 0; i < ML_set_nnzb; i++) {
+    //                 if (h_dbg_iev[i] < 0 || h_dbg_iev[i] >= IEV_nnodes) {
+    //                     printf(
+    //                         "ERROR: device ML iev block invalid at slot %d, i %d: %d not in "
+    //                         "[0,%d)\n",
+    //                         ML_block_col, i, h_dbg_iev[i], IEV_nnodes);
+    //                     exit(-1);
+    //                 }
+    //                 if (h_dbg_svv[i] < 0 || h_dbg_svv[i] >= Svv_MLIEV_nnzb) {
+    //                     printf(
+    //                         "ERROR: device ML svv block invalid at slot %d, i %d: %d not in "
+    //                         "[0,%d)\n",
+    //                         ML_block_col, i, h_dbg_svv[i], Svv_MLIEV_nnzb);
+    //                     exit(-1);
+    //                 }
+    //             }
+
+    //             printf("  first few ML device blocks for slot %d:\n", ML_block_col);
+    //             for (int i = 0; i < ML_set_nnzb && i < 12; i++) {
+    //                 printf("    i %d: iev %d, svv %d\n", i, h_dbg_iev[i], h_dbg_svv[i]);
+    //             }
+    //         }
+
+    //         dim3 block(32);
+    //         dim3 ML_grid((ML_set_nnzb * block_dim + 31) / 32);
+    //         k_addMat_IEVtoV_vals<T><<<ML_grid, block>>>(ML_set_nnzb, block_dim, icol,
+    //                                                     d_ML_iev_blocks, d_ML_svv_blocks,
+    //                                                     hvec.getPtr(),
+    //                                                     d_Svv_MLIEV_vals.getPtr());
+
+    //         CHECK_CUDA(cudaDeviceSynchronize());
+    //         printf("\tdone with addMat_IEVtoV_vals: MLIEV part icol %d\n", icol);
+    //     }
+    // }
+
     void addMat_IEVtoV_vals(const int icol, DeviceVec<T> hvec) {
+        printf("addMat_IEVtoV_vals ENTER icol %d\n", icol);
+
         // -----------------------------------------
         // standard 2-level BDDC assembly into S_VV
         // -----------------------------------------
@@ -4082,10 +4266,47 @@ class FetidpSolver : public BaseSolver {
         int *d_svv_blocks = d_IEVtoSVV_blocks[block_col];
         int *d_iev_blocks = d_IEVout_blocks[block_col];
 
+        printf("  regular part: block_col %d, set_nnzb %d, d_iev_blocks %p, d_svv_blocks %p\n",
+               block_col, set_nnzb, (void *)d_iev_blocks, (void *)d_svv_blocks);
+
+        if (set_nnzb > 0) {
+            std::vector<int> h_dbg_iev(set_nnzb);
+            std::vector<int> h_dbg_svv(set_nnzb);
+
+            CHECK_CUDA(cudaMemcpy(h_dbg_iev.data(), d_iev_blocks, set_nnzb * sizeof(int),
+                                  cudaMemcpyDeviceToHost));
+            CHECK_CUDA(cudaMemcpy(h_dbg_svv.data(), d_svv_blocks, set_nnzb * sizeof(int),
+                                  cudaMemcpyDeviceToHost));
+
+            for (int i = 0; i < set_nnzb; i++) {
+                if (h_dbg_iev[i] < 0 || h_dbg_iev[i] >= IEV_nnodes) {
+                    printf("ERROR: regular iev block invalid at slot %d, i %d: %d not in [0,%d)\n",
+                           block_col, i, h_dbg_iev[i], IEV_nnodes);
+                    exit(-1);
+                }
+                if (h_dbg_svv[i] < 0 || h_dbg_svv[i] >= Svv_nnzb) {
+                    printf("ERROR: regular svv block invalid at slot %d, i %d: %d not in [0,%d)\n",
+                           block_col, i, h_dbg_svv[i], Svv_nnzb);
+                    exit(-1);
+                }
+            }
+
+            printf("  first few regular device blocks for slot %d:\n", block_col);
+            for (int i = 0; i < set_nnzb && i < 12; i++) {
+                printf("    i %d: iev %d, svv %d\n", i, h_dbg_iev[i], h_dbg_svv[i]);
+            }
+        }
+
         dim3 block(32);
         dim3 grid((set_nnzb * block_dim + 31) / 32);
+        printf("  launching regular k_addMat_IEVtoV_vals, grid.x %d block.x %d\n", (int)grid.x,
+               (int)block.x);
+
         k_addMat_IEVtoV_vals<T><<<grid, block>>>(set_nnzb, block_dim, icol, d_iev_blocks,
                                                  d_svv_blocks, hvec.getPtr(), d_Svv_vals.getPtr());
+
+        CHECK_CUDA(cudaDeviceSynchronize());
+        printf("  done with regular addMat_IEVtoV_vals icol %d\n", icol);
 
         // -----------------------------------------
         // for 3+ BDDC levels, also assemble into
@@ -4093,22 +4314,61 @@ class FetidpSolver : public BaseSolver {
         // -----------------------------------------
         if (S_VV_MLIEV != nullptr) {
             CHECK_CUDA(cudaDeviceSynchronize());
-            printf("addMat_IEVtoV_vals: MLIEV part\n");
+            printf("addMat_IEVtoV_vals: MLIEV part icol %d\n", icol);
 
             int ML_block_col = icol / block_dim;
             int ML_set_nnzb = ML_IEVtoSVV_nnzb[ML_block_col];
             int *d_ML_svv_blocks = d_ML_IEVtoSVV_blocks[ML_block_col];
             int *d_ML_iev_blocks = d_ML_IEVout_blocks[ML_block_col];
-            printf("uses MLIEV_set_nnzb %d\n", ML_set_nnzb);
+
+            printf("  ML_block_col %d, ML_set_nnzb %d, d_ML_iev_blocks %p, d_ML_svv_blocks %p\n",
+                   ML_block_col, ML_set_nnzb, (void *)d_ML_iev_blocks, (void *)d_ML_svv_blocks);
+
+            if (ML_set_nnzb > 0) {
+                std::vector<int> h_dbg_iev(ML_set_nnzb);
+                std::vector<int> h_dbg_svv(ML_set_nnzb);
+
+                CHECK_CUDA(cudaMemcpy(h_dbg_iev.data(), d_ML_iev_blocks, ML_set_nnzb * sizeof(int),
+                                      cudaMemcpyDeviceToHost));
+                CHECK_CUDA(cudaMemcpy(h_dbg_svv.data(), d_ML_svv_blocks, ML_set_nnzb * sizeof(int),
+                                      cudaMemcpyDeviceToHost));
+
+                for (int i = 0; i < ML_set_nnzb; i++) {
+                    if (h_dbg_iev[i] < 0 || h_dbg_iev[i] >= IEV_nnodes) {
+                        printf(
+                            "ERROR: device ML iev block invalid at slot %d, i %d: %d not in "
+                            "[0,%d)\n",
+                            ML_block_col, i, h_dbg_iev[i], IEV_nnodes);
+                        exit(-1);
+                    }
+                    if (h_dbg_svv[i] < 0 || h_dbg_svv[i] >= Svv_MLIEV_nnzb) {
+                        printf(
+                            "ERROR: device ML svv block invalid at slot %d, i %d: %d not in "
+                            "[0,%d)\n",
+                            ML_block_col, i, h_dbg_svv[i], Svv_MLIEV_nnzb);
+                        exit(-1);
+                    }
+                }
+
+                printf("  first few ML device blocks for slot %d:\n", ML_block_col);
+                for (int i = 0; i < ML_set_nnzb && i < 12; i++) {
+                    printf("    i %d: iev %d, svv %d\n", i, h_dbg_iev[i], h_dbg_svv[i]);
+                }
+            }
 
             dim3 ML_grid((ML_set_nnzb * block_dim + 31) / 32);
+            printf("  launching ML k_addMat_IEVtoV_vals, grid.x %d block.x %d\n", (int)ML_grid.x,
+                   (int)block.x);
+
             k_addMat_IEVtoV_vals<T><<<ML_grid, block>>>(ML_set_nnzb, block_dim, icol,
                                                         d_ML_iev_blocks, d_ML_svv_blocks,
                                                         hvec.getPtr(), d_Svv_MLIEV_vals.getPtr());
 
             CHECK_CUDA(cudaDeviceSynchronize());
-            printf("\tdone with addMat_IEVtoV_vals: MLIEV part\n");
+            printf("\tdone with addMat_IEVtoV_vals: MLIEV part icol %d\n", icol);
         }
+
+        printf("addMat_IEVtoV_vals EXIT icol %d\n", icol);
     }
 
     template <bool scaled = false>
