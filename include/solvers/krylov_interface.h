@@ -2,43 +2,35 @@
 #include <string>
 
 #include "mesh/vtk_writer.h"
-#pragma once
 
 // like a TacsInterface for the multigrid solvers
 // can do function evals, set dvs, forward + adjoint solves, gradients, etc.
 
-template <typename T, class Assembler, class LinearSolver, class Continuation>
-class TACSNLInterface {
+template <typename T, class Assembler, class Krylov>
+class TacsKrylovInterface {
    public:
     using Vec = typename Assembler::template VecType<T>;
     // using Mat = typename Assembler::template MatType<Vec>;
     using MyFunction = typename Assembler::MyFunction;
 
-    TACSNLInterface(cublasHandle_t &cublasHandle_, Continuation *nl_solver_, Assembler &assembler_,
-                    LinearSolver *mg_, bool print = true, bool include_adjoint_vars = true,
-                    T inner_frtol_ = 1e-6)
-        : cublasHandle(cublasHandle_),
-          nl_solver(nl_solver_),
+    TacsKrylovInterface(Krylov &krylov_, Assembler &assembler_, BsrMat<DeviceVec<T>> &kmat_,
+                        bool print = true, bool include_adjoint_vars = true)
+        : krylov(krylov_),
           assembler(assembler_),
-          mg(mg_),
           include_adjoint_vars(include_adjoint_vars),
+          kmat(kmat_),
           print(print) {
         // create vectors
-        // loads = assembler.createVarsVec();
+        loads = assembler.createVarsVec();
         vars = assembler.createVarsVec();
         res = assembler.createVarsVec();
         soln = assembler.createVarsVec();
         rhs = assembler.createVarsVec();
 
-        inner_frtol = inner_frtol_;
-
-        // copy loads here
-        // struct_loads.copyValuesTo(loads);
-        // this->assembler.apply_bcs(this->loads);
-
         if (include_adjoint_vars) {
             dfdu = assembler.createVarsVec();
             psi = assembler.createVarsVec();
+            CHECK_CUBLAS(cublasCreate(&cublasHandle));
         }
     }
 
@@ -63,21 +55,19 @@ class TACSNLInterface {
         return func.value;
     }
 
-    // void set_loads(Vec &struct_loads) {
-    //     // set constant loads in
-    //     this->loads()
-    // }
+    void solve(Vec &struct_loads) {
+        // copy loads
+        this->loads.zeroValues();
+        struct_loads.copyValuesTo(this->loads);
+        this->assembler.apply_bcs(this->loads);
 
-    bool solve() {
-        // do nonlinear continuation solve
-        T lambda0 = 0.2, inner_atol = 1e-8, lambdaf = 1.0, inner_crtol = 1e-3;
-        bool fail = this->nl_solver->solve(this->vars, lambda0, inner_atol, lambdaf, inner_crtol,
-                                           inner_frtol);  // inout updates the vars
+        // make this more general later..
+        bool check_conv = true;
+        krylov.solve(this->loads, this->soln, check_conv);
+        this->soln.copyValuesTo(this->vars);
 
         // set new variables into assembler (for output function evals)
         this->assembler.set_variables(this->vars);
-
-        return fail;
     }
 
     void copy_solution_in(Vec &soln_in) {
@@ -85,19 +75,23 @@ class TACSNLInterface {
         this->soln.copyValuesTo(this->vars);
         this->assembler.set_variables(this->vars);
     }
-    void copy_solution_out(Vec &soln_out) { this->vars.copyValuesTo(soln_out); }
+    void copy_solution_out(Vec &soln_out) { this->soln.copyValuesTo(soln_out); }
 
     void set_design_variables(Vec &x) {
-        // this->resetSoln();
+        this->resetSoln();
         this->assembler.set_design_variables(x);
-        this->mg->set_design_variables(x);
-        // this->_update_assembly(); // this is called by inexact newton solver inside..
+        this->_update_assembly();
     }
 
-    // void _update_assembly() {
-    //     /* update kmat with new design */
-    //     // no need to do this => handled by internal inexact_newton solver now
-    // }
+    void _update_assembly() {
+        /* update kmat with new design */
+        if (this->print) printf("updating assembly\n");
+        assembler.add_jacobian_fast(kmat);
+        assembler.apply_bcs(kmat);
+
+        // additional assembly steps like update factor, smoother, etc.
+        krylov.update_after_assembly(this->vars);
+    }
 
     void solve_adjoint(MyFunction &func, const Vec *adj_rhs = nullptr) {
         /* adjoint analysis for a single function */
@@ -120,11 +114,8 @@ class TACSNLInterface {
             assembler.apply_bcs(dfdu);  // zero RHS part too?
 
             // make this more general later.. solves adjoint problem here
-            mg->grids[0].zeroSolution();
-            mg->grids[0].setDefect(this->dfdu);
-            // bool inner_print = false, inner_time = false;
-            mg->solve();
-            mg->grids[0].getSolution(this->psi);
+            bool check_conv = true;
+            krylov.solve(this->dfdu, this->psi);
             assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }
 
@@ -139,12 +130,12 @@ class TACSNLInterface {
     }
 
     void free() {
-        // loads.free();
+        loads.free();
         soln.free();
         res.free();
         vars.free();
         rhs.free();
-        mg->free();
+        krylov.free();
         if (include_adjoint_vars) {
             dfdu.free();
             psi.free();
@@ -152,13 +143,17 @@ class TACSNLInterface {
     }
 
    protected:
-    Continuation *nl_solver;
+    Krylov krylov;
     Assembler assembler;
-    LinearSolver *mg;  // usually multigrid (need it separately for linear adjoint solves)
-    Vec soln, res, vars, rhs;
+    BsrMat<DeviceVec<T>> kmat;
+    Vec loads, soln, res, vars, rhs;
     Vec dfdu, psi;
     bool include_adjoint_vars;
-    cublasHandle_t &cublasHandle;
+    cublasHandle_t cublasHandle = NULL;
     bool print;
-    T inner_frtol;
+
+    T rtol = 1e-6, atol = 1e-6;
+    T omega = 1.0;
+    int pre_smooth = 1, post_smooth = 1, n_cycles = 200, print_freq = 3;
+    bool double_smooth = true;
 };

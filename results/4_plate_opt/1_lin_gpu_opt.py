@@ -20,9 +20,42 @@ comm = MPI.COMM_WORLD
 # setup GPU solver
 solver = None
 
+
+# solver_type = "gmg_cp"
+# solver_type = "gmg_asw"
+# solver_type = "bddc_lu"
+solver_type = "lu"
+
+omega = None
+load_mag = 1.6e7
+rtol = 1e-6
+dvmin = 1e-2
+
+if solver_type == "gmg_cp":
+    SOLVER = platemultigrid.Linear_GMGCP_PlateSolver
+    omega, nsmooth = 0.85, 1
+    out_file = "out/plate_mg.vtk"
+elif solver_type == "gmg_asw":
+    SOLVER = platemultigrid.Linear_GMGASW_PlateSolver
+    omega, nsmooth = 0.25, 2
+    out_file = "out/plate_mg.vtk"
+elif solver_type == "bddc_lu":
+    SOLVER = platemultigrid.Linear_BDDCLU_PlateSolver
+    omega, nsmooth = 1.0, 1
+    out_file = "out/plate_bddc.vtk"
+    # load_mag *= (2.2 / 8.0)
+    load_mag *= 2.0
+    dvmin = 2.2e-2 # different dvmin cause clamped (need to fix so true one-to-one comparison, 
+    # corrected # lin-solves post-run)
+elif solver_type == "lu":
+    SOLVER = platemultigrid.Linear_LU_PlateSolver
+    omega, nsmooth = 1.0, 1
+    out_file = "out/plate_lu.vtk"
+
+    
 root = 0
 if comm.rank == root:
-    solver = platemultigrid.LinearPlateSolver(
+    solver = SOLVER(
         rhoKS=100.0,
         safety_factor=1.5,
         # load_mag=5e5,
@@ -30,9 +63,10 @@ if comm.rank == root:
         # load_mag=2e6,
         # load_mag=4e6, # V1 was this.. but that doesn't lead to significant NL plate deflection in optimal design
         # load_mag=8e6, # try double it.. so less slender? think about physics here..
-        load_mag=1.6e7,
+        load_mag=load_mag,
         # omega=0.3, # much faster
-        omega=0.85,
+        omega=omega,
+        nsmooth=nsmooth,
         # nxe=512,
         # nxe=256,
         nxe=128,
@@ -50,7 +84,7 @@ if comm.rank == root:
         # in_plane_frac=0.25,
         # ORDER=4,
         # rtol=1e-4,
-        rtol=1e-6, # almost want to have high rtol like this only later in the optimization tbh..
+        rtol=rtol, # almost want to have high rtol like this only later in the optimization tbh..
         Lx=1.0,
         # Lx=4.0, # both dimensions increased to give more deflection at NL case...
         # Lx=8.0,
@@ -148,7 +182,7 @@ opt_problem = Optimization("tuning-fork", get_functions)
 opt_problem.addVarGroup(
     "vars",
     ndvs,
-    lower=np.array([1e-2]*ndvs), # TODO : change min of non-struct-masses?
+    lower=np.array([dvmin]*ndvs), # TODO : change min of non-struct-masses?
     upper=np.array([1e2]*ndvs),
     value=x0,
     scale=np.array([1e2]*ndvs),

@@ -8,7 +8,7 @@
 // can do function evals, set dvs, forward + adjoint solves, gradients, etc.
 
 template <typename T, class Assembler, class LinearSolver, class Continuation>
-class TACSNLInterface {
+class TACSKrylovNLInterface {
    public:
     using Vec = typename Assembler::template VecType<T>;
     // using Mat = typename Assembler::template MatType<Vec>;
@@ -120,11 +120,9 @@ class TACSNLInterface {
             assembler.apply_bcs(dfdu);  // zero RHS part too?
 
             // make this more general later.. solves adjoint problem here
-            mg->grids[0].zeroSolution();
-            mg->grids[0].setDefect(this->dfdu);
-            // bool inner_print = false, inner_time = false;
-            mg->solve();
-            mg->grids[0].getSolution(this->psi);
+
+            bool check_conv = true;
+            mg->solve(this->dfdu, this->psi);
             assembler.apply_bcs(psi);  // dirichlet boundary conditions
         }
 

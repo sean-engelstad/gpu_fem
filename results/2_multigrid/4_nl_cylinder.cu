@@ -82,6 +82,9 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
 
     // T omegaLS_min = 0.25, omegaLS_max = 2.0;
     T omegaLS_min = 1e-2, omegaLS_max = 4.0;
+    // if (SR > 1e2) {
+        omegaLS_min = 0.1; // helps nonlinear
+    // }
 
     cublasHandle_t cublasHandle = NULL;
     CHECK_CUBLAS(cublasCreate(&cublasHandle));

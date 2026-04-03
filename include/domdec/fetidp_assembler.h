@@ -216,6 +216,11 @@ class FetidpSolver : public BaseSolver {
     void free() {  // TODO
     }
 
+    int get_num_IEV_nodes() { return this->IEV_nnodes; }
+    DeviceVec<int> get_IEV_conn() { return this->d_IEV_elem_conn; }
+    DeviceVec<T> get_IEV_xpts() { return this->d_IEV_xpts; }
+    DeviceVec<T> get_IEV_vars() { return this->d_IEV_vars; }
+
     ~FetidpSolver() { clear_host_data(); }
     int getLambdaSize() const { return lam_nnodes * block_dim; }
 
@@ -424,8 +429,8 @@ class FetidpSolver : public BaseSolver {
         // printf("IEV_ind %d\n", IEV_ind);
         // printf("IEV_nodes %d: ", IEV_nnodes);
         // printVec<int>(IEV_nnodes, IEV_nodes);
-        // printf("Fine BDDC IEV_conn: ");
-        // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+        printf("Fine BDDC IEV_conn: ");
+        printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
 
         // for (int iev = 0; iev < IEV_nnodes; iev++) {
         //     int isd = IEV_sd_ind[iev];
@@ -2993,13 +2998,13 @@ class FetidpSolver : public BaseSolver {
                 }
             }
 
-            if (!IEVout_blocks_host[k].empty()) {
-                printf("  first few regular host blocks for slot %d:\n", k);
-                for (int p = 0; p < (int)IEVout_blocks_host[k].size() && p < 12; p++) {
-                    printf("    p %d: iev %d, svv %d\n", p, IEVout_blocks_host[k][p],
-                           IEVtoSVV_blocks_host[k][p]);
-                }
-            }
+            // if (!IEVout_blocks_host[k].empty()) {
+            //     printf("  first few regular host blocks for slot %d:\n", k);
+            //     for (int p = 0; p < (int)IEVout_blocks_host[k].size() && p < 12; p++) {
+            //         printf("    p %d: iev %d, svv %d\n", p, IEVout_blocks_host[k][p],
+            //                IEVtoSVV_blocks_host[k][p]);
+            //     }
+            // }
         }
 
         for (int k = 0; k < MAX_NUM_VERTEX_PER_SUBDOMAIN; k++) {
@@ -3082,10 +3087,10 @@ class FetidpSolver : public BaseSolver {
                     }
                 }
 
-                printf("  first few regular device blocks for slot %d:\n", k);
-                for (int p = 0; p < IEVtoSVV_nnzb[k] && p < 12; p++) {
-                    printf("    p %d: iev %d, svv %d\n", p, h_dbg_out[p], h_dbg_svv[p]);
-                }
+                // printf("  first few regular device blocks for slot %d:\n", k);
+                // for (int p = 0; p < IEVtoSVV_nnzb[k] && p < 12; p++) {
+                //     printf("    p %d: iev %d, svv %d\n", p, h_dbg_out[p], h_dbg_svv[p]);
+                // }
             }
         }
 
@@ -3587,7 +3592,7 @@ class FetidpSolver : public BaseSolver {
     }
 
     template <class LoadMagnitude, int elems_per_block = 8>
-    void add_subdomain_fext(const LoadMagnitude &load, T load_mag) {
+    void add_subdomain_fext(const LoadMagnitude &load, T load_mag, T x_inplane_frac = 0.0) {
         fext_IEV.zeroValues();
 
         addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
@@ -3597,7 +3602,8 @@ class FetidpSolver : public BaseSolver {
 
         k_add_fext_fast<T, elems_per_block, ShellAssembler, Data, LoadMagnitude, Vec_>
             <<<grid, block>>>(num_elements, load, d_elem_components, d_IEV_elem_conn,
-                              d_IEV_elem_conn, d_IEV_xpts, d_compData, load_mag, fext_IEV);
+                              d_IEV_elem_conn, d_IEV_xpts, d_compData, load_mag, fext_IEV,
+                              x_inplane_frac);
 
         // CHECK_CUDA(cudaDeviceSynchronize());
 
@@ -3628,6 +3634,27 @@ class FetidpSolver : public BaseSolver {
         // const bool scaled = true;
         // addVec_globalToIEV<scaled>(rhs, fext_IEV, block_dim, 1.0, 0.0);
         // fext_IEV.apply_bcs(d_IEV_bcs);
+    }
+
+    void set_IEV_linear_rhs(DeviceVec<T> &vars) {
+        // set fext_IEV back into res_IEV
+
+        addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
+        addVec_globalToIEV(vars, d_IEV_vars, block_dim, 1.0, 0.0);
+        fext_IEV.copyValuesTo(res_IEV);
+    }
+
+    void set_IEV_adjoint_rhs(DeviceVec<T> &vars, DeviceVec<T> &adj_rhs_IEV, T a = 1.0) {
+        // res_IEV(u_IEV) = lambdaE * fext_IEV - lambdaI * fint_IEV
+
+        // printf("set_IEV_residual\n");
+        adj_rhs_IEV.apply_bcs(d_IEV_bcs);
+
+        addVec_globalToIEV(d_xpts, d_IEV_xpts, 3, 1.0, 0.0);
+        addVec_globalToIEV(vars, d_IEV_vars, block_dim, 1.0, 0.0);
+        CHECK_CUBLAS(
+            cublasDscal(cublasHandle, block_dim * IEV_nnodes, &a, adj_rhs_IEV.getPtr(), 1));
+        adj_rhs_IEV.copyValuesTo(res_IEV);
     }
 
     template <int elems_per_block = 8>
@@ -4098,7 +4125,7 @@ class FetidpSolver : public BaseSolver {
 
         // for 3+ BDDC levels, also copy the Avv part into S_VV_MLIEV
         bool MLIEV_isnot_null = S_VV_MLIEV != nullptr;
-        printf("MLIEV_isnot_null %d\n", MLIEV_isnot_null);
+        // printf("MLIEV_isnot_null %d\n", MLIEV_isnot_null);
         if (S_VV_MLIEV != nullptr) {
             CHECK_CUDA(cudaDeviceSynchronize());
             printf("copyKmatIEV to MLIEV\n");
@@ -4122,7 +4149,7 @@ class FetidpSolver : public BaseSolver {
         // seems quite expensive but remember we do 2 IE solves and 1 I subdomain solve per
         // Krylov step so this is similar expense to like 8 Krylov steps (not too bad, but
         // not trivial)
-        printf("MAX_NUM_VERTEX_PER_SUBDOMAIN %d\n", MAX_NUM_VERTEX_PER_SUBDOMAIN);
+        // printf("MAX_NUM_VERTEX_PER_SUBDOMAIN %d\n", MAX_NUM_VERTEX_PER_SUBDOMAIN);
         int ncols = MAX_NUM_VERTEX_PER_SUBDOMAIN * block_dim;
         for (int icol = 0; icol < ncols; icol++) {
             u_IEV.zeroValues();
@@ -4134,16 +4161,16 @@ class FetidpSolver : public BaseSolver {
             addVecIEtoIEV(u_IE, u_IEV, 1.0, 0.0);
 
             sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
-            CHECK_CUDA(cudaDeviceSynchronize());
-            printf("after sparseMatVec #2 icol %d\n", icol);
+            // CHECK_CUDA(cudaDeviceSynchronize());
+            // printf("after sparseMatVec #2 icol %d\n", icol);
 
-            CHECK_CUDA(cudaDeviceSynchronize());
-            printf("computeSvvInverseTerm pre-addMat sync ok icol %d\n", icol);
+            // CHECK_CUDA(cudaDeviceSynchronize());
+            // printf("computeSvvInverseTerm pre-addMat sync ok icol %d\n", icol);
 
-            printf("computeSvvInverseTerm entering addMat_IEVtoV_vals icol %d\n", icol);
+            // printf("computeSvvInverseTerm entering addMat_IEVtoV_v?als icol %d\n", icol);
             addMat_IEVtoV_vals(icol, f_IEV);
-            CHECK_CUDA(cudaDeviceSynchronize());
-            printf("computeSvvInverseTerm finished addMat_IEVtoV_vals icol %d\n", icol);
+            // CHECK_CUDA(cudaDeviceSynchronize());
+            // printf("computeSvvInverseTerm finished addMat_IEVtoV_vals icol %d\n", icol);
         }
     }
 
@@ -4256,7 +4283,7 @@ class FetidpSolver : public BaseSolver {
     // }
 
     void addMat_IEVtoV_vals(const int icol, DeviceVec<T> hvec) {
-        printf("addMat_IEVtoV_vals ENTER icol %d\n", icol);
+        // printf("addMat_IEVtoV_vals ENTER icol %d\n", icol);
 
         // -----------------------------------------
         // standard 2-level BDDC assembly into S_VV
@@ -4266,8 +4293,8 @@ class FetidpSolver : public BaseSolver {
         int *d_svv_blocks = d_IEVtoSVV_blocks[block_col];
         int *d_iev_blocks = d_IEVout_blocks[block_col];
 
-        printf("  regular part: block_col %d, set_nnzb %d, d_iev_blocks %p, d_svv_blocks %p\n",
-               block_col, set_nnzb, (void *)d_iev_blocks, (void *)d_svv_blocks);
+        // printf("  regular part: block_col %d, set_nnzb %d, d_iev_blocks %p, d_svv_blocks %p\n",
+        //        block_col, set_nnzb, (void *)d_iev_blocks, (void *)d_svv_blocks);
 
         if (set_nnzb > 0) {
             std::vector<int> h_dbg_iev(set_nnzb);
@@ -4291,22 +4318,22 @@ class FetidpSolver : public BaseSolver {
                 }
             }
 
-            printf("  first few regular device blocks for slot %d:\n", block_col);
-            for (int i = 0; i < set_nnzb && i < 12; i++) {
-                printf("    i %d: iev %d, svv %d\n", i, h_dbg_iev[i], h_dbg_svv[i]);
-            }
+            // printf("  first few regular device blocks for slot %d:\n", block_col);
+            // for (int i = 0; i < set_nnzb && i < 12; i++) {
+            //     printf("    i %d: iev %d, svv %d\n", i, h_dbg_iev[i], h_dbg_svv[i]);
+            // }
         }
 
         dim3 block(32);
         dim3 grid((set_nnzb * block_dim + 31) / 32);
-        printf("  launching regular k_addMat_IEVtoV_vals, grid.x %d block.x %d\n", (int)grid.x,
-               (int)block.x);
+        // printf("  launching regular k_addMat_IEVtoV_vals, grid.x %d block.x %d\n", (int)grid.x,
+        //        (int)block.x);
 
         k_addMat_IEVtoV_vals<T><<<grid, block>>>(set_nnzb, block_dim, icol, d_iev_blocks,
                                                  d_svv_blocks, hvec.getPtr(), d_Svv_vals.getPtr());
 
-        CHECK_CUDA(cudaDeviceSynchronize());
-        printf("  done with regular addMat_IEVtoV_vals icol %d\n", icol);
+        // CHECK_CUDA(cudaDeviceSynchronize());
+        // printf("  done with regular addMat_IEVtoV_vals icol %d\n", icol);
 
         // -----------------------------------------
         // for 3+ BDDC levels, also assemble into
@@ -4368,7 +4395,7 @@ class FetidpSolver : public BaseSolver {
             printf("\tdone with addMat_IEVtoV_vals: MLIEV part icol %d\n", icol);
         }
 
-        printf("addMat_IEVtoV_vals EXIT icol %d\n", icol);
+        // printf("addMat_IEVtoV_vals EXIT icol %d\n", icol);
     }
 
     template <bool scaled = false>

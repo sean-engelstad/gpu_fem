@@ -23,7 +23,7 @@ class DomDecKrylovWrapper : public BaseSolver {
         // res_IEV (FETI-DP case) and still want to use same original call structure in
         // inexact_newton
 
-        fetidp->set_global_rhs(rhs);
+        // fetidp->set_global_rhs(rhs); // this method doesn't work (needs element->IEV)
         // don't think set global rhs and then solving different linear system each time works?
         // cause needs element-level loads.. right? not equiv linear system cause rhs
         fetidp->get_lam_rhs(lam_rhs);
@@ -42,7 +42,9 @@ class DomDecKrylovWrapper : public BaseSolver {
     }
     void update_after_assembly(DeviceVec<T> &vars) {
         // krylov calls for DOMDEC preconditioner (so don't need to call on that)
+        // printf("update after assembly in DomDecKrylovWrapper\n");
         krylov->update_after_assembly(vars);
+        // printf("\tdone with update after assembly in DomDecKrylovWrapper\n");
     }
     void factor() {}
     void set_print(bool print) override { krylov->set_print(print); }

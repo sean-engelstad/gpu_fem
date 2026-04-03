@@ -13,37 +13,25 @@ plt.rcParams.update({
     "legend.fontsize": fs,
 })
 
+# Wing-only solver data
 rows = [
-    ("Direct-LU", False, 12.31, 1.000, 0.786),
-    ("DJ",        False, 2.841, 0.144, 0.726),
-    ("MCGS",      False, 5.173, 0.140, 0.739),
-    ("CP",        False, 2.620, 0.146, 0.722),
-    ("ILU(0)",    False, 22.61, 0.005, 0.519),
-    ("ILU(1)",    False, 8.712, 0.005, 0.590),
-    ("ILU(2)",    False, 5.718, 0.005, 0.587),
-    ("ASW",       False, 2.942, 0.521, 0.743),
-
-    ("GMG-CP",    True,  0.400, 0.026, 1.509),
-    ("GMG-ASW",   True,  0.412, 0.065, 1.641),
-    ("SA-AMG",    True,  1.871, 0.082, 0.910),
-    ("RN-AMG",    True,  1.423, 0.088, 0.948),
-    ("BDDC-LU",   True,  1.507, 0.845, 1.027),
-    ("BDDC-AMG",  True,  1.293, 0.167, 1.124),
+    ("Direct-LU", False, 16.50, 1.000, 0.776),
+    ("GMG-CP",    True,  1.261, 0.067, 1.149),
+    ("GMG-ASW",   True,  1.031, 0.167, 1.247),
+    ("BDDC-LU",   True,  2.526, 0.687, 1.028),
+    ("BDDC-AMG",  True,  3.489, 0.578, 1.013),
 ]
 
 df = pd.DataFrame(rows, columns=["solver", "multilevel", "base_runtime", "S_t", "S_h"])
 
 plt.style.use(niceplots.get_style())
-# fig, ax = plt.subplots(figsize=(8, 6))
+
 fig = plt.figure(figsize=(10, 6))
-ax = fig.add_axes([0.08, 0.1, 0.65, 0.85])  # main plot (left)
+ax = fig.add_axes([0.08, 0.1, 0.65, 0.85])
 
-# Add cylinder image on the right
-img_ax = fig.add_axes([0.76, 0.4, 0.2, 0.5])  # [left, bottom, width, height]
-# img_ax = fig.add_axes([0.76, 0.25, 0.2, 0.5])  # [left, bottom, width, height]
-# img_ax = fig.add_axes([0.72, 0.18, 0.26, 0.65])
-
-img = plt.imread("cylinder.png")  # <-- your image file
+# Add wing image on the right
+img_ax = fig.add_axes([0.76, 0.4, 0.2, 0.5])
+img = plt.imread("aob-wing.png")
 img_ax.imshow(img)
 img_ax.axis("off")
 
@@ -51,7 +39,7 @@ single_level = df[~df["multilevel"]]
 multigrid = df[df["solver"].str.contains("GMG|AMG")]
 domain_decomp = df[df["solver"].str.contains("BDDC")]
 
-marker_size = 80
+marker_size = 90
 
 ax.scatter(
     single_level["S_h"], single_level["S_t"],
@@ -66,23 +54,12 @@ ax.scatter(
     label="Domain-Decomp", s=marker_size, zorder=2
 )
 
-# Offsets are in display points, not data units.
 label_offsets = {
     "Direct-LU":  (10, -16),
-    "ASW":        (8, 10),
-    "CP":         (-10, 18),
-    "DJ":         (22, 14),
-    "MCGS":       (22, -2),
-    "ILU(0)":     (0, 28),
-    "ILU(1)":     (42, 2),
-    "ILU(2)":     (24, 16),
-    "GMG-CP":     (-70, 10),
-    # "GMG-ASW":    (-70, 18),
-    "GMG-ASW": (-60, 15),
-    "SA-AMG":     (20, -22),
-    "RN-AMG":     (24, 3),
-    "BDDC-LU":    (6, 8),
-    "BDDC-AMG":   (6, 8),
+    "GMG-CP":     (10, -6),
+    "GMG-ASW":    (10, 10),
+    "BDDC-LU":    (10, 8),
+    "BDDC-AMG":   (10, -16),
 }
 
 for _, r in df.iterrows():
@@ -114,17 +91,17 @@ ax.legend(
     frameon=True,
     facecolor="white",
     framealpha=1.0,
-    loc="center right",
+    loc="lower left",
 )
 
 ax.set_xlabel(r"$S_h\; (h\mathrm{-}scalability)$")
 ax.set_ylabel(r"$S_t\; (t\mathrm{-}independence)$")
 
-ax.set_xlim(0.45, 1.75)
+ax.set_xlim(0.70, 1.32)
 ax.set_ylim(-0.05, 1.05)
 ax.tick_params(axis="both", labelsize=fs)
 ax.grid(True)
 
-plt.savefig("solver_scatter.png", dpi=200, bbox_inches="tight")
-plt.savefig("solver_scatter.svg", dpi=200, bbox_inches="tight")
+plt.savefig("solver_scatter_wing.png", dpi=200, bbox_inches="tight")
+plt.savefig("solver_scatter_wing.svg", dpi=200, bbox_inches="tight")
 plt.show()

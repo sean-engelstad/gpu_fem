@@ -132,13 +132,19 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
 
     void update_after_assembly(DeviceVec<T> &vars) {
         // copy vars to d_vars (NL update)
+        // printf("copyValues to d_vars\n");
         vars.copyValuesTo(this->d_vars);
+        // printf("assemble subdomains\n");
         this->assemble_subdomains();
+        // printf("subdomainIEsolver factor\n");
         this->subdomainIESolver->factor();
+        // printf("subdomainISolver factor\n");
         this->subdomainISolver->factor();
+        // printf("assemble coarse problem\n");
         this->assemble_coarse_problem();
         // equiv to factor (but more general for coarse preconditioners)
         // coasre problem doesn't need NL update (uses matrix, so d_coarse_vars always zero)
+        // printf("coarse solver update after assembly\n");
         this->coarseSolver->update_after_assembly(this->d_coarse_vars);
         // this->coarseSolver->factor();
     }

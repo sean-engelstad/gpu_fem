@@ -29,7 +29,9 @@ class MatrixFreePCGSolver : public BaseSolver {
         // matrix-free operator usually does not need anything here
         // unless the preconditioner does
         if (pc) {
+            // printf("pc update after assembly in krylov\n");
             pc->update_after_assembly(vars);
+            // printf("\tdone with pc update after assembly in krylov\n");
         }
     }
 

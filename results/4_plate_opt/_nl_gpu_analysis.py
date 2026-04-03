@@ -23,8 +23,30 @@ ndvs_per_side = 32
 # ndvs_per_side = 64
 # ndvs_per_side = 128
 
+# solver_type = "gmg_cp"
+solver_type = "gmg_asw"
+# solver_type = "bddc_lu"
+
+omega = None
+load_mag = 1.6e7
+
+if solver_type == "gmg_cp":
+    SOLVER = platemultigrid.Nonlinear_GMGCP_PlateSolver
+    omega, nsmooth = 0.85, 1
+    out_file = "out/plate_mg.vtk"
+elif solver_type == "gmg_asw":
+    SOLVER = platemultigrid.Nonlinear_GMGASW_PlateSolver
+    omega, nsmooth = 0.25, 2
+    out_file = "out/plate_mg.vtk"
+elif solver_type == "bddc_lu":
+    SOLVER = platemultigrid.Nonlinear_BDDCLU_PlateSolver
+    omega, nsmooth = 1.0, 1
+    out_file = "out/plate_bddc.vtk"
+    # load_mag *= (2.2 / 8.0)
+    load_mag *= 2.0
+
 # setup GPU solver
-solver = platemultigrid.NonlinearPlateSolver(
+solver = SOLVER(
     rhoKS=100.0,
     safety_factor=1.5,
     # load_mag=5e5,
@@ -32,10 +54,11 @@ solver = platemultigrid.NonlinearPlateSolver(
     # load_mag=2e6,
     # load_mag=4e6, # original loads from linear case.., gonna lead to NL deflection?
     # load_mag=8e6,
-    load_mag=1.6e7,
+    load_mag=load_mag,
     # load_mag=2e7,
     # load_mag=8e7,
-    omega=0.85,
+    omega=omega,
+    nsmooth=nsmooth,
     # omega=0.3, # much faster than 0.85 usually..
     # nxe=512,
     # nxe=256,

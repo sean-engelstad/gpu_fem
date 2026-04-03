@@ -1,5 +1,6 @@
 // implement Ali's TACS continuation solver from TACS CPU for TACS GPU
 // implemented by Sean Engelstad, Nov 4th 2025
+#pragma once
 
 template <typename T, class Vec, class Assembler, class InnerSolver>
 class NonlinearContinuationSolver {
@@ -15,8 +16,8 @@ class NonlinearContinuationSolver {
         nvars = assembler.get_num_vars();
         use_predictor = use_predictor_;
         debug = debug_;
-    
-	// circular storage of predictor history
+
+        // circular storage of predictor history
         if (use_predictor) {
             n_predictor = 4;  // num predictor states to hold
             u_hist = DeviceVec<T>(n_predictor * nvars).getPtr();
@@ -27,8 +28,6 @@ class NonlinearContinuationSolver {
     // need func to set new RHS sometimes?
     bool solve(Vec &u_inout, T lambda0 = 0.2, T inner_atol = 1e-8, T lambdaf = 1.0,
                T inner_crtol = 1e-3, T inner_frtol = 1e-8, int N_STEPS = 20) {
-
-
         // basic initialization
         bool fail = true;
         u_inout.copyValuesTo(state);  // totally permuted
@@ -38,7 +37,8 @@ class NonlinearContinuationSolver {
 
         // modify initial load factors for aerostruct/optimization design restarts
         // if init disps = 0, no modification is done
-        bool restart_design = inner_solver->compute_optimal_restart(lambda0, lambdaf, state, lambda, dlambda);
+        bool restart_design =
+            inner_solver->compute_optimal_restart(lambda0, lambdaf, state, lambda, dlambda);
 
         // then reset predictor and proceed to continuation solve
         resetPredictor();
@@ -75,18 +75,18 @@ class NonlinearContinuationSolver {
                     // no safe state to go back to, so restart to zero disps
                     printf("first restart step failed, going back to zero disps\n");
                     state.zeroValues();
-		            lambda = 0.0, dlambda = lambda0;
+                    lambda = 0.0, dlambda = lambda0;
                 } else if (icont < (N_STEPS - 1) and abs(dlambda) > MIN_STEP) {
-		    // then proceed with linear solve (not last step + dlambda not too small)
-		    // just shrink step size
+                    // then proceed with linear solve (not last step + dlambda not too small)
+                    // just shrink step size
                     prev_state.copyValuesTo(state);  // reset state
                     lambda -= dlambda;               // go back to prev lambda
                     dlambda *= 0.5;                  // reduce step size
                 } else {
-		    printf("inner solver FAILED\n");
-		    break;
-		}
-	    } else {
+                    printf("inner solver FAILED\n");
+                    break;
+                }
+            } else {
                 // inner solve passed
                 if (lambda == lambdaf) {
                     // we succeeded the whole solve, break and exit
@@ -194,7 +194,7 @@ class NonlinearContinuationSolver {
     Assembler assembler;
     int nvars;
     bool use_predictor, debug;
-    T MIN_STEP = 0.01; // min step size for lambda (fails if hits this)
+    T MIN_STEP = 0.01;  // min step size for lambda (fails if hits this)
 
     cublasHandle_t &cublasHandle;
 

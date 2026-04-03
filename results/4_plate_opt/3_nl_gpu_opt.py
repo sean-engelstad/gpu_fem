@@ -28,14 +28,36 @@ comm = MPI.COMM_WORLD
 # setup GPU solver
 solver = None
 
+# solver_type = "gmg_cp"
+solver_type = "gmg_asw"
+# solver_type = "bddc_lu"
+
+omega = None
+load_mag = 1.6e7
+
+if solver_type == "gmg_cp":
+    SOLVER = platemultigrid.Nonlinear_GMGCP_PlateSolver
+    omega, nsmooth = 0.85, 1
+    out_file = "out/plate_mg.vtk"
+elif solver_type == "gmg_asw":
+    SOLVER = platemultigrid.Nonlinear_GMGASW_PlateSolver
+    omega, nsmooth = 0.25, 2
+    out_file = "out/plate_mg.vtk"
+elif solver_type == "bddc_lu":
+    SOLVER = platemultigrid.Nonlinear_BDDCLU_PlateSolver
+    omega, nsmooth = 1.0, 1
+    out_file = "out/plate_bddc.vtk"
+    # load_mag *= (2.2 / 8.0)
+    load_mag *= 2.0
+
 root = 0
 if comm.rank == root:
-    solver = platemultigrid.NonlinearPlateSolver(
+    solver = SOLVER(
         rhoKS=100.0,
         safety_factor=1.5,
         # load_mag=4e6,
         # load_mag=8e6,
-        load_mag=1.6e7,
+        load_mag=load_mag,
         # omega=0.3, # much faster
         # omega=0.85,
         # in_plane_frac=0.05,
@@ -47,10 +69,10 @@ if comm.rank == root:
         in_plane_frac=0.6,
         # in_plane_frac=0.35,
         # omega=0.85,
-        omega=0.8,
         # nxe=512,
-        # nxe=256,
-        nsmooth=1,
+        # nxe=256
+        omega=omega,
+        nsmooth=nsmooth,
         # nsmooth=2,
         Lx=1.0,
         nxe=128,
