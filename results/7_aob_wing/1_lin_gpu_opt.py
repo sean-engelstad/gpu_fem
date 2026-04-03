@@ -37,10 +37,10 @@ if element == "CFI4":
 elif element == "MITC4":
     if args.solver == "gmg_cp":
         SOLVER_CLASS = wingmultigrid.LinearMITC_GMGCP_WingSolver
-        omega, nsmooth = 0.85, 1
+        omega, nsmooth = 0.85, 2
     elif args.solver == "gmg_asw":
         SOLVER_CLASS = wingmultigrid.LinearMITC_GMGASW_WingSolver
-        omega, nsmooth = 0.2, 2
+        omega, nsmooth = 0.2, 4
     elif args.solver == "bddc_lu":
         SOLVER_CLASS = wingmultigrid.LinearMITC_BDDCLU_WingSolver
         omega, nsmooth = 1.0, 1
@@ -55,8 +55,8 @@ if comm.rank == root:
         force=684e3*3, # boost load from static benchmark (to get more deflection?)
         omega=omega,
         nsmooth=nsmooth,
-        ORDER=8,
-        # ORDER=16, # went with this as fast for thin shell and not too much extra smoothing for thick shell
+        # ORDER=8,
+        ORDER=16, # went with this as fast for thin shell and not too much extra smoothing for thick shell
         # ORDER=32, # fastest for very thin shell case (but only a bit faster than ORDER=16)
         # ORDER=4,
         n_krylov=200,
@@ -99,12 +99,12 @@ def get_functions(xdict):
 
     # print(f"{funcs=}")
 
-    if solver.get_num_lin_solves() % 20 == 0 and comm.rank == root: # so we don't affect runtimes for fast problems
-        comp_names = [f"comp{icomp}" for icomp in range(ndvs)]
-        with open("out/1_lin_unstiff_gpu_opt.txt", "w") as f:
-            f.write(f"{mass=:.4e} {ksfail=:.4e}\n")
-            for name, value in zip(comp_names, xarr):
-                f.write(f"{name}\t{value:.16e}\n")
+    # if solver.get_num_lin_solves() % 20 == 0 and comm.rank == root: # so we don't affect runtimes for fast problems
+    #     comp_names = [f"comp{icomp}" for icomp in range(ndvs)]
+    #     with open("out/1_lin_unstiff_gpu_opt.txt", "w") as f:
+    #         f.write(f"{mass=:.4e} {ksfail=:.4e}\n")
+    #         for name, value in zip(comp_names, xarr):
+    #             f.write(f"{name}\t{value:.16e}\n")
 
     return funcs, False
 
@@ -141,7 +141,7 @@ opt_problem = Optimization("aob-lin-wing", get_functions)
 opt_problem.addVarGroup(
     "vars",
     ndvs,
-    lower=np.array([2.5e-3]*ndvs), # TODO : change min of non-struct-masses?
+    lower=np.array([5e-3]*ndvs), # TODO : change min of non-struct-masses?
     upper=np.array([1e2]*ndvs),
     value=x0,
     scale=np.array([1e2]*ndvs),

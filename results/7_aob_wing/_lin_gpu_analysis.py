@@ -33,10 +33,10 @@ if element == "CFI4":
 elif element == "MITC4":
     if args.solver == "gmg_cp":
         SOLVER_CLASS = wingmultigrid.LinearMITC_GMGCP_WingSolver
-        omega, nsmooth = 0.95, 1
+        omega, nsmooth = 0.95, 2
     elif args.solver == "gmg_asw":
         SOLVER_CLASS = wingmultigrid.LinearMITC_GMGASW_WingSolver
-        omega, nsmooth = 0.3, 2
+        omega, nsmooth = 0.2, 4
     elif args.solver == "bddc_lu":
         SOLVER_CLASS = wingmultigrid.LinearMITC_BDDCLU_WingSolver
         omega, nsmooth = 1.0, 1
@@ -63,6 +63,9 @@ solver = SOLVER_CLASS(
     # ORDER=4,
     # ORDER=12,
     # ORDER=24,
+    level=2,
+    # level=1,
+    # level=0,
     # ORDER=4,
     # n_krylov=50,
     # n_krylov=200,

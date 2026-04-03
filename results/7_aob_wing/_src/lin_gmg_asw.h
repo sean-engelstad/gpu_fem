@@ -226,6 +226,7 @@ class LinearMITC_GMGASW_WingSolver {
         // print);
         mg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega,
                               atol, rtol, print_freq, print, double_smooth);
+        mg->coarse_solver->factor();
         solver = new StructSolver(*mg, print);
 
         // mg->solve();

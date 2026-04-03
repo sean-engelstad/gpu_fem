@@ -24,7 +24,8 @@ class LinearWingAnalysis:
         E = 70e9  # elastic modulus, Pa
         nu = 0.3  # poisson's ratio
         ys = 350e6  # yield stress, Pa
-        min_thickness = 2.5e-3
+        # min_thickness = 2.5e-3
+        min_thickness = 5e-3
         max_thickness = 2.0
         thickness = 0.03
 
@@ -202,7 +203,7 @@ class LinearWingAnalysis:
 
 # Load structural mesh from BDF file
 tacs_comm = MPI.COMM_WORLD
-bdf_name = "../../examples/multigrid/3_aob_wing/meshes/aob_wing_L2.bdf"
+bdf_name = "../../examples/gmg/3_aob_wing/meshes/aob_wing_L2.bdf"
 
 wing_opt = LinearWingAnalysis(tacs_comm, bdf_name)
 nvars = wing_opt.nvars

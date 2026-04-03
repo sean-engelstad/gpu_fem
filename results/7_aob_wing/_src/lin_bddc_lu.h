@@ -69,26 +69,25 @@ class LinearMITC_BDDCLU_WingSolver {
     using Mat = decltype(createBsrMat<Assembler, VecType<T>>(std::declval<Assembler &>()));
 
     LinearMITC_BDDCLU_WingSolver(double rhoKS = 100.0, double safety_factor = 1.5,
-                                 double force = 30e3, int level = 2, int nxe_subdomain_size = 8,
-                                 T omega = 1.0, T rtol = 1e-6, int nsmooth = 1, bool print = false,
-                                 int fill_level = -1, bool wraparound = true, T wrapfrac = 1.0)
+                                 double force = 684e3, double omega = 0.8, int level = 2,
+                                 double rtol = 1e-6, int ORDER = 8, int nsmooth = 1,
+                                 int ninnercyc = 1, bool print = false, int n_krylov = 50)
         : rhoKS_(rhoKS),
           safety_factor_(safety_factor),
           force_(force),
           level_(level),
-          nxe_subdomain_size_(nxe_subdomain_size),
           omega_(omega),
           rtol_(rtol),
           nsmooth_(nsmooth),
-          print_(print),
-          fill_level_(fill_level),
-          wraparound_(wraparound),
-          wrapfrac_(wrapfrac) {
+          print_(print) {
         int already_init = 0;
         MPI_Initialized(&already_init);
         if (!already_init) {
             MPI_Init(NULL, NULL);
         }
+
+        T wraparound = 1.0;
+        int nxe_subdomain_size_ = 8;
 
         MPI_Comm comm = MPI_COMM_WORLD;
 
