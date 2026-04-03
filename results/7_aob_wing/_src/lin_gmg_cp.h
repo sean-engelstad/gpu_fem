@@ -45,7 +45,7 @@
 
 // copied and modified from ../uCRM/_src/optim.h (uCRM optimization example)
 
-class LinearMITCWingSolver {
+class LinearMITC_GMGCP_WingSolver {
    public:
     using T = double;
     // FEM typedefs
@@ -88,10 +88,10 @@ class LinearMITCWingSolver {
     using DMass = Mass<T, DeviceVec>;
     using DKSFail = KSFailure<T, DeviceVec>;
 
-    LinearMITCWingSolver(double rhoKS = 100.0, double safety_factor = 1.5, double force = 30e3,
-                         T omega = 1.0, int level = 2, T rtol = 1e-6, int ORDER = 8,
-                         int nsmooth = 1, int ninnercyc = 1, bool print = false,
-                         int n_krylov = 50) {
+    LinearMITC_GMGCP_WingSolver(double rhoKS = 100.0, double safety_factor = 1.5,
+                                double force = 30e3, T omega = 1.0, int level = 2, T rtol = 1e-6,
+                                int ORDER = 8, int nsmooth = 1, int ninnercyc = 1,
+                                bool print = false, int n_krylov = 50) {
         // --- SAFE MPI INIT ---
         int already_init = 0;
         MPI_Initialized(&already_init);
@@ -118,8 +118,8 @@ class LinearMITCWingSolver {
         for (int i = level; i >= 0; i--) {
             // read the ESP/CAPS => nastran mesh for TACS
             TACSMeshLoader mesh_loader{comm};
-            std::string fname = "../../examples/multigrid/3_aob_wing/meshes/aob_wing_L" +
-                                std::to_string(i) + ".bdf";
+            std::string fname =
+                "../../examples/gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(i) + ".bdf";
             mesh_loader.scanBDFFile(fname.c_str());
 
             // IF STIFFENED WING with REF AXIS:
@@ -214,7 +214,8 @@ class LinearMITCWingSolver {
         // int nsmooth = 1, ninnercyc = 1, print_freq = 3;
         int print_freq = 3;
         // int n_krylov = 50;
-        T atol = 1e-4;  //, rtol = 1e-6;
+        // T atol = 1e-4;  //, rtol = 1e-6;
+        T atol = 1e-30;
         // bool double_smooth = false;  // actually faster sometimes
 
         // mg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq,

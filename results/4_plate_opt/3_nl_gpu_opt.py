@@ -28,8 +28,8 @@ comm = MPI.COMM_WORLD
 # setup GPU solver
 solver = None
 
-# solver_type = "gmg_cp"
-solver_type = "gmg_asw"
+solver_type = "gmg_cp"
+# solver_type = "gmg_asw"
 # solver_type = "bddc_lu"
 
 omega = None
@@ -133,12 +133,13 @@ def get_functions(xdict):
     num_lin_solves = solver.get_num_lin_solves()
     print(f"{funcs=}, {num_lin_solves=}")
 
-    if num_lin_solves % 5 == 0 and comm.rank == root: # so we don't affect runtimes for fast problems
-        comp_names = [f"comp{icomp}" for icomp in range(ndvs)]
-        with open("out/nl_gpu_opt.txt", "w") as f:
-            f.write(f"{mass=:.4e} {ksfail=:.4e}\n")
-            for name, value in zip(comp_names, xarr):
-                f.write(f"{name}\t{value:.16e}\n")
+    # writing this out is really slow on A100 for some reason (only for NL problem)
+    # if num_lin_solves % 5 == 0 and comm.rank == root: # so we don't affect runtimes for fast problems
+    #     comp_names = [f"comp{icomp}" for icomp in range(ndvs)]
+    #     with open("out/nl_gpu_opt.txt", "w") as f:
+    #         f.write(f"{mass=:.4e} {ksfail=:.4e}\n")
+    #         for name, value in zip(comp_names, xarr):
+    #             f.write(f"{name}\t{value:.16e}\n")
 
     return funcs, False
 

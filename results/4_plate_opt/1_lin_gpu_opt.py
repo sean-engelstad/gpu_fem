@@ -23,8 +23,8 @@ solver = None
 
 # solver_type = "gmg_cp"
 # solver_type = "gmg_asw"
-# solver_type = "bddc_lu"
-solver_type = "lu"
+solver_type = "bddc_lu"
+# solver_type = "lu"
 
 omega = None
 load_mag = 1.6e7
