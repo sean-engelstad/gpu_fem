@@ -55,8 +55,8 @@ if comm.rank == root:
         force=684e3*3, # boost load from static benchmark (to get more deflection?)
         omega=omega,
         nsmooth=nsmooth,
-        # ORDER=8,
-        ORDER=16, # went with this as fast for thin shell and not too much extra smoothing for thick shell
+        ORDER=8,
+        # ORDER=16, # went with this as fast for thin shell and not too much extra smoothing for thick shell
         # ORDER=32, # fastest for very thin shell case (but only a bit faster than ORDER=16)
         # ORDER=4,
         n_krylov=200,
