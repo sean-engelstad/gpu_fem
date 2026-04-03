@@ -21,6 +21,13 @@ parser.add_argument(
     default="MITC4",
     help="Finite element type to use (default: MITC4)."
 )
+parser.add_argument(
+    "--solver",
+    type=str,
+    choices=["gmg_cp", "gmg_asw", "bddc_lu"],
+    default="gmg_cp",
+    help="Finite element type to use (default: MITC4)."
+)
 args = parser.parse_args()
 element = args.element
 
@@ -28,8 +35,15 @@ SOLVER_CLASS = None
 if element == "CFI4":
     SOLVER_CLASS = wingmultigrid.LinearCFIWingSolver
 elif element == "MITC4":
-    SOLVER_CLASS = wingmultigrid.LinearMITCWingSolver
-
+    if args.solver == "gmg_cp":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_GMGCP_WingSolver
+        omega, nsmooth = 0.85, 1
+    elif args.solver == "gmg_asw":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_GMGASW_WingSolver
+        omega, nsmooth = 0.3, 2
+    elif args.solver == "bddc_lu":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_BDDCLU_WingSolver
+        omega, nsmooth = 1.0, 1
 
 # setup GPU solver on root
 root = 0
@@ -39,8 +53,8 @@ if comm.rank == root:
         safety_factor=1.5,
         # force=684e3, # 30 KPa on lower skin from the structural benchmark
         force=684e3*3, # boost load from static benchmark (to get more deflection?)
-        omega=0.85,
-        nsmooth=1,
+        omega=omega,
+        nsmooth=nsmooth,
         # ORDER=8,
         ORDER=16, # went with this as fast for thin shell and not too much extra smoothing for thick shell
         # ORDER=32, # fastest for very thin shell case (but only a bit faster than ORDER=16)
