@@ -40,7 +40,7 @@ elif element == "MITC4":
         omega, nsmooth = 0.85, 1
     elif args.solver == "gmg_asw":
         SOLVER_CLASS = wingmultigrid.LinearMITC_GMGASW_WingSolver
-        omega, nsmooth = 0.3, 2
+        omega, nsmooth = 0.2, 2
     elif args.solver == "bddc_lu":
         SOLVER_CLASS = wingmultigrid.LinearMITC_BDDCLU_WingSolver
         omega, nsmooth = 1.0, 1
