@@ -752,7 +752,8 @@ class FetidpSolver : public BaseSolver {
 
     void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
                                          T wrap_frac = 1.0, bool compute_jump = true) {
-        bool my_debug = true;
+        // bool my_debug = true;
+        bool my_debug = false;
         if (my_debug) {
             _setup_tacs_component_subdomains_debug(nxse_, nyse_, MOD_WRAPAROUND, wrap_frac,
                                                    compute_jump);
@@ -1914,8 +1915,8 @@ class FetidpSolver : public BaseSolver {
         std::memset(IE_rowp, 0, (IE_nnodes + 1) * sizeof(int));
         std::memset(I_rowp, 0, (I_nnodes + 1) * sizeof(int));
 
-        IE_row = 0;
-        I_row = 0;
+        int IE_row = 0;
+        int I_row = 0;
         for (int row = 0; row < IEV_nnodes; row++) {
             int gnode_row = IEV_nodes[row];
             int class_row = node_class_ind[gnode_row];
