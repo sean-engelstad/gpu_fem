@@ -27,6 +27,8 @@ args = parser.parse_args()
 element = args.element
 
 
+force = 684e3*3
+
 SOLVER_CLASS = None
 if element == "CFI4":
     SOLVER_CLASS = wingmultigrid.LinearCFIWingSolver
@@ -40,12 +42,13 @@ elif element == "MITC4":
     elif args.solver == "bddc_lu":
         SOLVER_CLASS = wingmultigrid.LinearMITC_BDDCLU_WingSolver
         omega, nsmooth = 1.0, 1
+        force *= 6e-3
 
 # setup GPU solver
 solver = SOLVER_CLASS(
     rhoKS=100.0,
     safety_factor=1.5,
-    force=684e3, # 30 KPa on lower skin from the structural benchmark
+    force=force, # 30 KPa on lower skin from the structural benchmark
     # force=684e3*3, # boost load from static benchmark (to get more deflection?)
     # omega=0.85,
     omega=omega,

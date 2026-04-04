@@ -23,8 +23,8 @@ solver = None
 
 # solver_type = "gmg_cp"
 # solver_type = "gmg_asw"
-solver_type = "bddc_lu"
-# solver_type = "lu"
+# solver_type = "bddc_lu"
+solver_type = "lu"
 
 omega = None
 load_mag = 1.6e7
@@ -158,11 +158,11 @@ def get_function_grad(xdict, funcs):
     mass_grad, ksfail_grad = None, None
 
     if comm.rank == root:
-        solver.set_design_variables(xarr)
+        # solver.set_design_variables(xarr)
 
-        # before not including this would result in wrong state vars
-        # now it only does the solve again if design changed with this call
-        solver.solve() # temp debug just solve again here
+        # # before not including this would result in wrong state vars
+        # # now it only does the solve again if design changed with this call
+        # solver.solve() # temp debug just solve again here
 
         mass_grad = solver.evalFunctionSens("mass")
         ksfail_grad = solver.evalFunctionSens("ksfailure")
