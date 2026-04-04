@@ -733,6 +733,1380 @@ class FetidpSolver : public BaseSolver {
 
     void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
                                          T wrap_frac = 1.0, bool compute_jump = true) {
+        bool my_debug = true;
+        if (my_debug) {
+            _setup_tacs_component_subdomains_debug(nxse_, nyse_, MOD_WRAPAROUND, wrap_frac,
+                                                   compute_jump);
+        } else {
+            _setup_tacs_component_subdomains_nodebug(nxse_, nyse_, MOD_WRAPAROUND, wrap_frac,
+                                                     compute_jump);
+        }
+    }
+
+    void _setup_tacs_component_subdomains_debug(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
+                                                T wrap_frac = 1.0, bool compute_jump = true) {
+        auto dbg = [&](const char *msg) {
+            if (print_debug) {
+                printf("[SD-DBG] %s\n", msg);
+                fflush(stdout);
+            }
+        };
+
+        auto dbg_val = [&](const char *name, int val) {
+            if (print_debug) {
+                printf("[SD-DBG] %s = %d\n", name, val);
+                fflush(stdout);
+            }
+        };
+
+        auto dbg_val2 = [&](const char *name, double val) {
+            if (print_debug) {
+                printf("[SD-DBG] %s = %.6e\n", name, val);
+                fflush(stdout);
+            }
+        };
+
+        auto print_int_sample = [&](const char *name, const int *arr, int n, int max_print = 8) {
+            if (!print_debug) return;
+            printf("[SD-DBG] %s sample (n=%d): ", name, n);
+            int m = (n < max_print ? n : max_print);
+            for (int i = 0; i < m; i++) {
+                printf("%d ", arr[i]);
+            }
+            if (n > m) printf("...");
+            printf("\n");
+            fflush(stdout);
+        };
+
+        auto print_bool_sample = [&](const char *name, const bool *arr, int n, int max_print = 8) {
+            if (!print_debug) return;
+            printf("[SD-DBG] %s sample (n=%d): ", name, n);
+            int m = (n < max_print ? n : max_print);
+            for (int i = 0; i < m; i++) {
+                printf("%d ", (int)arr[i]);
+            }
+            if (n > m) printf("...");
+            printf("\n");
+            fflush(stdout);
+        };
+
+        auto print_t_sample = [&](const char *name, const T *arr, int n, int max_print = 8) {
+            if (!print_debug) return;
+            printf("[SD-DBG] %s sample (n=%d): ", name, n);
+            int m = (n < max_print ? n : max_print);
+            for (int i = 0; i < m; i++) {
+                printf("%.4e ", (double)arr[i]);
+            }
+            if (n > m) printf("...");
+            printf("\n");
+            fflush(stdout);
+        };
+
+        dbg("ENTER setup_tacs_component_subdomains_debug");
+        dbg_val("nxse_", nxse_);
+        dbg_val("nyse_", nyse_);
+        dbg_val("MOD_WRAPAROUND", MOD_WRAPAROUND);
+        dbg_val2("wrap_frac", wrap_frac);
+        dbg_val("compute_jump", (int)compute_jump);
+        dbg_val("num_nodes", num_nodes);
+        dbg_val("num_elements", num_elements);
+        dbg_val("nodes_per_elem", nodes_per_elem);
+        dbg_val("block_dim", block_dim);
+
+        clear_structured_host_data();
+        dbg("after clear_structured_host_data");
+
+        int *nodal_num_wing_comps, *node_wing_geom_ind;
+        dbg("before get_nodal_geom_indices");
+        WingboxMultiColoring<ShellAssembler>::get_nodal_geom_indices(
+            assembler, nodal_num_wing_comps, node_wing_geom_ind);
+        dbg("after get_nodal_geom_indices");
+        print_int_sample("node_wing_geom_ind", node_wing_geom_ind, num_nodes);
+        print_int_sample("nodal_num_wing_comps", nodal_num_wing_comps, num_nodes);
+
+        int *node_nelems = new int[num_nodes];
+        memset(node_nelems, 0, num_nodes * sizeof(int));
+        dbg("before node_nelems accumulation");
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                if (gnode < 0 || gnode >= num_nodes) {
+                    printf("[SD-DBG] ERROR bad gnode=%d at ielem=%d lnode=%d\n", gnode, ielem,
+                           lnode);
+                    fflush(stdout);
+                }
+                node_nelems[gnode]++;
+            }
+        }
+        dbg("after node_nelems accumulation");
+        print_int_sample("node_nelems", node_nelems, num_nodes);
+
+        dbg("before assembler.getBCs()");
+        auto d_bcs = assembler.getBCs();
+        int n_orig_bcs = d_bcs.getSize();
+        int *h_bcs = d_bcs.createHostVec().getPtr();
+        dbg("after assembler.getBCs()");
+        dbg_val("n_orig_bcs", n_orig_bcs);
+        print_int_sample("h_bcs", h_bcs, n_orig_bcs);
+
+        bool *dirichlet_ind = new bool[num_nodes];
+        memset(dirichlet_ind, false, num_nodes * sizeof(bool));
+        dbg("before dirichlet_ind fill");
+        for (int ibc = 0; ibc < n_orig_bcs; ibc++) {
+            int bc_node = h_bcs[ibc] / block_dim;
+            if (bc_node < 0 || bc_node >= num_nodes) {
+                printf("[SD-DBG] ERROR bad bc_node=%d from h_bcs[%d]=%d\n", bc_node, ibc,
+                       h_bcs[ibc]);
+                fflush(stdout);
+            }
+            dirichlet_ind[bc_node] = true;
+        }
+        dbg("after dirichlet_ind fill");
+        print_bool_sample("dirichlet_ind", dirichlet_ind, num_nodes);
+
+        int *node_bndry_ind = new int[num_nodes];
+        dbg("before node_bndry_ind fill");
+        for (int inode = 0; inode < num_nodes; inode++) {
+            node_bndry_ind[inode] = 0;
+            int nelems_attached = node_nelems[inode];
+            if (nelems_attached == 2) {
+                node_bndry_ind[inode] = 1;
+            } else if (nelems_attached == 1) {
+                node_bndry_ind[inode] = 2;
+            }
+        }
+        dbg("after node_bndry_ind fill");
+        print_int_sample("node_bndry_ind", node_bndry_ind, num_nodes);
+
+        dbg("before write node geom vtk");
+        T *h_wgeom_ind = new T[num_nodes * block_dim];
+        memset(h_wgeom_ind, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_wgeom_ind[6 * i] = node_wing_geom_ind[i];
+        }
+        auto h_wgeom_vec = HostVec<T>(num_nodes * block_dim, h_wgeom_ind);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_wgeom_vec,
+                                               "out/wing_node_geom_ind.vtk");
+        dbg("after write node geom vtk");
+
+        int num_comps = assembler.get_num_components();
+        dbg_val("num_comps", num_comps);
+
+        dbg("before getElemComponents/createHostVec");
+        int *h_elem_comps = assembler.getElemComponents().createHostVec().getPtr();
+        dbg("after getElemComponents/createHostVec");
+        print_int_sample("h_elem_comps", h_elem_comps, num_elements);
+
+        dbg("before d_xpts host copy");
+        T *h_xpts = d_xpts.createHostVec().getPtr();
+        dbg("after d_xpts host copy");
+        print_t_sample("h_xpts", h_xpts, 3 * ((num_nodes < 3) ? num_nodes : 3), 9);
+
+        dbg("before element centroid computation");
+        T *elem_centroids = new T[3 * num_elements];
+        memset(elem_centroids, 0, 3 * num_elements * sizeof(T));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                T *xpt = &h_xpts[3 * gnode];
+                elem_centroids[3 * ielem + 0] += xpt[0];
+                elem_centroids[3 * ielem + 1] += xpt[1];
+                elem_centroids[3 * ielem + 2] += xpt[2];
+            }
+
+            elem_centroids[3 * ielem + 0] /= nodes_per_elem;
+            elem_centroids[3 * ielem + 1] /= nodes_per_elem;
+            elem_centroids[3 * ielem + 2] /= nodes_per_elem;
+        }
+        dbg("after element centroid computation");
+        print_t_sample("elem_centroids", elem_centroids,
+                       3 * ((num_elements < 3) ? num_elements : 3), 9);
+
+        elem_sd_ind = new int[num_elements];
+        memset(elem_sd_ind, 0, num_elements * sizeof(int));
+        int *debug_lelem_sd_ind = new int[num_elements];
+        memset(debug_lelem_sd_ind, 0, num_elements * sizeof(int));
+        int i_subdomain = 0;
+
+        int *elem2elem_row_cts = new int[num_elements];
+        int *comp_num_elems = new int[num_comps];
+        memset(elem2elem_row_cts, 0, num_elements * sizeof(int));
+        memset(comp_num_elems, 0, num_comps * sizeof(int));
+
+        dbg("before elem2elem_row_cts + comp_num_elems loop");
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int icomp = h_elem_comps[ielem];
+            if (icomp < 0 || icomp >= num_comps) {
+                printf("[SD-DBG] ERROR bad icomp=%d at ielem=%d\n", icomp, ielem);
+                fflush(stdout);
+            }
+            comp_num_elems[icomp]++;
+
+            bool elem_is_interior = true;
+            bool elem_is_edge = true;
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int node_class = node_wing_geom_ind[gnode];
+                int bndry_class = node_bndry_ind[gnode];
+                if (node_class > 0) elem_is_interior = false;
+                if (node_class > 1) elem_is_edge = false;
+                if (bndry_class > 0) elem_is_interior = false;
+                if (bndry_class > 1) elem_is_edge = false;
+                if (bndry_class == 1 && node_class == 1) elem_is_edge = false;
+            }
+
+            if (elem_is_interior) {
+                elem2elem_row_cts[ielem] = 4;
+            } else if (elem_is_edge) {
+                elem2elem_row_cts[ielem] = 3;
+            } else {
+                elem2elem_row_cts[ielem] = 2;
+            }
+        }
+        dbg("after elem2elem_row_cts + comp_num_elems loop");
+        print_int_sample("comp_num_elems", comp_num_elems, num_comps);
+        print_int_sample("elem2elem_row_cts", elem2elem_row_cts, num_elements);
+
+        int **elem2elem_ielem = new int *[num_comps];
+        int **elem2elem_rowp = new int *[num_comps];
+        int **elem2elem_cols = new int *[num_comps];
+        int *elem2elem_nnz = new int[num_comps];
+
+        for (int icomp = 0; icomp < num_comps; icomp++) {
+            elem2elem_ielem[icomp] = nullptr;
+            elem2elem_rowp[icomp] = nullptr;
+            elem2elem_cols[icomp] = nullptr;
+            elem2elem_nnz[icomp] = 0;
+        }
+
+        dbg("before component loop");
+        for (int icomp = 0; icomp < num_comps; icomp++) {
+            if (print_debug) {
+                printf("\n[SD-DBG] ===== COMPONENT %d / %d =====\n", icomp, num_comps - 1);
+                fflush(stdout);
+            }
+
+            int _num_elems = comp_num_elems[icomp];
+            dbg_val("_num_elems", _num_elems);
+
+            int *e2e_ielem = new int[_num_elems];
+            int *e2e_rowp = new int[_num_elems + 1];
+            elem2elem_ielem[icomp] = e2e_ielem;
+            elem2elem_rowp[icomp] = e2e_rowp;
+
+            e2e_rowp[0] = 0;
+
+            dbg("before reduced component element list");
+            int elem_ct = 0;
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int jcomp = h_elem_comps[ielem];
+                if (icomp != jcomp) continue;
+
+                e2e_ielem[elem_ct] = ielem;
+                e2e_rowp[elem_ct + 1] = e2e_rowp[elem_ct] + elem2elem_row_cts[ielem];
+                elem_ct++;
+            }
+            dbg("after reduced component element list");
+            print_int_sample("e2e_ielem", e2e_ielem, _num_elems);
+            print_int_sample("e2e_rowp", e2e_rowp, _num_elems + 1);
+
+            if (elem_ct != _num_elems) {
+                printf("ERROR: icomp %d expected _num_elems %d but got elem_ct %d\n", icomp,
+                       _num_elems, elem_ct);
+                fflush(stdout);
+                exit(1);
+            }
+
+            int nnz = e2e_rowp[_num_elems];
+            elem2elem_nnz[icomp] = nnz;
+            dbg_val("initial nnz", nnz);
+
+            int *e2e_cols = new int[nnz];
+            elem2elem_cols[icomp] = e2e_cols;
+
+            dbg("before e2e_cols fill");
+            int ind = 0;
+            for (int i2 = 0; i2 < _num_elems * _num_elems; i2++) {
+                int i = i2 / _num_elems, j = i2 % _num_elems;
+                if (i == j) continue;
+
+                int ielem = e2e_ielem[i];
+                int *li_conn = &elem_conn[nodes_per_elem * ielem];
+                int jelem = e2e_ielem[j];
+                int *lj_conn = &elem_conn[nodes_per_elem * jelem];
+
+                int num_match = 0;
+                for (int lnode2 = 0; lnode2 < nodes_per_elem * nodes_per_elem; lnode2++) {
+                    int lnodei = lnode2 % nodes_per_elem;
+                    int lnodej = lnode2 / nodes_per_elem;
+                    int inode = li_conn[lnodei], jnode = lj_conn[lnodej];
+                    if (inode == jnode) num_match++;
+                }
+
+                if (num_match > 1) {
+                    if (ind >= nnz) {
+                        printf("ERROR: e2e_cols overflow for icomp %d\n", icomp);
+                        fflush(stdout);
+                        exit(1);
+                    }
+                    e2e_cols[ind++] = j;
+                }
+            }
+            dbg("after e2e_cols fill");
+
+            if (ind != nnz) {
+                printf("WARNING: icomp %d expected nnz %d but filled %d\n", icomp, nnz, ind);
+                fflush(stdout);
+                nnz = ind;
+                elem2elem_nnz[icomp] = ind;
+            }
+            print_int_sample("e2e_cols", e2e_cols, nnz);
+
+            dbg("before xpt bounds + xcg");
+            T xpt_min[3] = {1e20, 1e20, 1e20};
+            T xpt_max[3] = {-1e20, -1e20, -1e20};
+
+            T xcg[3] = {0.0, 0.0, 0.0};
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                T *xpt_elem = &elem_centroids[3 * ielem];
+
+                xcg[0] += xpt_elem[0];
+                xcg[1] += xpt_elem[1];
+                xcg[2] += xpt_elem[2];
+
+                int *lconn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = lconn[lnode];
+                    T *xpt = &h_xpts[3 * gnode];
+                    for (int dim = 0; dim < 3; dim++) {
+                        xpt_min[dim] = (xpt[dim] < xpt_min[dim]) ? xpt[dim] : xpt_min[dim];
+                        xpt_max[dim] = (xpt[dim] > xpt_max[dim]) ? xpt[dim] : xpt_max[dim];
+                    }
+                }
+            }
+            xcg[0] /= _num_elems;
+            xcg[1] /= _num_elems;
+            xcg[2] /= _num_elems;
+            dbg("after xpt bounds + xcg");
+            print_t_sample("xpt_min", xpt_min, 3, 3);
+            print_t_sample("xpt_max", xpt_max, 3, 3);
+            print_t_sample("xcg", xcg, 3, 3);
+
+            T xpt_span[3];
+            for (int dim = 0; dim < 3; dim++) {
+                xpt_span[dim] = xpt_max[dim] - xpt_min[dim];
+            }
+            print_t_sample("xpt_span", xpt_span, 3, 3);
+
+            auto vec_dot = [](const T *a, const T *b) -> T {
+                return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            };
+
+            auto vec_norm = [&](const T *a) -> T { return sqrt(vec_dot(a, a)); };
+
+            auto normalize = [&](T *a) {
+                T nrm = vec_norm(a);
+                if (nrm > 1e-30) {
+                    a[0] /= nrm;
+                    a[1] /= nrm;
+                    a[2] /= nrm;
+                }
+            };
+
+            dbg("before geom_normal");
+            T geom_normal[3] = {0.0, 0.0, 0.0};
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                int *lconn = &elem_conn[nodes_per_elem * ielem];
+
+                T *x0 = &h_xpts[3 * lconn[0]];
+                T *x1 = &h_xpts[3 * lconn[1]];
+                T *x2 = &h_xpts[3 * lconn[2]];
+                T *x3 = &h_xpts[3 * lconn[3]];
+
+                T e01[3] = {x1[0] - x0[0], x1[1] - x0[1], x1[2] - x0[2]};
+                T e02[3] = {x2[0] - x0[0], x2[1] - x0[1], x2[2] - x0[2]};
+                T e03[3] = {x3[0] - x0[0], x3[1] - x0[1], x3[2] - x0[2]};
+
+                T n1[3], n2[3];
+                A2D::VecCrossCore<T>(e01, e02, n1);
+                A2D::VecCrossCore<T>(e02, e03, n2);
+
+                geom_normal[0] += n1[0] + n2[0];
+                geom_normal[1] += n1[1] + n2[1];
+                geom_normal[2] += n1[2] + n2[2];
+            }
+
+            if (vec_norm(geom_normal) < 1e-12) {
+                int min_direc = 0;
+                T min_span = xpt_span[0];
+                for (int dim = 1; dim < 3; dim++) {
+                    if (xpt_span[dim] < min_span) {
+                        min_span = xpt_span[dim];
+                        min_direc = dim;
+                    }
+                }
+                geom_normal[0] = 0.0;
+                geom_normal[1] = 0.0;
+                geom_normal[2] = 0.0;
+                geom_normal[min_direc] = 1.0;
+            }
+            normalize(geom_normal);
+            dbg("after geom_normal");
+            print_t_sample("geom_normal", geom_normal, 3, 3);
+
+            dbg("before inertia tensor");
+            T I[3][3];
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 3; c++) {
+                    I[r][c] = 0.0;
+                }
+            }
+
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                T *x = &elem_centroids[3 * ielem];
+
+                T dx = x[0] - xcg[0];
+                T dy = x[1] - xcg[1];
+                T dz = x[2] - xcg[2];
+
+                I[0][0] += dy * dy + dz * dz;
+                I[1][1] += dx * dx + dz * dz;
+                I[2][2] += dx * dx + dy * dy;
+                I[0][1] -= dx * dy;
+                I[0][2] -= dx * dz;
+                I[1][2] -= dy * dz;
+            }
+            I[1][0] = I[0][1];
+            I[2][0] = I[0][2];
+            I[2][1] = I[1][2];
+            dbg("after inertia tensor");
+
+            dbg("before eig3x3_exact_givens");
+            T evals[3];
+            T VT[9];
+            T A_I[9] = {
+                I[0][0], I[0][1], I[0][2], I[1][0], I[1][1], I[1][2], I[2][0], I[2][1], I[2][2],
+            };
+            eig3x3_exact_givens<T, 12, false, true>(A_I, evals, VT);
+            dbg("after eig3x3_exact_givens");
+            print_t_sample("evals", evals, 3, 3);
+
+            T axis0[3] = {VT[0], VT[1], VT[2]};
+            T axis1[3] = {VT[3], VT[4], VT[5]};
+            T axis2[3] = {VT[6], VT[7], VT[8]};
+            normalize(axis0);
+            normalize(axis1);
+            normalize(axis2);
+
+            T inertial_normal[3] = {axis0[0], axis0[1], axis0[2]};
+            T inertial_axis_a[3] = {axis1[0], axis1[1], axis1[2]};
+            T inertial_axis_b[3] = {axis2[0], axis2[1], axis2[2]};
+
+            if (vec_dot(inertial_normal, geom_normal) < 0.0) {
+                inertial_normal[0] *= -1.0;
+                inertial_normal[1] *= -1.0;
+                inertial_normal[2] *= -1.0;
+            }
+
+            T ex[3] = {1.0, 0.0, 0.0};
+            T ey[3] = {0.0, 1.0, 0.0};
+            T ez[3] = {0.0, 0.0, 1.0};
+
+            T ref_axis1[3], ref_axis2[3], ref_axis3[3];
+            ref_axis3[0] = inertial_normal[0];
+            ref_axis3[1] = inertial_normal[1];
+            ref_axis3[2] = inertial_normal[2];
+
+            T dax = fabs(vec_dot(inertial_axis_a, ex));
+            T day = fabs(vec_dot(inertial_axis_a, ey));
+            T daz = fabs(vec_dot(inertial_axis_a, ez));
+
+            if (dax >= day && dax >= daz) {
+                ref_axis1[0] = 1.0;
+                ref_axis1[1] = 0.0;
+                ref_axis1[2] = 0.0;
+            } else if (day >= dax && day >= daz) {
+                ref_axis1[0] = 0.0;
+                ref_axis1[1] = 1.0;
+                ref_axis1[2] = 0.0;
+            } else {
+                ref_axis1[0] = 0.0;
+                ref_axis1[1] = 0.0;
+                ref_axis1[2] = 1.0;
+            }
+
+            T dbx = fabs(vec_dot(inertial_axis_b, ex));
+            T dby = fabs(vec_dot(inertial_axis_b, ey));
+            T dbz = fabs(vec_dot(inertial_axis_b, ez));
+
+            if (dbx >= dby && dbx >= dbz) {
+                ref_axis2[0] = 1.0;
+                ref_axis2[1] = 0.0;
+                ref_axis2[2] = 0.0;
+            } else if (dby >= dbx && dby >= dbz) {
+                ref_axis2[0] = 0.0;
+                ref_axis2[1] = 1.0;
+                ref_axis2[2] = 0.0;
+            } else {
+                ref_axis2[0] = 0.0;
+                ref_axis2[1] = 0.0;
+                ref_axis2[2] = 1.0;
+            }
+
+            print_t_sample("ref_axis1", ref_axis1, 3, 3);
+            print_t_sample("ref_axis2", ref_axis2, 3, 3);
+            print_t_sample("ref_axis3", ref_axis3, 3, 3);
+
+            dbg("before min_lelem search");
+            int min_lelem = -1;
+            T min_xi = 1e30, min_eta = 1e30;
+            for (int i = 0; i < _num_elems; i++) {
+                int ielem = e2e_ielem[i];
+                T *xpt_elem = &elem_centroids[3 * ielem];
+                T xi = A2D::VecDotCore<T, 3>(xpt_elem, ref_axis1);
+                T eta = A2D::VecDotCore<T, 3>(xpt_elem, ref_axis2);
+                if (xi + eta < min_xi + min_eta) {
+                    min_lelem = i;
+                    min_xi = xi;
+                    min_eta = eta;
+                }
+            }
+            dbg("after min_lelem search");
+            dbg_val("min_lelem", min_lelem);
+            dbg_val2("min_xi", min_xi);
+            dbg_val2("min_eta", min_eta);
+
+            dbg("before allocate ixe/iye/assigned");
+            int *ixe_indices = new int[_num_elems];
+            int *iye_indices = new int[_num_elems];
+            bool *assigned = new bool[_num_elems];
+
+            for (int i = 0; i < _num_elems; i++) {
+                ixe_indices[i] = 0;
+                iye_indices[i] = 0;
+                assigned[i] = false;
+            }
+
+            ixe_indices[min_lelem] = 0;
+            iye_indices[min_lelem] = 0;
+            assigned[min_lelem] = true;
+            int n_assigned = 1;
+            int i = min_lelem;
+            dbg("after allocate ixe/iye/assigned");
+
+            dbg("before while(n_assigned < _num_elems)");
+            int while_iter = 0;
+            while (n_assigned < _num_elems) {
+                while_iter++;
+                if (print_debug && (while_iter <= 10 || while_iter % 100 == 0)) {
+                    printf("[SD-DBG] component %d while_iter=%d n_assigned=%d/%d seed_i=%d\n",
+                           icomp, while_iter, n_assigned, _num_elems, i);
+                    fflush(stdout);
+                }
+
+                bool any_unfilled = false;
+                bool assigned_new = false;
+
+                for (int jp = e2e_rowp[i]; jp < e2e_rowp[i + 1]; jp++) {
+                    int j = e2e_cols[jp];
+                    if (assigned[j]) continue;
+
+                    any_unfilled = true;
+
+                    int ielem = e2e_ielem[i], jelem = e2e_ielem[j];
+                    T *xpti = &elem_centroids[3 * ielem];
+                    T *xptj = &elem_centroids[3 * jelem];
+
+                    T dx[3];
+                    for (int dim = 0; dim < 3; dim++) {
+                        dx[dim] = xptj[dim] - xpti[dim];
+                    }
+
+                    T xi_dist = A2D::VecDotCore<T, 3>(dx, ref_axis1);
+                    T eta_dist = A2D::VecDotCore<T, 3>(dx, ref_axis2);
+
+                    if (fabs(xi_dist) > fabs(eta_dist)) {
+                        int sign = (xi_dist > 0.0) ? 1 : -1;
+                        ixe_indices[j] = ixe_indices[i] + sign;
+                        iye_indices[j] = iye_indices[i];
+                    } else {
+                        int sign = (eta_dist > 0.0) ? 1 : -1;
+                        ixe_indices[j] = ixe_indices[i];
+                        iye_indices[j] = iye_indices[i] + sign;
+                    }
+
+                    assigned[j] = true;
+                    n_assigned++;
+                    i = j;
+                    assigned_new = true;
+                    break;
+                }
+
+                if (!assigned_new) {
+                    bool found_seed = false;
+                    for (int j = 0; j < _num_elems; j++) {
+                        bool has_unfilled_adj = false;
+                        for (int kp = e2e_rowp[j]; kp < e2e_rowp[j + 1]; kp++) {
+                            int k = e2e_cols[kp];
+                            if (!assigned[k]) has_unfilled_adj = true;
+                        }
+                        if (has_unfilled_adj) {
+                            i = j;
+                            found_seed = true;
+                            break;
+                        }
+                    }
+                    if (!found_seed) {
+                        dbg("breaking while loop because !found_seed");
+                        break;
+                    }
+                }
+            }
+            dbg("after while(n_assigned < _num_elems)");
+            dbg_val("final n_assigned", n_assigned);
+            print_int_sample("ixe_indices", ixe_indices, _num_elems);
+            print_int_sample("iye_indices", iye_indices, _num_elems);
+
+            int ixe_min = ixe_indices[0], ixe_max = ixe_indices[0];
+            int iye_min = iye_indices[0], iye_max = iye_indices[0];
+            for (int i2 = 1; i2 < _num_elems; i2++) {
+                ixe_min = (ixe_indices[i2] < ixe_min) ? ixe_indices[i2] : ixe_min;
+                ixe_max = (ixe_indices[i2] > ixe_max) ? ixe_indices[i2] : ixe_max;
+                iye_min = (iye_indices[i2] < iye_min) ? iye_indices[i2] : iye_min;
+                iye_max = (iye_indices[i2] > iye_max) ? iye_indices[i2] : iye_max;
+            }
+
+            for (int i2 = 0; i2 < _num_elems; i2++) {
+                ixe_indices[i2] -= ixe_min;
+                iye_indices[i2] -= iye_min;
+            }
+
+            int nxs_comp = (ixe_max - ixe_min + nxse_ - 1) / nxse_;
+            int nys_comp = (iye_max - iye_min + nyse_ - 1) / nyse_;
+
+            if (MOD_WRAPAROUND != -1) {
+                dbg("before wraparound index shift");
+                for (int i2 = 0; i2 < _num_elems; i2++) {
+                    ixe_indices[i2] += MOD_WRAPAROUND;
+                    iye_indices[i2] += MOD_WRAPAROUND;
+                }
+
+                nxs_comp = (ixe_max - ixe_min + MOD_WRAPAROUND + nxse_ - 1) / nxse_;
+                nys_comp = (iye_max - iye_min + MOD_WRAPAROUND + nyse_ - 1) / nyse_;
+                dbg("after wraparound index shift");
+            }
+
+            dbg_val("ixe_min", ixe_min);
+            dbg_val("ixe_max", ixe_max);
+            dbg_val("iye_min", iye_min);
+            dbg_val("iye_max", iye_max);
+            dbg_val("nxs_comp", nxs_comp);
+            dbg_val("nys_comp", nys_comp);
+
+            dbg("before elem_sd_ind write for component");
+            for (int i2 = 0; i2 < _num_elems; i2++) {
+                int ielem = e2e_ielem[i2];
+                int ixe = ixe_indices[i2];
+                int iye = iye_indices[i2];
+
+                int ixs = ixe / nxse_;
+                int iys = iye / nyse_;
+                elem_sd_ind[ielem] = i_subdomain + ixs + iys * nxs_comp;
+                debug_lelem_sd_ind[ielem] = elem_sd_ind[ielem] - i_subdomain;
+            }
+            dbg("after elem_sd_ind write for component");
+            print_int_sample("debug_lelem_sd_ind partial", debug_lelem_sd_ind, num_elements);
+
+            i_subdomain += nxs_comp * nys_comp;
+            dbg_val("running i_subdomain", i_subdomain);
+
+            delete[] ixe_indices;
+            delete[] iye_indices;
+            delete[] assigned;
+            dbg("component cleanup complete");
+        }
+
+        dbg("after component loop");
+        num_subdomains = i_subdomain;
+        dbg_val("num_subdomains", num_subdomains);
+        print_int_sample("elem_sd_ind", elem_sd_ind, num_elements);
+
+        dbg("before printToVTK comp_sd0");
+        auto h_vars0 = assembler.createVarsVec().createHostVec();
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars0, elem_sd_ind,
+                                                            "subdomains", "out/comp_sd0.vtk");
+        dbg("after printToVTK comp_sd0");
+
+        if (MOD_WRAPAROUND != -1) {
+            dbg("ENTER wraparound postprocessing");
+
+            MAX_NUM_VERTEX_PER_SUBDOMAIN = 6;
+
+            node_elem_nnz = 0;
+            node_elem_rowp = new int[num_nodes + 1];
+            node_elem_ct = new int[num_nodes];
+            std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+            std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+            dbg("before wraparound node->subdomain incidence count");
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    node_elem_ct[gnode]++;
+                    node_elem_nnz++;
+                }
+            }
+            dbg("after wraparound node->subdomain incidence count");
+            dbg_val("node_elem_nnz", node_elem_nnz);
+
+            for (int inode = 0; inode < num_nodes; inode++) {
+                node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+            }
+            print_int_sample("node_elem_rowp", node_elem_rowp, num_nodes + 1);
+
+            int *temp_node_elem0 = new int[num_nodes];
+            node_sd_cols = new int[node_elem_nnz];
+            std::memset(temp_node_elem0, 0, num_nodes * sizeof(int));
+            std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+            dbg("before wraparound node_sd_cols fill");
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                int subdomain_ind = elem_sd_ind[ielem];
+
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    int offset = node_elem_rowp[gnode] + temp_node_elem0[gnode];
+                    node_sd_cols[offset] = subdomain_ind;
+                    temp_node_elem0[gnode]++;
+                }
+            }
+            delete[] temp_node_elem0;
+            dbg("after wraparound node_sd_cols fill");
+            print_int_sample("node_sd_cols", node_sd_cols, node_elem_nnz);
+
+            int *node_sd_bndry_ind = new int[num_nodes];
+            std::memset(node_sd_bndry_ind, 0, num_nodes * sizeof(int));
+
+            dbg("before node_sd_bndry_ind classification");
+            for (int inode = 0; inode < num_nodes; inode++) {
+                int start = node_elem_rowp[inode];
+                int end = node_elem_rowp[inode + 1];
+
+                if (start == end) {
+                    node_sd_bndry_ind[inode] = 0;
+                    continue;
+                }
+
+                int sd0 = node_sd_cols[start];
+                int count_in_sd = 0;
+                for (int j = start; j < end; j++) {
+                    if (node_sd_cols[j] == sd0) {
+                        count_in_sd++;
+                    }
+                }
+
+                if (count_in_sd == 4) {
+                    node_sd_bndry_ind[inode] = 0;
+                } else if (count_in_sd == 2) {
+                    node_sd_bndry_ind[inode] = 1;
+                } else if (count_in_sd == 1) {
+                    node_sd_bndry_ind[inode] = 2;
+                } else {
+                    printf("warning: inode %d has count_in_sd = %d in subdomain %d\n", inode,
+                           count_in_sd, sd0);
+                    fflush(stdout);
+                    node_sd_bndry_ind[inode] = 2;
+                }
+            }
+            dbg("after node_sd_bndry_ind classification");
+            print_int_sample("node_sd_bndry_ind", node_sd_bndry_ind, num_nodes);
+
+            std::vector<std::vector<int>> sd_groups;
+            dbg("before sd_groups build");
+            for (int inode = 0; inode < num_nodes; inode++) {
+                int _sd_bndry = node_sd_bndry_ind[inode];
+                int _comp_bndry = node_wing_geom_ind[inode];
+
+                if (_sd_bndry == 1 && _comp_bndry == 1) {
+                    int start = node_elem_rowp[inode];
+                    int end = node_elem_rowp[inode + 1];
+
+                    std::vector<int> group;
+                    group.reserve(end - start);
+
+                    for (int j = start; j < end; j++) {
+                        group.push_back(node_sd_cols[j]);
+                    }
+
+                    std::sort(group.begin(), group.end());
+                    group.erase(std::unique(group.begin(), group.end()), group.end());
+
+                    if (group.size() > 1) {
+                        sd_groups.push_back(group);
+                    }
+                }
+            }
+            dbg("after sd_groups build");
+            dbg_val("sd_groups.size()", (int)sd_groups.size());
+
+            std::sort(sd_groups.begin(), sd_groups.end());
+            sd_groups.erase(std::unique(sd_groups.begin(), sd_groups.end()), sd_groups.end());
+            dbg_val("unique sd_groups.size()", (int)sd_groups.size());
+
+            int *elem_sd_cts = new int[num_subdomains];
+            memset(elem_sd_cts, 0, num_subdomains * sizeof(int));
+            int *elem_sd_rowp = new int[num_subdomains + 1];
+            memset(elem_sd_rowp, 0, (num_subdomains + 1) * sizeof(int));
+
+            dbg("before elem_sd_cts count");
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int i_subdomain_local = elem_sd_ind[ielem];
+                elem_sd_cts[i_subdomain_local]++;
+            }
+            dbg("after elem_sd_cts count");
+
+            for (int i_sd = 0; i_sd < num_subdomains; i_sd++) {
+                elem_sd_rowp[i_sd + 1] = elem_sd_rowp[i_sd] + elem_sd_cts[i_sd];
+            }
+            print_int_sample("elem_sd_rowp", elem_sd_rowp, num_subdomains + 1);
+
+            int *elem_sd_cols = new int[num_elements];
+            memset(elem_sd_cols, 0, num_elements * sizeof(int));
+            memset(elem_sd_cts, 0, num_subdomains * sizeof(int));
+
+            dbg("before elem_sd_cols fill");
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int i_subdomain_local = elem_sd_ind[ielem];
+                int offset = elem_sd_rowp[i_subdomain_local] + elem_sd_cts[i_subdomain_local];
+                elem_sd_cols[offset] = ielem;
+                elem_sd_cts[i_subdomain_local]++;
+            }
+            dbg("after elem_sd_cols fill");
+
+            int ct = 0;
+            int n_wrap = sd_groups.size() * wrap_frac;
+            dbg_val("n_wrap", n_wrap);
+
+            dbg("before applying wrap groups");
+            for (auto group : sd_groups) {
+                int first_sd_ind = group[0];
+                if (ct >= n_wrap) continue;
+                ct++;
+
+                int isd0 = group[0];
+                int ielem0 = elem_sd_cols[elem_sd_rowp[isd0]];
+                if (elem_sd_ind[ielem0] != first_sd_ind) first_sd_ind = elem_sd_ind[ielem0];
+
+                for (auto isd : group) {
+                    for (int jp = elem_sd_rowp[isd]; jp < elem_sd_rowp[isd + 1]; jp++) {
+                        int ielem = elem_sd_cols[jp];
+                        elem_sd_ind[ielem] = first_sd_ind;
+                    }
+                }
+            }
+            dbg("after applying wrap groups");
+
+            std::vector<int> subdomains;
+            subdomains.reserve(num_elements);
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                subdomains.push_back(elem_sd_ind[ielem]);
+            }
+
+            int num_subdomains_0 = num_subdomains;
+            std::sort(subdomains.begin(), subdomains.end());
+            subdomains.erase(std::unique(subdomains.begin(), subdomains.end()), subdomains.end());
+            num_subdomains = subdomains.size();
+            dbg_val("num_subdomains after wrap reduction", num_subdomains);
+
+            int *subdomain_iperm = new int[num_subdomains_0];
+            memset(subdomain_iperm, -1, num_subdomains_0 * sizeof(int));
+
+            for (int isd = 0; isd < num_subdomains; isd++) {
+                int old_sd = subdomains[isd];
+                subdomain_iperm[old_sd] = isd;
+            }
+
+            dbg("before elem_sd_ind renumber");
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                int old_sd = elem_sd_ind[ielem];
+                int new_red_sd = subdomain_iperm[old_sd];
+                elem_sd_ind[ielem] = new_red_sd;
+            }
+            dbg("after elem_sd_ind renumber");
+            print_int_sample("elem_sd_ind after wrap", elem_sd_ind, num_elements);
+        }
+
+        dbg("before print VTKs after subdomain assignment");
+        auto h_vars = assembler.createVarsVec().createHostVec();
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, elem_sd_ind,
+                                                            "subdomains", "out/comp_sd.vtk");
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars, debug_lelem_sd_ind,
+                                                            "subdomains", "out/comp_lsd.vtk");
+
+        explodedSubdomainsPrintToVTK<ShellAssembler, HostVec<T>, LOWER_SKIN>(
+            assembler, h_vars, "out/comp_lskin.vtk", num_subdomains, elem_sd_ind);
+        explodedSubdomainsPrintToVTK<ShellAssembler, HostVec<T>, UPPER_SKIN>(
+            assembler, h_vars, "out/comp_uskin.vtk", num_subdomains, elem_sd_ind);
+        explodedSubdomainsPrintToVTK<ShellAssembler, HostVec<T>, INT_STRUCT>(
+            assembler, h_vars, "out/comp_intstruct.vtk", num_subdomains, elem_sd_ind);
+        dbg("after print VTKs after subdomain assignment");
+
+        dbg("before final node->subdomain incidence rebuild");
+        node_elem_nnz = 0;
+        node_elem_rowp = new int[num_nodes + 1];
+        node_elem_ct = new int[num_nodes];
+        std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+        std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                node_elem_ct[gnode]++;
+                node_elem_nnz++;
+            }
+        }
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+        }
+
+        int *temp_node_elem = new int[num_nodes];
+        node_sd_cols = new int[node_elem_nnz];
+        std::memset(temp_node_elem, 0, num_nodes * sizeof(int));
+        std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int subdomain_ind = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int offset = node_elem_rowp[gnode] + temp_node_elem[gnode];
+                node_sd_cols[offset] = subdomain_ind;
+                temp_node_elem[gnode]++;
+            }
+        }
+        delete[] temp_node_elem;
+        dbg("after final node->subdomain incidence rebuild");
+
+        dbg("before node classification");
+        node_class_ind = new int[num_nodes];
+        std::memset(node_class_ind, 0, num_nodes * sizeof(int));
+
+        printf(
+            "WARNING: for unstructured meshes, this node classification may fail at junctions.\n");
+        fflush(stdout);
+
+        node_nsd = new int[num_nodes];
+        I_nnodes = 0, IE_nnodes = 0, IEV_nnodes = 0;
+        Vc_nnodes = 0, V_nnodes = 0, lam_nnodes = 0;
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            std::unordered_set<int> node_sds;
+            for (int jp = node_elem_rowp[inode]; jp < node_elem_rowp[inode + 1]; jp++) {
+                node_sds.insert(node_sd_cols[jp]);
+            }
+
+            int nsd = static_cast<int>(node_sds.size());
+            node_nsd[inode] = nsd;
+
+            if (nsd < 2) {
+                node_class_ind[inode] = INTERIOR;
+                I_nnodes++, IE_nnodes++, IEV_nnodes++;
+            } else if (dirichlet_ind[inode]) {
+                node_class_ind[inode] = INTERIOR;
+                if (node_bndry_ind[inode] > 0) {
+                    node_class_ind[inode] = DIRICHLET_EDGE;
+                    I_nnodes += nsd;
+                    IE_nnodes += nsd;
+                    IEV_nnodes += nsd;
+                }
+            } else if (nsd == 2 || node_wing_geom_ind[inode] == 1) {
+                node_class_ind[inode] = EDGE;
+                lam_nnodes++;
+                IE_nnodes += nsd;
+                IEV_nnodes += nsd;
+            } else {
+                node_class_ind[inode] = VERTEX;
+                Vc_nnodes++;
+                V_nnodes += nsd;
+                IEV_nnodes += nsd;
+            }
+        }
+        dbg("after node classification");
+        dbg_val("I_nnodes", I_nnodes);
+        dbg_val("IE_nnodes", IE_nnodes);
+        dbg_val("IEV_nnodes", IEV_nnodes);
+        dbg_val("Vc_nnodes", Vc_nnodes);
+        dbg_val("V_nnodes", V_nnodes);
+        dbg_val("lam_nnodes", lam_nnodes);
+        print_int_sample("node_nsd", node_nsd, num_nodes);
+        print_int_sample("node_class_ind", node_class_ind, num_nodes);
+
+        dbg("before comp_node_nsd / comp_node_class VTK");
+        T *h_soln = new T[num_nodes * block_dim];
+        memset(h_soln, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_soln[6 * i] = node_nsd[i];
+        }
+        auto h_soln_debug = HostVec<T>(num_nodes * block_dim, h_soln);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug, "out/comp_node_nsd.vtk");
+
+        T *h_soln2 = new T[num_nodes * block_dim];
+        memset(h_soln2, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_soln2[6 * i] = node_class_ind[i];
+        }
+        auto h_soln_debug2 = HostVec<T>(num_nodes * block_dim, h_soln2);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug2, "out/comp_node_class.vtk");
+        dbg("after comp_node_nsd / comp_node_class VTK");
+
+        dbg("before duplicated IEV nodal layout");
+        IEV_sd_ptr = new int[num_subdomains + 1];
+        IEV_sd_ind = new int[IEV_nnodes];
+        IEV_nodes = new int[IEV_nnodes];
+        std::memset(IEV_sd_ptr, 0, (num_subdomains + 1) * sizeof(int));
+
+        int IEV_ind = 0;
+        int *temp_completion = new int[num_nodes];
+
+        for (int i_subdomain_local = 0; i_subdomain_local < num_subdomains; i_subdomain_local++) {
+            std::memset(temp_completion, 0, num_nodes * sizeof(int));
+            IEV_sd_ptr[i_subdomain_local + 1] = IEV_sd_ptr[i_subdomain_local];
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                if (elem_sd_ind[ielem] != i_subdomain_local) continue;
+
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    if (temp_completion[gnode]) continue;
+
+                    IEV_nodes[IEV_ind] = gnode;
+                    IEV_sd_ind[IEV_ind] = i_subdomain_local;
+                    IEV_sd_ptr[i_subdomain_local + 1]++;
+                    IEV_ind++;
+                    temp_completion[gnode] = 1;
+                }
+            }
+        }
+        delete[] temp_completion;
+        dbg("after duplicated IEV nodal layout");
+        dbg_val("IEV_ind", IEV_ind);
+        print_int_sample("IEV_sd_ptr", IEV_sd_ptr, num_subdomains + 1);
+        print_int_sample("IEV_nodes", IEV_nodes, IEV_nnodes);
+        print_int_sample("IEV_sd_ind", IEV_sd_ind, IEV_nnodes);
+
+        dbg("before IEV element connectivity");
+        IEV_elem_conn = new int[num_elements * nodes_per_elem];
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int i_subdomain_local = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int local_ind = -1;
+
+                for (int jp = IEV_sd_ptr[i_subdomain_local]; jp < IEV_sd_ptr[i_subdomain_local + 1];
+                     jp++) {
+                    if (IEV_nodes[jp] == gnode) {
+                        local_ind = jp;
+                        break;
+                    }
+                }
+
+                if (local_ind < 0) {
+                    printf("ERROR: failed to find duplicated IEV node for elem %d node %d\n", ielem,
+                           gnode);
+                    fflush(stdout);
+                }
+                IEV_elem_conn[nodes_per_elem * ielem + lnode] = local_ind;
+            }
+        }
+        dbg("after IEV element connectivity");
+        print_int_sample("IEV_elem_conn", IEV_elem_conn, num_elements * nodes_per_elem);
+
+        dbg("before IE / I nodal lists");
+        IE_nodes = new int[IE_nnodes];
+        I_nodes = new int[I_nnodes];
+        std::memset(IE_nodes, 0, IE_nnodes * sizeof(int));
+        std::memset(I_nodes, 0, I_nnodes * sizeof(int));
+        IE_interior = new bool[IE_nnodes];
+        IE_general_edge = new bool[IE_nnodes];
+
+        int IE_ind = 0;
+        int I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IE_interior[IE_ind] = node_class == INTERIOR || node_class == DIRICHLET_EDGE;
+                IE_general_edge[IE_ind] = node_class == DIRICHLET_EDGE || node_class == EDGE;
+                IE_nodes[IE_ind++] = gnode;
+            }
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                I_nodes[I_ind++] = gnode;
+            }
+        }
+        dbg("after IE / I nodal lists");
+        print_int_sample("IE_nodes", IE_nodes, IE_nnodes);
+        print_int_sample("I_nodes", I_nodes, I_nnodes);
+        print_bool_sample("IE_interior", IE_interior, IE_nnodes);
+        print_bool_sample("IE_general_edge", IE_general_edge, IE_nnodes);
+
+        d_IE_interior = HostVec<bool>(IE_nnodes, IE_interior).createDeviceVec().getPtr();
+        d_IE_general_edge = HostVec<bool>(IE_nnodes, IE_general_edge).createDeviceVec().getPtr();
+        d_IE_nodes = HostVec<int>(IE_nnodes, IE_nodes).createDeviceVec().getPtr();
+        dbg("after IE metadata moved to device");
+
+        dbg("before IEV_bsr_data");
+        IEV_bsr_data = BsrData(num_elements, IEV_nnodes, nodes_per_elem, block_dim, IEV_elem_conn);
+        IEV_rowp = IEV_bsr_data.rowp;
+        IEV_cols = IEV_bsr_data.cols;
+        IEV_nnzb = IEV_bsr_data.nnzb;
+        IEV_rows = new int[IEV_nnzb];
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            for (int jp = IEV_rowp[inode]; jp < IEV_rowp[inode + 1]; jp++) {
+                IEV_rows[jp] = inode;
+            }
+        }
+        dbg("after IEV_bsr_data");
+        dbg_val("IEV_nnzb", IEV_nnzb);
+        print_int_sample("IEV_rowp", IEV_rowp, IEV_nnodes + 1);
+        print_int_sample("IEV_cols", IEV_cols, IEV_nnzb);
+
+        dbg("before reduced rowp arrays");
+        IE_rowp = new int[IE_nnodes + 1];
+        I_rowp = new int[I_nnodes + 1];
+        std::memset(IE_rowp, 0, (IE_nnodes + 1) * sizeof(int));
+        std::memset(I_rowp, 0, (I_nnodes + 1) * sizeof(int));
+
+        IE_row = 0;
+        I_row = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            if (typeI_row) I_rowp[I_row + 1] = I_rowp[I_row];
+            if (typeIE_row) IE_rowp[IE_row + 1] = IE_rowp[IE_row];
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) I_rowp[I_row + 1]++;
+                if (typeIE_row && typeIE_col) IE_rowp[IE_row + 1]++;
+            }
+
+            if (typeI_row) I_row++;
+            if (typeIE_row) IE_row++;
+        }
+
+        I_nnzb = I_rowp[I_nnodes];
+        IE_nnzb = IE_rowp[IE_nnodes];
+        dbg("after reduced rowp arrays");
+        dbg_val("I_nnzb", I_nnzb);
+        dbg_val("IE_nnzb", IE_nnzb);
+        print_int_sample("I_rowp", I_rowp, I_nnodes + 1);
+        print_int_sample("IE_rowp", IE_rowp, IE_nnodes + 1);
+
+        IE_rows = new int[IE_nnzb];
+        for (int inode = 0; inode < IE_nnodes; inode++) {
+            for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+                IE_rows[jp] = inode;
+            }
+        }
+        I_rows = new int[I_nnzb];
+        for (int inode = 0; inode < I_nnodes; inode++) {
+            for (int jp = I_rowp[inode]; jp < I_rowp[inode + 1]; jp++) {
+                I_rows[jp] = inode;
+            }
+        }
+        dbg("after reduced rows arrays");
+
+        dbg("before IEV->IE map");
+        IEVtoIE_map = new int[IEV_nnodes];
+        std::memset(IEVtoIE_map, -1, IEV_nnodes * sizeof(int));
+        IEVtoIE_imap = new int[IE_nnodes];
+
+        IE_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IEVtoIE_imap[IE_ind] = inode;
+                IEVtoIE_map[inode] = IE_ind++;
+            }
+        }
+        dbg("after IEV->IE map");
+        print_int_sample("IEVtoIE_map", IEVtoIE_map, IEV_nnodes);
+        print_int_sample("IEVtoIE_imap", IEVtoIE_imap, IE_nnodes);
+
+        d_IEVtoIE_imap = HostVec<int>(IE_nnodes, IEVtoIE_imap).createDeviceVec().getPtr();
+        dbg("after d_IEVtoIE_imap");
+
+        dbg("before IEV->I map");
+        IEVtoI_map = new int[IEV_nnodes];
+        IEVtoI_imap = new int[I_nnodes];
+        std::memset(IEVtoI_map, -1, IEV_nnodes * sizeof(int));
+
+        I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                IEVtoI_imap[I_ind] = inode;
+                IEVtoI_map[inode] = I_ind++;
+            }
+        }
+        dbg("after IEV->I map");
+        print_int_sample("IEVtoI_map", IEVtoI_map, IEV_nnodes);
+        print_int_sample("IEVtoI_imap", IEVtoI_imap, I_nnodes);
+
+        d_IEVtoI_imap = HostVec<int>(I_nnodes, IEVtoI_imap).createDeviceVec().getPtr();
+        dbg("after d_IEVtoI_imap");
+
+        dbg("before reduced column arrays");
+        IE_cols = new int[IE_nnzb];
+        I_cols = new int[I_nnzb];
+
+        I_ind = 0;
+        IE_ind = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) {
+                    I_cols[I_ind++] = IEVtoI_map[col];
+                }
+                if (typeIE_row && typeIE_col) {
+                    IE_cols[IE_ind++] = IEVtoIE_map[col];
+                }
+            }
+        }
+        dbg("after reduced column arrays");
+        print_int_sample("I_cols", I_cols, I_nnzb);
+        print_int_sample("IE_cols", IE_cols, IE_nnzb);
+
+        dbg("before d_IEV_elem_conn");
+        d_IEV_elem_conn =
+            HostVec<int>(num_elements * nodes_per_elem, IEV_elem_conn).createDeviceVec();
+        dbg("after d_IEV_elem_conn");
+
+        dbg("before Vc setup");
+        std::unordered_set<int> Vc_nodeset;
+        for (int i2 = 0; i2 < IEV_nnodes; i2++) {
+            int gnode = IEV_nodes[i2];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                Vc_nodeset.insert(gnode);
+            }
+        }
+        std::vector<int> Vc_nodes_vec(Vc_nodeset.begin(), Vc_nodeset.end());
+        std::sort(Vc_nodes_vec.begin(), Vc_nodes_vec.end());
+
+        int *Vc_inodes = new int[num_nodes];
+        memset(Vc_inodes, -1, num_nodes * sizeof(int));
+        for (int i2 = 0; i2 < (int)Vc_nodes_vec.size(); i2++) {
+            int j = Vc_nodes_vec[i2];
+            Vc_inodes[j] = i2;
+        }
+
+        d_Vc_nodes = HostVec<int>(Vc_nnodes, Vc_nodes_vec.data()).createDeviceVec().getPtr();
+        Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
+        dbg("after Vc setup");
+        print_int_sample("Vc_nodes", Vc_nodes, Vc_nnodes);
+
+        int nwrap_nodes = 0;
+        for (int ivc = 0; ivc < Vc_nnodes; ivc++) {
+            int glob_node = Vc_nodes[ivc];
+            int wing_node_class = node_wing_geom_ind[glob_node];
+            if (wing_node_class == 0) {
+                nwrap_nodes++;
+            }
+        }
+        T wrap_node_frac = 1.0 * nwrap_nodes / Vc_nnodes;
+        printf("frac of nodes on interior (for wrap subdomains): %d/%d = %.4f\n", nwrap_nodes,
+               Vc_nnodes, wrap_node_frac);
+        fflush(stdout);
+
+        dbg("before VctoV/IEVtoV maps");
+        VctoV_imap = new int[V_nnodes];
+        std::memset(VctoV_imap, -1, V_nnodes * sizeof(int));
+        IEVtoV_imap = new int[V_nnodes];
+        std::memset(IEVtoV_imap, -1, V_nnodes * sizeof(int));
+
+        int V_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                int Vc_ind = Vc_inodes[gnode];
+                VctoV_imap[V_ind] = Vc_ind;
+                IEVtoV_imap[V_ind] = inode;
+                V_ind++;
+            }
+        }
+        dbg("after VctoV/IEVtoV maps");
+        print_int_sample("VctoV_imap", VctoV_imap, V_nnodes);
+        print_int_sample("IEVtoV_imap", IEVtoV_imap, V_nnodes);
+
+        d_IEVtoV_imap = HostVec<int>(V_nnodes, IEVtoV_imap).createDeviceVec().getPtr();
+        d_VctoV_imap = HostVec<int>(V_nnodes, VctoV_imap).createDeviceVec().getPtr();
+        dbg("after d_IEVtoV_imap / d_VctoV_imap");
+
+        dbg("before _compute_jump_operators");
+        bool square_domain = compute_jump;
+        _compute_jump_operators(square_domain);
+        dbg("after _compute_jump_operators");
+
+        dbg("before allocate_workspace");
+        allocate_workspace();
+        dbg("after allocate_workspace");
+
+        dbg("before IE_bsr_data / I_bsr_data");
+        IE_bsr_data = BsrData(IE_nnodes, block_dim, IE_nnzb, IE_rowp, IE_cols);
+        IE_bsr_data.rows = IE_rows;
+        IE_nofill_nnzb = IE_nnzb;
+        IE_perm = IE_bsr_data.perm, IE_iperm = IE_bsr_data.iperm;
+
+        I_bsr_data = BsrData(I_nnodes, block_dim, I_nnzb, I_rowp, I_cols);
+        I_bsr_data.rows = I_rows;
+        I_nofill_nnzb = I_nnzb;
+        dbg("after IE_bsr_data / I_bsr_data");
+
+        dbg("EXIT setup_tacs_component_subdomains_debug");
+    }
+
+    void _setup_tacs_component_subdomains_nodebug(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
+                                                  T wrap_frac = 1.0, bool compute_jump = true) {
         clear_structured_host_data();
 
         // printf("SETUP_WING_SUBDOMAINS : get_nodal_geom_indices\n");
