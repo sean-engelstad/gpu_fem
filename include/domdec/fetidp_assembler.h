@@ -76,6 +76,25 @@ class FetidpSolver : public BaseSolver {
         MAX_NUM_VERTEX_PER_SUBDOMAIN = 4;
         S_VV_MLIEV = nullptr;  // unused in 2-level BDDC
 
+        elem_sd_ind = nullptr;
+        node_sd_cols = nullptr;
+        node_elem_ct = nullptr;
+        node_elem_rowp = nullptr;
+        node_class_ind = nullptr;
+
+        IEV_nodes = nullptr;
+        IE_nodes = nullptr;
+        I_nodes = nullptr;
+        IE_rowp = nullptr;
+        I_rowp = nullptr;
+        IE_cols = nullptr;
+        I_cols = nullptr;
+        IEV_elem_conn = nullptr;
+        IEV_sd_ptr = nullptr;
+        IEV_sd_ind = nullptr;
+        IEVtoIE_map = nullptr;
+        IEVtoI_map = nullptr;
+
         descrK = 0;
         CHECK_CUSPARSE(cusparseCreateMatDescr(&descrK));
         CHECK_CUSPARSE(cusparseSetMatType(descrK, CUSPARSE_MATRIX_TYPE_GENERAL));
@@ -745,6 +764,7 @@ class FetidpSolver : public BaseSolver {
 
     void _setup_tacs_component_subdomains_debug(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
                                                 T wrap_frac = 1.0, bool compute_jump = true) {
+        bool print_debug = true;
         auto dbg = [&](const char *msg) {
             if (print_debug) {
                 printf("[SD-DBG] %s\n", msg);
@@ -5420,43 +5440,75 @@ class FetidpSolver : public BaseSolver {
     void clear_host_data() { clear_structured_host_data(); }
 
     void clear_structured_host_data() {
-        delete[] elem_sd_ind;
-        delete[] node_sd_cols;
-        delete[] node_elem_ct;
-        delete[] node_elem_rowp;
-        delete[] node_class_ind;
+        if (elem_sd_ind) {
+            delete[] elem_sd_ind;
+            elem_sd_ind = nullptr;
+        }
+        if (node_sd_cols) {
+            delete[] node_sd_cols;
+            node_sd_cols = nullptr;
+        }
+        if (node_elem_ct) {
+            delete[] node_elem_ct;
+            node_elem_ct = nullptr;
+        }
+        if (node_elem_rowp) {
+            delete[] node_elem_rowp;
+            node_elem_rowp = nullptr;
+        }
+        if (node_class_ind) {
+            delete[] node_class_ind;
+            node_class_ind = nullptr;
+        }
 
-        delete[] IEV_nodes;
-        delete[] IE_nodes;
-        delete[] I_nodes;
-        delete[] IE_rowp;
-        delete[] I_rowp;
-        delete[] IE_cols;
-        delete[] I_cols;
-        delete[] IEV_elem_conn;
-        delete[] IEV_sd_ptr;
-        delete[] IEV_sd_ind;
-        delete[] IEVtoIE_map;
-        delete[] IEVtoI_map;
-
-        elem_sd_ind = nullptr;
-        node_sd_cols = nullptr;
-        node_elem_ct = nullptr;
-        node_elem_rowp = nullptr;
-        node_class_ind = nullptr;
-
-        IEV_nodes = nullptr;
-        IE_nodes = nullptr;
-        I_nodes = nullptr;
-        IE_rowp = nullptr;
-        I_rowp = nullptr;
-        IE_cols = nullptr;
-        I_cols = nullptr;
-        IEV_elem_conn = nullptr;
-        IEV_sd_ptr = nullptr;
-        IEV_sd_ind = nullptr;
-        IEVtoIE_map = nullptr;
-        IEVtoI_map = nullptr;
+        if (IEV_nodes) {
+            delete[] IEV_nodes;
+            IEV_nodes = nullptr;
+        }
+        if (IE_nodes) {
+            delete[] IE_nodes;
+            IE_nodes = nullptr;
+        }
+        if (I_nodes) {
+            delete[] I_nodes;
+            I_nodes = nullptr;
+        }
+        if (IE_rowp) {
+            delete[] IE_rowp;
+            IE_rowp = nullptr;
+        }
+        if (I_rowp) {
+            delete[] I_rowp;
+            I_rowp = nullptr;
+        }
+        if (IE_cols) {
+            delete[] IE_cols;
+            IE_cols = nullptr;
+        }
+        if (I_cols) {
+            delete[] I_cols;
+            I_cols = nullptr;
+        }
+        if (IEV_elem_conn) {
+            delete[] IEV_elem_conn;
+            IEV_elem_conn = nullptr;
+        }
+        if (IEV_sd_ptr) {
+            delete[] IEV_sd_ptr;
+            IEV_sd_ptr = nullptr;
+        }
+        if (IEV_sd_ind) {
+            delete[] IEV_sd_ind;
+            IEV_sd_ind = nullptr;
+        }
+        if (IEVtoIE_map) {
+            delete[] IEVtoIE_map;
+            IEVtoIE_map = nullptr;
+        }
+        if (IEVtoI_map) {
+            delete[] IEVtoI_map;
+            IEVtoI_map = nullptr;
+        }
     }
 
     void copyKmat_IEVtoIE() {
