@@ -46,6 +46,11 @@ class HellingerReissnerIsogeometricElement:
         self.nodes_per_elem = 3
         self.dof_per_node = 2  # [w, th]
 
+
+        self._P0_cache = {}
+        self._P1_cache = {}
+        self._kmat_cache = {}
+
         # Element-local discontinuous strain DOFs
         self.gamma_dof_per_elem = 2  # [gamma_L, gamma_R]
 
@@ -262,55 +267,250 @@ class HellingerReissnerIsogeometricElement:
 
         R /= counts
         return R
+    
+    def _energy_smooth_prolong_local(self, P0: sp.csr_matrix, nxe_c: int,
+                                    block_nodes: int = 1,
+                                    n_sweeps: int = 1,
+                                    omega: float = 1.0,
+                                    tau: float = 1.0):
+        """
+        Energy smoothing of prolongator using the trace objective:
 
-    def prolongate(self, coarse_disp: np.ndarray, length: float):
-        dpn = self.dof_per_node
+            E(P) = tr(P^T K_f P)
+
+        Gradient: dE/dP = 2 K_f P.
+
+        Local preconditioned gradient descent / Richardson step:
+            P <- P - tau * D^{-1} (K_f P)
+
+        where D is the block-diagonal of K_f with 1- or 2-node blocks.
+
+        Parameters
+        ----------
+        P0 : csr_matrix
+            Baseline prolong, shape (n_f, n_c).
+        nxe_c : int
+            Coarse elements, used to eliminate coarse BC columns (same convention as your locking routine).
+        block_nodes : {1,2}
+            1 -> 2x2 blocks (node-local), 2 -> 4x4 blocks (two-node local).
+        n_sweeps : int
+            Number of smoothing sweeps (each sweep applies one local-preconditioned gradient step).
+        omega : float
+            Relaxation on the block update (like your locking GS): X <- X + omega*(Xnew - X).
+        tau : float
+            Step size in the gradient step. Often tau ~ 0.5–1.0 works; if it oversmooths, reduce tau.
+
+        Returns
+        -------
+        P : dense ndarray, shape (n_f, n_c)
+        """
+
+        # fine operator
+        K = self._kmat_cache[nxe_c]
+        n_f = K.shape[0]
+
+        # coarse column handling (same as your locking routine)
+        nx_c = nxe_c + self.ORDER
+        n_c = 2 * nx_c
+        fixed_cols = [0, 2 * (nx_c - 1)]  # SS: w left/right
+        all_cols = np.arange(n_c, dtype=int)
+        free_cols = np.array([j for j in all_cols if j not in set(fixed_cols)], dtype=int)
+
+        # print(f"{nx_c=} {n_c=} {P0.shape=}")
+
+        # dense working array
+        P0 = P0 #.toarray()
+        X = P0[:, free_cols].copy()   # (n_f, n_free)
+
+        # block structure
+        if block_nodes not in (1, 2):
+            raise ValueError("block_nodes must be 1 or 2")
+
+        dofs_per_node = 2
+        block_size = dofs_per_node * block_nodes
+        n_blocks = int(np.ceil(n_f / block_size))
+
+        def blk_slice(b):
+            i0 = b * block_size
+            i1 = min(n_f, (b + 1) * block_size)
+            return slice(i0, i1)
+
+        # cache block-diagonal inverses of K (local)
+        Dinv = []
+        for b in range(n_blocks):
+            sl = blk_slice(b)
+            Kb = K[sl, sl].toarray()
+            Kb = 0.5 * (Kb + Kb.T)
+            # small safeguard in case Kb is singular-ish locally (optional)
+            # eps = 1e-14 * np.trace(Kb) / max(1, Kb.shape[0])
+            # Kb = Kb + eps * np.eye(Kb.shape[0])
+            Dinv.append(np.linalg.inv(Kb))
+
+        # print(f"{K.shape=} {X.shape=}")
+
+        # smoothing sweeps
+        for _ in range(n_sweeps):
+            # compute global gradient piece once: G = K X
+            # (sparse-dense multiply; gives dense n_f x n_free)
+            GX = K @ X
+
+            # local block-preconditioned update
+            for b in range(n_blocks):
+                sl = blk_slice(b)
+
+                # preconditioned gradient step on this block:
+                # Xnew_b = X_b - tau * Dinv_b * (GX_b)
+                Xnew = X[sl, :] - tau * (Dinv[b] @ GX[sl, :])
+
+                # relax like your locking routine
+                X[sl, :] = X[sl, :] + omega * (Xnew - X[sl, :])
+
+        # print("ENERGY SMOOTH PROLONG LOCAL")
+
+        # reinsert into full P
+        P = np.zeros((n_f, n_c))
+        P[:, free_cols] = X
+        return P
+
+    # def prolongate(self, coarse_disp: np.ndarray, length: float):
+    #     dpn = self.dof_per_node
+    #     ndof_coarse = coarse_disp.shape[0]
+    #     nnodes_coarse = ndof_coarse // dpn
+    #     nelems_coarse = nnodes_coarse - 2
+
+    #     nelems_fine = 2 * nelems_coarse
+    #     nnodes_fine = nelems_fine + 2
+    #     ndof_fine = nnodes_fine * dpn
+
+    #     R = self._build_restriction_matrix(nelems_coarse)
+    #     P0 = R.T
+    #     P = P0.copy()
+
+    #     # P = self._energy_smooth_prolong_local(P0, nelems_coarse, block_nodes=1, n_sweeps=8, omega=1.0, tau=0.5)
+
+    #     fine_disp = np.zeros(ndof_fine)
+    #     fine_wts = np.zeros(ndof_fine)
+
+    #     for idof in range(dpn):
+    #         fine_disp[idof::dpn] += P @ coarse_disp[idof::dpn]
+    #         fine_wts[idof::dpn] += P @ np.ones(nnodes_coarse)
+
+    #     fine_disp /= fine_wts
+
+    #     # Apply BCs (your pattern)
+    #     fine_disp[0] = 0.0
+    #     fine_disp[-2] = 0.0
+    #     if self.clamped:
+    #         fine_disp[1] = 0.0
+    #         fine_disp[-1] = 0.0
+
+    #     return fine_disp
+
+    # def restrict_defect(self, fine_defect: np.ndarray, length: float):
+    #     dpn = self.dof_per_node
+    #     ndof_fine = fine_defect.shape[0]
+    #     nnodes_fine = ndof_fine // dpn
+    #     nelems_fine = nnodes_fine - 2
+
+    #     nelems_coarse = nelems_fine // 2
+    #     nnodes_coarse = nelems_coarse + 2
+    #     ndof_coarse = nnodes_coarse * dpn
+
+    #     R = self._build_restriction_matrix(nelems_coarse)
+    #     P0 = R.T
+    #     P = P0.copy()
+
+    #     # P = self._energy_smooth_prolong_local(P0, nelems_coarse, block_nodes=1, n_sweeps=8, omega=1.0, tau=0.5)
+
+
+    #     coarse_defect = np.zeros(ndof_coarse)
+    #     for idof in range(dpn):
+    #         coarse_defect[idof::dpn] += R @ fine_defect[idof::dpn]
+
+    #     # Apply BCs (your pattern)
+    #     coarse_defect[0] = 0.0
+    #     coarse_defect[-2] = 0.0
+    #     if self.clamped:
+    #         coarse_defect[1] = 0.0
+    #         coarse_defect[-1] = 0.0
+
+    #     return coarse_defect
+
+    def prolongate(self, coarse_disp:np.ndarray, length:float):
         ndof_coarse = coarse_disp.shape[0]
-        nnodes_coarse = ndof_coarse // dpn
+        nnodes_coarse = ndof_coarse // self.dof_per_node
         nelems_coarse = nnodes_coarse - 2
-
         nelems_fine = 2 * nelems_coarse
         nnodes_fine = nelems_fine + 2
-        ndof_fine = nnodes_fine * dpn
+        ndof_fine = nnodes_fine * self.dof_per_node
+
+        # R = self._build_restriction_matrix(nelems_coarse)
+        # P = R.T
 
         R = self._build_restriction_matrix(nelems_coarse)
-        P = R.T
+        P0 = R.T
+        P0_2 = np.zeros((2*P0.shape[0], 2 * P0.shape[1]))
+        for i in range(P0.shape[0]):
+            for j in range(P0.shape[1]):
+                P0_2[2*i, 2*j] = P0[i,j]
+                P0_2[2*i+1,2*j+1] = P0[i,j]
+
+        # P = P0.copy()
+        P = self._energy_smooth_prolong_local(P0_2, nelems_coarse, block_nodes=1, n_sweeps=8, omega=1.0, tau=0.5)
+
 
         fine_disp = np.zeros(ndof_fine)
-        fine_wts = np.zeros(ndof_fine)
+        fine_weights = np.zeros(ndof_fine) # to do row-sum norm on P (since P^T is properly normalized but P is not?)
+        dpn = self.dof_per_node
+        # for idof in range(dpn):
+        #     fine_disp[idof::dpn] += np.dot(P, coarse_disp[idof::dpn])
+        #     fine_weights[idof::dpn] += np.dot(P, np.ones(nnodes_coarse))
+        fine_disp = np.dot(P, coarse_disp)
 
-        for idof in range(dpn):
-            fine_disp[idof::dpn] += P @ coarse_disp[idof::dpn]
-            fine_wts[idof::dpn] += P @ np.ones(nnodes_coarse)
+        # fine_disp /= fine_weights
 
-        fine_disp /= fine_wts
-
-        # Apply BCs (your pattern)
+        # apply bcs again, no need same answer either way
         fine_disp[0] = 0.0
-        fine_disp[-1] = 0.0
+        fine_disp[-2] = 0.0
+
         if self.clamped:
             fine_disp[1] = 0.0
             fine_disp[-1] = 0.0
-
+            
         return fine_disp
-
-    def restrict_defect(self, fine_defect: np.ndarray, length: float):
-        dpn = self.dof_per_node
-        ndof_fine = fine_defect.shape[0]
-        nnodes_fine = ndof_fine // dpn
+    
+    def restrict_defect(self, fine_defect:np.ndarray, length:float):
+        ndof_coarse = ndof_fine = fine_defect.shape[0]
+        nnodes_fine = ndof_fine // self.dof_per_node
         nelems_fine = nnodes_fine - 2
 
         nelems_coarse = nelems_fine // 2
         nnodes_coarse = nelems_coarse + 2
-        ndof_coarse = nnodes_coarse * dpn
+        dpn = self.dof_per_node
+        ndof_coarse = dpn * nnodes_coarse
+
+        # R = self._build_restriction_matrix(nelems_coarse)
 
         R = self._build_restriction_matrix(nelems_coarse)
+        P0 = R.T
+        P0_2 = np.zeros((2*P0.shape[0], 2 * P0.shape[1]))
+        for i in range(P0.shape[0]):
+            for j in range(P0.shape[1]):
+                P0_2[2*i, 2*j] = P0[i,j]
+                P0_2[2*i+1,2*j+1] = P0[i,j]
+
+        # P = P0.copy()
+        P = self._energy_smooth_prolong_local(P0_2, nelems_coarse, block_nodes=1, n_sweeps=8, omega=1.0, tau=0.5)
+        R = P.T
+
 
         coarse_defect = np.zeros(ndof_coarse)
-        for idof in range(dpn):
-            coarse_defect[idof::dpn] += R @ fine_defect[idof::dpn]
+        dpn = self.dof_per_node
+        # for idof in range(dpn):
+        #     coarse_defect[idof::dpn] += np.dot(R, fine_defect[idof::dpn])
+        coarse_defect = np.dot(R, fine_defect)
 
-        # Apply BCs (your pattern)
+        # apply bcs.. to coarse defect also
         coarse_defect[0] = 0.0
         coarse_defect[-2] = 0.0
         if self.clamped:

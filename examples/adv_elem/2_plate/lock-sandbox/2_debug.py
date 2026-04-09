@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("../src/")
 from iga_assembler import IGAPlateAssembler
-from drig_assembler import DeRhamIGAPlateAssembler
+from mig_assembler import DeRhamIGAPlateAssembler
 from elem import HierarchicIsogeometricDispElement9, DeRhamIsogeometricPlateElement
 from elem import DiscreteKirchoffLoveTrianglePlateElement, ReissnerMindlinPlateElement
 from dkt_assembler import DKTPlateAssembler
@@ -47,11 +47,11 @@ is_iga = False
 if args.elem == 'higd':
     ELEMENT = HierarchicIsogeometricDispElement9(reduced_integrated=False)
     is_iga = True
-elif args.elem == 'drig':
+elif args.elem == 'mig':
     ELEMENT = DeRhamIsogeometricPlateElement()
     is_iga = True
-elif args.elem == 'drigr':
-    # NOTE : drig element shouldn't need to be reduced integrated, was just trying it
+elif args.elem == 'migr':
+    # NOTE : mig element shouldn't need to be reduced integrated, was just trying it
     ELEMENT = DeRhamIsogeometricPlateElement(reduced_integrated=True)
     is_iga = True
 elif args.elem == 'dkt':
@@ -121,7 +121,7 @@ load_fcn = lambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
 
 
 # ASSEMBLER = IGAPlateAssembler if is_iga else StandardBeamAssembler
-if args.elem in ['drig', 'drigr']:
+if args.elem in ['mig', 'migr']:
     ASSEMBLER = DeRhamIGAPlateAssembler
 elif args.elem == 'dkt':
     ASSEMBLER = DKTPlateAssembler
@@ -215,7 +215,7 @@ if args.solve == 'direct':
 
 elif args.solve == 'kmg':
 
-    line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp', 'mitc_ep']
+    line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp', 'mitc_ep']
 
     vmg2 = VMG(
         grids, nsmooth=args.nsmooth, 

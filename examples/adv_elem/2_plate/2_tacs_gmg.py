@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("src/")
 from iga_assembler import IGAPlateAssembler
-from drig_assembler import DeRhamIGAPlateAssembler
+from mig_assembler import DeRhamIGAPlateAssembler
 from elem import HierarchicIsogeometricDispElement9, DeRhamIsogeometricPlateElement
 from elem import DiscreteKirchoffLoveTrianglePlateElement, ReissnerMindlinPlateElement
 from dkt_assembler import DKTPlateAssembler
@@ -52,7 +52,7 @@ is_iga = False
 if args.elem == 'higd':
     ELEMENT = HierarchicIsogeometricDispElement9(reduced_integrated=False)
     is_iga = True
-elif args.elem == 'drig':
+elif args.elem == 'mig':
     ELEMENT = DeRhamIsogeometricPlateElement()
     is_iga = True
 elif args.elem == 'dkt':
@@ -92,7 +92,7 @@ load_fcn = lambda x,y : 1.0e2 # simple load
 #     load_fcn = lambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
 
 # ASSEMBLER = IGAPlateAssembler if is_iga else StandardBeamAssembler
-if args.elem == 'drig':
+if args.elem == 'mig':
     ASSEMBLER = DeRhamIGAPlateAssembler
 elif args.elem == 'dkt':
     ASSEMBLER = DKTPlateAssembler
@@ -161,7 +161,7 @@ if 'mg' in args.solve:
                 omega = args.omega / 4.0 # because 2x smoothing than coupled == 1 schwarz (so ~4x smoothing on thx, thy)
                 patch_type = "wblock_vertex_edges"
 
-            if args.elem == 'drig':
+            if args.elem == 'mig':
                 print("using Additive schwarz DeRham smoother")
                 smoother = TwoDimAddSchwarzDeRhamVertexEdges.from_assembler(
                     grid, omega=omega, iters=nsmooth,
@@ -192,8 +192,8 @@ elif args.solve == 'vmg':
                                     # line search sometimes hurts high cond # cases (high defects in prolong)
                                     # line_search=not(args.elem in ['aig', 'tsr', 'hhd', 'higd']), 
                                     # line_search=False, # often need it turned off.. for best conv
-                                    # line_search = args.elem in ['drig', 'mitc'],
-                                    line_search = args.elem in ['drig'],
+                                    # line_search = args.elem in ['mig', 'mitc'],
+                                    line_search = args.elem in ['mig'],
                                     debug=args.debug,
                                     smoothers=smoothers)
 
@@ -203,7 +203,7 @@ elif args.solve == 'kmg':
         grids, nsmooth=args.nsmooth, 
         ncyc=1, # fewer total v-cycles often..
         # ncyc=2,
-        smoothers=smoothers, line_search=args.elem in ['drig', 'drigr']
+        smoothers=smoothers, line_search=args.elem in ['mig', 'migr']
     )
     pc = vmg2
     assembler._assemble_system()

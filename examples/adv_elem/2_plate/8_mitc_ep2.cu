@@ -163,11 +163,14 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, int nsmooth
             kmg->grids.push_back(grid);
         } else {
             mg->grids.push_back(grid);
-            if (full_LU) mg->coarse_solver = new CoarseSolver(cublasHandle, cusparseHandle, assembler, kmat);
+            if (full_LU) {
+                mg->coarse_solver = new CoarseSolver(cublasHandle, cusparseHandle, assembler, kmat);
+                mg->coarse_solver->factor();
+            }
         }
     }
 
-    assert(is_kcycle); // for first try..
+    // assert(is_kcycle); // for first try..
     auto &grids = kmg->grids;
     kmg->template init_prolongations<Basis>();
 
@@ -190,7 +193,8 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, int nsmooth
 
     if (is_kcycle) {
         int n_krylov = 500;
-        kmg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, double_smooth);    
+        kmg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq, print, double_smooth);   
+        kmg->coarse_solver->factor(); 
     }
 
     CHECK_CUDA(cudaDeviceSynchronize());

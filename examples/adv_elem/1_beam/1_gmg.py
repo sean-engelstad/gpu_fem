@@ -15,8 +15,12 @@ from multigrid2 import vcycle_solve, VMG
 # IGA elements
 from elem import AsymptoticIsogeometricTimoshenkoElement, HierarchicIsogeometricDispElement, MixedShearIsogeometricElement
 from elem import AsymptoticIsogeometricTimoshenkoElementV2
+from elem import AsymptoticIsogeometricTimoshenkoElementV3
 # from iga_assembler import IGABeamAssembler
 from iga_assembler2 import IGABeamAssemblerV2
+from elem import OrthogonalSubGridScaleElement_V2
+
+from elem import ANSTimoshenkoIGA2Element
 
 # special vertex-edge DeRham style element
 from elem import DeRhamIsogeometricElement
@@ -28,14 +32,14 @@ from elem import TimoshenkoElement_OptProlong
 
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument("--elem", type=str, default='drig', help="--beam, options: hyb, ts, ts-nd")
+parser.add_argument("--elem", type=str, default='mig', help="--beam, options: hyb, ts, ts-nd")
 parser.add_argument("--lam", type=float, default=1e-2, help="lagrange multiplier for weak-penalty of locking-awareness on prolongation")
 
 parser.add_argument("--nxe", type=int, default=128, help="number of elements")
 parser.add_argument("--nxemin", type=int, default=16, help="min # elems multigrid")
 parser.add_argument("--thick", type=float, default=1e-3, help="number of elements")
 parser.add_argument("--solve", type=str, default='vmg', help="--solve : [direct, vmg, kmg]")
-parser.add_argument("--nsmooth", type=int, default=2, help="number of smoothing steps")
+parser.add_argument("--nsmooth", type=int, default=1, help="number of smoothing steps")
 parser.add_argument("--omega", type=float, default=0.7, help="omega smoother coeff (sometimes needs to be lower)")
 parser.add_argument("--smoother", type=str, default='asw', help="--smooth : [gs, asw]")
 parser.add_argument("--plot", action=argparse.BooleanOptionalAction, default=False, help="Plot matrices and residual")
@@ -59,8 +63,9 @@ elif args.elem == 'hhd':
     ELEMENT = HierarchicDispHermiteElement(reduced_integrated=False)
 elif args.elem == 'aig':
     # ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=True)
-    ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=False)
+    # ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=False)
     # ELEMENT = AsymptoticIsogeometricTimoshenkoElementV2(reduced_integrated=False)
+    ELEMENT = AsymptoticIsogeometricTimoshenkoElementV3()
     is_iga = True
 elif args.elem == 'higd':
     ELEMENT = HierarchicIsogeometricDispElement(reduced_integrated=False)
@@ -68,7 +73,7 @@ elif args.elem == 'higd':
 elif args.elem == 'msig':
     ELEMENT = MixedShearIsogeometricElement()
     is_iga = True
-elif args.elem == 'drig':
+elif args.elem == 'mig':
     # derham isogeometric element, special vertex-edge style IGA 2nd order basis that is auto locking-free!
     ELEMENT = DeRhamIsogeometricElement()
     is_iga = True
@@ -78,9 +83,9 @@ elif args.elem == 'tsrp':
         reduced_integrated=True, 
         # ["global-lock", "kmat", "none"]
         # prolong_mode="global-locking", 
-        prolong_mode="local-locking", 
+        # prolong_mode="local-locking", 
         # prolong_mode="global-kmat",
-        # prolong_mode="none",
+        prolong_mode="none",
         lam=args.lam
     )
 elif 'asgs' in args.elem:
@@ -93,10 +98,8 @@ elif 'asgs' in args.elem:
         prolong_mode=prolong_mode, omega=0.3
     )
 elif 'osgs' in args.elem:
-    ELEMENT = OrthogonalSubGridScaleElement(
-        # schur_complement=True,
-        schur_complement=False
-    )
+    ELEMENT = OrthogonalSubGridScaleElement()
+    # ELEMENT = OrthogonalSubGridScaleElement_V2()
 elif args.elem == 'hra':
     ELEMENT = HellingerReissnerAnsatzElement(
         schur_complement=True, # at element-level
@@ -120,6 +123,9 @@ elif 'hrig' in args.elem:
     # doesn't smooth well for IGA case?
     ELEMENT = HellingerReissnerIsogeometricElement()
     is_iga = True
+elif 'ans' == args.elem:
+    ELEMENT = ANSTimoshenkoIGA2Element()
+    is_iga = True
 
 # ================================
 # make beam assembler
@@ -137,7 +143,7 @@ else:
 
 # ASSEMBLER = IGABeamAssembler if is_iga else StandardBeamAssembler
 ASSEMBLER = IGABeamAssemblerV2 if is_iga else StandardBeamAssembler
-if args.elem == 'drig':
+if args.elem == 'mig':
     ASSEMBLER = DeRhamIGABeamAssembler
 elif args.elem in ['osgs', 'hra']:
     # For these mixed elements the auxiliary (strain/stress) DOF are globally continuous (shared across elements).
@@ -194,7 +200,7 @@ if 'mg' in args.solve:
         )
         grid._assemble_system()
 
-        if args.elem in ['tsrp', 'asgsp', 'hrap']:
+        if args.elem in ['tsrp', 'asgsp', 'hrap', 'hrig', 'ans']:
             ELEMENT._kmat_cache[nxe // 2] = grid.kmat.tocsr()
             
         grids += [grid]
@@ -204,7 +210,7 @@ if 'mg' in args.solve:
             )
         elif args.smoother == 'asw':
             omega = args.omega / 2.0 # since 2x smoothing
-            if args.elem == 'drig': # needs custom schwarz smoother with vertex-edge based
+            if args.elem == 'mig': # needs custom schwarz smoother with vertex-edge based
                 smoother = OneDimAddSchwarzVertex2Edges.from_assembler(
                     grid, omega=omega, iters=nsmooth,
                     # patch_type="vertex2edges",
@@ -212,7 +218,7 @@ if 'mg' in args.solve:
                 )
             else:
                 smoother = OnedimAddSchwarz.from_assembler(
-                    grid, omega=omega, iters=nsmooth, coupled_size=2
+                    grid, omega=omega, iters=nsmooth, coupled_size=2 if not(is_iga) else 3
                 )
 
         smoothers += [smoother]
@@ -249,17 +255,19 @@ elif args.solve == 'vmg':
                                     # line search sometimes hurts high cond # cases (high defects in prolong)
                                     # line_search=not(args.elem in ['aig', 'tsr', 'hhd', 'higd']), 
                                     # line_search=False,
-                                    line_search=args.elem == 'drig', # rarerly helps (but does help for drig elem!)
+                                    line_search=args.elem == 'mig', # rarerly helps (but does help for mig elem!)
                                     # line_search=True,
+                                    nvcycles=1000,
                                     debug=args.debug,
                                     smoothers=smoothers)
 
 elif args.solve == 'kmg':
-    vmg.n_cycles = 2
+    # vmg.n_cycles = 2
+    vmg.n_cycles = 1
     vmg.print = False
 
     vmg2 = VMG(grids, args.nsmooth, ncyc=1, smoothers=smoothers, 
-        line_search = args.elem == 'drig'
+        line_search = args.elem == 'mig'
     )
     
     # assembler.u, nsteps = right_pcg2(
@@ -318,7 +326,7 @@ if args.verify:
         w = u[0::3] + u[2::3]
     elif args.elem in ['higd']:
         w = u[0::2] + u[1::2]
-    elif args.elem == 'drig':
+    elif args.elem == 'mig':
         w = u[:assembler.nw]
     else:
         w = u[0::assembler.dof_per_node]
@@ -342,13 +350,13 @@ else:
         w = u[0::3] + u[2::3]
     elif args.elem in ['higd']:
         w = u[0::2] + u[1::2]
-    elif args.elem == 'drig':
+    elif args.elem == 'mig':
         w = u[:assembler.nw]
     else:
         w = u[0::assembler.dof_per_node]
     pred_disp = np.max(w)
 
-    if is_iga and not(args.elem == 'drig'):
+    if is_iga and not(args.elem == 'mig'):
         # trying to see if this makes a difference in IGA conv
         pred_disp = assembler.get_max_deflection_greville()
     print(f"{pred_disp=}")

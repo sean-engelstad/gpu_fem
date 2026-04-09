@@ -1,18 +1,89 @@
 
 ## Current Tasks
 
-1. [ ] multilevel BDDC
+
+1. [x] finish writing the element study chapter
+   - [x] change standard 2nd order MIG to MIG2 in the beam and plate sections (also say MITC4 when appropriate)
+
+2. [ ] finish writing up thesis (conclusion + final runthrough)
+
+3. [ ] finish defense presentation
+
+## STRETCH GOALS (for thesis pres deadline)
+
+1. put MIG elements on GPU
+   - [ ] put MIG2 element on GPU with CSR matrices (and its own ASW smoother)
+      * show good speedup to Direct-LU and MITC4, also MITC4-EP shell on plate, very high DOF
+      * should be pretty scalable assembly (cause very parallelizable cheap opreations, no shell rotations)..
+   - [ ] put MIG3 element on GPU with CSR matrices (and its own ASW)
+      * show good speedup and high DOF problem (against Direct-LU and MITC4 shells)
+
+2. [ ] multilevel BDDC
    - [ ] add new ML-BDDC category to scatter plots, table and bar chart
 
-2. [ ] do wing optimization cases
-   - [ ] linear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] nonlinear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] linear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] nonlinear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
-   - [ ] linear stiffened AOB wing with: etc..
-   - [ ] add to writing / wing section
+3. develop multiple GPUs on wing
+   - [ ] do multilevel BDDC
+      - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
+   - [ ] then multi GPU
+   - [ ] writeup of multi GPU section
 
-3. [ ] Element multigrid study (curved shells)
+4. look at general non-const curved shells
+   - [ ] try DRIG+CAS (with EP/LP smooth prolong maybe) so that CAS element handles mem locking on 2nd order (u,v) IGA
+      * [Overcoming membrane locking in quadratic NURBS-based discretizations of linear Kirchhoff–Love shells: CAS elements](https://www.sciencedirect.com/science/article/pii/S0045782523006473)
+      * [Removing membrane locking in quadratic NURBS-based discretizations of linear plane Kirchhoff rods: CAS elements](https://www.sciencedirect.com/science/article/pii/S0045782522004364?utm_source=chatgpt.com)
+   - [ ] try DRIG+MITC (with EP/LP  smooth prolong) so that MITC handles mem locking on 2nd order (u,v) IGA
+
+5. [ ] do higher DOF wing optimization cases
+   - [ ] try and run 10.8M DOF wing optimization (may require)
+   - [ ] run with buckling constraints + stiffened panels
+
+6. do unstructured wing problems with BDDC wraparound method
+   - [ ] develop so METIS or general nominal subdomain splitting
+   - [ ] combine subdomains along patch boundaries (checking any violations)
+   - [ ] do all quad-element HSCT mesh..
+
+
+
+# 4. In writeup:
+#    - [ ] explain challenge in general curved and multi-patch shells (still working on it)
+#    - [ ] could mixed FEA allow us to introduce similar auxillary states (with L2-prjoected error) => to lower the IGA order of cylindrical / spherical shell cases?
+#    - [ ] explain that subdivision surface method for Kirchoff shells (with mem strains) combined with DRIG element (mixed-order IGA) may be able to solve it? But have to try it still
+
+## After thesis deadline
+
+1. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
+   - [ ] make interface that constructs GPU assembler and classes from CPU assembler
+   - [ ] then runs the GPU code as usual
+   - [ ] implement BDDC (with these two tasks to make it more practical)
+      - [ ] BDDC wraparound for unstructured meshes (and gen single-patch), min # corners and other metrics maybe
+      - [ ] BDDC with more general simply supported vs clamped BCs (prob just duplicate node and make some DOF one in each view)
+
+2. publish two (or more) journal papers on this work
+   - [ ] multilevel solver comparison study + multilevel BDDC-LU with wraparound for wings
+   - [ ] mixed order IGA (and other) thick-independent multigrid methods for beams, plates + shells (maybe I'd just focus on shells in journal?)
+
+
+
+## REALLY OPTIONAL
+
+ALL THE BELOW (do not really work)
+
+
+Other elements
+   - [ ] regge for mem locking https://arxiv.org/pdf/1907.06232
+
+
+3. demo Kirchoff-love multigrid for subvidision surfaces
+   - [ ] [https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf](https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf)
+   * perfect paper, they solve with multigrid PCG
+   - [ ] this paper for hte FEA Model,  [SUBDIVISION SURFACES: A NEW PARADIGM FOR THIN-SHELL FINITE-ELEMENT ANALYSIS](https://multires.caltech.edu/pubs/thinshell.pdf)
+
+3.5: 
+   - [ ] maybe look at this one, A spectral finite element Reissner–Mindlin shell formulation with NURBS-based geometry definition
+
+5. [ ] TODO after submit thesis + before presentation, curved shell thick-ind multigrid study
+   * exploring other methods besides mixed-order IGA that appeared to give thick-ind multigrid for curved Kirchoff shells (extend to RM shells if I can)
+   * a la subdivision surfaces appeared to get thick-ind multigrid including membrane strains
    - [ ] implement Kirchoff shell multigrid/BPX like this + its elements, [Parallel multilevel preconditioners for thin smooth shell finite element analysis](https://onlinelibrary.wiley.com/doi/abs/10.1002/%28SICI%291099-1506%28199809/10%295%3A5%3C401%3A%3AAID-NLA140%3E3.0.CO%3B2-7)
    - [ ] subd surf. for Kirchoff multigrid! [https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf](https://www.cs.cmu.edu/~bloodflow/publications/sm02-107-green.pdf)
       - [ ] related ref [SUBDIVISION SURFACES: A NEW PARADIGM FOR THIN-SHELL FINITE-ELEMENT ANALYSIS](https://multires.caltech.edu/pubs/thinshell.pdf)
@@ -22,29 +93,16 @@
       - [ ] [𝐶1‐hierarchical bases, J]
    - [ ] try to combine these methods with DRIG maybe to get RM-multigrid solve like Kirchoff-multigrid on cylinder then wing 
 
-4. [ ] finish writing the element study chapter
 
 
-5. develop multiple GPUs on wing
-   - [ ] do multilevel BDDC
-      - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
-   - [ ] then multi GPU
-   - [ ] writeup of multi GPU section
+2. [ ] do wing optimization cases
+   - [x] linear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [x] nonlinear plate with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [x] linear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [x] nonlinear unstiffened AOB wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
+   - [ ] linear stiffened AOB wing with: etc..
+   - [ ] add to writing / wing section
 
-6. do unstructured wing problems with BDDC wraparound method
-   - [ ] develop so METIS or general nominal subdomain splitting
-   - [ ] combine subdomains along patch boundaries (checking any violations)
-   - [ ] do all quad-element HSCT mesh..
-   
-7. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
-   - [ ] make interface that constructs GPU assembler and classes from CPU assembler
-   - [ ] then runs the GPU code as usual
-
-
-
-
-
-## OPTIONAL
 4. optimization cases (may not need to do all cases on HPC)
    - [ ] linear cylinder with: LU (48 CPUs), LU (1 GPU), EP-GMG (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)
    - [ ] linear HSCT unstiffened wing with: LU (48 CPUs), LU (1 GPU), BDDC (1 GPU), BDDC (4 GPUs)

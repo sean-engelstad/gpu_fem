@@ -135,7 +135,7 @@ args = parser.parse_args()
 # problem setup
 # ----------------------------
 nxe_vec = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
-# beam_types = ["eb", "ts", "tsr", "aig", "hhr", "hhd", "higd", "drig", "asgs", "hra"]
+# beam_types = ["eb", "ts", "tsr", "aig", "hhr", "hhd", "higd", "mig", "asgs", "hra"]
 beam_types = ['hra']
 deflections = {key: [] for key in beam_types}
 
@@ -160,7 +160,7 @@ def build_element(elem):
     elif elem == "aig":
         ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=False)
         is_iga = True
-    elif elem == "drig":
+    elif elem == "mig":
         ELEMENT = DeRhamIsogeometricElement()
         is_iga = True
     elif elem == 'asgs':
@@ -178,7 +178,7 @@ def build_element(elem):
 def build_assembler(elem, is_iga):
     # (keeping your original choice: V2 for IGA, Standard for non-IGA)
     ASSEMBLER = IGABeamAssemblerV2 if is_iga else StandardBeamAssembler
-    if elem == "drig":
+    if elem == "mig":
         ASSEMBLER = DeRhamIGABeamAssembler
     return ASSEMBLER
 
@@ -234,7 +234,7 @@ for nxe in nxe_vec:
                     )
                 elif args.smoother == "asw":
                     omega = args.omega / 2.0  # since 2x smoothing
-                    if elem == "drig":
+                    if elem == "mig":
                         smoother = OneDimAddSchwarzVertex2Edges.from_assembler(
                             grid,
                             omega=omega,
@@ -271,7 +271,7 @@ for nxe in nxe_vec:
             w = u[0::3] + u[2::3]  # shear + bending split
         elif elem in ["higd"]:
             w = u[0::2] + u[1::2]
-        elif elem in ["drig"]:
+        elif elem in ["mig"]:
             w = u[: assembler.nw]
         else:
             w = u[0:: assembler.dof_per_node]

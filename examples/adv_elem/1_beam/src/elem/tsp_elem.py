@@ -441,107 +441,196 @@ class TimoshenkoElement_OptProlong:
         # fixed coarse BC cols remain identically zero
         return P
 
-    def _energy_smooth_prolong_local(self, P0: sp.csr_matrix, nxe_c: int,
-                                    block_nodes: int = 1,
-                                    n_sweeps: int = 1,
-                                    omega: float = 1.0,
-                                    tau: float = 1.0):
+    # def _energy_smooth_prolong_local(self, P0: sp.csr_matrix, nxe_c: int,
+    #                                 block_nodes: int = 1,
+    #                                 n_sweeps: int = 1,
+    #                                 omega: float = 1.0,
+    #                                 tau: float = 1.0):
+    #     """
+    #     Energy smoothing of prolongator using the trace objective:
+
+    #         E(P) = tr(P^T K_f P)
+
+    #     Gradient: dE/dP = 2 K_f P.
+
+    #     Local preconditioned gradient descent / Richardson step:
+    #         P <- P - tau * D^{-1} (K_f P)
+
+    #     where D is the block-diagonal of K_f with 1- or 2-node blocks.
+
+    #     Parameters
+    #     ----------
+    #     P0 : csr_matrix
+    #         Baseline prolong, shape (n_f, n_c).
+    #     nxe_c : int
+    #         Coarse elements, used to eliminate coarse BC columns (same convention as your locking routine).
+    #     block_nodes : {1,2}
+    #         1 -> 2x2 blocks (node-local), 2 -> 4x4 blocks (two-node local).
+    #     n_sweeps : int
+    #         Number of smoothing sweeps (each sweep applies one local-preconditioned gradient step).
+    #     omega : float
+    #         Relaxation on the block update (like your locking GS): X <- X + omega*(Xnew - X).
+    #     tau : float
+    #         Step size in the gradient step. Often tau ~ 0.5–1.0 works; if it oversmooths, reduce tau.
+
+    #     Returns
+    #     -------
+    #     P : dense ndarray, shape (n_f, n_c)
+    #     """
+
+    #     # fine operator
+    #     K = self._kmat_cache[nxe_c]
+    #     n_f = K.shape[0]
+
+    #     # coarse column handling (same as your locking routine)
+    #     nx_c = nxe_c + 1
+    #     n_c = 2 * nx_c
+    #     fixed_cols = [0, 2 * (nx_c - 1)]  # SS: w left/right
+    #     all_cols = np.arange(n_c, dtype=int)
+    #     free_cols = np.array([j for j in all_cols if j not in set(fixed_cols)], dtype=int)
+
+    #     # dense working array
+    #     P0 = P0.toarray()
+    #     X = P0[:, free_cols].copy()   # (n_f, n_free)
+
+    #     # block structure
+    #     if block_nodes not in (1, 2):
+    #         raise ValueError("block_nodes must be 1 or 2")
+
+    #     dofs_per_node = 2
+    #     block_size = dofs_per_node * block_nodes
+    #     n_blocks = int(np.ceil(n_f / block_size))
+
+    #     def blk_slice(b):
+    #         i0 = b * block_size
+    #         i1 = min(n_f, (b + 1) * block_size)
+    #         return slice(i0, i1)
+
+    #     # cache block-diagonal inverses of K (local)
+    #     Dinv = []
+    #     for b in range(n_blocks):
+    #         sl = blk_slice(b)
+    #         Kb = K[sl, sl].toarray()
+    #         Kb = 0.5 * (Kb + Kb.T)
+    #         # small safeguard in case Kb is singular-ish locally (optional)
+    #         # eps = 1e-14 * np.trace(Kb) / max(1, Kb.shape[0])
+    #         # Kb = Kb + eps * np.eye(Kb.shape[0])
+    #         Dinv.append(np.linalg.inv(Kb))
+
+    #     # print(f"{K.shape=} {X.shape=}")
+
+    #     # smoothing sweeps
+    #     for _ in range(n_sweeps):
+    #         # compute global gradient piece once: G = K X
+    #         # (sparse-dense multiply; gives dense n_f x n_free)
+    #         GX = K @ X
+
+    #         # local block-preconditioned update
+    #         for b in range(n_blocks):
+    #             sl = blk_slice(b)
+
+    #             # preconditioned gradient step on this block:
+    #             # Xnew_b = X_b - tau * Dinv_b * (GX_b)
+    #             Xnew = X[sl, :] - tau * (Dinv[b] @ GX[sl, :])
+
+    #             # relax like your locking routine
+    #             X[sl, :] = X[sl, :] + omega * (Xnew - X[sl, :])
+
+    #     # print("ENERGY SMOOTH PROLONG LOCAL")
+
+    #     # reinsert into full P
+    #     P = np.zeros((n_f, n_c))
+    #     P[:, free_cols] = X
+    #     return P
+
+    def _energy_smooth_jacobi_v1(
+        self,
+        P0: sp.csr_matrix, 
+        nxe_c: int,
+        n_sweeps: int = 10,
+        omega: float = 0.7,
+        with_fillin: bool = True,
+        use_mask: bool = True,
+    ):
         """
-        Energy smoothing of prolongator using the trace objective:
+        Standard K-matrix energy smoothing in Jacobi-preconditioned space:
+            P <- P - omega * D^{-1} (K P)
 
-            E(P) = tr(P^T K_f P)
-
-        Gradient: dE/dP = 2 K_f P.
-
-        Local preconditioned gradient descent / Richardson step:
-            P <- P - tau * D^{-1} (K_f P)
-
-        where D is the block-diagonal of K_f with 1- or 2-node blocks.
-
-        Parameters
-        ----------
-        P0 : csr_matrix
-            Baseline prolong, shape (n_f, n_c).
-        nxe_c : int
-            Coarse elements, used to eliminate coarse BC columns (same convention as your locking routine).
-        block_nodes : {1,2}
-            1 -> 2x2 blocks (node-local), 2 -> 4x4 blocks (two-node local).
-        n_sweeps : int
-            Number of smoothing sweeps (each sweep applies one local-preconditioned gradient step).
-        omega : float
-            Relaxation on the block update (like your locking GS): X <- X + omega*(Xnew - X).
-        tau : float
-            Step size in the gradient step. Often tau ~ 0.5–1.0 works; if it oversmooths, reduce tau.
-
-        Returns
-        -------
-        P : dense ndarray, shape (n_f, n_c)
+        - K is taken from: self._kmat_cache[nxe_c]   (you provide it)
+        - Optional fixed sparsity: mask = pattern(K@P) computed once initially.
+        - Cache key is ONLY nxe_c (simple).
         """
 
-        # fine operator
-        K = self._kmat_cache[nxe_c]
-        n_f = K.shape[0]
+        import numpy as np
+        import scipy.sparse as sp
 
-        # coarse column handling (same as your locking routine)
-        nx_c = nxe_c + 1
-        n_c = 2 * nx_c
-        fixed_cols = [0, 2 * (nx_c - 1)]  # SS: w left/right
-        all_cols = np.arange(n_c, dtype=int)
-        free_cols = np.array([j for j in all_cols if j not in set(fixed_cols)], dtype=int)
+        # simple cache: ONLY keyed by nxe_c
+        # cache_key = ("energy_smooth_jacobi_v1", int(nxe_c))
+        # if cache_key in self._lock_P_cache:
+        #     return self._lock_P_cache[cache_key]
 
-        # dense working array
-        P0 = P0.toarray()
-        X = P0[:, free_cols].copy()   # (n_f, n_free)
+        # # baseline P0
+        # P0 = self._build_P2_uncoupled3(nxe_c)
+        # P0 = self._apply_bcs_to_P(P0, nxe_c)
+        P = P0.tocsr()
 
-        # block structure
-        if block_nodes not in (1, 2):
-            raise ValueError("block_nodes must be 1 or 2")
+        # kmat from cache
+        K = self._kmat_cache[int(nxe_c)]
+        K = K.tocsr() if sp.isspmatrix(K) else sp.csr_matrix(K)
 
-        dofs_per_node = 2
-        block_size = dofs_per_node * block_nodes
-        n_blocks = int(np.ceil(n_f / block_size))
+        # Jacobi block inverse (3x3 nodal blocks)
+        bs = 2
+        N = K.shape[0]
+        if (N % bs) != 0 or K.shape[1] != N:
+            raise ValueError(f"kmat must be square with size multiple of 3, got {K.shape}")
+        nblk = N // bs
 
-        def blk_slice(b):
-            i0 = b * block_size
-            i1 = min(n_f, (b + 1) * block_size)
-            return slice(i0, i1)
+        Kb = K.tobsr(blocksize=(bs, bs))
+        diag_inv = np.zeros((nblk, bs, bs), dtype=float)
+        for i in range(nblk):
+            s, e = Kb.indptr[i], Kb.indptr[i + 1]
+            cols = Kb.indices[s:e]
+            data = Kb.data[s:e]  # (nblocks_in_row, bs, bs)
+            k = np.searchsorted(cols, i)
+            if k >= cols.size or cols[k] != i:
+                raise RuntimeError("Missing diagonal 3x3 block in kmat.")
+            Db = data[k]
+            Db = 0.5 * (Db + Db.T)
+            diag_inv[i] = np.linalg.inv(Db)
 
-        # cache block-diagonal inverses of K (local)
-        Dinv = []
-        for b in range(n_blocks):
-            sl = blk_slice(b)
-            Kb = K[sl, sl].toarray()
-            Kb = 0.5 * (Kb + Kb.T)
-            # small safeguard in case Kb is singular-ish locally (optional)
-            # eps = 1e-14 * np.trace(Kb) / max(1, Kb.shape[0])
-            # Kb = Kb + eps * np.eye(Kb.shape[0])
-            Dinv.append(np.linalg.inv(Kb))
+        Dinv = sp.bsr_matrix(
+            (diag_inv, np.arange(nblk, dtype=np.int32), np.arange(nblk + 1, dtype=np.int32)),
+            shape=(N, N),
+            blocksize=(bs, bs),
+        ).tocsr()
 
-        # print(f"{K.shape=} {X.shape=}")
+        # fixed sparsity mask from initial K@P
+        mask = None
+        if (not with_fillin) and use_mask:
+            mask = ((K @ P) != 0).astype(np.int8)
 
-        # smoothing sweeps
-        for _ in range(n_sweeps):
-            # compute global gradient piece once: G = K X
-            # (sparse-dense multiply; gives dense n_f x n_free)
-            GX = K @ X
+        def control(Z):
+            if mask is None:
+                return Z
+            if not sp.issparse(Z):
+                Z = sp.csr_matrix(Z)
+            return Z.multiply(mask)
 
-            # local block-preconditioned update
-            for b in range(n_blocks):
-                sl = blk_slice(b)
+        P = control(P)
 
-                # preconditioned gradient step on this block:
-                # Xnew_b = X_b - tau * Dinv_b * (GX_b)
-                Xnew = X[sl, :] - tau * (Dinv[b] @ GX[sl, :])
+        # Jacobi-preconditioned energy smoothing: P <- P - omega * Dinv * (K P)
+        if with_fillin or (mask is None):
+            for _ in range(int(n_sweeps)):
+                KP = K @ P
+                P = P - float(omega) * (Dinv @ KP)
+        else:
+            for _ in range(int(n_sweeps)):
+                KP = control(K @ P)
+                P = control(P - float(omega) * (Dinv @ KP))
 
-                # relax like your locking routine
-                X[sl, :] = X[sl, :] + omega * (Xnew - X[sl, :])
-
-        # print("ENERGY SMOOTH PROLONG LOCAL")
-
-        # reinsert into full P
-        P = np.zeros((n_f, n_c))
-        P[:, free_cols] = X
-        return P
+        P_out = P.toarray()
+        # self._lock_P_cache[cache_key] = P_out
+        return P_out
 
     
     def prolongate(self, coarse_disp, length: float):
@@ -559,7 +648,7 @@ class TimoshenkoElement_OptProlong:
         elif self.prolong_mode == 'local-locking':
             P = self._locking_aware_prolong_local(P0, nelems_coarse, length, block_nodes=2, n_sweeps=1, omega=1.0)
         elif self.prolong_mode == 'global-kmat':
-            P = self._energy_smooth_prolong_local(P0, nelems_coarse, block_nodes=1, n_sweeps=8, omega=1.0, tau=0.5)
+            P = self._energy_smooth_jacobi_v1(P0, nelems_coarse, n_sweeps=8, omega=0.5)
         else:
             P = P0
         fine_disp = P @ coarse_disp
@@ -582,7 +671,7 @@ class TimoshenkoElement_OptProlong:
         elif self.prolong_mode == 'local-locking':
             P = self._locking_aware_prolong_local(P0, nelems_coarse, length, block_nodes=2, n_sweeps=1, omega=1.0)
         elif self.prolong_mode == 'global-kmat':
-            P = self._energy_smooth_prolong_local(P0, nelems_coarse, block_nodes=1, n_sweeps=8, omega=1.0, tau=0.5)
+            P = self._energy_smooth_jacobi_v1(P0, nelems_coarse, n_sweeps=8, omega=0.5)
         else:
             P = P0
 

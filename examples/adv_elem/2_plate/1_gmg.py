@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("src/")
 from iga_assembler import IGAPlateAssembler
-from drig_assembler import DeRhamIGAPlateAssembler
+from mig_assembler import DeRhamIGAPlateAssembler
 from stab_assembler import StabilizedPlateAssembler
 from elem import HierarchicIsogeometricDispElement9, DeRhamIsogeometricPlateElement
 from elem import DiscreteKirchoffLoveTrianglePlateElement, ReissnerMindlinPlateElement
@@ -67,11 +67,11 @@ is_iga = False
 if args.elem == 'higd':
     ELEMENT = HierarchicIsogeometricDispElement9(reduced_integrated=False)
     is_iga = True
-elif args.elem == 'drig':
+elif args.elem == 'mig':
     ELEMENT = DeRhamIsogeometricPlateElement()
     is_iga = True
-elif args.elem == 'drigr':
-    # NOTE : drig element shouldn't need to be reduced integrated, was just trying it
+elif args.elem == 'migr':
+    # NOTE : mig element shouldn't need to be reduced integrated, was just trying it
     ELEMENT = DeRhamIsogeometricPlateElement(reduced_integrated=True)
     is_iga = True
 elif args.elem == 'dkt':
@@ -182,7 +182,7 @@ load_fcn = lambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
 #     load_fcn = lambda x,y : np.sin(m * np.pi * x) * np.sin(n * np.pi * y)
 
 # ASSEMBLER = IGAPlateAssembler if is_iga else StandardBeamAssembler
-if args.elem in ['drig', 'drigr']:
+if args.elem in ['mig', 'migr']:
     ASSEMBLER = DeRhamIGAPlateAssembler
 elif args.elem == 'dkt':
     ASSEMBLER = DKTPlateAssembler
@@ -236,7 +236,7 @@ if 'mg' in args.solve:
         )
         grid._assemble_system()
 
-        if args.elem == 'mitc_ep':
+        if args.elem == 'mitc_ep' or args.elem == 'higd':
             # add kmat into kmat cache for the element
             ELEMENT._kmat_cache[nxe // 2] = grid.kmat.copy()
 
@@ -246,12 +246,13 @@ if 'mg' in args.solve:
                 grid, omega=args.omega, iters=nsmooth
             )
         elif 'asw' in args.smoother:
-            if args.elem in ['drig', 'drigr']:
+            if args.elem in ['mig', 'migr']:
                 omega = args.omega * 0.5 # need extra mult for them (default best values)
                 coupled = args.coupled
                 if coupled > 2:
                     print(f"{args.elem=} and {args.coupled=} dropped to 2")
                     coupled = 2
+
             else:
                 omega = args.omega
                 coupled = args.coupled
@@ -264,10 +265,10 @@ if 'mg' in args.solve:
                 omega = omega / 4.0 # because 2x smoothing than coupled == 1 schwarz (so ~4x smoothing on thx, thy)
                 patch_type = "wblock_vertex_edges"
             elif coupled == 3:
-                assert not (args.elem in ['drig', 'drigr'])
+                assert not (args.elem in ['mig', 'migr'])
                 omega = omega / 8.0
 
-            if args.elem in ['drig', 'drigr']:
+            if args.elem in ['mig', 'migr']:
                 print("using Additive schwarz DeRham smoother")
                 smoother = TwoDimAddSchwarzDeRhamVertexEdges.from_assembler(
                     grid, omega=omega, iters=nsmooth,
@@ -324,9 +325,9 @@ if args.solve == 'direct':
 elif args.solve == 'vmg':
 
     # mitc_ep does better without line search btw
-    # line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp']
-    line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep'] # better not with asgs?
-    # line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep', 'asgs']
+    # line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp']
+    line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep'] # better not with asgs?
+    # line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep', 'asgs']
     # if args.elem == 'mitcp':
     #     line_search = ELEMENT.prolong_mode != 'locking-local'
 
@@ -335,8 +336,8 @@ elif args.solve == 'vmg':
                                     # line search sometimes hurts high cond # cases (high defects in prolong)
                                     # line_search=not(args.elem in ['aig', 'tsr', 'hhd', 'higd']), 
                                     # line_search=False, # often need it turned off.. for best conv
-                                    line_search = line_search,
-                                    # line_search=True,
+                                    # line_search = line_search,
+                                    line_search=True,
                                     debug=args.debug,
                                     # nvcycles=100,
                                     nvcycles=200,
@@ -346,9 +347,9 @@ elif args.solve == 'vmg':
 
 elif args.solve == 'kmg':
 
-    # line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp']
-    line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep'] # better not with asgs?
-    # line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep', 'asgs']
+    # line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp']
+    line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep'] # better not with asgs?
+    # line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep', 'asgs']
     # if args.elem == 'mitcp':
     #     line_search = ELEMENT.prolong_mode != 'locking-local'
 
@@ -358,7 +359,8 @@ elif args.solve == 'kmg':
         # ncyc=2,
         smoothers=smoothers, 
         # line_search=False,
-        line_search = line_search,
+        # line_search = line_search,
+        line_search=True,
         # line_search=True,
     )
     pc = vmg2
@@ -366,7 +368,8 @@ elif args.solve == 'kmg':
 
     # pc = smoothers[0] # DEBUG
 
-    if args.elem in ['rm', 'rmr']:
+    # if args.elem in ['rm', 'rmr']:
+    if False:
         # these elems have nonsym P and R (can fix) but for now use this
         assembler.u, nsteps = right_pgmres2(
             A=assembler.kmat, b=assembler.force,
@@ -379,8 +382,8 @@ elif args.solve == 'kmg':
 
         assembler.u, nsteps = right_pcg2(
             A=assembler.kmat, b=assembler.force,
-            M=pc, rtol=1e-6, atol=1e-12,
-            max_iter=200,
+            M=pc, rtol=1e-6, atol=1e-20,
+            max_iter=400,
             print_freq=3
         )
 

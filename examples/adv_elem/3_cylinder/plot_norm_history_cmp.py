@@ -53,7 +53,19 @@ def plot_runs(
         print("No runs to plot.")
         return
 
+    # plt.style.use(niceplots.get_style())
     plt.style.use(niceplots.get_style())
+
+    fs = 20  # bump this up aggressively for thesis plots
+
+    plt.rcParams.update({
+        "font.size": fs + 2,
+        "axes.labelsize": fs,
+        "axes.titlesize": fs + 2,
+        "xtick.labelsize": fs - 2,
+        "ytick.labelsize": fs - 2,
+        "legend.fontsize": fs,
+    })
 
     fig, ax = plt.subplots(figsize=(8, 6))
 
@@ -68,9 +80,21 @@ def plot_runs(
         ymin_global = min(ymin_global, np.min(y))
         ymax_global = max(ymax_global, np.max(y))
 
-        lbl = ", ".join(
-            f"{f}={r['meta'][f]}" for f in label_fields if f in r["meta"]
-        )
+        # lbl = ", ".join(
+        #     f"{f}={r['meta'][f]}" for f in label_fields if f in r["meta"]
+        # )
+        elem = r["meta"].get("elem", "").upper()
+        load = r["meta"].get("load", "")
+
+        # clean formatting
+        if elem and load:
+            if elem == "MIG":
+                elem = "MIG3"
+            lbl = f"{elem}-{load}"
+        elif elem:
+            lbl = elem
+        else:
+            lbl = load
 
         ax.semilogy(it, y, label=lbl)
 
@@ -105,10 +129,10 @@ def plot_runs(
 
     # ---- Legend on top ----
     ax.legend(
-        fontsize=9,
+        # fontsize=9,
         loc="lower center",
         bbox_to_anchor=(0.5, 1.02),
-        ncol=3,
+        ncol=2,
         frameon=False,
     )
 
@@ -126,16 +150,17 @@ if __name__ == "__main__":
     # change limiting plot settings
     # -------------------
 
+    nsmooth = 1
     # load, nsmooth = 'axial', 1
     # load, nsmooth = 'axial', 2
-    load, nsmooth = 'shear', 2
+    # load, nsmooth = 'shear', 2
 
     # ---- Example filters you can tweak ----
     # Only compare a fixed nxe/thick/load/solve:
 
     runs = filter_runs(runs, must_match={
         # "solve": "kmg",
-        "load": load,
+        # "load": load,
         # "nxe": 32,
         # "thick": 1e-3,
         # "clamped": True,
@@ -158,6 +183,6 @@ if __name__ == "__main__":
         # title="Convergence comparison (cached norm_hist)",
         # label_fields=("elem", "smoother", "coupled", "omega", "nsmooth", "nprolong", "line_search"),
         label_fields=("elem", "nsmooth"),
-        save_png=f"cyl_hist_{load}{nsmooth}.png",
+        save_png=f"cyl_hist_{nsmooth}.png",
         # save_png="cyl_hist_compare2.png",
     )

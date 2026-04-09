@@ -4,7 +4,7 @@ import sys
 sys.path.append("src/")
 
 from elem import DeRhamIsogeometricCylinderElement
-from drig_assembler import DeRhamIGACylinderAssembler
+from mig_assembler import DeRhamIGACylinderAssembler
 
 import argparse
 
@@ -115,7 +115,7 @@ nxe_vec = [4, 8, 16, 32, 64]   # you can extend to 128 if you want
 # nxe_vec = [8, 16, 32, 64, 128]
 
 # cylinder element/assembler (single element type for now)
-elem_types = ["drig_cyl"]
+elem_types = ["mig_cyl"]
 deflections = {key: [] for key in elem_types}
 
 # your cylinder load: f(x,s) -> scalar
@@ -123,7 +123,7 @@ load_fcn = lambda x, s: 1.0
 
 
 def build_element(elem):
-    if elem == "drig_cyl":
+    if elem == "mig_cyl":
         axial_factor = 0.0
         # axial_factor = 0.3
         ELEMENT = DeRhamIsogeometricCylinderElement(r=R, reduced_integrated=False, axial_factor=axial_factor)
@@ -135,7 +135,7 @@ def build_element(elem):
 
 def build_assembler(elem, is_iga):
     # for now only DRIG cylinder assembler
-    if elem == "drig_cyl":
+    if elem == "mig_cyl":
         return DeRhamIGACylinderAssembler
     raise ValueError(f"Unknown assembler mapping for elem: {elem}")
 

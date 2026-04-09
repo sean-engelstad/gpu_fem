@@ -12,6 +12,9 @@ from multigrid2 import vcycle_solve, VMG
 from elem import AlgebraicSubGridScaleElement
 
 
+from elem import AlgebraicSubGridScaleElement, OrthogonalSubGridScaleElement
+from elem import HellingerReissnerAnsatzElement
+
 # IGA elements
 from elem import AsymptoticIsogeometricTimoshenkoElement, HierarchicIsogeometricDispElement
 # from iga_assembler import IGABeamAssembler
@@ -35,7 +38,8 @@ args = parser.parse_args()
 nxe_vec = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
 # beam_types = ['eb', 'tsr', 'hhd', 'higd']
 # beam_types = ['eb', 'aig', 'ts', 'tsr', 'hhr', 'hhd', 'higd']
-beam_types = ['eb', 'ts', 'tsr', 'aig', 'hhr', 'hhd', 'higd', 'drig']
+# beam_types = ['eb', 'ts', 'tsr', 'aig', 'hhr', 'hhd', 'higd', 'mig']
+beam_types = ['eb', 'ts', 'tsr-lp', 'asgs', 'hhr', 'hra', 'higd', 'mig']
 deflections = {key:[] for key in beam_types}
 
 for nxe in nxe_vec:
@@ -61,12 +65,25 @@ for nxe in nxe_vec:
             # ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=True)
             ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=False)
             is_iga = True
-        elif elem == 'drig':
+        elif elem == 'mig':
             # derham isogeometric element, special vertex-edge style IGA 2nd order basis that is auto locking-free!
             ELEMENT = DeRhamIsogeometricElement()
             is_iga = True
-        elif args.elem == 'asgs':
-            ELEMENT = AlgebraicSubGridScaleElement()
+        elif 'asgs' in elem:
+            prolong_mode = 'standard'
+            ELEMENT = AlgebraicSubGridScaleElement(
+                prolong_mode=prolong_mode, omega=0.3
+            )
+        elif elem == 'hra':
+            ELEMENT = HellingerReissnerAnsatzElement(
+                schur_complement=True, # at element-level
+                # schur_complement=False,
+                # these DOF can only be eliminated at global patch level..
+                # hra_method = 'disp', 
+                # hra_method = 'strain',
+                # uses edge DOF for internal strain so can static condensate (idea from this paper Two-field formulations for isogeometric Reissner–Mindlin plates and shells with global and local condensation)
+                hra_method='strain-int',
+            )
 
         # ================================
         # make beam assembler
@@ -79,7 +96,7 @@ for nxe in nxe_vec:
         clamped = False # simply supported
         # ASSEMBLER = IGABeamAssembler if is_iga else StandardBeamAssembler
         ASSEMBLER = IGABeamAssemblerV2 if is_iga else StandardBeamAssembler
-        if elem == 'drig':
+        if elem == 'mig':
             ASSEMBLER = DeRhamIGABeamAssembler
 
         assembler = ASSEMBLER(
@@ -96,8 +113,8 @@ for nxe in nxe_vec:
         # ================================
 
         # use_mg = True
-        # use_mg = False
-        use_mg = nxe > args.nxemin and not(elem in ['ts', 'tsr', 'aig'])
+        use_mg = False
+        # use_mg = nxe > args.nxemin and not(elem in ['ts', 'tsr', 'aig'])
 
         if use_mg:
 
@@ -128,7 +145,7 @@ for nxe in nxe_vec:
                     )
                 elif args.smoother == 'asw':
                     omega = args.omega / 2.0 # since 2x smoothing
-                    if elem == 'drig': # needs custom schwarz smoother with vertex-edge based
+                    if elem == 'mig': # needs custom schwarz smoother with vertex-edge based
                         smoother = OneDimAddSchwarzVertex2Edges.from_assembler(
                             grid, omega=omega, iters=nsmooth,
                             # patch_type="vertex2edges",
@@ -162,7 +179,7 @@ for nxe in nxe_vec:
             w = u[0::3] + u[2::3]
         elif elem in ['higd']:
             w = u[0::2] + u[1::2]
-        elif elem in ['drig']:
+        elif elem in ['mig']:
             w = u[:assembler.nw]
         else:
             w = u[0::assembler.dof_per_node]
@@ -172,7 +189,7 @@ for nxe in nxe_vec:
         elif pred_disp <= 1e-12:
             pred_disp = np.nan
             
-        if is_iga and not(elem == 'drig'):
+        if is_iga and not(elem == 'mig'):
             # trying to see if this makes a difference in IGA conv
             pred_disp = assembler.get_max_deflection_greville()
 
@@ -181,68 +198,90 @@ for nxe in nxe_vec:
 # plot max displacement vs nxe
 # ==================================
 import niceplots
+
+# ==================================
+# plot max displacement vs nxe
+# ==================================
+import numpy as np
+import matplotlib.pyplot as plt
+import niceplots
+
+# -----------------------------
+# Match style from first plot
+# -----------------------------
+fs = 22
+
+plt.rcParams.update({
+    "font.size": fs + 2,
+    "axes.labelsize": fs,
+    "xtick.labelsize": fs,
+    "ytick.labelsize": fs,
+    "legend.fontsize": fs,
+})
+
 plt.style.use(niceplots.get_style())
 
-fig, ax = plt.subplots()
+# -----------------------------
+# Plot
+# -----------------------------
+fig, ax = plt.subplots(figsize=(8.5, 6.5))
 
-# colors = ["#d95a72", "#f3d27d", "#3cc7a1", "#3b90b3"]
-colors = ["#d95a72", "#eb9a79", "#f3d27d", "#3cc7a1", "#3b90b3", "#1a4c60", "k", 'tab:gray']
+colors = ["#d95a72", "#eb9a79", "#f3d27d", "#3cc7a1",
+          "#3b90b3", "#1a4c60", "k", "tab:gray"]
 
 nxe_arr = np.array(nxe_vec, dtype=int)
 
 for ibeam, beam in enumerate(beam_types):
     deflns = np.array(deflections[beam], dtype=float)
 
-    # "converged" reference: finest mesh value
+    # converged reference from first beam only
     if ibeam == 0:
-        ax.hlines(deflns[-1], nxe_arr[0], nxe_arr[-1],
-                  linestyles='--', linewidth=1.5, color='k', alpha=1.0)
+        ax.hlines(
+            deflns[-1],
+            nxe_arr[0],
+            nxe_arr[-1],
+            linestyles="--",
+            linewidth=2.0,
+            color="k",
+            alpha=1.0,
+        )
 
-    # main curve: max displacement vs nxe
     ax.plot(
-        nxe_arr, deflns,
-        'o-' if beam != 'hhd' else 'o--',
-        color=colors[ibeam], label=beam,
-        linewidth=2.5, markersize=7
+        nxe_arr,
+        deflns,
+        "o-" if beam != "hhd" else "o--",
+        color=colors[ibeam],
+        label=beam.upper(),
+        linewidth=3,
+        markersize=8,
     )
-   
-              
 
-ax.set_xlabel("nxe")
+ax.set_xlabel(r"# elements")
+ax.set_ylabel(r"Max displacement $w$")
+
 ax.set_xscale("log")
-ax.set_ylabel("max displacement (predicted)")
-# ax.set_yscale("log")  # optional; comment out if you prefer linear y
+ax.tick_params(axis="both", labelsize=fs)
+ax.grid(True)
 
-ax.legend()
-plt.margins(x=0.05, y=0.05)
-
-# nice tick labels for log-x
-xticks = ax.get_xticks()
-xlabels = []
-for x in xticks:
-    if x <= 0:
-        xlabels.append("")
-    else:
-        # show powers of 2-ish cleanly if you want, otherwise generic 10^k
-        xlabels.append(f"$10^{{{int(np.log10(x))}}}$")
+# set exact x ticks + labels manually
+xticks = [16, 32, 64, 128, 256, 512, 1024, 2048]
+xticks = [x for x in xticks if nxe_arr[0] <= x <= nxe_arr[-1]]
+xlabels = [fr"${x}$" for x in xticks]
+ax.set_xticks(xticks)
 ax.set_xticklabels(xlabels)
 
-# optional: y tick formatting (same style you used)
-# yticks = ax.get_yticks()
-# ylabels = []
-# for y in yticks:
-#     if y <= 0:
-#         ylabels.append("")
-#     else:
-#         ylabels.append(f"$10^{{{int(np.log10(y))}}}$")
-# ax.set_yticklabels(ylabels)
 ax.legend(
     loc="lower center",
     bbox_to_anchor=(0.5, 1.02),
     ncol=4,
-    frameon=False,
-    fontsize=12   # ↓ shrink legend font only
+    frameon=True,
+    facecolor="white",
+    framealpha=1.0,
 )
-plt.tight_layout()
 
-plt.savefig("beam-maxdisp-vs-nxe.png", dpi=400)
+plt.tight_layout()
+plt.margins(x=0.05, y=0.05)
+
+plt.savefig("beam-maxdisp-vs-nxe.png", dpi=400, bbox_inches="tight")
+plt.savefig("beam-maxdisp-vs-nxe.svg", dpi=400, bbox_inches="tight")
+plt.show()

@@ -582,6 +582,129 @@ class DeRhamIGACylinderAssembler:
     # -------------------------------------------------------------------------
     # Plot (updated layout: no w2)
     # -------------------------------------------------------------------------
+    # def _plot_disp(self, disp_mag: float = 0.2, mode: str = "w", ax=None):
+    #     if self.u is None:
+    #         raise RuntimeError("Run direct_solve() first.")
+
+    #     import matplotlib.pyplot as plt
+    #     import matplotlib.colors as mcolors
+    #     import matplotlib.cm as cm
+
+    #     mode = mode.lower()
+
+    #     off_w   = 0
+    #     off_u   = off_w   + self.nw
+    #     off_v   = off_u   + self.nu_d
+    #     off_thx = off_v   + self.nv
+    #     off_thy = off_thx + self.nthx
+
+    #     if mode == "w":
+    #         vec = self.u[off_w:off_w + self.nw]
+    #         nx, ny = self.nx_w, self.ny_w
+    #         label = "w"
+    #     elif mode == "u":
+    #         vec = self.u[off_u:off_u + self.nu_d]
+    #         nx, ny = self.nx_u, self.ny_u
+    #         label = "u"
+    #     elif mode == "v":
+    #         vec = self.u[off_v:off_v + self.nv]
+    #         nx, ny = self.nx_v, self.ny_v
+    #         label = "v"
+    #     elif mode == "thx":
+    #         vec = self.u[off_thx:off_thx + self.nthx]
+    #         nx, ny = self.nx_thx, self.ny_thx
+    #         label = "thx"
+    #     elif mode == "thy":
+    #         vec = self.u[off_thy:off_thy + self.nthy]
+    #         nx, ny = self.nx_thy, self.ny_thy
+    #         label = "thy"
+    #     else:
+    #         raise ValueError("Unknown mode. Use one of ['w','u','v','thx','thy'].")
+
+    #     vec_nrm = np.max(np.abs(vec))
+    #     print(f"{label} disp nrm: {vec_nrm:.4e}")
+
+    #     V = vec.reshape((ny, nx))
+    #     print(f"{nx=} {ny=}")
+
+    #     x = np.linspace(0.0, self.Lx, nx)
+    #     # s = np.linspace(-self.Ly, 0.0, ny)
+    #     s = np.arange(nx) * self.dy
+    #     X, S = np.meshgrid(x, s, indexing="xy")
+    #     Phi = S / self.radius
+
+    #     X = 1.0 - X
+
+    #     R = V
+    #     orig_mag = float(np.max(np.abs(R)))
+    #     scale_factor = (disp_mag / orig_mag) if orig_mag > 0 else 1.0
+    #     Rdef = R * scale_factor
+
+    #     # Y = (self.radius + Rdef) * np.sin(Phi)
+    #     # Z = (self.radius + Rdef) * np.cos(Phi)
+    #     Y = (self.radius + Rdef) * -np.cos(Phi)
+    #     Z = (self.radius + Rdef) * np.sin(Phi)
+
+    #     C = np.abs(V)
+    #     C_face = 0.25 * (C[:-1, :-1] + C[1:, :-1] + C[:-1, 1:] + C[1:, 1:])
+
+    #     norm = mcolors.Normalize(vmin=float(C_face.min()), vmax=float(C_face.max()))
+    #     cmap = cm.get_cmap("viridis")
+    #     facecolors = cmap(norm(C_face))
+
+    #     created_fig = False
+    #     if ax is None:
+    #         fig = plt.figure(figsize=(9, 6))
+    #         ax = fig.add_subplot(111, projection="3d")
+    #         created_fig = True
+    #     else:
+    #         fig = ax.figure
+
+    #     ax.plot_surface(
+    #         X, Y, Z,
+    #         facecolors=facecolors,
+    #         linewidth=0,
+    #         antialiased=True,
+    #         shade=False,
+    #     )
+
+    #     ax.set_xlabel("x")
+    #     ax.set_ylabel("y")
+    #     ax.set_zlabel("radial")
+    #     ax.set_title(f"color={label}")
+    #     ax.view_init(elev=25, azim=-135)
+    #     ax.set_box_aspect((1,1,1))
+
+    #     if created_fig:
+    #         mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
+    #         mappable.set_array([])
+    #         fig.colorbar(mappable, ax=ax, shrink=0.6, pad=0.08, label=f"|{label}|")
+    #         plt.tight_layout()
+    #         plt.show()
+
+    #     return ax
+
+    # def plot_disp(self, disp_mag: float = 0.2, mode: str = "all"):
+    #     import matplotlib.pyplot as plt
+
+    #     if isinstance(mode, str) and mode.lower() == "all":
+    #         modes = ["w", "u", "v", "thx", "thy"]
+
+    #         fig = plt.figure(figsize=(16, 7))
+    #         axs = [fig.add_subplot(2, 3, k + 1, projection="3d") for k in range(5)]
+
+    #         for i, m in enumerate(modes):
+    #             self._plot_disp(disp_mag=disp_mag, mode=m, ax=axs[i])
+
+    #         plt.tight_layout()
+    #         plt.show()
+    #         return
+
+    #     self._plot_disp(disp_mag=disp_mag, mode=mode, ax=None)
+
+    # -------------------------------------------------------------------------
+    # Plot (smooth, no edge artifacts)
+    # -------------------------------------------------------------------------
     def _plot_disp(self, disp_mag: float = 0.2, mode: str = "w", ax=None):
         if self.u is None:
             raise RuntimeError("Run direct_solve() first.")
@@ -619,7 +742,7 @@ class DeRhamIGACylinderAssembler:
             nx, ny = self.nx_thy, self.ny_thy
             label = "thy"
         else:
-            raise ValueError("Unknown mode. Use one of ['w','u','v','thx','thy'].")
+            raise ValueError("Unknown mode.")
 
         vec_nrm = np.max(np.abs(vec))
         print(f"{label} disp nrm: {vec_nrm:.4e}")
@@ -627,29 +750,24 @@ class DeRhamIGACylinderAssembler:
         V = vec.reshape((ny, nx))
 
         x = np.linspace(0.0, self.Lx, nx)
-        # s = np.linspace(-self.Ly, 0.0, ny)
-        s = np.arange(nx) * self.dy
+        s = np.arange(ny) * self.dy   # FIXED (was nx)
         X, S = np.meshgrid(x, s, indexing="xy")
-        Phi = S / self.radius
 
+        Phi = S / self.radius
         X = 1.0 - X
 
-        R = V
-        orig_mag = float(np.max(np.abs(R)))
+        # deformation scaling
+        orig_mag = float(np.max(np.abs(V)))
         scale_factor = (disp_mag / orig_mag) if orig_mag > 0 else 1.0
-        Rdef = R * scale_factor
+        Rdef = V * scale_factor
 
-        # Y = (self.radius + Rdef) * np.sin(Phi)
-        # Z = (self.radius + Rdef) * np.cos(Phi)
         Y = (self.radius + Rdef) * -np.cos(Phi)
         Z = (self.radius + Rdef) * np.sin(Phi)
 
+        # smooth color (node-based, not cell-averaged)
         C = np.abs(V)
-        C_face = 0.25 * (C[:-1, :-1] + C[1:, :-1] + C[:-1, 1:] + C[1:, 1:])
-
-        norm = mcolors.Normalize(vmin=float(C_face.min()), vmax=float(C_face.max()))
+        norm = mcolors.Normalize(vmin=float(C.min()), vmax=float(C.max()))
         cmap = cm.get_cmap("viridis")
-        facecolors = cmap(norm(C_face))
 
         created_fig = False
         if ax is None:
@@ -659,29 +777,39 @@ class DeRhamIGACylinderAssembler:
         else:
             fig = ax.figure
 
-        ax.plot_surface(
+        surf = ax.plot_surface(
             X, Y, Z,
-            facecolors=facecolors,
+            facecolors=cmap(norm(C)),
+            rstride=1, cstride=1,
             linewidth=0,
-            antialiased=True,
-            shade=False,
+            edgecolor='none',   # 🔥 kill mesh lines
+            antialiased=False,  # 🔥 avoids weird facet edges
+            shade=False
         )
 
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_zlabel("radial")
-        ax.set_title(f"color={label}")
+        ax.set_title(f"{label}")
         ax.view_init(elev=25, azim=-135)
-        ax.set_box_aspect((1,1,1))
+        ax.set_box_aspect((1, 1, 1))
+
+        # cleaner axes (journal style)
+        ax.grid(False)
+        ax.xaxis.pane.fill = False
+        ax.yaxis.pane.fill = False
+        ax.zaxis.pane.fill = False
 
         if created_fig:
             mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
             mappable.set_array([])
             fig.colorbar(mappable, ax=ax, shrink=0.6, pad=0.08, label=f"|{label}|")
             plt.tight_layout()
+            plt.savefig("cylinder.png", dpi=400)
             plt.show()
 
         return ax
+
 
     def plot_disp(self, disp_mag: float = 0.2, mode: str = "all"):
         import matplotlib.pyplot as plt

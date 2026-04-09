@@ -1,4 +1,6 @@
-# from .drig import DeRhamIsogeometricCylinderElement
-# from .mdrig import MixedDeRhamIGACylinderElement
-from .drig import DeRhamMITC_IGACylinderElement
+# from .mig import DeRhamIsogeometricCylinderElement
+# from .mmig import MixedDeRhamIGACylinderElement
+from .mig import DeRham_IGACylinderElement
 from .mitc import MITCShellElement
+from .mig_mitc import MIG_MITC_CylinderElement
+from .mig4 import MIG4CylinderElement

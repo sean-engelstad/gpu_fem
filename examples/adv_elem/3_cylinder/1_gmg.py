@@ -2,18 +2,24 @@ import numpy as np
 import sys
 sys.path.append("src/")
 # from elem import DeRhamIsogeometricCylinderElement #, MixedDeRhamIGACylinderElement
-from elem import DeRhamMITC_IGACylinderElement
-from drig_assembler import DeRhamIGACylinderAssembler
-# from drig_assembler2 import MixedDeRhamIGACylinderAssembler
+from elem import DeRham_IGACylinderElement, MIG_MITC_CylinderElement
+from mig_assembler import DeRhamIGACylinderAssembler
+# from mig_assembler2 import MixedDeRhamIGACylinderAssembler
 
 # MITC
 from elem import MITCShellElement
 from std_assembler import StandardShellAssembler
+from elem import MIG4CylinderElement
+
+from mig_mitc_assembler import MIG2CylinderAssembler
+from mig4_assembler import MIG4IGACylinderAssembler
 
 # sys.path.append("../2_plate/src/")
 # from asw_derham import TwoDimAddSchwarzDeRhamVertexEdges
 # from dasw_cyl import TwoDimAddSchwarzDeRhamCylinderVertexEdges, MixedTwoDimAddSchwarzDeRhamCylinderVertexEdges
 from dasw_cyl import TwoDimAddSchwarzDeRhamCylinderVertexEdges
+# from dasw2_cyl import TwoDimAddSchwarzMIG2VertexEdges
+from dasw_cyl4 import TwoDimAddSchwarzMIG4CylinderVertexEdges
 
 sys.path.append("../1_beam/src/")
 from multigrid2 import vcycle_solve, VMG
@@ -43,13 +49,6 @@ parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=Tr
                     help="Cache assembled kmat/force per MG level to disk") # --no-cache to turn off and reset
 parser.add_argument("--nxe", type=int, default=32, help="number of elements") # 32
 
-# TEMP DEBUG drig element
-# parser.add_argument("--elem", type=str, default='drig', help="--elem, options: tbd")
-# parser.add_argument("--solve", type=str, default='kmg', help="--solve : [direct, vmg, kmg]")
-# parser.add_argument("--plot", type=str, default='w', help="--plot is str : [w, u, v, thx, thy, thz] or None")
-# parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=True,
-#                     help="Cache assembled kmat/force per MG level to disk") # --no-cache to turn off and reset
-# parser.add_argument("--nxe", type=int, default=32, help="number of elements") # 32
 
 # which load case
 parser.add_argument("--load", type=str, default='axial', help="--load, axial or shear bending modes")
@@ -57,16 +56,16 @@ parser.add_argument("--load", type=str, default='axial', help="--load, axial or 
 
 # usual inputs
 parser.add_argument("--nxemin", type=int, default=8, help="min # elems multigrid")
-parser.add_argument("--coupled", type=int, default=2, help="size of coupling ASW blocks (options are 1 and 2), 1 is still an interesting vertex-edge coupling for DRIG")
+parser.add_argument("--coupled", type=int, default=1, help="size of coupling ASW blocks (options are 1 and 2), 1 is still an interesting vertex-edge coupling for DRIG")
 parser.add_argument("--thick", type=float, default=1e-3, help="shell thickness")
 # parser.add_argument("--radius", type=float, default=1.0, help="cylinder radius")
 parser.add_argument("--curvature", type=float, default=1.0, help="shell curvature (lower gets flatter)")
 parser.add_argument("--length", type=float, default=1.0, help="cylinder length")
 parser.add_argument("--width", type=float, default=np.pi / 2, help="cylinder width (hoop length)")
 # parser.add_argument("--solve", type=str, default='direct', help="--solve : [direct, vmg, kmg]")
-parser.add_argument("--nsmooth", type=int, default=2, help="number of smoothing steps")
-parser.add_argument("--nprolong", type=int, default=10, help="number of smoothing steps for prolongator")
-parser.add_argument("--omega", type=float, default=1.0, help="omega smoother coeff (sometimes needs to be lower)")
+parser.add_argument("--nsmooth", type=int, default=1, help="number of smoothing steps")
+parser.add_argument("--nprolong", type=int, default=2, help="number of smoothing steps for prolongator")
+parser.add_argument("--omega", type=float, default=0.7, help="omega smoother coeff (sometimes needs to be lower)")
 parser.add_argument("--smoother", type=str, default='supp_asw', help="--smooth : [gs, asw]")
 # parser.add_argument("--plot", action=argparse.BooleanOptionalAction, default=False, help="Plot matrices and residual")
 parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=False, help="run debug codes")
@@ -80,8 +79,10 @@ def _wrap_assemble_with_cache(obj, cache_dir=".mg_cache"):
     def cached():
         if args.elem.startswith("mitc"):
             elem_key = "mitc" # mitc, mitc_lp, mitc_gp, mitc_ep -> mitc
-        elif args.elem.startswith("drig"):
-            elem_key = "drig"
+        elif args.elem.startswith("mig_mitc"):
+            elem_key = "mig_mitc"
+        elif args.elem.startswith("mig"):
+            elem_key = "mig"
         else:
             elem_key = args.elem        
 
@@ -147,36 +148,54 @@ axial_factor = 0.0
 # axial_factor = 0.3
 # larger radius can lead to weird locking behavior
 
+if 'mig_mitc' in args.elem:
+    assert args.elem in ['mig_mitc', 'mig_mitc_ep']
+    ELEMENT = MIG_MITC_CylinderElement(
+        r=R, 
+        curvature_on=True, 
+        # reduced_integrate_exy=True,
+        prolong_mode='standard' if args.elem == 'mig_mitc' else 'energy-jacobi',
+        omega=0.5, 
+        n_Psweeps=args.nprolong
+    )
+    ASSEMBLER = MIG2CylinderAssembler
 
-if 'drig' in args.elem:
-    assert args.elem in ['drig', 'drig_ep']
-    ELEMENT = DeRhamMITC_IGACylinderElement(
+elif 'mig4' in args.elem:
+    ELEMENT = MIG4CylinderElement(
+        r=R, 
+        curvature_on=True, 
+    )
+    ASSEMBLER = MIG4IGACylinderAssembler
+
+elif 'mig' in args.elem:
+    assert args.elem in ['mig', 'mig_ep']
+    ELEMENT = DeRham_IGACylinderElement(
         r=R, 
         curvature_on=True, 
         reduced_integrate_exy=True,
-        prolong_mode='standard' if args.elem == 'drig' else 'energy-jacobi',
-        # omega=0.4,
-        # omega=0.3,
-        # omega=0.3,
-        omega=0.1,
-        # omega=0.5, 
+        prolong_mode='standard' if args.elem == 'mig' else 'energy-jacobi',
+        omega=0.4,
         n_Psweeps=args.nprolong
     )
     ASSEMBLER = DeRhamIGACylinderAssembler
 
+
+
 elif 'mitc' in args.elem:
-    elems = ['mitc', 'mitc_gp', 'mitc_lp', 'mitc_ep']
-    modes = ['standard', 'locking-global', 'locking-local', 'energy-jacobi']
+    elems = ['mitc', 'mitc_gp', 'mitc_lp', 'mitc_ep', 'mitc_gep']
+    modes = ['standard', 'locking-global', 'locking-local', 'energy-jacobi', 'energy-exact']
     prolong_mode = None
-    for i in range(4):
+    for i in range(5):
         if elems[i] == args.elem:
             prolong_mode = modes[i]
 
     ELEMENT = MITCShellElement(
         prolong_mode=prolong_mode,
-        # lam=1e-6, omega=0.5,
+        # prolong_mode="locking-global",
+        # prolong_mode="energy-exact",
+        lam=1e-6, omega=0.5,
         # lam=1e-2, omega=0.4,
-        lam=1e0, omega=0.4,
+        # lam=1e0, omega=0.4,
         n_lock_sweeps=args.nprolong,
     )
     ASSEMBLER = StandardShellAssembler
@@ -207,8 +226,8 @@ if args.load == 'shear':
     #     return np.sin(np.pi * (xh + 0.5*yh))
     
     def xyz_load_fcn(x,y,z):
-        th = np.atan2(y, z)
-        dth = th - np.atan2(-args.width,0)
+        th = np.arctan2(y, z)
+        dth = th - np.arctan2(-args.width,0)
         s = R * dth
         return xs_load_fcn(x, s)
 
@@ -218,14 +237,15 @@ elif args.load == 'axial':
         y = -R * np.cos(s / R)
         z = R * np.sin(s / R)
         return xyz_load_fcn(x,y,z)
-    
-if 'mitc' in args.elem:
+
+if 'mig' in args.elem:
+    load_fcn = xs_load_fcn 
+elif 'mitc' in args.elem:
     load_fcn = xyz_load_fcn
-elif 'drig' in args.elem:
-    load_fcn = xs_load_fcn
+
     
 
-# NOTE : old load was this, great drig performance with this load case (low exy shear strain which is red int?)
+# NOTE : old load was this, great mig performance with this load case (low exy shear strain which is red int?)
 # load_fcn = lambda x, y, z : 1.0 * np.sin(np.pi * x) * np.sin(np.pi * z) * np.sin(np.pi * -y),
 # load_fcn = lambda x,s : 1.0,
 # load_fcn = lambda x, y, z : 1.0 * np.sin(3 * np.pi * x) * np.sin(np.pi * z) * np.sin(np.pi * -y),
@@ -288,12 +308,14 @@ if 'mg' in args.solve:
         grid._assemble_system()
 
 
-        if '_ep' in args.elem:
+        if 'ep' in args.elem:
             # add kmat into kmat cache for the element
             ELEMENT._kmat_cache[nxe // 2] = grid.kmat.copy()
 
         # register xpts to mitc element for multigrid prolongators
-        if 'mitc' in args.elem:
+        if 'mig' in args.elem:
+            pass
+        elif 'mitc' in args.elem:
             ELEMENT._xpts_cache[int(nxe)] = grid.xpts
 
         print(f"{nxe=} with {grid.force.shape=}")
@@ -305,7 +327,7 @@ if 'mg' in args.solve:
         elif 'asw' in args.smoother:
             smoother = None
 
-            if 'drig' in args.elem:
+            if 'mig' in args.elem:
                 omega = args.omega * 0.5 # need extra mult for them (default best values)
                 coupled = args.coupled
                 if coupled > 2:
@@ -314,21 +336,28 @@ if 'mg' in args.solve:
             else:
                 omega = args.omega
                 coupled = args.coupled
+                if 'mitc' in args.elem:
+                    coupled = 2 
+                    print("OVERWRITING MITC to coupled=2 ASW smoother (so uses coupled=1 default for MIG currently)")
 
-            if args.coupled == 1:
+            if coupled == 1:
                 omega = omega / 2.0 # because some 2x smoothing on thx, thy
                 patch_type = "vertex_edges"
-            elif args.coupled == 2:
+            elif coupled == 2:
                 omega = omega / 4.0 # because 2x smoothing than coupled == 1 schwarz (so ~4x smoothing on thx, thy)
                 patch_type = "wblock_vertex_edges"
-            elif args.coupled == 3:
+            elif coupled == 3:
                 omega = omega / 8.0
 
-            if 'drig' in args.elem:
+            if 'mig' in args.elem:
                 print("using Additive schwarz DeRham smoother")
-                if 'drig' in args.elem:
+                # if 'mig_mitc' in args.elem:
+                #     ASW_CLASS = TwoDimAddSchwarzMIG2VertexEdges
+                if 'mig4' in args.elem:
+                    ASW_CLASS = TwoDimAddSchwarzMIG4CylinderVertexEdges
+                elif 'mig' in args.elem:
                     ASW_CLASS = TwoDimAddSchwarzDeRhamCylinderVertexEdges
-                # elif args.elem == 'mdrig':
+                # elif args.elem == 'mmig':
                 #     ASW_CLASS = MixedTwoDimAddSchwarzDeRhamCylinderVertexEdges 
 
                 smoother = ASW_CLASS.from_assembler(
@@ -417,12 +446,13 @@ if args.solve == 'direct':
 elif args.solve == 'vmg':
 
     DEVEL_DEBUG = args.debug
-    line_search = args.elem in ['drig', 'drigr', 'drig_ep', 'mitc_lp', 'mitc_gp', 'mitc']
+    # line_search = args.elem in ['mig', 'migr', 'mig_ep', 'mig_mitc', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep', 'mitc_gep']
+    line_search = args.elem in ['mig', 'migr', 'mig_ep', 'mig_mitc', 'mitc_lp', 'mitc_gp', 'mitc']
 
     if DEVEL_DEBUG:
         assembler.u, ncyc = vcycle_solve(grids, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
                                         # line_search=False, # often need it turned off.. for best conv
-                                        # line_search = 'drig' in args.elem,
+                                        # line_search = 'mig' in args.elem,
                                         line_search=line_search,
                                         debug=True,
                                         nvcycles=1000,
@@ -431,7 +461,7 @@ elif args.solve == 'vmg':
     else:
         assembler.u, ncyc = vcycle_solve(grids, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
                                         # line_search=False, # often need it turned off.. for best conv
-                                        # line_search = 'drig' in args.elem,
+                                        # line_search = 'mig' in args.elem,
                                         # line_search=False,
                                         line_search=line_search,
                                         debug=args.debug,
@@ -442,15 +472,16 @@ elif args.solve == 'vmg':
 elif args.solve == 'kmg':
 
 
-    line_search = args.elem in ['drig', 'drigr', 'drig_ep', 'mitc_lp', 'mitc_gp', 'mitc']
-    # line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp']
+    # line_search = args.elem in ['mig', 'migr', 'mig_ep', 'mig_mitc', 'mitc_lp', 'mitc_gp', 'mitc', 'mitc_ep', 'mitc_gep']
+    line_search = args.elem in ['mig', 'migr', 'mig_ep', 'mig_mitc', 'mitc_lp', 'mitc_gp', 'mitc']
+    # line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp']
 
     vmg2 = VMG(
         grids, nsmooth=args.nsmooth, 
         ncyc=1, # fewer total v-cycles often..
         # ncyc=2,
         smoothers=smoothers, 
-        # line_search = 'drig' in args.elem,
+        # line_search = 'mig' in args.elem,
         line_search=line_search,
     )
     pc = vmg2
@@ -508,7 +539,15 @@ elif args.solve == 'kmg':
 def norm(x):
     return np.max(np.abs(x))
 
-if 'mitc' in args.elem:
+if 'mig' in args.elem:
+    u = assembler.u.copy()
+    off_w = assembler.off_w; nw = assembler.nw
+    normal_defln = u[off_w:off_w + nw]
+    disp_nrm = norm(normal_defln)
+    norm_nrm = norm(normal_defln)
+
+
+elif 'mitc' in args.elem:
     # get max deflection
     disp = assembler.u.copy()
     u = disp[0::6]
@@ -542,12 +581,6 @@ if 'mitc' in args.elem:
     disp_nrm = np.max([v_nrm, w_nrm])
     norm_nrm = norm(normal_defln)
 
-elif 'drig' in args.elem:
-    u = assembler.u.copy()
-    off_w = assembler.off_w; nw = assembler.nw
-    normal_defln = u[off_w:off_w + nw]
-    disp_nrm = norm(normal_defln)
-    norm_nrm = norm(normal_defln)
 
 nxe = args.nxe
 print(f"{nxe=} {disp_nrm=:.4e} {norm_nrm=:.4e}")
@@ -562,7 +595,9 @@ if args.plot is not None:
     assembler.plot_disp(
         # disp_mag=0.2,
         # disp_mag=0.3 * R,
-        disp_mag=0.4 * R,
+        disp_mag = 0.05 * R,
+        # disp_mag = 0.1 * R,
+        # disp_mag=0.4 * R,
         # disp_mag=1.0, # same as radius (as multiple of inf-norm or max value)
         # disp_mag=2.0,
         # disp_mag=5.0,

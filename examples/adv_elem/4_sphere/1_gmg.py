@@ -2,12 +2,12 @@ import numpy as np
 import sys
 sys.path.append("../3_cylinder/src/")
 # from elem import DeRhamIsogeometricCylinderElement #, MixedDeRhamIGACylinderElement
-from elem import DeRhamMITC_IGACylinderElement
+from elem import DeRham_IGACylinderElement
 
 
 sys.path.append("src/")
-from sdrig_assembler import DeRhamIGASphereAssembler
-# from drig_assembler2 import MixedDeRhamIGACylinderAssembler
+from smig_assembler import DeRhamIGASphereAssembler
+# from mig_assembler2 import MixedDeRhamIGACylinderAssembler
 
 # MITC
 from elem import MITCShellElement
@@ -36,6 +36,8 @@ The assembled kmat and rhs are cached if you run them multiple times to speedup 
 Also caches some prolong matrices in multigrid
 """
 
+print("WARNING: the sphere case does not have an orthonormal basis (not constant curvatures) - this code is invalid, only cylinder case works")
+
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -46,8 +48,8 @@ parser = argparse.ArgumentParser()
 #                     help="Cache assembled kmat/force per MG level to disk") # --no-cache to turn off and reset
 # parser.add_argument("--nxe", type=int, default=32, help="number of elements") # 32
 
-# TEMP DEBUG drig element
-parser.add_argument("--elem", type=str, default='drig', help="--elem, options: tbd")
+# TEMP DEBUG mig element
+parser.add_argument("--elem", type=str, default='mig', help="--elem, options: tbd")
 parser.add_argument("--solve", type=str, default='kmg', help="--solve : [direct, vmg, kmg]")
 parser.add_argument("--plot", type=str, default='w', help="--plot is str : [w, u, v, thx, thy, thz] or None")
 parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=True,
@@ -65,7 +67,7 @@ parser.add_argument("--curvature", type=float, default=1.0, help="shell curvatur
 parser.add_argument("--length", type=float, default=1.0, help="cylinder length")
 parser.add_argument("--width", type=float, default=1.0, help="cylinder width (hoop length)")
 # parser.add_argument("--solve", type=str, default='direct', help="--solve : [direct, vmg, kmg]")
-parser.add_argument("--nsmooth", type=int, default=2, help="number of smoothing steps")
+parser.add_argument("--nsmooth", type=int, default=1, help="number of smoothing steps")
 parser.add_argument("--nprolong", type=int, default=1, help="number of smoothing steps for prolongator")
 parser.add_argument("--omega", type=float, default=1.0, help="omega smoother coeff (sometimes needs to be lower)")
 parser.add_argument("--smoother", type=str, default='supp_asw', help="--smooth : [gs, asw]")
@@ -144,13 +146,13 @@ axial_factor = 0.0
 # larger radius can lead to weird locking behavior
 
 
-if 'drig' in args.elem:
-    assert args.elem in ['drig', 'drig_ep']
-    ELEMENT = DeRhamMITC_IGACylinderElement(
+if 'mig' in args.elem:
+    assert args.elem in ['mig', 'mig_ep']
+    ELEMENT = DeRham_IGACylinderElement(
         r=R, 
         curvature_on=True, 
         reduced_integrate_exy=True,
-        prolong_mode='standard' if args.elem == 'drig' else 'energy-jacobi',
+        prolong_mode='standard' if args.elem == 'mig' else 'energy-jacobi',
         # omega=0.4,
         # omega=0.3,
         # omega=0.3,
@@ -210,6 +212,7 @@ if args.load == 'shear':
 
 elif args.load == 'axial':
     xyz_load_fcn = lambda x, y, z : 1.0 * np.sin(np.pi * x) * np.sin(np.pi * z) * np.sin(np.pi * -y)
+    # xyz_load_fcn = lambda x, y, z : 1.0 * np.sin(np.pi * x) * np.sin(np.pi * (z**2 + y**2))
     
     def xs_load_fcn(u, v):
         # u: arc-length in +phi direction (like "x" on the surface)
@@ -225,7 +228,7 @@ elif args.load == 'axial':
     
 if 'mitc' in args.elem:
     load_fcn = xyz_load_fcn
-elif 'drig' in args.elem:
+elif 'mig' in args.elem:
     load_fcn = xs_load_fcn
 
 
@@ -297,7 +300,7 @@ if 'mg' in args.solve:
         elif 'asw' in args.smoother:
             smoother = None
 
-            if args.elem in ['drig', 'drigr']:
+            if args.elem in ['mig', 'migr']:
                 omega = args.omega * 0.5 # need extra mult for them (default best values)
                 coupled = args.coupled
                 if coupled > 2:
@@ -316,11 +319,11 @@ if 'mg' in args.solve:
             elif args.coupled == 3:
                 omega = omega / 8.0
 
-            if 'drig' in args.elem:
+            if 'mig' in args.elem:
                 print("using Additive schwarz DeRham smoother")
-                if 'drig' in args.elem:
+                if 'mig' in args.elem:
                     ASW_CLASS = TwoDimAddSchwarzDeRhamCylinderVertexEdges
-                # elif args.elem == 'mdrig':
+                # elif args.elem == 'mmig':
                 #     ASW_CLASS = MixedTwoDimAddSchwarzDeRhamCylinderVertexEdges 
 
                 smoother = ASW_CLASS.from_assembler(
@@ -382,7 +385,7 @@ def _normhist_key(extra: dict) -> str:
     return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16], payload
 
 
-def save_norm_hist(norm_hist, cache_dir=".mg_cache/norm_hist", extra: dict | None = None):
+def save_norm_hist(norm_hist, cache_dir=".mg_cache/norm_hist", extra: dict = None):
     extra = {} if extra is None else dict(extra)
     key, meta = _normhist_key(extra)
     os.makedirs(cache_dir, exist_ok=True)
@@ -409,12 +412,12 @@ if args.solve == 'direct':
 elif args.solve == 'vmg':
 
     DEVEL_DEBUG = args.debug
-    line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp', 'mitc']
+    line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp', 'mitc']
 
     if DEVEL_DEBUG:
         assembler.u, ncyc = vcycle_solve(grids, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
                                         # line_search=False, # often need it turned off.. for best conv
-                                        # line_search = 'drig' in args.elem,
+                                        # line_search = 'mig' in args.elem,
                                         line_search=line_search,
                                         debug=True,
                                         nvcycles=1000,
@@ -423,7 +426,7 @@ elif args.solve == 'vmg':
     else:
         assembler.u, ncyc = vcycle_solve(grids, pre_smooth=args.nsmooth, post_smooth=args.nsmooth,
                                         # line_search=False, # often need it turned off.. for best conv
-                                        # line_search = 'drig' in args.elem,
+                                        # line_search = 'mig' in args.elem,
                                         # line_search=False,
                                         line_search=line_search,
                                         debug=args.debug,
@@ -434,15 +437,15 @@ elif args.solve == 'vmg':
 elif args.solve == 'kmg':
 
 
-    line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp', 'mitc']
-    # line_search = args.elem in ['drig', 'drigr', 'mitc_lp', 'mitc_gp']
+    line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp', 'mitc']
+    # line_search = args.elem in ['mig', 'migr', 'mitc_lp', 'mitc_gp']
 
     vmg2 = VMG(
         grids, nsmooth=args.nsmooth, 
         ncyc=1, # fewer total v-cycles often..
         # ncyc=2,
         smoothers=smoothers, 
-        # line_search = 'drig' in args.elem,
+        # line_search = 'mig' in args.elem,
         line_search=line_search,
     )
     pc = vmg2
@@ -529,7 +532,7 @@ if 'mitc' in args.elem:
     disp_nrm = np.max([v_nrm, w_nrm])
     norm_nrm = norm(normal_defln)
 
-elif 'drig' in args.elem:
+elif 'mig' in args.elem:
     u = assembler.u.copy()
     off_w = assembler.off_w; nw = assembler.nw
     normal_defln = u[off_w:off_w + nw]
