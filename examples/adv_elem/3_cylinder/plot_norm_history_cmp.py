@@ -90,6 +90,8 @@ def plot_runs(
         if elem and load:
             if elem == "MIG":
                 elem = "MIG3"
+            if elem == "MITC":
+                elem = "MITC4"
             lbl = f"{elem}-{load}"
         elif elem:
             lbl = elem
