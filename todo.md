@@ -22,9 +22,12 @@
    - [ ] add new ML-BDDC category to scatter plots, table and bar chart
 
 3. develop multiple GPUs on wing
-   - [ ] do multilevel BDDC
+   - [x] do multilevel BDDC
       - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
    - [ ] then multi GPU
+      - [ ] stick with two-level BDDC probably
+      - [ ] use CuDSS with CSR and its multi-GPU schur complement (with METIS) to parallelize direct solve, multilevel BDDC not as thick-independent rn
+         https://docs.nvidia.com/cuda/cudss/advanced_features.html?utm_source=chatgpt.com#schur-complement
    - [ ] writeup of multi GPU section
 
 4. look at general non-const curved shells
