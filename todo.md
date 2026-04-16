@@ -9,6 +9,15 @@
 
 3. [ ] finish defense presentation
 
+## Journal paper plan
+
+- [ ] multigrid has these issues with MITC for thin shells
+- [ ] BDDC-LU improves performance but requires wraparound subdomain splitting
+- [ ] empirical / theoretical evidence of wraparound method
+   * run a bunch of different multi-patch structures, with wraparound fraction
+- [ ] demonstrate GPU (GPU-CPU) speedups + linear solver comparison
+- [ ] optimization demonstration
+
 ## STRETCH GOALS (for thesis pres deadline)
 
 1. put MIG elements on GPU
