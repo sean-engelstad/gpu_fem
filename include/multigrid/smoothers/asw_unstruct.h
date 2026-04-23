@@ -9,7 +9,7 @@
 #include "linalg/vec.h"
 #include "multigrid/solvers/solve_utils.h"
 
-template <typename T, class Assembler>
+template <typename T, class Assembler, bool use_chebyshev = false>
 class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
     // additive schwarz smoother for unstructured 1st order elements (any mesh)
     // performs local smoothing on each 4-node element (if tris need to write new version of this)
@@ -108,8 +108,58 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         return false;  // fail = False
     }
 
-    void smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln, int __n_iters, bool print = false,
-                      int print_freq = 10) {
+    // void smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln, int __n_iters, bool print =
+    // false,
+    //                   int print_freq = 10) {
+    //     const int n_rhs_blocks = batchSize * size2;
+    //     const int n_rhs_vals = n_rhs_blocks * block_dim;
+
+    //     for (int iter = 0; iter < iters; iter++) {
+    //         // (1) Collect the defect RHS vectors for each block into d_Xarray.
+    //         dim3 grid((n_rhs_vals + 31) / 32);
+    //         k_copyRHSIntoBatched<T><<<grid, 32>>>(n_rhs_vals, block_dim, size, d_RHSblockMap,
+    //                                               d_defect.getPtr(), d_Xarray);
+
+    //         // (2) Batched matrix–vector multiplication: for each block, compute Y_i = invA_i *
+    //         X_i. const double alpha = 1.0; const double beta = 0.0;
+    //         CHECK_CUBLAS(cublasDgemmBatched(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, n, 1, n,
+    //         &alpha,
+    //                                         (const double **)d_invAarray, n,
+    //                                         (const double **)d_Xarray, n, &beta, d_Yarray, n,
+    //                                         batchSize));
+
+    //         // (3) Scatter the batched solution stored in d_Yarray into the global 'temp' vector.
+    //         cudaMemset(d_temp, 0.0, N * sizeof(T));
+    //         k_copyBatchedIntoSoln_additive<T>
+    //             <<<grid, 32>>>(n_rhs_vals, block_dim, size, d_RHSblockMap, d_Yarray, d_temp);
+
+    //         // 4) compute defect update after new solution term..
+    //         //     ..(with soln change stored in d_temp)
+    //         T a = -omega, b = 1.0;  // with omega * d_temp update
+    //         CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+    //                                       CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes,
+    //                                       kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp,
+    //                                       d_kmat_cols, block_dim, d_temp, &b,
+    //                                       d_defect.getPtr()));
+    //         // also update d_soln += omega * d_temp
+    //         a = omega;
+    //         CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_soln.getPtr(), 1));
+    //     }
+    // }
+
+    void smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln, int _n_iters = -1,
+                      bool print = false, int print_freq = 0) {
+        // call smoother on the defect=rhs and solution pair
+        // printf("ASW solve, use_chebyshev = %d\n", use_chebyshev);
+        if constexpr (use_chebyshev) {
+            this->_smoothDefectChebyshev(d_defect, d_soln);
+        } else {
+            this->_smoothDefect(d_defect, d_soln);
+        }
+    }
+
+    void _smoothDefect(DeviceVec<T> d_defect, DeviceVec<T> d_soln, int _n_iters = -1,
+                       bool print = false, int print_freq = 0) {
         const int n_rhs_blocks = batchSize * size2;
         const int n_rhs_vals = n_rhs_blocks * block_dim;
 
@@ -145,6 +195,59 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         }
     }
 
+    void _smoothDefectChebyshev(DeviceVec<T> d_defect, DeviceVec<T> d_soln, int _n_iters = -1,
+                                bool print = false, int print_freq = 0) {
+        const int n_rhs_blocks = batchSize * size2;
+        const int n_rhs_vals = n_rhs_blocks * block_dim;
+        cudaMemset(d_z, 0.0, N * sizeof(T));
+        cudaMemset(d_zprev, 0.0, N * sizeof(T));
+        // printf("smooth defect chebyshev\n");
+
+        for (int iter = 0; iter < iters; iter++) {
+            // (1) Collect the defect RHS vectors for each block into d_Xarray.
+            dim3 grid((n_rhs_vals + 31) / 32);
+            k_copyRHSIntoBatched<T><<<grid, 32>>>(n_rhs_vals, block_dim, size, d_RHSblockMap,
+                                                  d_defect.getPtr(), d_Xarray);
+
+            // (2) Batched matrix–vector multiplication: for each block, compute Y_i = invA_i * X_i.
+            const double alpha = 1.0;
+            const double beta = 0.0;
+            CHECK_CUBLAS(cublasDgemmBatched(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, n, 1, n, &alpha,
+                                            (const double **)d_invAarray, n,
+                                            (const double **)d_Xarray, n, &beta, d_Yarray, n,
+                                            batchSize));
+
+            // (3) Scatter the batched solution stored in d_Yarray into the global 'temp' vector.
+            cudaMemset(d_temp, 0.0, N * sizeof(T));
+            k_copyBatchedIntoSoln_additive<T>
+                <<<grid, 32>>>(n_rhs_vals, block_dim, size, d_RHSblockMap, d_Yarray, d_temp);
+
+            // compute z preconditioned vector
+            cudaMemset(d_z, 0.0, N * sizeof(T));
+            //  then add old z into it with the prescribed scalar
+            int k = iter + 1;
+            T a = omega * (2.0 * k - 3.0) / (2.0 * k + 1.0);
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_zprev, 1, d_z, 1));
+            // then add preconditioned solution
+            a = omega * (8.0 * k - 4.0) / (2.0 * k + 1.0);
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_temp, 1, d_z, 1));
+            // then copy d_z into the previous value (for next iteration)
+            CHECK_CUDA(cudaMemcpy(d_zprev, d_z, N * sizeof(T), cudaMemcpyDeviceToDevice));
+
+            // 4) compute defect update after new solution term..
+            //     ..(with soln change stored in d_temp)
+            a = -1.0;  // with omega * d_temp update
+            T b = 1.0;
+            CHECK_CUSPARSE(cusparseDbsrmv(cusparseHandle, CUSPARSE_DIRECTION_ROW,
+                                          CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes,
+                                          kmat_nnzb, &a, descrKmat, d_kmat_vals, d_kmat_rowp,
+                                          d_kmat_cols, block_dim, d_z, &b, d_defect.getPtr()));
+            // also update d_soln += omega * d_temp
+            a = 1.0;
+            CHECK_CUBLAS(cublasDaxpy(cublasHandle, N, &a, d_z, 1, d_soln.getPtr(), 1));
+        }
+    }
+
    private:
     // References to CUDA library handles.
     cublasHandle_t &cublasHandle;
@@ -162,7 +265,7 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
 
     // updated vectors
     DeviceVec<T> d_temp_vec, d_rhs_vec, d_inner_soln_vec;
-    T *d_temp, *d_temp2, *d_resid;
+    T *d_temp, *d_temp2, *d_resid, *d_z, *d_zprev;
     T *d_rhs, *d_inner_soln;
 
     // Block and batch sizes for batched operations.
@@ -185,6 +288,8 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         d_temp_vec = DeviceVec<T>(N);
         d_temp = d_temp_vec.getPtr();
         d_temp2 = DeviceVec<T>(N).getPtr();
+        d_z = DeviceVec<T>(N).getPtr();
+        d_zprev = DeviceVec<T>(N).getPtr();
         d_resid = DeviceVec<T>(N).getPtr();
 
         // for linear solver / precond use

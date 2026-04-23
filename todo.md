@@ -1,13 +1,15 @@
 
-## Current Tasks
+## Urgent Tasks
+
+1. [ ] submit thesis format check by April 23rd
+
+2. [ ] apply edits to thesis from Dr. Qian
+   - [ ] fix Christoffel symbols
+   - [ ] send thesis back out to committe with short document stating changes
+
+3. [ ] send around thesis approval docusign
 
 
-1. [x] finish writing the element study chapter
-   - [x] change standard 2nd order MIG to MIG2 in the beam and plate sections (also say MITC4 when appropriate)
-
-2. [ ] finish writing up thesis (conclusion + final runthrough)
-
-3. [ ] finish defense presentation
 
 ## Journal paper plan
 
@@ -18,7 +20,49 @@
 - [ ] demonstrate GPU (GPU-CPU) speedups + linear solver comparison
 - [ ] optimization demonstration
 
-## STRETCH GOALS (for thesis pres deadline)
+
+## Journal paper tasks
+
+
+2. [ ] do unstructured wing problems with BDDC wraparound method
+   - [x] fix BDDC code so it can do general BCs, just did equiv bcs on kmat_IEV (with duplicate nodes)
+   - [ ] come up with my own nominal unstructured mesh subdomain splittings
+   - [ ] loop over elements on multi-patch boundary first (so that it there should be subdomains like split along it, then later correct)
+   - [ ] do correction step to combine subdomains along multi-patch boundaries, checking # vertices on multi-patch boundaries reduced to zero
+   - [ ] demonstrate on uCRM and HSCT wingbox structures
+   - [ ] implement nested dissection ordering instead of AMD
+
+3. develop multiple GPUs for bddc
+   - [ ] subdomain parallelism for the K_II and K_{IE,IE} subdomain parallel matrices
+   - [ ] multi-GPU Schur complement for Direct-LU solve with CuDSS (only for coarse vertex)
+   - [ ] add performance tables to high DOF for multi-GPU
+
+
+4. [ ] do smeared stiffened + buckling constraints on GPU (more realistic case, extra DVs per panel)
+
+5. [ ] do higher DOF wing optimization cases
+   - [ ] try and run 10.8M DOF wing optimization (may require)
+   - [ ] run with buckling constraints + stiffened panels
+
+
+1. [x] multilevel BDDC
+   - [ ] try to improve its thickness independence some more
+   - [ ] add new ML-BDDC category to scatter plots, table and bar chart
+
+6. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
+   - [ ] make interface that constructs GPU assembler and classes from CPU assembler
+   - [ ] then runs the GPU code as usual
+   - [ ] implement BDDC (with these two tasks to make it more practical)
+      - [ ] BDDC wraparound for unstructured meshes (and gen single-patch), min # corners and other metrics maybe
+      - [ ] BDDC with more general simply supported vs clamped BCs (prob just duplicate node and make some DOF one in each view)
+
+7. publish two (or more) journal papers on this work
+   - [ ] multilevel solver comparison study + multilevel BDDC-LU with wraparound for wings
+   - [ ] mixed order IGA (and other) thick-independent multigrid methods for beams, plates + shells (maybe I'd just focus on shells in journal?)
+
+   
+
+## Optional Element work
 
 1. put MIG elements on GPU
    - [ ] put MIG2 element on GPU with CSR matrices (and its own ASW smoother)
@@ -27,54 +71,28 @@
    - [ ] put MIG3 element on GPU with CSR matrices (and its own ASW)
       * show good speedup and high DOF problem (against Direct-LU and MITC4 shells)
 
-2. [ ] multilevel BDDC
-   - [ ] add new ML-BDDC category to scatter plots, table and bar chart
+2. get MITC9 + lock-prolong to work better..
 
-3. develop multiple GPUs on wing
-   - [x] do multilevel BDDC
-      - [ ] update some tables and scatter plot by adding newML-BDDC category, and update discussion
-   - [ ] then multi GPU
-      - [ ] stick with two-level BDDC probably
-      - [ ] use CuDSS with CSR and its multi-GPU schur complement (with METIS) to parallelize direct solve, multilevel BDDC not as thick-independent rn
-         https://docs.nvidia.com/cuda/cudss/advanced_features.html?utm_source=chatgpt.com#schur-complement
-   - [ ] writeup of multi GPU section
+3. Look at multiscale SFE plate + shell elements (like ASGS algebraic sub-grid scale)
+   - other elements ASGS, Discrete Shear Gap, bubble elements
+   - [ ] try Falk-Tu elements with thick-ind BDDC
+   - [ ] extend Falk-Tu to shells and try to get thick-ind BDDC (with multilevel BDDC for multi-GPU)
 
-4. look at general non-const curved shells
+4. Try again the Kirchoff multigrid cases (like subdivision surfaces, etc.)
+
+5. look at general non-const curved shells
    - [ ] try DRIG+CAS (with EP/LP smooth prolong maybe) so that CAS element handles mem locking on 2nd order (u,v) IGA
       * [Overcoming membrane locking in quadratic NURBS-based discretizations of linear Kirchhoff–Love shells: CAS elements](https://www.sciencedirect.com/science/article/pii/S0045782523006473)
       * [Removing membrane locking in quadratic NURBS-based discretizations of linear plane Kirchhoff rods: CAS elements](https://www.sciencedirect.com/science/article/pii/S0045782522004364?utm_source=chatgpt.com)
    - [ ] try DRIG+MITC (with EP/LP  smooth prolong) so that MITC handles mem locking on 2nd order (u,v) IGA
 
-5. [ ] do higher DOF wing optimization cases
-   - [ ] try and run 10.8M DOF wing optimization (may require)
-   - [ ] run with buckling constraints + stiffened panels
-
-6. do unstructured wing problems with BDDC wraparound method
-   - [ ] develop so METIS or general nominal subdomain splitting
-   - [ ] combine subdomains along patch boundaries (checking any violations)
-   - [ ] do all quad-element HSCT mesh..
 
 
-
-# 4. In writeup:
-#    - [ ] explain challenge in general curved and multi-patch shells (still working on it)
-#    - [ ] could mixed FEA allow us to introduce similar auxillary states (with L2-prjoected error) => to lower the IGA order of cylindrical / spherical shell cases?
-#    - [ ] explain that subdivision surface method for Kirchoff shells (with mem strains) combined with DRIG element (mixed-order IGA) may be able to solve it? But have to try it still
-
-## After thesis deadline
-
-1. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
-   - [ ] make interface that constructs GPU assembler and classes from CPU assembler
-   - [ ] then runs the GPU code as usual
-   - [ ] implement BDDC (with these two tasks to make it more practical)
-      - [ ] BDDC wraparound for unstructured meshes (and gen single-patch), min # corners and other metrics maybe
-      - [ ] BDDC with more general simply supported vs clamped BCs (prob just duplicate node and make some DOF one in each view)
-
-2. publish two (or more) journal papers on this work
-   - [ ] multilevel solver comparison study + multilevel BDDC-LU with wraparound for wings
-   - [ ] mixed order IGA (and other) thick-independent multigrid methods for beams, plates + shells (maybe I'd just focus on shells in journal?)
-
-
+7. Try new multigrid methods (see other book on it I haven't read), do python first maybe
+   - [x] try colored additive schwarz (closer to multiplicative schwarz) for multigrid
+   - [x] try a chebyshev additive schwarz (need spectral radius for it), only mild improvements.. not very helpful generally
+   - [ ] try FMG (full multigrid) for linear + nonlinear problems
+   - [ ] possible better smoothers with machine learning?
 
 ## REALLY OPTIONAL
 

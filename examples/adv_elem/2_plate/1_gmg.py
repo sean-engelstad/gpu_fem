@@ -15,7 +15,7 @@ from elem import AlgebraicSubGridScaleElement
 from smooth import TwoDimAddSchwarzDeRhamVertexEdges
 # from smooth import TwodimAddSchwarzColored22_BC, TwodimAddSchwarzColored22
 from smooth import TwodimSVDAddSchwarz
-from smooth import TwodimSupportAddSchwarz, TwodimElementAddSchwarz
+from smooth import TwodimSupportAddSchwarz, TwodimElementAddSchwarz, ColoredTwodimElementAddSchwarz
 
 sys.path.append("../1_beam/src/")
 from multigrid2 import vcycle_solve, VMG
@@ -270,12 +270,15 @@ if 'mg' in args.solve:
 
             if args.elem in ['mig', 'migr']:
                 print("using Additive schwarz DeRham smoother")
+                ASW_SMOOTHER = TwoDimAddSchwarzDeRhamVertexEdges
+
                 smoother = TwoDimAddSchwarzDeRhamVertexEdges.from_assembler(
                     grid, omega=omega, iters=nsmooth,
                     patch_type = patch_type,
                     # patch_type="vertex_edges", # one w vertex and nearby 4 edges (2 of thx and 2 of thy)
                     # patch_type="wblock_vertex_edges",
                 )
+
             # elif args.coupled == 2:
             #     print("doing colored asw 2x2")
             #     # smoother = TwodimAddSchwarzColored22.from_assembler(
@@ -295,6 +298,9 @@ if 'mg' in args.solve:
             else:
                 # SMOOTHER_CLASS = TwodimSupportAddSchwarz # can't use this on 2x2 coupled or lower
                 SMOOTHER_CLASS = TwodimAddSchwarz # BEST
+                # SMOOTHER_CLASS = ColoredTwodimElementAddSchwarz
+                print("HERE")
+
                 # SMOOTHER_CLASS = TwodimElementAddSchwarz # ends up being worse than regular add-Schwarz by a few iterations
 
                 # old good LU smoother

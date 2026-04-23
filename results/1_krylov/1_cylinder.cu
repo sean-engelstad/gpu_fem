@@ -213,14 +213,16 @@ void chebyshev_polynomial_solve(int nxe, double SR, int nsmooth, T omegaMC = 1.5
 }
 
 
-template <typename T, class Assembler>
+template <typename T, class Assembler, bool USE_CHEBYSHEV = false>
 void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure = 5.0e7) {
     /* SPAI-GMRES solve */
 
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
     const SCALER scaler  = LINE_SEARCH;
-    using Smoother = StructuredAdditiveSchwarzSmoother<T, Assembler, S_CYLINDER>;
+    // const bool USE_CHEBYSHEV = true;
+    // // const bool USE_CHEBYSHEV = false;
+    using Smoother = StructuredAdditiveSchwarzSmoother<T, Assembler, S_CYLINDER, USE_CHEBYSHEV>;
     using Prolongation = StructuredProlongation<Assembler, CYLINDER>;
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, scaler>;
 
@@ -1365,7 +1367,12 @@ void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth,
         omega = 0.2;
         printf("ASW : setting omega = 0.2 and size to 2, comment this out to change it\n");
         int size = 2; // recommend omega = 0.2 here, nsmooth = 2
-        asw_solve<T, Assembler>(nxe, SR, omega, nsmooth, size, load_mag);
+        asw_solve<T, Assembler, false>(nxe, SR, omega, nsmooth, size, load_mag);
+    } else if (solver_type == "aswc2") {
+        omega = 0.12;
+        printf("ASW chebyshev : setting omega = 0.12 and size to 2, comment this out to change it\n");
+        int size = 2; // recommend omega = 0.2 here, nsmooth = 2
+        asw_solve<T, Assembler, true>(nxe, SR, omega, nsmooth, size, load_mag);
     } else if (solver_type == "aswe3") {
         omega = 0.1;
         printf("ASW : setting omega = 0.1 and size to 3, comment this out to change it\n");

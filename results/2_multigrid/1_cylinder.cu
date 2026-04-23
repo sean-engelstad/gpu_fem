@@ -66,6 +66,7 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
     using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
     // using MG = GeometricMultigridSolver<GRID, CoarseSolver>;
     using ASW = StructuredAdditiveSchwarzSmoother<T, Assembler, S_CYLINDER>;
+    using ASWC = StructuredAdditiveSchwarzSmoother<T, Assembler, S_CYLINDER, true>;
     
     // for K-cycles
     using KrylovSolve = PCGSolver<T, GRID>;
@@ -167,7 +168,7 @@ void multigrid_solve(std::string smoother_type, int nxe, double SR, int nsmooth,
         } else if constexpr (std::is_same_v<Smoother,MulticolorGSSmoother_V1<Assembler>>) {
             bool symmetric = true;
             smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, h_color_rowp, omega, symmetric, nsmooth);
-        } else if constexpr (std::is_same_v<Smoother, ASW>) {
+        } else if constexpr (std::is_same_v<Smoother, ASW> || std::is_same_v<Smoother, ASWC>) {
             int size = 2;
             smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, c_nxe + 1, c_nxe, 
             omega, nsmooth, size);
@@ -548,7 +549,14 @@ int main(int argc, char **argv) {
         using Smoother = MulticolorGSSmoother_V1<Assembler>; // still calls direct later if direct
         gatekeeper_method<T, Smoother, Assembler>(smoother_type, nxe, SR, nsmooth, ninnercyc, omega, ORDER, cycle_type);
     } else if (smoother_type == "asw") {
-        using Smoother = StructuredAdditiveSchwarzSmoother<T, Assembler, S_CYLINDER>; // still calls direct later if direct
+        // const bool USE_CHEBYSHEV = true;
+        const bool USE_CHEBYSHEV = false;
+        using Smoother = StructuredAdditiveSchwarzSmoother<T, Assembler, S_CYLINDER, USE_CHEBYSHEV>; // still calls direct later if direct
+        gatekeeper_method<T, Smoother, Assembler>(smoother_type, nxe, SR, nsmooth, ninnercyc, omega, ORDER, cycle_type);
+    } else if (smoother_type == "aswc") {
+        const bool USE_CHEBYSHEV = true;
+        // const bool USE_CHEBYSHEV = false;
+        using Smoother = StructuredAdditiveSchwarzSmoother<T, Assembler, S_CYLINDER, USE_CHEBYSHEV>; // still calls direct later if direct
         gatekeeper_method<T, Smoother, Assembler>(smoother_type, nxe, SR, nsmooth, ninnercyc, omega, ORDER, cycle_type);
     }
 

@@ -52,10 +52,10 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     int getLambdaSize() const { return ngam * this->block_dim; }
 
     void setup_structured_subdomains(int nxe_, int nye_, int nxs_, int nys_,
-                                     bool close_hoop = false) {
+                                     bool close_hoop = false, bool track_dirichlet = false) {
         // call base FETI-DP setup
-        FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_structured_subdomains(nxe_, nye_, nxs_,
-                                                                                  nys_, close_hoop);
+        FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_structured_subdomains(
+            nxe_, nye_, nxs_, nys_, close_hoop, track_dirichlet);
 
         // TODO: BDDC unique maps/weights for edge averaging
 
@@ -78,11 +78,11 @@ class BddcSolver : public FetidpSolver<T, ShellAssembler_, Vec_, Mat_> {
     }
 
     void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
-                                         T wrap_frac = 1.0) {
+                                         T wrap_frac = 1.0, bool track_dirichlet = false) {
         // call base FETI-DP setup
         bool compute_jump = false;
         FetidpSolver<T, ShellAssembler_, Vec_, Mat_>::setup_tacs_component_subdomains(
-            nxse_, nyse_, MOD_WRAPAROUND, wrap_frac, compute_jump);
+            nxse_, nyse_, MOD_WRAPAROUND, wrap_frac, compute_jump, track_dirichlet);
 
         // TODO: BDDC unique maps/weights for edge averaging
         // printf("\tdone with BDDC outer setup wing subdomains\n");

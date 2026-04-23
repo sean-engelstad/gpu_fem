@@ -243,8 +243,251 @@ class FetidpSolver : public BaseSolver {
     ~FetidpSolver() { clear_host_data(); }
     int getLambdaSize() const { return lam_nnodes * block_dim; }
 
+    void setup_unstructured_subdomains(int target_sd_size = 16) {
+        clear_structured_host_data();
+
+        // node-element adjacency
+        int ne_nnz = 0;
+        int *ne_cts = new int[num_nodes];
+        memset(ne_cts, 0, num_nodes * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                ne_cts[gnode]++;
+                ne_nnz++;
+            }
+        }
+        int *ne_ptr = new int[num_nodes + 1];
+        memset(ne_ptr, 0, (num_nodes + 1) * sizeof(int));
+        for (int inode = 0; inode < num_nodes; inode++) {
+            ne_ptr[inode + 1] = ne_ptr[inode] + ne_cts[inode];
+        }
+        memset(ne_cts, 0, num_nodes * sizeof(int));
+        int *ne_cols = new int[ne_nnz];
+        memset(ne_cols, 0, ne_nnz * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int offset = ne_ptr[gnode] + ne_cts[gnode];
+                ne_cols[offset] = ielem;
+                ne_cts[gnode]++;
+                ne_nnz++;
+            }
+        }
+        // DEBUG node-element adjacency
+        for (int inode = 0; inode < num_nodes; inode++) {
+            printf("node %d: ", inode);
+            for (int jp = ne_ptr[inode]; jp < ne_ptr[inode + 1]; jp++) {
+                int ielem = ne_cols[jp];
+                printf("%d,", ielem);
+            }
+            printf("\n");
+        }
+
+        // then build element-element adjacency
+        // elem => local nodes on elem => adj elem through elem-elem adjacency
+        int *ee_cts = new int[num_elements];
+        int ee_nnz = 0;
+        memset(ee_cts, 0, num_elements * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                for (int jp = ne_ptr[gnode]; jp < ne_ptr[gnode + 1]; jp++) {
+                    int jelem = ne_cols[jp];
+                    if (jelem == ielem) continue;
+                    ee_cts[ielem]++;
+                    ee_nnz++;
+                }
+            }
+        }
+        printf("here1\n");
+        int *ee_ptr = new int[num_elements + 1];
+        memset(ee_ptr, 0, (num_elements + 1) * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            ee_ptr[ielem + 1] = ee_ptr[ielem] + ee_cts[ielem];
+        }
+        memset(ee_cts, 0, num_elements * sizeof(int));
+        int *ee_cols = new int[ee_nnz];
+        memset(ee_cols, 0, ee_nnz * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                for (int jp = ne_ptr[gnode]; jp < ne_ptr[gnode + 1]; jp++) {
+                    int jelem = ne_cols[jp];
+                    if (jelem == ielem) continue;
+                    int offset = ee_ptr[ielem] + ee_cts[ielem];
+                    ee_cols[offset] = jelem;
+                    ee_cts[ielem]++;
+                }
+            }
+        }
+        // DEBUG element-element adjacency
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            printf("elem %d: ", ielem);
+            for (int jp = ee_ptr[ielem]; jp < ee_ptr[ielem + 1]; jp++) {
+                int jelem = ee_cols[jp];
+                printf("%d,", jelem);
+            }
+            printf("\n");
+        }
+
+        // -------------------------------------------
+        // begin assigning subdomains
+        // -------------------------------------------
+        elem_sd_ind = new int[num_elements];
+        bool *visited = new bool[num_elements];
+        memset(elem_sd_ind, 0, num_elements * sizeof(int));
+        memset(visited, 0, num_elements * sizeof(bool));
+        int subdomain_ind = 0;
+        bool all_visited = false;
+        while (!all_visited) {
+            // find an un-assigned element
+            int elem = -1;
+            for (int _elem = 0; _elem < num_elements; _elem++) {
+                if (!visited[_elem]) {
+                    elem = _elem;
+                    break;
+                }
+            }
+            if (elem == -1) break;
+
+            // initialize subdomain
+            std::vector<int> sd_elems;
+            sd_elems.push_back(elem);
+            elem_sd_ind[elem] = subdomain_ind;
+            visited[elem] = true;
+            printf("start subdomain %d, with elem %d\n", subdomain_ind, elem);
+
+            // fill out the rest of the elements in this subdomain
+            while (sd_elems.size() < target_sd_size) {
+                // build a unique element frontier (of element neighbors)
+                std::unordered_set<int> frontier_set;
+
+                for (auto _elem : sd_elems) {
+                    // printf("_elem %d\n", _elem);
+                    for (int jp = ee_ptr[_elem]; jp < ee_ptr[_elem + 1]; jp++) {
+                        int neighbor_elem = ee_cols[jp];
+                        if (visited[neighbor_elem]) continue;
+                        frontier_set.insert(neighbor_elem);
+                    }
+                }
+
+                // convert to vector
+                std::vector<int> frontier(frontier_set.begin(), frontier_set.end());
+                // printf("subdomain %d frontier: ", subdomain_ind);
+                // printVec<int>(frontier.size(), frontier.data());
+
+                if (frontier.size() == 0) break;
+
+                // rank / sort the frontier by # subdomain corners (not same as vertices)
+                // a subdomain corner is a node that has only one element in the subdomain
+                int nfrontier = frontier.size();
+                int *frontier_scores = new int[nfrontier];
+                memset(frontier_scores, 0, nfrontier * sizeof(int));
+                int ii = 0;
+                for (auto frontier_elem : frontier) {
+                    std::vector<int> proposed_sd_elems(frontier_elem);
+                    for (auto _elem : sd_elems) {
+                        proposed_sd_elems.push_back(_elem);
+                    }
+
+                    // get all nodes in the subdomain unique
+                    std::unordered_set<int> proposed_sd_nodes;
+                    for (auto sd_elem : proposed_sd_elems) {
+                        int *local_elem_conn = &elem_conn[nodes_per_elem * sd_elem];
+                        for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                            int gnode = local_elem_conn[lnode];
+                            proposed_sd_nodes.insert(gnode);
+                        }
+                    }
+
+                    // now determine how many of the proposed_sd_nodes are corners (and total it)
+                    int ncorners = 0;
+                    for (auto gnode : proposed_sd_nodes) {
+                        int nelems_in_subdomain = 0;
+                        for (int jp = ne_ptr[gnode]; jp < ne_ptr[gnode + 1]; jp++) {
+                            int jelem = ne_cols[jp];
+                            for (auto _elem : proposed_sd_elems) {
+                                if (jelem == _elem) {
+                                    nelems_in_subdomain++;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (nelems_in_subdomain == 1) {
+                            ncorners++;
+                        }
+                    }
+
+                    frontier_scores[ii] = ncorners;
+                    ii++;
+                }
+                // end of computing frontier elem scores (# corners)
+
+                // sort by frontier scores
+                // pair each elem with its score
+                std::vector<std::pair<int, int>> frontier_pairs;
+                frontier_pairs.reserve(nfrontier);
+
+                for (int i = 0; i < nfrontier; i++) {
+                    frontier_pairs.emplace_back(frontier[i], frontier_scores[i]);
+                }
+
+                // sort by score (smaller first)
+                std::sort(frontier_pairs.begin(), frontier_pairs.end(),
+                          [](const std::pair<int, int> &a, const std::pair<int, int> &b) {
+                              return a.second < b.second;
+                          });
+
+                // write back sorted frontier
+                for (int i = 0; i < nfrontier; i++) {
+                    frontier[i] = frontier_pairs[i].first;
+                }
+
+                // add all frontier elems in the right order to subdomain
+                for (int i = 0; i < nfrontier; i++) {
+                    int frontier_elem = frontier[i];
+                    if (sd_elems.size() >= target_sd_size) break;
+                    if (visited[frontier_elem]) continue;
+
+                    // printf("\tnfrontier %d, subdomain %d, adding elem %d\n", nfrontier,
+                    //        subdomain_ind, frontier_elem);
+                    sd_elems.push_back(frontier_elem);
+                    elem_sd_ind[frontier_elem] = subdomain_ind;
+                    visited[frontier_elem] = true;
+                }
+            }
+            // end of while loop to build the subdomain
+
+            printf("done with subdomain %d, #elems = %d == target_sd_size %d\n", subdomain_ind,
+                   sd_elems.size(), target_sd_size);
+            printf("\tsd_elems: ");
+            printVec<int>(sd_elems.size(), sd_elems.data());
+            subdomain_ind++;
+            // check if all visited
+            all_visited = true;
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                if (!visited[ielem]) {
+                    all_visited = false;
+                    break;
+                }
+            }
+        }
+
+        auto h_vars0 = assembler.createVarsVec().createHostVec();
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars0, elem_sd_ind,
+                                                            "subdomains", "out/elem_sd_ind.vtk");
+
+        // Phase 2 : merge very small subdomains if it reduces total vertices
+    }
+
     void setup_structured_subdomains(int nxe_, int nye_, int nxs_, int nys_,
-                                     bool close_hoop = false) {
+                                     bool close_hoop = false, bool track_dirichlet = false) {
         clear_structured_host_data();
 
         nxe = nxe_;
@@ -352,7 +595,7 @@ class FetidpSolver : public BaseSolver {
                 node_class_ind[inode] = INTERIOR;
                 nnodes_interior++;
             } else if (nsd == 2) {
-                if (on_bndry) {
+                if (on_bndry && track_dirichlet) {
                     node_class_ind[inode] = DIRICHLET_EDGE;
                     nnodes_dirichlet_edge++;
                 } else {
@@ -448,8 +691,8 @@ class FetidpSolver : public BaseSolver {
         // printf("IEV_ind %d\n", IEV_ind);
         // printf("IEV_nodes %d: ", IEV_nnodes);
         // printVec<int>(IEV_nnodes, IEV_nodes);
-        printf("Fine BDDC IEV_conn: ");
-        printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+        // printf("Fine BDDC IEV_conn: ");
+        // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
 
         // for (int iev = 0; iev < IEV_nnodes; iev++) {
         //     int isd = IEV_sd_ind[iev];
@@ -751,20 +994,22 @@ class FetidpSolver : public BaseSolver {
     }
 
     void setup_tacs_component_subdomains(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
-                                         T wrap_frac = 1.0, bool compute_jump = true) {
+                                         T wrap_frac = 1.0, bool compute_jump = true,
+                                         bool track_dirichlet = false) {
         // bool my_debug = true;
         bool my_debug = false;
         if (my_debug) {
             _setup_tacs_component_subdomains_debug(nxse_, nyse_, MOD_WRAPAROUND, wrap_frac,
-                                                   compute_jump);
+                                                   compute_jump, track_dirichlet);
         } else {
             _setup_tacs_component_subdomains_nodebug(nxse_, nyse_, MOD_WRAPAROUND, wrap_frac,
-                                                     compute_jump);
+                                                     compute_jump, track_dirichlet);
         }
     }
 
     void _setup_tacs_component_subdomains_debug(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
-                                                T wrap_frac = 1.0, bool compute_jump = true) {
+                                                T wrap_frac = 1.0, bool compute_jump = true,
+                                                bool track_dirichlet = false) {
         bool print_debug = true;
         auto dbg = [&](const char *msg) {
             if (print_debug) {
@@ -1746,7 +1991,7 @@ class FetidpSolver : public BaseSolver {
             if (nsd < 2) {
                 node_class_ind[inode] = INTERIOR;
                 I_nnodes++, IE_nnodes++, IEV_nnodes++;
-            } else if (dirichlet_ind[inode]) {
+            } else if (dirichlet_ind[inode] && track_dirichlet) {
                 node_class_ind[inode] = INTERIOR;
                 if (node_bndry_ind[inode] > 0) {
                     node_class_ind[inode] = DIRICHLET_EDGE;
@@ -2127,7 +2372,8 @@ class FetidpSolver : public BaseSolver {
     }
 
     void _setup_tacs_component_subdomains_nodebug(int nxse_, int nyse_, int MOD_WRAPAROUND = -1,
-                                                  T wrap_frac = 1.0, bool compute_jump = true) {
+                                                  T wrap_frac = 1.0, bool compute_jump = true,
+                                                  bool track_dirichlet = false) {
         clear_structured_host_data();
 
         // printf("SETUP_WING_SUBDOMAINS : get_nodal_geom_indices\n");
@@ -3152,7 +3398,7 @@ class FetidpSolver : public BaseSolver {
             if (nsd < 2) {
                 node_class_ind[inode] = INTERIOR;
                 I_nnodes++, IE_nnodes++, IEV_nnodes++;
-            } else if (dirichlet_ind[inode]) {
+            } else if (dirichlet_ind[inode] && track_dirichlet) {
                 node_class_ind[inode] = INTERIOR;
                 if (node_bndry_ind[inode] > 0) {
                     node_class_ind[inode] = DIRICHLET_EDGE;
