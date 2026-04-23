@@ -34,6 +34,7 @@
 3. develop multiple GPUs for bddc
    - [ ] subdomain parallelism for the K_II and K_{IE,IE} subdomain parallel matrices
    - [ ] multi-GPU Schur complement for Direct-LU solve with CuDSS (only for coarse vertex)
+   - [ ] multi-GPU for GMG-ASW and BDDC-LU
    - [ ] add performance tables to high DOF for multi-GPU
 
 
