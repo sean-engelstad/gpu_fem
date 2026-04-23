@@ -345,6 +345,7 @@ class FetidpSolver : public BaseSolver {
         int subdomain_ind = 0;
         bool all_visited = false;
         while (!all_visited) {
+            printf("in while loop 1\n");
             // find an un-assigned element
             int elem = -1;
             for (int _elem = 0; _elem < num_elements; _elem++) {
@@ -364,6 +365,7 @@ class FetidpSolver : public BaseSolver {
 
             // fill out the rest of the elements in this subdomain
             while (sd_elems.size() < target_sd_size) {
+                printf("in while loop 2\n");
                 // build a unique element frontier (of element neighbors)
                 std::unordered_set<int> frontier_set;
 
@@ -386,19 +388,24 @@ class FetidpSolver : public BaseSolver {
                 // rank / sort the frontier by # subdomain corners (not same as vertices)
                 // a subdomain corner is a node that has only one element in the subdomain
                 int nfrontier = frontier.size();
-                int *frontier_scores = new int[nfrontier];
-                memset(frontier_scores, 0, nfrontier * sizeof(int));
-                // improve nomenclature here (frontier_elemcorners means how many corner nodes in just the element, not full subdomain)
-                int *frontier_elemcorners = new int[nfrontier];
-                memset(frontier_elemcorners, 0, nfrontier * sizeof(int));
+
+                // total # corners in the proposed subdomain if this candidate element is added
+                int *candidate_corner_count = new int[nfrontier];
+                memset(candidate_corner_count, 0, nfrontier * sizeof(int));
+
+                // # corners introduced by this candidate frontier element
+                int *candidate_corner_delta = new int[nfrontier];
+                memset(candidate_corner_delta, 0, nfrontier * sizeof(int));
+
                 int ii = 0;
                 for (auto frontier_elem : frontier) {
-                    std::vector<int> proposed_sd_elems(frontier_elem);
+                    std::vector<int> proposed_sd_elems;
+                    proposed_sd_elems.push_back(frontier_elem);
                     for (auto _elem : sd_elems) {
                         proposed_sd_elems.push_back(_elem);
                     }
 
-                    // get all nodes in the subdomain unique
+                    // get all nodes in the proposed subdomain unique
                     std::unordered_set<int> proposed_sd_nodes;
                     for (auto sd_elem : proposed_sd_elems) {
                         int *local_elem_conn = &elem_conn[nodes_per_elem * sd_elem];
@@ -408,15 +415,21 @@ class FetidpSolver : public BaseSolver {
                         }
                     }
 
-                    // now determine how many of the proposed_sd_nodes are corners (and total it)
-                    int ncorners = 0;
-                    int nnew_corners = 0; // num corners in the frontier element
+                    // now determine how many of the proposed_sd_nodes are corners
+                    int total_corners = 0;
+                    int added_corners = 0;  // number of corners contributed by frontier_elem
+
                     for (auto gnode : proposed_sd_nodes) {
                         int nelems_in_subdomain = 0;
-                        bool frontier_in_node = false;
+                        bool candidate_elem_contains_node = false;
+
                         for (int jp = ne_ptr[gnode]; jp < ne_ptr[gnode + 1]; jp++) {
                             int jelem = ne_cols[jp];
-                            if (jelem == frontier_elem) frontier_in_node = true;
+
+                            if (jelem == frontier_elem) {
+                                candidate_elem_contains_node = true;
+                            }
+
                             for (auto _elem : proposed_sd_elems) {
                                 if (jelem == _elem) {
                                     nelems_in_subdomain++;
@@ -426,53 +439,65 @@ class FetidpSolver : public BaseSolver {
                         }
 
                         if (nelems_in_subdomain == 1) {
-                            ncorners++;
-                            if (frontier_in_node) nnew_corners++;
+                            total_corners++;
+                            if (candidate_elem_contains_node) {
+                                added_corners++;
+                            }
                         }
                     }
 
-                    frontier_scores[ii] = ncorners;
-                    frontier_elemcorners[ii] = nnew_corners;
+                    candidate_corner_count[ii] = total_corners;
+                    candidate_corner_delta[ii] = added_corners;
                     ii++;
                 }
-                // end of computing frontier elem scores (# corners)
+                // end of computing frontier candidate scores (# corners)
 
-                // sort by frontier scores
+                // sort by candidate corner count
                 // pair each elem with its score
-                std::vector<std::pair<int, int, int>> frontier_pairs;
-                frontier_pairs.reserve(nfrontier);
+                std::vector<std::tuple<int, int, int>> frontier_candidates;
+                frontier_candidates.reserve(nfrontier);
 
                 for (int i = 0; i < nfrontier; i++) {
-                    frontier_pairs.emplace_back(frontier[i], frontier_scores[i], frontier_elemcorners[i]);
+                    frontier_candidates.emplace_back(frontier[i], candidate_corner_count[i],
+                                                     candidate_corner_delta[i]);
                 }
 
                 // sort by score (smaller first)
-                std::sort(frontier_pairs.begin(), frontier_pairs.end(),
-                          [](const std::pair<int, int, int> &a, const std::pair<int, int, int> &b) {
-                              return a.second < b.second;
-                          });
+                std::sort(
+                    frontier_candidates.begin(), frontier_candidates.end(),
+                    [](const std::tuple<int, int, int> &a, const std::tuple<int, int, int> &b) {
+                        return std::get<1>(a) < std::get<1>(b);
+                    });
 
                 // write back sorted frontier
                 for (int i = 0; i < nfrontier; i++) {
-                    frontier[i] = frontier_pairs[i].first;
-                    frontier_scores[i] = frontier_pairs[i].second;
-                    frontier_elemcorners[i] = frontier_pairs[i].third;
+                    frontier[i] = std::get<0>(frontier_candidates[i]);
+                    candidate_corner_count[i] = std::get<1>(frontier_candidates[i]);
+                    candidate_corner_delta[i] = std::get<2>(frontier_candidates[i]);
                 }
 
                 // add all frontier elems in the right order to subdomain
+                bool added_any = false;
                 for (int i = 0; i < nfrontier; i++) {
                     int frontier_elem = frontier[i];
                     if (sd_elems.size() >= target_sd_size) break;
                     if (visited[frontier_elem]) continue;
-                    // this element would introduce
-                    if (frontier_elemcorners[frontier_elem] > 2) continue; 
+
+                    // this element would introduce too many new corners
+                    if (candidate_corner_delta[i] > 2) continue;
 
                     // printf("\tnfrontier %d, subdomain %d, adding elem %d\n", nfrontier,
                     //        subdomain_ind, frontier_elem);
                     sd_elems.push_back(frontier_elem);
                     elem_sd_ind[frontier_elem] = subdomain_ind;
                     visited[frontier_elem] = true;
+                    added_any = true;
                 }
+
+                if (!added_any) break;
+
+                delete[] candidate_corner_count;
+                delete[] candidate_corner_delta;
             }
             // end of while loop to build the subdomain
 
@@ -481,6 +506,7 @@ class FetidpSolver : public BaseSolver {
             printf("\tsd_elems: ");
             printVec<int>(sd_elems.size(), sd_elems.data());
             subdomain_ind++;
+
             // check if all visited
             all_visited = true;
             for (int ielem = 0; ielem < num_elements; ielem++) {
@@ -490,12 +516,596 @@ class FetidpSolver : public BaseSolver {
                 }
             }
         }
+        num_subdomains = subdomain_ind;
+        int n_subdomain = num_subdomains;
 
         auto h_vars0 = assembler.createVarsVec().createHostVec();
         printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars0, elem_sd_ind,
-                                                            "subdomains", "out/elem_sd_ind.vtk");
+                                                            "subdomains", "out/elem_sd_ind0.vtk");
 
         // Phase 2 : merge very small subdomains if it reduces total vertices
+        printf("begin phase 2\n");
+        int *subdomain_cts = new int[n_subdomain];
+        memset(subdomain_cts, 0, n_subdomain * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            subdomain_ind = elem_sd_ind[ielem];
+            subdomain_cts[subdomain_ind]++;
+        }
+        int *subdomain_ptr = new int[n_subdomain + 1];
+        memset(subdomain_ptr, 0, (n_subdomain + 1) * sizeof(int));
+        for (int isd = 0; isd < n_subdomain; isd++) {
+            subdomain_ptr[isd + 1] = subdomain_ptr[isd] + subdomain_cts[isd];
+        }
+        memset(subdomain_cts, 0, n_subdomain * sizeof(int));
+        int *subdomain_cols = new int[num_elements];
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int isd = elem_sd_ind[ielem];
+            int offset = subdomain_ptr[isd] + subdomain_cts[isd];
+            subdomain_cols[offset] = ielem;
+            subdomain_cts[isd]++;
+        }
+        for (int isd = 0; isd < n_subdomain; isd++) {
+            int nelems_sd = subdomain_cts[isd];
+            if (nelems_sd < target_sd_size) {
+                // find adjacent subdomains
+                std::vector<int> sd_elems;
+                for (int jp = subdomain_ptr[isd]; jp < subdomain_ptr[isd + 1]; jp++) {
+                    int ielem = subdomain_cols[jp];
+                    sd_elems.push_back(ielem);
+                }
+                printf("sd[%d]-elems: ", isd);
+                printVec<int>(sd_elems.size(), sd_elems.data());
+                std::unordered_set<int> adj_subdomains_set;
+                for (auto _elem : sd_elems) {
+                    // adjacent elems to find adjacent subdomains
+                    for (int jp = ee_ptr[_elem]; jp < ee_ptr[_elem + 1]; jp++) {
+                        int jelem = ee_cols[jp];
+                        int jsd = elem_sd_ind[jelem];
+                        if (jsd == isd) continue;
+                        adj_subdomains_set.insert(jsd);
+                    }
+                }
+
+                std::vector<int> adj_subdomains(adj_subdomains_set.begin(),
+                                                adj_subdomains_set.end());
+                printf("adj subdomains[%d]: ", isd);
+                printVec<int>(adj_subdomains.size(), adj_subdomains.data());
+
+                // TODO : combine with nearest subdomain to get min vertices
+                // for now just combine with the nearest subdomain
+                int jsd = adj_subdomains[0];
+                for (auto _elem : sd_elems) {
+                    elem_sd_ind[_elem] = jsd;
+                }
+            }
+        }
+        printf("done with phase 2\n");
+
+        // now get unique list of subdomains (and adjust isd to new max)
+        std::unordered_set<int> sd_set;
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int isd = elem_sd_ind[ielem];
+            sd_set.insert(isd);
+        }
+        std::vector<int> sd_vec(sd_set.begin(), sd_set.end());
+        std::sort(sd_vec.begin(), sd_vec.end());
+
+        int *sd_imap = new int[n_subdomain];
+        for (int isd = 0; isd < n_subdomain; isd++) {
+            sd_imap[isd] = -1;
+        }
+
+        // map old subdomain id -> compact new id
+        for (int new_isd = 0; new_isd < (int)sd_vec.size(); new_isd++) {
+            int old_isd = sd_vec[new_isd];
+            sd_imap[old_isd] = new_isd;
+        }
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int old_isd = elem_sd_ind[ielem];
+            elem_sd_ind[ielem] = sd_imap[old_isd];
+        }
+
+        num_subdomains = sd_vec.size();
+        delete[] sd_imap;
+        auto h_vars1 = assembler.createVarsVec().createHostVec();
+        printToVTK_elemVec<int, ShellAssembler, HostVec<T>>(assembler, h_vars1, elem_sd_ind,
+                                                            "subdomains", "out/elem_sd_ind1.vtk");
+
+        // classify nodes, etc.
+        // -----------------------------------------
+        // node -> subdomain incidence
+        // -----------------------------------------
+        printf("node -> subdomain incidence\n");
+        node_elem_nnz = 0;
+        node_elem_rowp = new int[num_nodes + 1];
+        node_elem_ct = new int[num_nodes];
+        std::memset(node_elem_rowp, 0, (num_nodes + 1) * sizeof(int));
+        std::memset(node_elem_ct, 0, num_nodes * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                node_elem_ct[gnode]++;
+                node_elem_nnz++;
+            }
+        }
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            node_elem_rowp[inode + 1] = node_elem_rowp[inode] + node_elem_ct[inode];
+        }
+
+        int *temp_node_elem = new int[num_nodes];
+        node_sd_cols = new int[node_elem_nnz];
+        std::memset(temp_node_elem, 0, num_nodes * sizeof(int));
+        std::memset(node_sd_cols, 0, node_elem_nnz * sizeof(int));
+
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int subdomain_ind = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int offset = node_elem_rowp[gnode] + temp_node_elem[gnode];
+                node_sd_cols[offset] = subdomain_ind;
+                temp_node_elem[gnode]++;
+            }
+        }
+        delete[] temp_node_elem;
+
+        // -----------------------------------------
+        // classify nodes
+        // -----------------------------------------
+        printf("classify nodes\n");
+        node_class_ind = new int[num_nodes];
+        std::memset(node_class_ind, 0, num_nodes * sizeof(int));
+        node_nsd = new int[num_nodes];
+        I_nnodes = 0, IE_nnodes = 0, IEV_nnodes = 0;
+        Vc_nnodes = 0, V_nnodes = 0, lam_nnodes = 0;
+
+        for (int inode = 0; inode < num_nodes; inode++) {
+            std::unordered_set<int> node_sds;
+            for (int jp = node_elem_rowp[inode]; jp < node_elem_rowp[inode + 1]; jp++) {
+                node_sds.insert(node_sd_cols[jp]);
+            }
+
+            int nsd = static_cast<int>(node_sds.size());
+            node_nsd[inode] = nsd;
+
+            if (nsd < 2) {
+                node_class_ind[inode] = INTERIOR;
+                I_nnodes++, IE_nnodes++, IEV_nnodes++;
+            } else if (nsd == 2) {
+                node_class_ind[inode] = EDGE;
+                lam_nnodes++;
+                IE_nnodes += nsd;
+                IEV_nnodes += nsd;
+            } else {
+                node_class_ind[inode] = VERTEX;
+                Vc_nnodes++;
+                V_nnodes += nsd;
+                IEV_nnodes += nsd;
+            }
+        }
+
+        printf("before comp_node_nsd / comp_node_class VTK\n");
+        T *h_soln = new T[num_nodes * block_dim];
+        memset(h_soln, 0.0, num_nodes * block_dim * sizeof(T));
+        for (int i = 0; i < num_nodes; i++) {
+            h_soln[6 * i] = node_class_ind[i];
+        }
+        auto h_soln_debug = HostVec<T>(num_nodes * block_dim, h_soln);
+        printToVTK<ShellAssembler, HostVec<T>>(assembler, h_soln_debug,
+                                               "out/comp_node_class_ind.vtk");
+
+        // get MAX vertices per subdomain
+        // -----------------------------------------
+
+        int *nvertex = new int[num_subdomains];
+        MAX_NUM_VERTEX_PER_SUBDOMAIN = 0;
+        memset(nvertex, 0, num_subdomains * sizeof(int));
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int isd = elem_sd_ind[ielem];
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int node_class = node_class_ind[gnode];
+                if (node_class == VERTEX) {
+                    nvertex[isd]++;
+                }
+            }
+        }
+
+        for (int isd = 0; isd < num_subdomains; isd++) {
+            int sd_nvertex = nvertex[isd];
+            MAX_NUM_VERTEX_PER_SUBDOMAIN = std::max(MAX_NUM_VERTEX_PER_SUBDOMAIN, sd_nvertex);
+        }
+
+        printf("MAX_NUM_VERTEX_PER_SUBDOMAIN %d\n", MAX_NUM_VERTEX_PER_SUBDOMAIN);
+        // // MAX_NUM_VERTEX_PER_SUBDOMAIN = 11;
+        // MAX_NUM_VERTEX_PER_SUBDOMAIN = 6;
+
+        // -----------------------------------------
+        // build duplicated IEV nodal layout
+        // -----------------------------------------
+        printf("build duplicated IEV nodal layout\n");
+        IEV_sd_ptr = new int[num_subdomains + 1];
+        IEV_sd_ind = new int[IEV_nnodes];
+        IEV_nodes = new int[IEV_nnodes];
+
+        std::memset(IEV_sd_ptr, 0, (num_subdomains + 1) * sizeof(int));
+
+        int IEV_ind = 0;
+        int *temp_completion = new int[num_nodes];
+
+        for (int i_subdomain = 0; i_subdomain < num_subdomains; i_subdomain++) {
+            std::memset(temp_completion, 0, num_nodes * sizeof(int));
+            IEV_sd_ptr[i_subdomain + 1] = IEV_sd_ptr[i_subdomain];
+
+            for (int ielem = 0; ielem < num_elements; ielem++) {
+                if (elem_sd_ind[ielem] != i_subdomain) continue;
+
+                int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+                for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                    int gnode = local_elem_conn[lnode];
+                    if (temp_completion[gnode]) continue;
+
+                    IEV_nodes[IEV_ind] = gnode;
+                    IEV_sd_ind[IEV_ind] = i_subdomain;
+                    IEV_sd_ptr[i_subdomain + 1]++;
+                    IEV_ind++;
+                    temp_completion[gnode] = 1;
+                }
+            }
+        }
+        delete[] temp_completion;
+
+        // printf("IEV_sd_ptr: ");
+        // printVec<int>(num_subdomains + 1, IEV_sd_ptr);
+        // printf("IEV_sd_ind: ");
+        // printVec<int>(IEV_nnodes, IEV_sd_ind);
+
+        // -----------------------------------------
+        // build IEV element connectivity
+        // -----------------------------------------
+        printf("build IEV element connectivity\n");
+        IEV_elem_conn = new int[num_elements * nodes_per_elem];
+        for (int ielem = 0; ielem < num_elements; ielem++) {
+            int *local_elem_conn = &elem_conn[nodes_per_elem * ielem];
+            int i_subdomain = elem_sd_ind[ielem];
+
+            for (int lnode = 0; lnode < nodes_per_elem; lnode++) {
+                int gnode = local_elem_conn[lnode];
+                int local_ind = -1;
+
+                for (int jp = IEV_sd_ptr[i_subdomain]; jp < IEV_sd_ptr[i_subdomain + 1]; jp++) {
+                    if (IEV_nodes[jp] == gnode) {
+                        local_ind = jp;
+                        break;
+                    }
+                }
+
+                if (local_ind < 0) {
+                    printf("ERROR: failed to find duplicated IEV node for elem %d node %d\n", ielem,
+                           gnode);
+                }
+                IEV_elem_conn[nodes_per_elem * ielem + lnode] = local_ind;
+            }
+        }
+
+        // printf("IEV_ind %d\n", IEV_ind);
+        // printf("IEV_nodes %d: ", IEV_nnodes);
+        // printVec<int>(IEV_nnodes, IEV_nodes);
+        // printf("Fine BDDC IEV_conn: ");
+        // printVec<int>(nodes_per_elem * num_elements, IEV_elem_conn);
+
+        // for (int iev = 0; iev < IEV_nnodes; iev++) {
+        //     int isd = IEV_sd_ind[iev];
+        //     int gnode = IEV_nodes[iev];
+        //     int iclass = node_class_ind[gnode];
+        //     printf("iev %d, isd %d, gnode %d, class %d\n", iev, isd, gnode, iclass);
+        // }
+
+        // -----------------------------------------
+        // IE and I nodal lists
+        // -----------------------------------------
+        printf("IE and I nodal lists, IEV_nnodes(%d) and IE_nnodes(%d) and I_nnodes(%d)\n",
+               IEV_nnodes, IE_nnodes, I_nnodes);
+        IE_nodes = new int[IE_nnodes];
+        I_nodes = new int[I_nnodes];
+        std::memset(IE_nodes, 0, IE_nnodes * sizeof(int));
+        std::memset(I_nodes, 0, I_nnodes * sizeof(int));
+        IE_interior = new bool[IE_nnodes];
+        IE_general_edge = new bool[IE_nnodes];
+
+        int IE_ind = 0;
+        int I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IE_interior[IE_ind] = node_class == INTERIOR || node_class == DIRICHLET_EDGE;
+                IE_general_edge[IE_ind] = node_class == DIRICHLET_EDGE || node_class == EDGE;
+                IE_nodes[IE_ind++] = gnode;
+            }
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                I_nodes[I_ind++] = gnode;
+            }
+        }
+        d_IE_interior = HostVec<bool>(IE_nnodes, IE_interior).createDeviceVec().getPtr();
+        d_IE_general_edge = HostVec<bool>(IE_nnodes, IE_general_edge).createDeviceVec().getPtr();
+        d_IE_nodes = HostVec<int>(IE_nnodes, IE_nodes).createDeviceVec().getPtr();
+
+        // printf("IE_nodes %d: ", IE_nnodes);
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("I_nodes %d: ", I_nnodes);
+        // printVec<int>(I_nnodes, I_nodes);
+
+        // -----------------------------------------
+        // build IEV sparsity from duplicated connectivity
+        // -----------------------------------------
+        printf("build IEV sparsity from duplicated connectivity\n");
+        IEV_bsr_data = BsrData(num_elements, IEV_nnodes, nodes_per_elem, block_dim, IEV_elem_conn);
+        IEV_rowp = IEV_bsr_data.rowp;
+        IEV_cols = IEV_bsr_data.cols;
+        IEV_nnzb = IEV_bsr_data.nnzb;
+        IEV_rows = new int[IEV_nnzb];
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            for (int jp = IEV_rowp[inode]; jp < IEV_rowp[inode + 1]; jp++) {
+                IEV_rows[jp] = inode;
+            }
+        }
+        // printf("IEV_rowp with nnzb %d: ", IEV_nnzb);
+        // printVec<int>(IEV_nnodes + 1, IEV_rowp);
+        // printf("IEV_cols: ");
+        // printVec<int>(IEV_nnzb, IEV_cols);
+
+        // -----------------------------------------
+        // reduced rowp arrays
+        // -----------------------------------------
+        printf("reduced rowp arrays\n");
+        IE_rowp = new int[IE_nnodes + 1];
+        I_rowp = new int[I_nnodes + 1];
+        std::memset(IE_rowp, 0, (IE_nnodes + 1) * sizeof(int));
+        std::memset(I_rowp, 0, (I_nnodes + 1) * sizeof(int));
+
+        int IE_row = 0;
+        int I_row = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            if (typeI_row) I_rowp[I_row + 1] = I_rowp[I_row];
+            if (typeIE_row) IE_rowp[IE_row + 1] = IE_rowp[IE_row];
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) I_rowp[I_row + 1]++;
+                if (typeIE_row && typeIE_col) IE_rowp[IE_row + 1]++;
+            }
+
+            if (typeI_row) I_row++;
+            if (typeIE_row) IE_row++;
+        }
+
+        I_nnzb = I_rowp[I_nnodes];
+        IE_nnzb = IE_rowp[IE_nnodes];
+
+        // printf("I_rowp nnzb %d: ", I_nnzb);
+        // printVec<int>(I_nnodes + 1, I_rowp);
+        // printf("IE_nodes %d: ", IE_nnodes);
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("IE_rowp nnzb %d: ", IE_nnzb);
+        // printVec<int>(IE_nnodes + 1, IE_rowp);
+
+        IE_rows = new int[IE_nnzb];
+        for (int inode = 0; inode < IE_nnodes; inode++) {
+            for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+                IE_rows[jp] = inode;
+            }
+        }
+        I_rows = new int[I_nnzb];
+        for (int inode = 0; inode < I_nnodes; inode++) {
+            for (int jp = I_rowp[inode]; jp < I_rowp[inode + 1]; jp++) {
+                I_rows[jp] = inode;
+            }
+        }
+
+        // -----------------------------------------
+        // IEV -> IE map
+        // -----------------------------------------
+        printf("IEV -> IE map\n");
+        IEVtoIE_map = new int[IEV_nnodes];
+        std::memset(IEVtoIE_map, -1, IEV_nnodes * sizeof(int));
+        IEVtoIE_imap = new int[IE_nnodes];
+
+        IE_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE || node_class == EDGE) {
+                IEVtoIE_imap[IE_ind] = inode;
+                IEVtoIE_map[inode] = IE_ind++;
+            }
+        }
+
+        // printf("IEVtoIE_map: ");
+        // printVec<int>(IEV_nnodes, IEVtoIE_map);
+
+        // put on device
+        d_IEVtoIE_imap = HostVec<int>(IE_nnodes, IEVtoIE_imap).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // IEV -> I map
+        // -----------------------------------------
+        printf("IEV -> I map\n");
+        IEVtoI_map = new int[IEV_nnodes];
+        IEVtoI_imap = new int[I_nnodes];
+        std::memset(IEVtoI_map, -1, IEV_nnodes * sizeof(int));
+
+        I_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == INTERIOR || node_class == DIRICHLET_EDGE) {
+                IEVtoI_imap[I_ind] = inode;
+                IEVtoI_map[inode] = I_ind++;
+            }
+        }
+
+        // printf("IEVtoI_map: ");
+        // printVec<int>(IEV_nnodes, IEVtoI_map);
+
+        // put on device
+        d_IEVtoI_imap = HostVec<int>(I_nnodes, IEVtoI_imap).createDeviceVec().getPtr();
+
+        // -----------------------------------------
+        // reduced column arrays
+        // -----------------------------------------
+        printf("reduced column arrays\n");
+        IE_cols = new int[IE_nnzb];
+        I_cols = new int[I_nnzb];
+
+        I_ind = 0;
+        IE_ind = 0;
+        for (int row = 0; row < IEV_nnodes; row++) {
+            int gnode_row = IEV_nodes[row];
+            int class_row = node_class_ind[gnode_row];
+            bool typeI_row = (class_row == INTERIOR || class_row == DIRICHLET_EDGE);
+            bool typeIE_row = (typeI_row || class_row == EDGE);
+
+            for (int jp = IEV_rowp[row]; jp < IEV_rowp[row + 1]; jp++) {
+                int col = IEV_cols[jp];
+                int gnode_col = IEV_nodes[col];
+                int class_col = node_class_ind[gnode_col];
+                bool typeI_col = (class_col == INTERIOR || class_col == DIRICHLET_EDGE);
+                bool typeIE_col = (typeI_col || class_col == EDGE);
+
+                if (typeI_row && typeI_col) {
+                    I_cols[I_ind++] = IEVtoI_map[col];
+                }
+                if (typeIE_row && typeIE_col) {
+                    IE_cols[IE_ind++] = IEVtoIE_map[col];
+                }
+            }
+        }
+
+        // printf("I_cols: ");
+        // printVec<int>(I_nnzb, I_cols);
+        // printf("IE_cols: ");
+        // printVec<int>(IE_nnzb, IE_cols);
+
+        d_IEV_elem_conn =
+            HostVec<int>(num_elements * nodes_per_elem, IEV_elem_conn).createDeviceVec();
+
+        // -----------------------------------------
+        // IEV -> Vc map (coarse non-repeated vertices)
+        // -----------------------------------------
+        printf("IEV -> Vc map (coarse non-repeated vertices)\n");
+
+        // make a list of the reduced Vc_ind (takes global node and figures out it's Vc_ind)
+        std::unordered_set<int> Vc_nodeset;
+        for (int i = 0; i < IEV_nnodes; i++) {
+            int gnode = IEV_nodes[i];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                Vc_nodeset.insert(gnode);
+            }
+        }
+        std::vector<int> Vc_nodes_vec(Vc_nodeset.begin(), Vc_nodeset.end());
+        std::sort(Vc_nodes_vec.begin(), Vc_nodes_vec.end());
+        // printf("Vc_nodes %d: ", Vc_nodes_vec.size());
+        // printVec<int>(Vc_nodes_vec.size(), Vc_nodes_vec.data());
+
+        int *Vc_inodes = new int[num_nodes];  // takes Vc global node => Vc red node
+        memset(Vc_inodes, -1, num_nodes * sizeof(int));
+        for (int i = 0; i < Vc_nodes_vec.size(); i++) {
+            int j = Vc_nodes_vec[i];
+            Vc_inodes[j] = i;
+        }
+
+        // printf("Vc_inodes: ");
+        // printVec<int>(num_nodes, Vc_inodes);
+
+        d_Vc_nodes = HostVec<int>(Vc_nnodes, Vc_nodes_vec.data()).createDeviceVec().getPtr();
+        Vc_nodes = DeviceVec<int>(Vc_nnodes, d_Vc_nodes).createHostVec().getPtr();
+
+        // set VcToV_imap and IEVtoV_imap now
+        VctoV_imap = new int[V_nnodes];
+        std::memset(VctoV_imap, -1, V_nnodes * sizeof(int));
+        IEVtoV_imap = new int[V_nnodes];
+        std::memset(IEVtoV_imap, -1, V_nnodes * sizeof(int));
+
+        int V_ind = 0;
+        for (int inode = 0; inode < IEV_nnodes; inode++) {
+            int gnode = IEV_nodes[inode];
+            int node_class = node_class_ind[gnode];
+            if (node_class == VERTEX) {
+                int Vc_ind = Vc_inodes[gnode];
+                VctoV_imap[V_ind] = Vc_ind;
+                IEVtoV_imap[V_ind] = inode;
+                V_ind++;
+            }
+        }
+
+        // printf("IEVtoV_imap %d: ", V_nnodes);
+        // printVec<int>(V_nnodes, IEVtoV_imap);
+
+        // put on device
+        d_IEVtoV_imap = HostVec<int>(V_nnodes, IEVtoV_imap).createDeviceVec().getPtr();
+        d_VctoV_imap = HostVec<int>(V_nnodes, VctoV_imap).createDeviceVec().getPtr();
+
+        // Build all remaining maps/permutations:
+        //  - jump operator ownership/sign maps
+
+        printf("compute jump operators\n");
+        _compute_jump_operators(false);
+        allocate_workspace();
+
+        // ---------------------------------------------------
+        // Save ORIGINAL nofill sparsity for IE and I
+        // before fill-in / AMD reordering
+        // ---------------------------------------------------
+        IE_bsr_data = BsrData(IE_nnodes, block_dim, IE_nnzb, IE_rowp, IE_cols);
+        IE_bsr_data.rows = IE_rows;
+        IE_nofill_nnzb = IE_nnzb;
+        IE_perm = IE_bsr_data.perm, IE_iperm = IE_bsr_data.iperm;
+
+        // sparsity before the permutation
+        // printf("\nIE SPARSITY BEFORE PERMUTATION\n");
+        // for (int inode = 0; inode < IE_nnodes; inode++) {
+        //     printf("(");
+        //     int grow = IE_nodes[IE_perm[inode]];
+        //     printf("%d, ", grow);
+        //     for (int jp = IE_rowp[inode]; jp < IE_rowp[inode + 1]; jp++) {
+        //         int j = IE_cols[jp];
+        //         int gcol = IE_nodes[IE_perm[j]];
+        //         printf("%d ", gcol);
+        //     }
+        //     printf(")\n");
+        // }
+        // printf("\n\n");
+
+        // printf("pre-perm IE_rowp: ");
+        // printVec<int>(IE_nnodes + 1, IE_rowp);
+        // printf("IE_cols: ");
+        // printVec<int>(IE_nnzb, IE_cols);
+        // printf("IE_nodes: ");
+        // printVec<int>(IE_nnodes, IE_nodes);
+        // printf("\n");
+
+        I_bsr_data = BsrData(I_nnodes, block_dim, I_nnzb, I_rowp, I_cols);
+        I_bsr_data.rows = I_rows;
+        I_nofill_nnzb = I_nnzb;
     }
 
     void setup_structured_subdomains(int nxe_, int nye_, int nxs_, int nys_,
@@ -6710,19 +7320,19 @@ class FetidpSolver : public BaseSolver {
     int *d_node_nsd, *d_edge_nsd, *d_vertex_nsd, *d_IE_nsd;
 
     // // up to 4 local vertex slots per subdomain (structured quad partition case)
-    int *IEVset_blocks[6], *d_IEVset_blocks[6];      // for setVec_IEVtoV_vals
-    int *IEVout_blocks[6], *d_IEVout_blocks[6];      // for addMat_IEVtoV_vals read side
-    int *IEVtoSVV_blocks[6], *d_IEVtoSVV_blocks[6];  // for addMat_IEVtoV_vals write side
+    int *IEVset_blocks[14], *d_IEVset_blocks[14];      // for setVec_IEVtoV_vals
+    int *IEVout_blocks[14], *d_IEVout_blocks[14];      // for addMat_IEVtoV_vals read side
+    int *IEVtoSVV_blocks[14], *d_IEVtoSVV_blocks[14];  // for addMat_IEVtoV_vals write side
     int MAX_NUM_VERTEX_PER_SUBDOMAIN;
 
     // and for multilevel
-    int *ML_IEVset_blocks[6], *d_ML_IEVset_blocks[6];      // for setVec_IEVtoV_vals
-    int *ML_IEVout_blocks[6], *d_ML_IEVout_blocks[6];      // for addMat_IEVtoV_vals read side
-    int *ML_IEVtoSVV_blocks[6], *d_ML_IEVtoSVV_blocks[6];  // for addMat_IEVtoV_vals write side
+    int *ML_IEVset_blocks[14], *d_ML_IEVset_blocks[14];      // for setVec_IEVtoV_vals
+    int *ML_IEVout_blocks[14], *d_ML_IEVout_blocks[14];      // for addMat_IEVtoV_vals read side
+    int *ML_IEVtoSVV_blocks[14], *d_ML_IEVtoSVV_blocks[14];  // for addMat_IEVtoV_vals write side
 
-    int IEVset_nnzb[6], ML_IEVset_nnzb[6];
+    int IEVset_nnzb[14], ML_IEVset_nnzb[14];
     // int IEVout_nnzb[4];
-    int IEVtoSVV_nnzb[6], ML_IEVtoSVV_nnzb[6];
+    int IEVtoSVV_nnzb[14], ML_IEVtoSVV_nnzb[14];
     // int *IEVtoV_nnzb;       // length 4
     // int **d_IEVtoV_blocks;  // length 4, each entry is device ptr to block list
     // int *IEVtoSVV_nnzb;       // length 4

@@ -252,7 +252,7 @@ int main(int argc, char **argv) {
     // this is a structured mesh, but uses the unstructured BDDC subdomains (for prelim testing)
     printf("nxe_subdomain_size %d\n", nxe_subdomain_size);
     bddc->setup_unstructured_subdomains(nxe_subdomain_size * nxe_subdomain_size);
-    return 0;
+    // return 0;
     // bddc->setup_wing_subdomains(nxe_subdomain_size, nxe_subdomain_size); // debug this method (for wing case)
 
     // perform LU fillin and reordering (optional)
@@ -360,8 +360,8 @@ int main(int argc, char **argv) {
     // matrix-free PCG for FETI-DP interface problem
     SolverOptions opts;
     // opts.ncycles = 2;
-    opts.ncycles = 50;
-    // opts.ncycles = 500;
+    // opts.ncycles = 50;
+    opts.ncycles = 500;
     opts.print = true;
     opts.print_freq = 5;
     opts.debug = true;

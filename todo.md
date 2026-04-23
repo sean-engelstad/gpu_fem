@@ -23,13 +23,22 @@
 ## Journal paper tasks
 
 
-2. [ ] do unstructured wing problems with BDDC wraparound method
+1. [ ] do unstructured wing problems with BDDC wraparound method
    - [x] fix BDDC code so it can do general BCs, just did equiv bcs on kmat_IEV (with duplicate nodes)
    - [ ] come up with my own nominal unstructured mesh subdomain splittings
+      - [ ] improve unstruct subdomain performance by promoting element closest to the current centroid?
    - [ ] loop over elements on multi-patch boundary first (so that it there should be subdomains like split along it, then later correct)
    - [ ] do correction step to combine subdomains along multi-patch boundaries, checking # vertices on multi-patch boundaries reduced to zero
    - [ ] demonstrate on uCRM and HSCT wingbox structures
    - [ ] implement nested dissection ordering instead of AMD
+
+2. in paper, show different subdomain splittings affect thick-ind
+   - [ ] different BDDC unstructured subdomain algorithms may have different thick-ind ranks
+   - [ ] BDDC wraparound, etc.
+   - [ ] BDDC wraparound unstruct algorithm
+   - [ ] see how centroid and other heuristic methods may improve thick-ind BDDC perf (for thick shells doesn't matter as much)
+   - [ ] any theoretical results on this? why does it matter so much to thick-ind performance, min vertices a lot more?
+      * maybe need multiple element width of subdomains to get better thick-ind performance (breaking down with current splitting)?
 
 3. develop multiple GPUs for bddc
    - [ ] subdomain parallelism for the K_II and K_{IE,IE} subdomain parallel matrices
