@@ -388,6 +388,9 @@ class FetidpSolver : public BaseSolver {
                 int nfrontier = frontier.size();
                 int *frontier_scores = new int[nfrontier];
                 memset(frontier_scores, 0, nfrontier * sizeof(int));
+                // improve nomenclature here (frontier_elemcorners means how many corner nodes in just the element, not full subdomain)
+                int *frontier_elemcorners = new int[nfrontier];
+                memset(frontier_elemcorners, 0, nfrontier * sizeof(int));
                 int ii = 0;
                 for (auto frontier_elem : frontier) {
                     std::vector<int> proposed_sd_elems(frontier_elem);
@@ -407,10 +410,13 @@ class FetidpSolver : public BaseSolver {
 
                     // now determine how many of the proposed_sd_nodes are corners (and total it)
                     int ncorners = 0;
+                    int nnew_corners = 0; // num corners in the frontier element
                     for (auto gnode : proposed_sd_nodes) {
                         int nelems_in_subdomain = 0;
+                        bool frontier_in_node = false;
                         for (int jp = ne_ptr[gnode]; jp < ne_ptr[gnode + 1]; jp++) {
                             int jelem = ne_cols[jp];
+                            if (jelem == frontier_elem) frontier_in_node = true;
                             for (auto _elem : proposed_sd_elems) {
                                 if (jelem == _elem) {
                                     nelems_in_subdomain++;
@@ -421,32 +427,36 @@ class FetidpSolver : public BaseSolver {
 
                         if (nelems_in_subdomain == 1) {
                             ncorners++;
+                            if (frontier_in_node) nnew_corners++;
                         }
                     }
 
                     frontier_scores[ii] = ncorners;
+                    frontier_elemcorners[ii] = nnew_corners;
                     ii++;
                 }
                 // end of computing frontier elem scores (# corners)
 
                 // sort by frontier scores
                 // pair each elem with its score
-                std::vector<std::pair<int, int>> frontier_pairs;
+                std::vector<std::pair<int, int, int>> frontier_pairs;
                 frontier_pairs.reserve(nfrontier);
 
                 for (int i = 0; i < nfrontier; i++) {
-                    frontier_pairs.emplace_back(frontier[i], frontier_scores[i]);
+                    frontier_pairs.emplace_back(frontier[i], frontier_scores[i], frontier_elemcorners[i]);
                 }
 
                 // sort by score (smaller first)
                 std::sort(frontier_pairs.begin(), frontier_pairs.end(),
-                          [](const std::pair<int, int> &a, const std::pair<int, int> &b) {
+                          [](const std::pair<int, int, int> &a, const std::pair<int, int, int> &b) {
                               return a.second < b.second;
                           });
 
                 // write back sorted frontier
                 for (int i = 0; i < nfrontier; i++) {
                     frontier[i] = frontier_pairs[i].first;
+                    frontier_scores[i] = frontier_pairs[i].second;
+                    frontier_elemcorners[i] = frontier_pairs[i].third;
                 }
 
                 // add all frontier elems in the right order to subdomain
@@ -454,6 +464,8 @@ class FetidpSolver : public BaseSolver {
                     int frontier_elem = frontier[i];
                     if (sd_elems.size() >= target_sd_size) break;
                     if (visited[frontier_elem]) continue;
+                    // this element would introduce
+                    if (frontier_elemcorners[frontier_elem] > 2) continue; 
 
                     // printf("\tnfrontier %d, subdomain %d, adding elem %d\n", nfrontier,
                     //        subdomain_ind, frontier_elem);

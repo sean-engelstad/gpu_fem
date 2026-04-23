@@ -10,7 +10,6 @@
 3. [ ] send around thesis approval docusign
 
 
-
 ## Journal paper plan
 
 - [ ] multigrid has these issues with MITC for thin shells
@@ -48,6 +47,9 @@
 1. [x] multilevel BDDC
    - [ ] try to improve its thickness independence some more
    - [ ] add new ML-BDDC category to scatter plots, table and bar chart
+
+2. [ ] compare to other state-of-the-art linear solver packages
+   - [ ] compare to hypre with my CuSparse routines, etc.
 
 6. put my GPU code into TACS repo (prob BDDC first, MITC4 shells)
    - [ ] make interface that constructs GPU assembler and classes from CPU assembler
