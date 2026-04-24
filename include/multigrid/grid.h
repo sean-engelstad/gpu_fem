@@ -17,7 +17,8 @@ enum SCALER : short {
     PCG,
 };
 
-template <class Assembler, class Prolongation, class Smoother, SCALER scaler>
+template <class Assembler, class Prolongation, class Smoother, SCALER scaler,
+          bool SMOOTH_PROLONG = false>
 class SingleGrid {
     /* single grid class for multigrid, that manages smoothing, prolong and soln + defect of a given
      * level */
@@ -90,6 +91,8 @@ class SingleGrid {
         d_temp_vec = DeviceVec<T>(N);
         d_temp = d_temp_vec.getPtr();
         d_temp2 = DeviceVec<T>(N).getPtr();
+        d_temp3 = DeviceVec<T>(N).getPtr();
+        d_temp4 = DeviceVec<T>(N).getPtr();
         d_resid = DeviceVec<T>(N).getPtr();
 
         // get perm pointers
@@ -203,6 +206,23 @@ class SingleGrid {
                                       CUSPARSE_OPERATION_NON_TRANSPOSE, nnodes, nnodes, kmat_nnzb,
                                       &a, descrKmat, d_kmat_vals, d_kmat_rowp, d_kmat_cols,
                                       block_dim, d_temp, &b, d_temp2));
+
+        // smooth defect.. of the prolongation.. before line search
+        // actually doesn't help much..
+        if constexpr (SMOOTH_PROLONG) {
+            cudaMemcpy(d_temp3, d_soln.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_temp4, d_defect.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_soln.getPtr(), d_temp, N * sizeof(T), cudaMemcpyDeviceToDevice);
+            a = -1.0;
+            CHECK_CUBLAS(cublasDscal(cublasHandle, N, &a, d_temp2, 1));
+            cudaMemcpy(d_defect.getPtr(), d_temp2, N * sizeof(T), cudaMemcpyDeviceToDevice);
+            smoother->smoothDefect(d_defect, d_soln, 1, false, 10);
+            cudaMemcpy(d_temp, d_soln.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_temp2, d_defect.getPtr(), N * sizeof(T), cudaMemcpyDeviceToDevice);
+            CHECK_CUBLAS(cublasDscal(cublasHandle, N, &a, d_temp2, 1));
+            cudaMemcpy(d_soln.getPtr(), d_temp3, N * sizeof(T), cudaMemcpyDeviceToDevice);
+            cudaMemcpy(d_defect.getPtr(), d_temp4, N * sizeof(T), cudaMemcpyDeviceToDevice);
+        }
 
         if constexpr (scaler == ZERO) {
             return;  // no update to solution, just keep soln update in temp and use that in outer
@@ -325,6 +345,7 @@ class SingleGrid {
     cusparseHandle_t &cusparseHandle;
 
     T *d_temp2, *d_temp;  // temporarily not private
+    T *d_temp3, *d_temp4;
     T omega;
     int smooth_matrix_iters;
 

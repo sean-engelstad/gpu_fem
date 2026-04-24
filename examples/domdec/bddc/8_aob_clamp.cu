@@ -114,8 +114,8 @@ int main(int argc, char **argv) {
 
     int level = 2; // wing mesh level
     // int level = 1;
-    int nxe_subdomain_size = 4;
-    // int nxe_subdomain_size = 8;
+    // int nxe_subdomain_size = 4;
+    int nxe_subdomain_size = 8;
     T omega;
     int nsmooth, fill_level;
     T thick = 1e-3;

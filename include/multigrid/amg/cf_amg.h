@@ -21,12 +21,12 @@
 #include "cf_amg.cuh"
 #include "fake_assembler.h"
 
-template <typename T, class Smoother>
+template <typename T, class FAKE_ASSEMBLER, class Smoother>
 class ClassicalCFAMG : public BaseSolver {
     /* based on python code in _py_demo/_src/bsr_aggregation.py */
    public:
-    using Assembler = FakeAssembler<T>;
-    using CoarseMG = ClassicalCFAMG<T, Smoother>;
+    using Assembler = FAKE_ASSEMBLER;
+    using CoarseMG = ClassicalCFAMG<T, FAKE_ASSEMBLER, Smoother>;
     using CoarseDirect = CusparseMGDirectLU<T, Assembler>;
 
     ClassicalCFAMG(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
@@ -99,6 +99,19 @@ class ClassicalCFAMG : public BaseSolver {
         // printf("2 - AMG compute coarse grid values\n");
         compute_coarse_grid_values();
         // _done_post_apply_bcs = true;
+    }
+
+    int get_total_nnzb() {
+        int c_nnzb = P_nnzb * 2 + kmat_nnzb;
+        if (is_coarse_mg) {
+            c_nnzb += coarse_mg->get_total_nnzb();
+        } else {
+            c_nnzb += coarse_direct->get_nnzb();
+        }
+        return c_nnzb;
+    }
+    T get_operator_complexity(int nofill_nnzb) {
+        return T(get_total_nnzb()) * 1.0 / T(nofill_nnzb);
     }
 
     void update_after_assembly(DeviceVec<T> &vars) {

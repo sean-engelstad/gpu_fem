@@ -24,7 +24,8 @@ class LinearWingAnalysis:
         E = 70e9  # elastic modulus, Pa
         nu = 0.3  # poisson's ratio
         ys = 350e6  # yield stress, Pa
-        min_thickness = 2.5e-3
+        # min_thickness = 2.5e-3
+        min_thickness = 5e-3
         max_thickness = 2.0
         thickness = 0.03
 
@@ -125,8 +126,18 @@ class LinearWingAnalysis:
         # print("solve")
 
         # Solve
-        self.static_problem.solve()
+        # self.static_problem.solve()
         # print("done solve")
+        self.comm.Barrier()
+        t0 = MPI.Wtime()
+
+        self.static_problem.solve()
+
+        self.comm.Barrier()
+        t1 = MPI.Wtime()
+
+        if self.comm.rank == 0:
+            print(f"[TACS] Forward solve time: {t1 - t0:.6f} s")
 
         # Evaluate the function
         self.static_problem.evalFunctions(func_dict)
@@ -159,7 +170,17 @@ class LinearWingAnalysis:
             self.static_problem.setDesignVars(np.zeros(0))
 
         # Evaluate the function sensitivities
+        # self.static_problem.evalFunctionsSens(sens_dict)
+        self.comm.Barrier()
+        t0 = MPI.Wtime()
+
         self.static_problem.evalFunctionsSens(sens_dict)
+
+        self.comm.Barrier()
+        t1 = MPI.Wtime()
+
+        if self.comm.rank == 0:
+            print(f"[TACS] Adjoint solve time: {t1 - t0:.6f} s")
 
         # objective gradient
         if self.comm.rank == 0:
@@ -202,7 +223,8 @@ class LinearWingAnalysis:
 
 # Load structural mesh from BDF file
 tacs_comm = MPI.COMM_WORLD
-bdf_name = "../../examples/multigrid/3_aob_wing/meshes/aob_wing_L2.bdf"
+# bdf_name = "../../examples/gmg/3_aob_wing/meshes/aob_wing_L2.bdf"
+bdf_name = "../../examples/gmg/3_aob_wing/meshes/aob_wing_L4.bdf"
 
 wing_opt = LinearWingAnalysis(tacs_comm, bdf_name)
 nvars = wing_opt.nvars

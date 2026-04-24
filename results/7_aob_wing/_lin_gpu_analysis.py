@@ -16,25 +16,43 @@ parser.add_argument(
     default="MITC4",
     help="Finite element type to use (default: MITC4)."
 )
+parser.add_argument(
+    "--solver",
+    type=str,
+    choices=["gmg_cp", "gmg_asw", "bddc_lu"],
+    default="gmg_cp",
+    help="Finite element type to use (default: MITC4)."
+)
 args = parser.parse_args()
 element = args.element
 
+
+force = 684e3*3
 
 SOLVER_CLASS = None
 if element == "CFI4":
     SOLVER_CLASS = wingmultigrid.LinearCFIWingSolver
 elif element == "MITC4":
-    SOLVER_CLASS = wingmultigrid.LinearMITCWingSolver
+    if args.solver == "gmg_cp":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_GMGCP_WingSolver
+        omega, nsmooth = 0.95, 2
+    elif args.solver == "gmg_asw":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_GMGASW_WingSolver
+        omega, nsmooth = 0.2, 4
+    elif args.solver == "bddc_lu":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_BDDCLU_WingSolver
+        omega, nsmooth = 1.0, 1
+        force *= 6e-3
 
 # setup GPU solver
 solver = SOLVER_CLASS(
     rhoKS=100.0,
     safety_factor=1.5,
-    force=684e3, # 30 KPa on lower skin from the structural benchmark
+    force=force, # 30 KPa on lower skin from the structural benchmark
     # force=684e3*3, # boost load from static benchmark (to get more deflection?)
     # omega=0.85,
-    omega=0.95,
-    nsmooth=1,
+    omega=omega,
+    nsmooth=nsmooth,
     ninnercyc=1,
     # ninnercyc=2,
     # nsmooth=8,
@@ -48,6 +66,9 @@ solver = SOLVER_CLASS(
     # ORDER=4,
     # ORDER=12,
     # ORDER=24,
+    level=2,
+    # level=1,
+    # level=0,
     # ORDER=4,
     # n_krylov=50,
     # n_krylov=200,

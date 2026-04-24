@@ -79,7 +79,7 @@ elif args.elem == 'higd':
 elif args.elem == 'msig':
     ELEMENT = MixedShearIsogeometricElement()
     is_iga = True
-elif args.elem == 'drig':
+elif args.elem == 'mig':
     # derham isogeometric element, special vertex-edge style IGA 2nd order basis that is auto locking-free!
     ELEMENT = DeRhamIsogeometricElement()
     is_iga = True
@@ -100,7 +100,7 @@ else:
 
 # ASSEMBLER = IGABeamAssembler if is_iga else StandardBeamAssembler
 ASSEMBLER = IGABeamAssemblerV2 if is_iga else StandardBeamAssembler
-if args.elem == 'drig':
+if args.elem == 'mig':
     ASSEMBLER = DeRhamIGABeamAssembler
 
 assembler = ASSEMBLER(
@@ -154,7 +154,7 @@ if 'mg' in args.solve:
             )
         elif args.smoother == 'asw':
             omega = args.omega / 2.0 # since 2x smoothing
-            if args.elem == 'drig': # needs custom schwarz smoother with vertex-edge based
+            if args.elem == 'mig': # needs custom schwarz smoother with vertex-edge based
                 smoother = OneDimAddSchwarzVertex2Edges.from_assembler(
                     grid, omega=omega, iters=nsmooth,
                     # patch_type="vertex2edges",
@@ -199,7 +199,7 @@ elif args.solve == 'vmg':
                                     # line search sometimes hurts high cond # cases (high defects in prolong)
                                     # line_search=not(args.elem in ['aig', 'tsr', 'hhd', 'higd']), 
                                     # line_search=False,
-                                    line_search=args.elem == 'drig', # rarerly helps (but does help for drig elem!)
+                                    line_search=args.elem == 'mig', # rarerly helps (but does help for mig elem!)
                                     # line_search=True,
                                     debug=args.debug,
                                     smoothers=smoothers)
@@ -256,7 +256,7 @@ if args.verify:
         w = u[0::3] + u[2::3]
     elif args.elem in ['higd']:
         w = u[0::2] + u[1::2]
-    elif args.elem == 'drig':
+    elif args.elem == 'mig':
         w = u[:assembler.nw]
     else:
         w = u[0::assembler.dof_per_node]
@@ -280,13 +280,13 @@ else:
         w = u[0::3] + u[2::3]
     elif args.elem in ['higd']:
         w = u[0::2] + u[1::2]
-    elif args.elem == 'drig':
+    elif args.elem == 'mig':
         w = u[:assembler.nw]
     else:
         w = u[0::assembler.dof_per_node]
     pred_disp = np.max(w)
 
-    if is_iga and not(args.elem == 'drig'):
+    if is_iga and not(args.elem == 'mig'):
         # trying to see if this makes a difference in IGA conv
         pred_disp = assembler.get_max_deflection_greville()
     print(f"{pred_disp=}")

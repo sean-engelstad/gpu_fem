@@ -23,8 +23,9 @@
 // #include "multigrid/smoothers/mc_smooth1.h"
 // #include "multigrid/prolongation/structured.h"
 #include "multigrid/prolongation/unstructured.h"
-#include "multigrid/smoothers/_wingbox_coloring.h"
-#include "multigrid/smoothers/cheb4_poly.h"
+// #include "multigrid/smoothers/_wingbox_coloring.h"
+// #include "multigrid/smoothers/cheb4_poly.h"
+#include "multigrid/smoothers/asw_unstruct.h"
 // #include "multigrid/solvers/gmg.h"
 
 // chebyshev element
@@ -45,7 +46,7 @@
 
 // copied and modified from ../uCRM/_src/optim.h (uCRM optimization example)
 
-class LinearMITCWingSolver {
+class LinearMITC_GMGASW_WingSolver {
    public:
     using T = double;
     // FEM typedefs
@@ -69,7 +70,8 @@ class LinearMITCWingSolver {
 
     // multigrid objects
     using CoarseSolver = CusparseMGDirectLU<T, Assembler>;
-    using Smoother = ChebyshevPolynomialSmoother<Assembler>;
+    // using Smoother = ChebyshevPolynomialSmoother<Assembler>;
+    using Smoother = UnstructuredQuadElementAdditiveSchwarzSmoother<T, Assembler>;
     static const bool is_bsr = true;
     // static const bool is_bsr = false; // no difference in intra-nodal (default old working
     // prolong)
@@ -88,10 +90,10 @@ class LinearMITCWingSolver {
     using DMass = Mass<T, DeviceVec>;
     using DKSFail = KSFailure<T, DeviceVec>;
 
-    LinearMITCWingSolver(double rhoKS = 100.0, double safety_factor = 1.5, double force = 30e3,
-                         T omega = 1.0, int level = 2, T rtol = 1e-6, int ORDER = 8,
-                         int nsmooth = 1, int ninnercyc = 1, bool print = false,
-                         int n_krylov = 50) {
+    LinearMITC_GMGASW_WingSolver(double rhoKS = 100.0, double safety_factor = 1.5,
+                                 double force = 30e3, T omega = 1.0, int level = 2, T rtol = 1e-6,
+                                 int ORDER = 8, int nsmooth = 1, int ninnercyc = 1,
+                                 bool print = false, int n_krylov = 50) {
         // --- SAFE MPI INIT ---
         int already_init = 0;
         MPI_Initialized(&already_init);
@@ -118,8 +120,8 @@ class LinearMITCWingSolver {
         for (int i = level; i >= 0; i--) {
             // read the ESP/CAPS => nastran mesh for TACS
             TACSMeshLoader mesh_loader{comm};
-            std::string fname = "../../examples/multigrid/3_aob_wing/meshes/aob_wing_L" +
-                                std::to_string(i) + ".bdf";
+            std::string fname =
+                "../../examples/gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(i) + ".bdf";
             mesh_loader.scanBDFFile(fname.c_str());
 
             // IF STIFFENED WING with REF AXIS:
@@ -154,7 +156,7 @@ class LinearMITCWingSolver {
             bool coarsest_grid = i == 0;
             // if (!coarsest_grid) {
             // WingboxMultiColoring<Assembler>::apply_coloring(assembler, bsr_data, num_colors,
-            // _color_rowp); bsr_data.compute_nofill_pattern();
+            // _color_rowp);
             // } else {
             // try no reordering
             if (coarsest_grid) {
@@ -164,6 +166,8 @@ class LinearMITCWingSolver {
                 num_colors = 0;
                 _color_rowp = new int[2];
                 _color_rowp[0] = 0, _color_rowp[1] = nnodes;
+            } else {
+                bsr_data.compute_nofill_pattern();
             }
             auto h_color_rowp = HostVec<int>(num_colors + 1, _color_rowp);
             assembler.moveBsrDataToDevice();
@@ -189,7 +193,7 @@ class LinearMITCWingSolver {
             // // bool smooth_debug = true;
             // bool smooth_debug = false;
             auto smoother =
-                new Smoother(cublasHandle, cusparseHandle, assembler, kmat, omega, ORDER);
+                new Smoother(cublasHandle, cusparseHandle, assembler, kmat, omega, nsmooth);
             int ELEM_MAX = 10;  // num nearby elements of each fine node for nz pattern construction
             // int ELEM_MAX = 4;
             auto prolongation = new Prolongation(cusparseHandle, assembler, ELEM_MAX);
@@ -198,7 +202,7 @@ class LinearMITCWingSolver {
             auto grid = GRID(assembler, prolongation, smoother, kmat, loads, cublasHandle,
                              cusparseHandle, omegaLS_min, omegaLS_max);
 
-            smoother->setup_cg_lanczos(grid.d_defect);
+            // smoother->setup_cg_lanczos(grid.d_defect);
 
             mg->grids.push_back(grid);
         }
@@ -214,13 +218,15 @@ class LinearMITCWingSolver {
         // int nsmooth = 1, ninnercyc = 1, print_freq = 3;
         int print_freq = 3;
         // int n_krylov = 50;
-        T atol = 1e-4;  //, rtol = 1e-6;
+        // T atol = 1e-4;  //, rtol = 1e-6;
+        T atol = 1e-30;
         // bool double_smooth = false;  // actually faster sometimes
 
         // mg->init_outer_solver(nsmooth, ninnercyc, n_krylov, omega, atol, rtol, print_freq,
         // print);
         mg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, n_krylov, omega,
                               atol, rtol, print_freq, print, double_smooth);
+        mg->coarse_solver->factor();
         solver = new StructSolver(*mg, print);
 
         // mg->solve();

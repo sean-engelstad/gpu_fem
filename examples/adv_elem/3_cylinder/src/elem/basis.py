@@ -22,6 +22,14 @@ def third_order_quadrature():
     wb = 0.6521451548625461
     return [-a, -b, b, a], [wa, wb, wb, wa]
 
+def fourth_order_quadrature():
+    a = 0.9061798459386640
+    b = 0.5384693101056831
+    wa = 0.2369268850561891
+    wb = 0.4786286704993665
+    wc = 0.5688888888888889
+    return [-a, -b, 0.0, b, a], [wa, wb, wc, wb, wa]
+
 # =============================
 # BASIS
 # =============================
@@ -399,3 +407,138 @@ def get_iga3_basis(xi, ielem, nxe):
     N = np.dot(BtoN, B)
     dN = np.dot(BtoN, dB)
     return N, dN
+
+# fourth order IGA
+def quartic_bernstein(xi):
+    """
+    Quartic Bernstein basis on [0,1].
+    Returns B, dB/dxi
+    """
+    x = xi
+    omx = 1.0 - x
+
+    B0 = omx**4
+    B1 = 4.0 * x * omx**3
+    B2 = 6.0 * x**2 * omx**2
+    B3 = 4.0 * x**3 * omx
+    B4 = x**4
+
+    # Derivatives w.r.t. xi
+    dB0 = -4.0 * omx**3
+    dB1 = 4.0 * omx**3 - 12.0 * x * omx**2
+    dB2 = 12.0 * x * omx**2 - 12.0 * x**2 * omx
+    dB3 = 12.0 * x**2 * omx - 4.0 * x**3
+    dB4 = 4.0 * x**3
+
+    B  = np.array([B0, B1, B2, B3, B4])
+    dB = np.array([dB0, dB1, dB2, dB3, dB4])
+    return B, dB
+
+
+def quartic_bernstein_hess(xi):
+    """
+    Second derivatives d2B/dxi2 for quartic Bernstein on [0,1].
+    """
+    x = xi
+
+    d2B0 = 12.0 * (1.0 - x)**2
+    d2B1 = -24.0 + 72.0*x - 48.0*x**2
+    d2B2 = 12.0 - 72.0*x + 72.0*x**2
+    d2B3 = 24.0*x - 48.0*x**2
+    d2B4 = 12.0*x**2
+
+    return np.array([d2B0, d2B1, d2B2, d2B3, d2B4])
+
+
+def get_iga4_BtoN(ielem, nxe):
+    first_elem   = (ielem == 0)
+    second_elem  = (ielem == 1)
+    third_elem   = (ielem == 2)
+
+    third_last   = (ielem == nxe - 3)
+    second_last  = (ielem == nxe - 2)
+    last_elem    = (ielem == nxe - 1)
+
+    interior = not (first_elem or second_elem or third_elem or
+                    third_last or second_last or last_elem)
+
+    # quartic Bernstein to basis matrix
+    if first_elem:
+        BtoN = np.array([
+            [1.0,      0.0,      0.0,      0.0,      0.0],
+            [0.0,      1.0,      0.5,      0.25,     0.125],
+            [0.0,      0.0,      0.5,      7.0/12.0, 37.0/72.0],
+            [0.0,      0.0,      0.0,      1.0/6.0,  23.0/72.0],
+            [0.0,      0.0,      0.0,      0.0,      1.0/24.0]
+        ])
+
+    elif second_elem:
+        BtoN = np.array([
+            [1.0/8.0,   0.0,       0.0,       0.0,       0.0],
+            [37.0/72.0, 4.0/9.0,   2.0/9.0,   1.0/9.0,   1.0/18.0],
+            [23.0/72.0, 17.0/36.0, 11.0/18.0, 5.0/9.0,   4.0/9.0],
+            [1.0/24.0,  1.0/12.0,  1.0/6.0,   1.0/3.0,   11.0/24.0],
+            [0.0,       0.0,       0.0,       0.0,       1.0/24.0]
+        ])
+
+    elif third_elem:
+        BtoN = np.array([
+            [1.0/18.0,  0.0,       0.0,       0.0,       0.0],
+            [4.0/9.0,   1.0/3.0,   1.0/6.0,   1.0/12.0,  1.0/24.0],
+            [11.0/24.0, 7.0/12.0,  2.0/3.0,   7.0/12.0,  11.0/24.0],
+            [1.0/24.0,  1.0/12.0,  1.0/6.0,   1.0/3.0,   11.0/24.0],
+            [0.0,       0.0,       0.0,       0.0,       1.0/24.0]
+        ])
+
+    elif third_last:
+        BtoN = np.array([
+            [1.0/24.0,  0.0,       0.0,       0.0,       0.0],
+            [11.0/24.0, 1.0/3.0,   1.0/6.0,   1.0/12.0,  1.0/24.0],
+            [11.0/24.0, 7.0/12.0,  2.0/3.0,   7.0/12.0,  11.0/24.0],
+            [1.0/24.0,  1.0/12.0,  1.0/6.0,   1.0/3.0,   4.0/9.0],
+            [0.0,       0.0,       0.0,       0.0,       1.0/18.0]
+        ])
+
+    elif second_last:
+        BtoN = np.array([
+            [1.0/24.0,  0.0,       0.0,       0.0,       0.0],
+            [11.0/24.0, 1.0/3.0,   1.0/6.0,   1.0/12.0,  1.0/24.0],
+            [4.0/9.0,   5.0/9.0,   11.0/18.0, 17.0/36.0, 23.0/72.0],
+            [1.0/18.0,  1.0/9.0,   2.0/9.0,   4.0/9.0,   37.0/72.0],
+            [0.0,       0.0,       0.0,       0.0,       1.0/8.0]
+        ])
+
+    elif last_elem:
+        BtoN = np.array([
+            [1.0/24.0,  0.0,       0.0,       0.0,       0.0],
+            [23.0/72.0, 1.0/6.0,   0.0,       0.0,       0.0],
+            [37.0/72.0, 7.0/12.0,  0.5,       0.0,       0.0],
+            [0.125,     0.25,      0.5,       1.0,       0.0],
+            [0.0,       0.0,       0.0,       0.0,       1.0]
+        ])
+
+    else:  # interior
+        BtoN = np.array([
+            [1.0/24.0,  0.0,       0.0,       0.0,       0.0],
+            [11.0/24.0, 1.0/3.0,   1.0/6.0,   1.0/12.0,  1.0/24.0],
+            [11.0/24.0, 7.0/12.0,  2.0/3.0,   7.0/12.0,  11.0/24.0],
+            [1.0/24.0,  1.0/12.0,  1.0/6.0,   1.0/3.0,   11.0/24.0],
+            [0.0,       0.0,       0.0,       0.0,       1.0/24.0]
+        ])
+
+    return BtoN
+
+
+def get_iga4_basis(xi, ielem, nxe):
+    B, dB = quartic_bernstein(xi)
+    BtoN = get_iga4_BtoN(ielem, nxe)
+    N = np.dot(BtoN, B)
+    dN = np.dot(BtoN, dB)
+    return N, dN
+
+
+def get_iga4_basis_hess(xi, ielem, nxe):
+    BtoN = get_iga4_BtoN(ielem, nxe)
+    d2B = quartic_bernstein_hess(xi)
+    d2N = np.dot(BtoN, d2B)
+    return d2N

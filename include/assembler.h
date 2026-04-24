@@ -77,6 +77,8 @@ class ElementAssembler {
     // used in adjoint solve and total derivatives
     void evalFunctionDVSens(MyFunction &func);
     void evalFunctionSVSens(const MyFunction &func, Vec<T> &dfdu);
+    void evalFunctionSVSens_BDDC_IEV(const MyFunction &func, Vec<int> &d_IEV_elem_conn,
+                                     Vec<T> &d_xpts_IEV, Vec<T> &d_vars_IEV, Vec<T> &dfdu);
     void evalFunctionXptSens(MyFunction &func);
     void evalFunctionAdjResProduct(const Vec<T> &psi, MyFunction &func);
 
@@ -84,6 +86,9 @@ class ElementAssembler {
     void _compute_adjResProduct(const Vec<T> &psi, Vec<T> &dfdx);
     void _compute_ks_failure_SVsens(T rho_KS, T safetyFactor, Vec<T> &dfdu, T *_max_fail = nullptr,
                                     T *_sumexp_fail = nullptr);
+    void _compute_ks_failure_BDDC_IEV_SVsens(T rho_KS, T safetyFactor, Vec<int> &d_IEV_elem_conn,
+                                             Vec<T> &d_xpts_IEV, Vec<T> &d_vars_IEV, Vec<T> &dfdu,
+                                             T *_max_fail = nullptr, T *_sumexp_fail = nullptr);
     void _compute_ks_failure_DVsens(T rho_KS, T safetyFactor, Vec<T> &dfdu, T *_max_fail = nullptr,
                                     T *_sumexp_fail = nullptr);
     void _compute_mass_DVsens(Vec<T> &dfdx);
@@ -505,6 +510,64 @@ void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_ks_failure_
 #endif
 };
 
+template <typename ElemGroup, typename T, typename Basis, typename Phys,
+          template <typename> class Vec, template <typename> class Mat>
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::_compute_ks_failure_BDDC_IEV_SVsens(
+    T rho_KS, T safetyFactor, Vec<int> &d_IEV_elem_conn, Vec<T> &d_xpts_IEV, Vec<T> &d_vars_IEV,
+    Vec<T> &dfdu_IEV, T *_max_fail, T *_sumexp_fail) {
+    using Quadrature = typename ElemGroup::Quadrature;
+
+    // computes df/du in IEV-split form for BDDC (domain decomposition solver)
+    // uses IEV element connectivity, etc.
+    // output is dfdu_IEV (in IEV-pattern with some duplicate nodes)
+    // this is needed as BDDC must have IEV-split RHS to compute the reduced interface problem
+
+#ifdef USE_GPU
+
+    const int elems_per_block = 32;
+    dim3 block(Quadrature::num_quad_pts, elems_per_block);
+    int nblocks = (num_elements + block.y - 1) / block.y;
+    dim3 grid(nblocks);
+
+    // dfdu.zeroValues();
+
+    // rerun old states from forward (if not provided)
+    T h_max_fail, h_sumexp_ks_fail;
+    if (_max_fail) {
+        h_max_fail = *_max_fail;
+    } else {
+        // first compute the max failure index (not KS), so we can prevent overflow
+        DeviceVec<T> d_max_fail(1);
+        k_compute_max_failure<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid, block>>>(num_elements, elem_components, geo_conn, vars_conn, xpts, vars,
+                              compData, rho_KS, safetyFactor, d_max_fail.getPtr());
+        h_max_fail = d_max_fail.createHostVec()[0];
+    }
+
+    if (_sumexp_fail) {
+        h_sumexp_ks_fail = *_sumexp_fail;
+    } else {
+        // second, do sum ks fail (needed for denom of KS derivs)
+        DeviceVec<T> d_sum_ksfail(1);
+        k_compute_ksfailure<T, ElemGroup, Data, elems_per_block, Vec>
+            <<<grid, block>>>(num_elements, elem_components, geo_conn, vars_conn, xpts, vars,
+                              compData, rho_KS, safetyFactor, h_max_fail, d_sum_ksfail.getPtr());
+        // add back global non-smooth max (overflow prevention)
+        h_sumexp_ks_fail = d_sum_ksfail.createHostVec()[0];
+    }
+
+    // printf("h_sumexp_ks_fail %.4e, h_max_fail %.4e\n", h_sumexp_ks_fail, h_max_fail);
+
+    // now compute the SVsens gradient
+    k_compute_ksfailure_SVsens<T, ElemGroup, Data, elems_per_block, Vec><<<grid, block>>>(
+        num_elements, elem_components, d_IEV_elem_conn, d_IEV_elem_conn, d_xpts_IEV, d_vars_IEV,
+        compData, rho_KS, safetyFactor, h_max_fail, h_sumexp_ks_fail, dfdu_IEV);
+
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+#endif
+};
+
 // doesn't do anything yet, TODO to write it
 template <typename ElemGroup, typename T, typename Basis, typename Phys,
           template <typename> class Vec, template <typename> class Mat>
@@ -916,6 +979,28 @@ void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::evalFunctionSVSens(
             throw std::runtime_error("Invalid function type: expected KSFailure");
         }
         _compute_ks_failure_SVsens(ks_func->rho_KS, ks_func->safetyFactor, dfdu);
+    }
+}
+
+template <typename ElemGroup, typename T, typename Basis, typename Phys,
+          template <typename> class Vec, template <typename> class Mat>
+void ElementAssembler<ElemGroup, T, Basis, Phys, Vec, Mat>::evalFunctionSVSens_BDDC_IEV(
+    const MyFunction &func, Vec<int> &d_IEV_elem_conn, Vec<T> &d_xpts_IEV, Vec<T> &d_vars_IEV,
+    Vec<T> &dfdu_IEV) {
+    // df/du partial term
+    func.check_setup();
+    if (func.name == "mass") {
+        // pass non-adjoint function
+    } else if (func.name == "ksfailure") {
+        // Attempt safe downcast
+        auto *ks_func = dynamic_cast<const KSFailure<T, Vec> *>(&func);
+        if (!ks_func) {
+            throw std::runtime_error("Invalid function type: expected KSFailure");
+        }
+
+        // needed for domain decomposition method with with IEV-splitting for Schur complement
+        _compute_ks_failure_BDDC_IEV_SVsens(ks_func->rho_KS, ks_func->safetyFactor, d_IEV_elem_conn,
+                                            d_xpts_IEV, d_vars_IEV, dfdu_IEV);
     }
 }
 

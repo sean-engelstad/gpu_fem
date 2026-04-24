@@ -19,7 +19,7 @@ parent_parser.add_argument("--setedge", type=int, default=1) # default is that i
 parent_parser.add_argument(
     "--level",
     type=int,
-    choices=[0, 1, 2, 3, 4],
+    choices=[0, 1, 2, 3, 4, 5],
     required=True,
     help="Mesh refinement level: 0 = coarsest, 1 = finer, 2 etc..",
 )
@@ -110,8 +110,8 @@ elif args.level == 5:
     tacs_model.mesh_aim.set_mesh(  # need a refined-enough mesh for the derivative test to pass
         edge_pt_min=108,
         edge_pt_max=120,
-        global_mesh_size=0.0015,
-        max_surf_offset=0.0015,
+        global_mesh_size=0.00125,
+        max_surf_offset=0.00125,
         max_dihedral_angle=0.8,
     ).register_to(
         tacs_model

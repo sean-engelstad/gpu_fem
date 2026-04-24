@@ -1196,6 +1196,8 @@ __GLOBAL__ void k_compute_ksfailure_SVsens(const int32_t num_elements, const Vec
 
 }  // end of compute_ksfailure_SVsens_kernel
 
+
+
 template <typename T, class ElemGroup, class Data, int32_t elems_per_block = 1,
           template <typename> class Vec>
 __GLOBAL__ void k_compute_adjResProduct(const int32_t num_elements,

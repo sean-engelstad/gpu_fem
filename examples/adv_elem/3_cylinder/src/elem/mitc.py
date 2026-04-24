@@ -28,7 +28,7 @@ class MITCShellElement:
         debug:bool=False,
         strain_debug_mode:str='all', # 'all' is not debug, 'tying', 'bending', 'drill' just does one term
     ):
-        assert prolong_mode in ["locking-global", "locking-local", "standard", "energy-jacobi"]
+        assert prolong_mode in ["locking-global", "locking-local", "standard", "energy-jacobi", "energy-exact"]
 
         self.dof_per_node = 6
         self.nodes_per_elem = 4
@@ -1525,7 +1525,7 @@ class MITCShellElement:
         K = K.tocsr() if sp.isspmatrix(K) else sp.csr_matrix(K)
 
         # Jacobi block inverse (3x3 nodal blocks)
-        bs = 3
+        bs = 6
         N = K.shape[0]
         if (N % bs) != 0 or K.shape[1] != N:
             raise ValueError(f"kmat must be square with size multiple of 3, got {K.shape}")
@@ -1554,6 +1554,7 @@ class MITCShellElement:
         mask = None
         if (not with_fillin) and use_mask:
             mask = ((K @ P) != 0).astype(np.int8)
+            # mask = ((K @ K @ P) != 0).astype(np.int8) # try higher order stencil in P?
 
         def control(Z):
             if mask is None:
@@ -1576,6 +1577,200 @@ class MITCShellElement:
 
         P_out = P.toarray()
         return P_out
+    
+    def _exact_energy_jacobi(self, nxe_c: int):
+        # exact CF-splitting prolongation:
+        # P = [ -K_FF^{-1} K_FC
+        #        I              ]
+
+        nxe_f = 2 * nxe_c
+        nx_f = nxe_f + 1
+        nnodes = nx_f**2
+        ndof = 6 * nnodes
+
+        fine_mask = np.zeros(ndof, dtype=bool)
+        coarse_mask = np.zeros(ndof, dtype=bool)
+
+        for i in range(nx_f):
+            for j in range(nx_f):
+                inode = j * nx_f + i
+                is_coarse = (i % 2 == 0) and (j % 2 == 0)
+                for idim in range(6):
+                    idx = 6 * inode + idim
+                    fine_mask[idx] = not is_coarse
+                    coarse_mask[idx] = is_coarse
+
+        K = self._kmat_cache[int(nxe_c)].toarray()
+
+        K_FF = K[fine_mask, :][:, fine_mask]
+        K_FC = K[fine_mask, :][:, coarse_mask]
+
+        # exact fine-part interpolation
+        P_F = -np.linalg.solve(K_FF, K_FC)
+
+        nF = np.count_nonzero(fine_mask)
+        nC = np.count_nonzero(coarse_mask)
+
+        # assemble full prolongation with rows in original fine-grid DOF ordering
+        P = np.zeros((ndof, nC))
+
+        P[fine_mask, :] = P_F
+        P[coarse_mask, :] = np.eye(nC)
+
+        return P
+    
+    def _energy_smooth_jacobi_v2(
+        self,
+        nxe_c: int,
+        length: float = 1.0,
+        n_sweeps: int = 10,
+        omega: float = 0.7,
+        with_fillin: bool = True,
+        use_mask: bool = True,
+    ):
+        """
+        Energy smoothing with coarse-DOF injection.
+
+        Solve only for the fine part of the prolongation:
+            K_FF P_F = -K_FC
+
+        with Jacobi smoothing:
+            P_F <- P_F - omega * D_FF^{-1} (K_FF P_F + K_FC)
+
+        Full prolongation is then
+            P = [P_F
+                 I ]
+
+        in the original fine-grid DOF ordering.
+        """
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        # ------------------------------------------------------------------
+        # baseline prolongation, then enforce BCs
+        # ------------------------------------------------------------------
+        P0 = self._build_P2_uncoupled3(nxe_c)
+        P0 = self._apply_bcs_to_P(P0, nxe_c)
+        P0 = P0.tocsr()
+
+        # ------------------------------------------------------------------
+        # get fine-grid stiffness
+        # ------------------------------------------------------------------
+        if not hasattr(self, "_kmat_cache") or (int(nxe_c) not in self._kmat_cache):
+            raise RuntimeError("Expected self._kmat_cache[nxe_c] to exist for energy smoothing.")
+        K = self._kmat_cache[int(nxe_c)]
+        K = K.tocsr() if sp.isspmatrix(K) else sp.csr_matrix(K)
+
+        # ------------------------------------------------------------------
+        # build coarse/fine masks from 2:1 refinement
+        # assumes structured grid and 3 dof/node like your old P2 routine
+        # ------------------------------------------------------------------
+        nxe_f = 2 * nxe_c
+        nx_f = nxe_f + 1
+        nnodes = nx_f * nx_f
+        ndof = 6 * nnodes   # this method assumes 3 dof per node
+
+        if K.shape[0] != ndof or K.shape[1] != ndof:
+            raise ValueError(f"Expected K shape {(ndof, ndof)} from nxe_c={nxe_c}, got {K.shape}")
+
+        fine_mask = np.zeros(ndof, dtype=bool)
+        coarse_mask = np.zeros(ndof, dtype=bool)
+
+        for i in range(nx_f):
+            for j in range(nx_f):
+                inode = j * nx_f + i
+                is_coarse = (i % 2 == 0) and (j % 2 == 0)
+                for idim in range(6):
+                    idx = 6 * inode + idim
+                    coarse_mask[idx] = is_coarse
+                    fine_mask[idx] = not is_coarse
+
+        nF = int(np.count_nonzero(fine_mask))
+        nC = int(np.count_nonzero(coarse_mask))
+
+        # ------------------------------------------------------------------
+        # block matrices
+        # ------------------------------------------------------------------
+        K_FF = K[fine_mask, :][:, fine_mask].tocsr()
+        K_FC = K[fine_mask, :][:, coarse_mask].tocsr()
+
+        # initial fine part from baseline prolongation
+        P_F = P0[fine_mask, :].tocsr()
+
+        if P_F.shape != (nF, nC):
+            raise ValueError(f"P_F has shape {P_F.shape}, expected {(nF, nC)}")
+
+        # ------------------------------------------------------------------
+        # Jacobi inverse on fine block only, using 3x3 nodal blocks
+        # ------------------------------------------------------------------
+        bs = 6
+        if (nF % bs) != 0:
+            raise ValueError(f"Fine block size must be multiple of {bs}, got {nF}")
+
+        nblk = nF // bs
+        Kb = K_FF.tobsr(blocksize=(bs, bs))
+
+        diag_inv = np.zeros((nblk, bs, bs), dtype=float)
+        for i in range(nblk):
+            s, e = Kb.indptr[i], Kb.indptr[i + 1]
+            cols = Kb.indices[s:e]
+            data = Kb.data[s:e]
+            k = np.searchsorted(cols, i)
+            if k >= cols.size or cols[k] != i:
+                raise RuntimeError("Missing diagonal 3x3 block in K_FF.")
+            Db = data[k]
+            Db = 0.5 * (Db + Db.T)
+            diag_inv[i] = np.linalg.inv(Db)
+
+        Dinv_FF = sp.bsr_matrix(
+            (diag_inv, np.arange(nblk, dtype=np.int32), np.arange(nblk + 1, dtype=np.int32)),
+            shape=(nF, nF),
+            blocksize=(bs, bs),
+        ).tocsr()
+
+        # ------------------------------------------------------------------
+        # optional fixed sparsity mask on P_F only
+        # ------------------------------------------------------------------
+        mask = None
+        if (not with_fillin) and use_mask:
+            # keep the initial sparsity of the fine prolongation block
+            # mask = (P_F != 0).astype(np.int8)
+            mask = (K_FF @ P_F != 0).astype(np.int8)
+            # alternative:
+            # mask = ((K_FF @ P_F + K_FC) != 0).astype(np.int8)
+
+        def control(Z):
+            if mask is None:
+                return Z
+            if not sp.issparse(Z):
+                Z = sp.csr_matrix(Z)
+            return Z.multiply(mask)
+
+        P_F = control(P_F)
+
+        # ------------------------------------------------------------------
+        # Jacobi smoothing on fine block only:
+        #   P_F <- P_F - omega * Dinv_FF * (K_FF P_F + K_FC)
+        # ------------------------------------------------------------------
+        if with_fillin or (mask is None):
+            for _ in range(int(n_sweeps)):
+                R_F = K_FF @ P_F + K_FC
+                P_F = P_F - float(omega) * (Dinv_FF @ R_F)
+        else:
+            for _ in range(int(n_sweeps)):
+                R_F = control(K_FF @ P_F + K_FC)
+                P_F = control(P_F - float(omega) * (Dinv_FF @ R_F))
+
+        # ------------------------------------------------------------------
+        # assemble full prolongation in original fine-grid DOF ordering
+        # coarse rows = identity injection
+        # ------------------------------------------------------------------
+        P_out = np.zeros((ndof, nC), dtype=float)
+        P_out[fine_mask, :] = P_F.toarray()
+        P_out[coarse_mask, :] = np.eye(nC)
+
+        return P_out
 
     def _assemble_prolongation(self, nxe_fine:int):
         nxe_coarse = nxe_fine // 2
@@ -1594,9 +1789,16 @@ class MITCShellElement:
             P = self._apply_bcs_to_P(P, nxe_coarse)
         elif self.prolong_mode == "energy-jacobi":
             P = self._energy_smooth_jacobi_v1(nxe_coarse, n_sweeps=self.n_lock_sweeps, omega=self.omega, 
-                                              with_fillin=True,
-                                            #   with_fillin=False,
+                                            #   with_fillin=True,
+                                              with_fillin=False,
                                               )
+            # V2 does energy-smoothing of F part only
+            # P = self._energy_smooth_jacobi_v2(nxe_coarse, n_sweeps=self.n_lock_sweeps, omega=self.omega, 
+            #                                 #   with_fillin=True,
+            #                                   with_fillin=False,
+            #                                   )
+        elif self.prolong_mode == "energy-exact":
+            P = self._exact_energy_jacobi(nxe_coarse)
         else:
             raise NotImplementedError("locking-local not implemented in this prototype")
         

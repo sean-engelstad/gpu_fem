@@ -21,15 +21,32 @@ parser.add_argument(
     default="MITC4",
     help="Finite element type to use (default: MITC4)."
 )
+parser.add_argument(
+    "--solver",
+    type=str,
+    choices=["gmg_cp", "gmg_asw", "bddc_lu"],
+    default="gmg_cp",
+    help="Finite element type to use (default: MITC4)."
+)
 args = parser.parse_args()
 element = args.element
+
+force = 684e3*3
 
 SOLVER_CLASS = None
 if element == "CFI4":
     SOLVER_CLASS = wingmultigrid.LinearCFIWingSolver
 elif element == "MITC4":
-    SOLVER_CLASS = wingmultigrid.LinearMITCWingSolver
-
+    if args.solver == "gmg_cp":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_GMGCP_WingSolver
+        omega, nsmooth = 0.85, 2
+    elif args.solver == "gmg_asw":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_GMGASW_WingSolver
+        omega, nsmooth = 0.2, 4
+    elif args.solver == "bddc_lu":
+        SOLVER_CLASS = wingmultigrid.LinearMITC_BDDCLU_WingSolver
+        omega, nsmooth = 1.0, 1
+        force *= 6e-3
 
 # setup GPU solver on root
 root = 0
@@ -38,14 +55,16 @@ if comm.rank == root:
         rhoKS=100.0,
         safety_factor=1.5,
         # force=684e3, # 30 KPa on lower skin from the structural benchmark
-        force=684e3*3, # boost load from static benchmark (to get more deflection?)
-        omega=0.85,
-        nsmooth=1,
+        force=force, # boost load from static benchmark (to get more deflection?)
+        omega=omega,
+        nsmooth=nsmooth,
         # ORDER=8,
         ORDER=16, # went with this as fast for thin shell and not too much extra smoothing for thick shell
         # ORDER=32, # fastest for very thin shell case (but only a bit faster than ORDER=16)
         # ORDER=4,
         n_krylov=200,
+        # level=2,
+        level=4,
         # rtol=1e-6, # almost want to have high rtol like this only later in the optimization tbh..
         rtol=1e-5,
         # rtol=1e-4, # faster optimization, but will it converge though?
@@ -70,8 +89,12 @@ def get_functions(xdict):
     if comm.rank == root:
         solver.set_design_variables(xarr)
 
-        # solve and get functions
+        # forward solve timing
+        t0 = MPI.Wtime()
         solver.solve()
+        t1 = MPI.Wtime()
+        print(f"[GPU] Forward solve time: {t1 - t0:.6f} s")
+
         mass = solver.evalFunction("mass")
         ksfail = solver.evalFunction("ksfailure")
 
@@ -83,34 +106,32 @@ def get_functions(xdict):
         'ksfailure' : ksfail,
     }
 
-    # print(f"{funcs=}")
-
-    if solver.get_num_lin_solves() % 20 == 0 and comm.rank == root: # so we don't affect runtimes for fast problems
-        comp_names = [f"comp{icomp}" for icomp in range(ndvs)]
-        with open("out/1_lin_unstiff_gpu_opt.txt", "w") as f:
-            f.write(f"{mass=:.4e} {ksfail=:.4e}\n")
-            for name, value in zip(comp_names, xarr):
-                f.write(f"{name}\t{value:.16e}\n")
-
     return funcs, False
+
 
 def get_function_grad(xdict, funcs):
     # update design, this shouldn't really come with a new forward solve, just adj solve
-    # but if optimizer calls grads twice in a row or something, this won't work right (needs companion get_functions call every time)
+    # but if optimizer calls grads twice in a row or something, this won't work right
     xlist = xdict["vars"]
     xarr = np.array([float(_) for _ in xlist])
 
     mass_grad, ksfail_grad = None, None
 
     if comm.rank == root:
-        solver.set_design_variables(xarr)
+        # solver.set_design_variables(xarr)
 
-        # before not including this would result in wrong state vars
-        # now it only does the solve again if design changed with this call
-        solver.solve() # temp debug just solve again here
+        # # # forward solve timing (temporary debug re-solve)
+        # t0 = MPI.Wtime()
+        # solver.solve()  # temp debug just solve again here
+        # t1 = MPI.Wtime()
+        # print(f"[GPU] Forward solve time inside gradient call: {t1 - t0:.6f} s")
 
+        # adjoint / sensitivity timing
+        t0 = MPI.Wtime()
         mass_grad = solver.evalFunctionSens("mass")
         ksfail_grad = solver.evalFunctionSens("ksfailure")
+        t1 = MPI.Wtime()
+        print(f"[GPU] Adjoint/sensitivity time: {t1 - t0:.6f} s")
 
     mass_grad = comm.bcast(mass_grad, root=root)
     ksfail_grad = comm.bcast(ksfail_grad, root=root)
@@ -120,14 +141,13 @@ def get_function_grad(xdict, funcs):
         'ksfailure' : {'vars' : ksfail_grad},
     }
 
-    # print(f"{sens=}")
     return sens, False
 
 opt_problem = Optimization("aob-lin-wing", get_functions)
 opt_problem.addVarGroup(
     "vars",
     ndvs,
-    lower=np.array([2.5e-3]*ndvs), # TODO : change min of non-struct-masses?
+    lower=np.array([5e-3]*ndvs), # TODO : change min of non-struct-masses?
     upper=np.array([1e2]*ndvs),
     value=x0,
     scale=np.array([1e2]*ndvs),

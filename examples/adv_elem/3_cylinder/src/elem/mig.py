@@ -29,13 +29,14 @@ from .basis import (
     third_order_quadrature,
     second_order_quadrature,
     zero_order_quadrature,
+    first_order_quadrature,
     get_iga2_basis,
     get_iga3_basis,
     get_lagrange_basis_01,
 )
 import scipy.sparse as sp
 
-class DeRhamMITC_IGACylinderElement:
+class DeRham_IGACylinderElement:
     """
     Mixed IGA cylinder element with different-order spaces:
 
@@ -114,7 +115,8 @@ class DeRhamMITC_IGACylinderElement:
         pts, wts = third_order_quadrature()
 
         # reduced quadrature (1-point) for exy only
-        pts_r, wts_r = zero_order_quadrature()
+        # pts_r, wts_r = zero_order_quadrature()
+        pts_r, wts_r = first_order_quadrature()
 
         r = self.r
         Jdet = dx * dy

@@ -58,10 +58,11 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     // geometric multigrid method here..
     // need to make a number of grids..
 
+    using Data = typename Assembler::Data;
     using Basis = typename Assembler::Basis;
     using Physics = typename Assembler::Phys;
     const SCALER scaler  = LINE_SEARCH;
-    using FAssembler = FakeAssembler<T>;
+    using FAssembler = FakeAssembler<T, Assembler>;
     using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
     using Prolongation = StructuredProlongation<Assembler, PLATE>;
     using GRID = SingleGrid<Assembler, Prolongation, Smoother, LINE_SEARCH>;
@@ -84,6 +85,7 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     // build the kmat
     auto &bsr_data = assembler.getBsrData();
     bsr_data.compute_nofill_pattern();
+    int nofill_nnzb = bsr_data.nnzb;
     assembler.moveBsrDataToDevice();
     auto loads = assembler.createVarsVec(my_loads);
     assembler.apply_bcs(loads);
@@ -191,6 +193,9 @@ void amg_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omegas, T omega
     auto options = SolverOptions();
     options.ncycles = 800; // number of max PCG cycles
     options.print_freq = 10;
+
+    T operator_complexity = fine_amg->get_operator_complexity(nofill_nnzb);
+    printf("AMG operator complexity %.4e\n", operator_complexity);
 
     // printf("MAIN: build KRYLOV\n");
 
@@ -388,21 +393,21 @@ void gatekeeper_method(std::string solver_type, int nxe, double SR, int nsmooth,
     if (solver_type == "sa_amg") {
         const bool ORTHOG_PROJECTOR = true;
         // const bool ORTHOG_PROJECTOR = false;
-        using FAssembler = FakeAssembler<T>;
+        using FAssembler = FakeAssembler<T, Assembler>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
-        using AMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
+        using AMG = SmoothAggregationAMG<T, FAssembler, Smoother, ORTHOG_PROJECTOR>;
         amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "cf_amg") {
-        using FAssembler = FakeAssembler<T>;
+        using FAssembler = FakeAssembler<T, Assembler>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
-        using AMG = ClassicalCFAMG<T, Smoother>;
+        using AMG = ClassicalCFAMG<T, FAssembler, Smoother>;
         amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "rn_amg") {
         const bool ORTHOG_PROJECTOR = true;
         // const bool ORTHOG_PROJECTOR = false;
-        using FAssembler = FakeAssembler<T>;
+        using FAssembler = FakeAssembler<T, Assembler>;
         using Smoother = ChebyshevPolynomialSmoother<FAssembler>; // uses fake assembler for smoother so can also build on coarser grids
-        using AMG = RootNodeAMG<T, Smoother, ORTHOG_PROJECTOR>;
+        using AMG = RootNodeAMG<T, FAssembler, Smoother, ORTHOG_PROJECTOR>;
         amg_solve<T, Assembler, AMG>(nxe, SR, nsmooth, ninnercyc, omegas, omegap, ORDER, threshold, nmat_smooth);
     } else if (solver_type == "direct") {
         solve_direct<T, Assembler>(nxe, SR);

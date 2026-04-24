@@ -1,5 +1,6 @@
 // GPU implementation of Ali Gray's inexact Newton solver (with Eisenstat-Walker method from CPU
 // TACS) implemented by Sean Engelstad, Nov 4th 2025
+#pragma once
 
 #include <functional>
 #include <iostream>

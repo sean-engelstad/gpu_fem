@@ -30,7 +30,7 @@ args = parser.parse_args()
 
 # nxe_vec = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
 nxe_vec = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
-beam_types = ['eb', 'ts', 'tsr', 'aig', 'hhd', 'higd', 'drig']
+beam_types = ['eb', 'ts', 'tsr', 'aig', 'hhd', 'higd', 'mig']
 # beam_types = ['eb', 'hhr', 'hhd', 'higd']
 deflections = {key:[] for key in beam_types}
 
@@ -66,7 +66,7 @@ for nxe in nxe_vec:
             # ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=True)
             ELEMENT = AsymptoticIsogeometricTimoshenkoElement(reduced_integrated=False)
             is_iga = True
-        elif elem == 'drig':
+        elif elem == 'mig':
             # derham isogeometric element, special vertex-edge style IGA 2nd order basis that is auto locking-free!
             ELEMENT = DeRhamIsogeometricElement()
             is_iga = True
@@ -79,7 +79,7 @@ for nxe in nxe_vec:
         clamped = False # simply supported
         # ASSEMBLER = IGABeamAssembler if is_iga else StandardBeamAssembler
         ASSEMBLER = IGABeamAssemblerV2 if is_iga else StandardBeamAssembler
-        if elem == 'drig':
+        if elem == 'mig':
             ASSEMBLER = DeRhamIGABeamAssembler
 
         assembler = ASSEMBLER(
@@ -130,7 +130,7 @@ for nxe in nxe_vec:
                     )
                 elif args.smoother == 'asw':
                     omega = args.omega / 2.0 # since 2x smoothing
-                    if elem == 'drig': # needs custom schwarz smoother with vertex-edge based
+                    if elem == 'mig': # needs custom schwarz smoother with vertex-edge based
                         smoother = OneDimAddSchwarzVertex2Edges.from_assembler(
                             grid, omega=omega, iters=nsmooth,
                             # patch_type="vertex2edges",
@@ -164,7 +164,7 @@ for nxe in nxe_vec:
             w = u[0::3] + u[2::3]
         elif elem in ['higd']:
             w = u[0::2] + u[1::2]
-        elif elem in ['drig']:
+        elif elem in ['mig']:
             w = u[:assembler.nw]
         else:
             w = u[0::assembler.dof_per_node]

@@ -2,6 +2,7 @@
 #include <string>
 
 #include "mesh/vtk_writer.h"
+#pragma once
 
 // like a TacsInterface for the multigrid solvers
 // can do function evals, set dvs, forward + adjoint solves, gradients, etc.
@@ -13,8 +14,9 @@ class TACSNLInterface {
     // using Mat = typename Assembler::template MatType<Vec>;
     using MyFunction = typename Assembler::MyFunction;
 
-    TACSNLInterface(cublasHandle_t &cublasHandle_, Continuation *nl_solver_, Assembler &assembler_, LinearSolver *mg_,
-                    bool print = true, bool include_adjoint_vars = true, T inner_frtol_ = 1e-6)
+    TACSNLInterface(cublasHandle_t &cublasHandle_, Continuation *nl_solver_, Assembler &assembler_,
+                    LinearSolver *mg_, bool print = true, bool include_adjoint_vars = true,
+                    T inner_frtol_ = 1e-6)
         : cublasHandle(cublasHandle_),
           nl_solver(nl_solver_),
           assembler(assembler_),
@@ -67,11 +69,10 @@ class TACSNLInterface {
     // }
 
     bool solve() {
-
         // do nonlinear continuation solve
         T lambda0 = 0.2, inner_atol = 1e-8, lambdaf = 1.0, inner_crtol = 1e-3;
-        bool fail = this->nl_solver->solve(this->vars, lambda0, inner_atol, lambdaf, inner_crtol, 
-            inner_frtol);  // inout updates the vars
+        bool fail = this->nl_solver->solve(this->vars, lambda0, inner_atol, lambdaf, inner_crtol,
+                                           inner_frtol);  // inout updates the vars
 
         // set new variables into assembler (for output function evals)
         this->assembler.set_variables(this->vars);

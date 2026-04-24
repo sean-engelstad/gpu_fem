@@ -7,6 +7,7 @@ from .hhd_elem import HierarchicDispHermiteElement
 # isogeometric elements
 from .aig_elem import AsymptoticIsogeometricTimoshenkoElement
 from .aig_elem2 import AsymptoticIsogeometricTimoshenkoElementV2
+from .aig_elem3 import AsymptoticIsogeometricTimoshenkoElementV3
 from .higd_elem import HierarchicIsogeometricDispElement
 from .ms_elem import MixedShearIsogeometricElement
 
@@ -17,7 +18,11 @@ from .tsp_elem import TimoshenkoElement_OptProlong
 # subgrid scale elements
 from .asgs import AlgebraicSubGridScaleElement
 from .osgs import OrthogonalSubGridScaleElement
+from .osgs2 import OrthogonalSubGridScaleElement_V2
 
 # hellinger-reissner elements
 from .hra_elem import HellingerReissnerAnsatzElement
 from .hrig_elem import HellingerReissnerIsogeometricElement
+
+# assumed natural strain
+from .ans_elem import ANSTimoshenkoIGA2Element

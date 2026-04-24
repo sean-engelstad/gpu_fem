@@ -14,7 +14,7 @@ from elem import (
 
 from dkt_assembler import DKTPlateAssembler
 from iga_assembler import IGAPlateAssembler
-from drig_assembler import DeRhamIGAPlateAssembler
+from mig_assembler import DeRhamIGAPlateAssembler
 from stab_assembler import StabilizedPlateAssembler
 
 # from asw_derham import TwoDimAddSchwarzDeRhamVertexEdges
@@ -133,8 +133,8 @@ args = parser.parse_args()
 # nxe_vec = [4, 8, 16, 32, 64]
 nxe_vec = [4, 8, 16, 32, 64, 128]
 # plate_types = ["rmr"]
-# plate_types = ["dkt", "rm", "rmr", "higd", "drig", "drigr", "asgs"]
-plate_types = ['asgs']
+# plate_types = ["dkt", "rm", "rmr", "higd", "mig", "migr", "asgs"]
+plate_types = ['mig']
 deflections = {key: [] for key in plate_types}
 
 # load_fcn = lambda x: np.sin(4 * np.pi * x)
@@ -146,10 +146,10 @@ def build_element(elem):
     if elem == 'higd':
         ELEMENT = HierarchicIsogeometricDispElement9(reduced_integrated=False)
         is_iga = True
-    elif elem == 'drig':
+    elif elem == 'mig':
         ELEMENT = DeRhamIsogeometricPlateElement()
         is_iga = True
-    elif elem == 'drigr':
+    elif elem == 'migr':
         ELEMENT = DeRhamIsogeometricPlateElement(reduced_integrated=True)
         is_iga = True
     elif elem == 'dkt':
@@ -173,7 +173,7 @@ def build_element(elem):
 
 def build_assembler(elem, is_iga):
     # (keeping your original choice: V2 for IGA, Standard for non-IGA)
-    if elem in ['drig', 'drigr']:
+    if elem in ['mig', 'migr']:
         ASSEMBLER = DeRhamIGAPlateAssembler
     elif elem == 'dkt':
         ASSEMBLER = DKTPlateAssembler
@@ -215,7 +215,7 @@ for nxe in nxe_vec:
         u = assembler.u.copy()
         if elem in ["higd"]:
             w = u[0::3] + u[1::3] + u[2::3]  # shear + bending split
-        elif elem  in ['drig', 'drigr']:
+        elif elem  in ['mig', 'migr']:
             w = u[: assembler.nw]
         else:
             w = u[0:: assembler.dof_per_node]

@@ -49,6 +49,7 @@ def right_pcg2(A, b, x0=None, rtol=1e-8, atol=1e-7, max_iter=1000, M=None, print
     norm_r0 = np.linalg.norm(r)
 
     if norm_r0 < atol:
+        print(f"{norm_r0=} < {atol=} exiting early")
         return x
     
     rz_old = None

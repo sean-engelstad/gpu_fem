@@ -31,7 +31,7 @@
 
 // copied and modified from ../uCRM/_src/optim.h (uCRM optimization example)
 
-class LinearPlateSolver {
+class Linear_GMGCP_PlateSolver {
    public:
     using T = double;
     // FEM typedefs
@@ -59,11 +59,11 @@ class LinearPlateSolver {
     using DMass = Mass<T, DeviceVec>;
     using DKSFail = KSFailure<T, DeviceVec>;
 
-    LinearPlateSolver(double rhoKS = 100.0, double safety_factor = 1.5, double load_mag = 100.0,
-                      T omega = 1.0, int nxe = 100, int nx_comp = 5, int ny_comp = 5,
-                      double SR = 50.0, T rtol = 1e-6, int ORDER = 8, double Lx = 1.0,
-                      int nsmooth = 1, int ninnercyc = 1, double in_plane_frac = 0.1,
-                      bool print = false) {
+    Linear_GMGCP_PlateSolver(double rhoKS = 100.0, double safety_factor = 1.5,
+                             double load_mag = 100.0, T omega = 1.0, int nxe = 100, int nx_comp = 5,
+                             int ny_comp = 5, double SR = 50.0, T rtol = 1e-6, int ORDER = 8,
+                             double Lx = 1.0, int nsmooth = 1, int ninnercyc = 1,
+                             double in_plane_frac = 0.1, bool print = false) {
         // 1) Build mesh & assembler
         assert(nxe % nx_comp == 0);  // evenly divisible by number of elems_per_comp
         int nye = nxe;

@@ -67,6 +67,25 @@ struct UniformPressure {
     }
 };
 
+
+template <typename T>
+struct ObliqueCylinderLoad {
+
+    __HOST_DEVICE__
+    T operator()(T x, T y, T z) const {
+        T x_hat = x / 1.0; // assumes L = 1.0
+        T th = atan2(y, z);
+        T th_hat = th / 2 / M_PI;
+        T mag = 1.0e2 *
+                (0.3 * cos(5 * th + 2.0 * M_PI * x_hat) +
+                    0.7 * cos(10 * th + 3.14159 / 6.0 + 5.3 * M_PI * x_hat)) *
+                sin(5 * M_PI * x_hat + 0.5 * 2.0 * x_hat * x_hat);
+        return mag;
+    }
+};
+
+
+
 template <typename T>
 struct ObliqueShearSineLoad {
     __HOST_DEVICE__
@@ -299,7 +318,7 @@ int main(int argc, char **argv) {
     bddc->assemble_subdomains();
 
     // external load (can add internally)
-    ObliqueShearSineLoad<T> load;
+    ObliqueCylinderLoad<T> load;
     bddc->add_subdomain_fext(load, mag);
 
     bddc->set_IEV_residual(1.0, 0.0, vars);

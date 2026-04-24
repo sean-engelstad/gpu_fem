@@ -15,6 +15,9 @@ class HierarchicIsogeometricDispElement9:
         self.clamped = True
         self.ORDER = 2 # 2nd order IGA
 
+        self._kmat_cache = {}
+        self._lock_P_cache = {}
+
     def get_kelem(
         self,
         E:float, nu:float, thick:float, elem_xpts:np.ndarray,
@@ -246,7 +249,7 @@ class HierarchicIsogeometricDispElement9:
         n_fine = nxe_f + 2
 
         R = self._build_1d_restriction_matrix(nxe_c)        
-        R_twod = np.zeros((n_coarse**2, n_fine**2))
+        R_twod = np.zeros((n_coarse**2, n_fine**2), dtype=np.double)
 
         for inode_c in range(n_coarse**2):
             ix_c, iy_c = inode_c % n_coarse, inode_c // n_coarse
@@ -366,7 +369,108 @@ class HierarchicIsogeometricDispElement9:
 
         return out
 
+    def _energy_smooth_jacobi_v1(
+        self,
+        nxe_c: int,
+        length: float = 1.0,
+        n_sweeps: int = 10,
+        omega: float = 0.7,
+        with_fillin: bool = True,
+        use_mask: bool = True,
+    ):
+        """
+        Standard K-matrix energy smoothing in Jacobi-preconditioned space:
+            P <- P - omega * D^{-1} (K P)
 
+        - K is taken from: self._kmat_cache[nxe_c]   (you provide it)
+        - Optional fixed sparsity: mask = pattern(K@P) computed once initially.
+        - Cache key is ONLY nxe_c (simple).
+        """
+
+        import numpy as np
+        import scipy.sparse as sp
+
+        # simple cache: ONLY keyed by nxe_c
+        cache_key = ("energy_smooth_jacobi_v1", int(nxe_c))
+        if cache_key in self._lock_P_cache:
+            return self._lock_P_cache[cache_key]
+
+        # baseline P0
+        # P0 = self._build_P2_uncoupled3(nxe_c)
+        # P0 = self._apply_bcs_to_P(P0, nxe_c)
+
+
+        R = self._build_2d_restr_matrix(nxe_c, nxe_c)   # (nnode_c, nnode_f)
+        P0 = R.T                                         # (nnode_f, nnode_c)
+
+        # make it the full prolong now
+        P0 = sp.kron(P0, sp.eye(3, format="csr"), format="csr")
+
+        # print(f"P0 type: {P0=}")
+        # print(type(P0))
+        P = sp.csr_matrix(P0)
+
+        # kmat from cache
+        # if not hasattr(self, "_kmat_cache") or (int(nxe_c) not in self._kmat_cache):
+        #     raise RuntimeError("Expected self._kmat_cache[nxe_c] to exist for energy smoothing.")
+        K = self._kmat_cache[int(nxe_c)]
+        K = K.tocsr() if sp.isspmatrix(K) else sp.csr_matrix(K)
+
+        # Jacobi block inverse (3x3 nodal blocks)
+        bs = 3
+        N = K.shape[0]
+        if (N % bs) != 0 or K.shape[1] != N:
+            raise ValueError(f"kmat must be square with size multiple of 3, got {K.shape}")
+        nblk = N // bs
+
+        Kb = K.tobsr(blocksize=(bs, bs))
+        diag_inv = np.zeros((nblk, bs, bs), dtype=float)
+        for i in range(nblk):
+            s, e = Kb.indptr[i], Kb.indptr[i + 1]
+            cols = Kb.indices[s:e]
+            data = Kb.data[s:e]  # (nblocks_in_row, bs, bs)
+            k = np.searchsorted(cols, i)
+            if k >= cols.size or cols[k] != i:
+                raise RuntimeError("Missing diagonal 3x3 block in kmat.")
+            Db = data[k]
+            Db = 0.5 * (Db + Db.T)
+            diag_inv[i] = np.linalg.inv(Db)
+
+        Dinv = sp.bsr_matrix(
+            (diag_inv, np.arange(nblk, dtype=np.int32), np.arange(nblk + 1, dtype=np.int32)),
+            shape=(N, N),
+            blocksize=(bs, bs),
+        ).tocsr()
+
+        print(f"{K.shape=} {P.shape=}")
+
+        # fixed sparsity mask from initial K@P
+        mask = None
+        if (not with_fillin) and use_mask:
+            mask = ((K @ P) != 0).astype(np.int8)
+
+        def control(Z):
+            if mask is None:
+                return Z
+            if not sp.issparse(Z):
+                Z = sp.csr_matrix(Z)
+            return Z.multiply(mask)
+
+        P = control(P)
+
+        # Jacobi-preconditioned energy smoothing: P <- P - omega * Dinv * (K P)
+        if with_fillin or (mask is None):
+            for _ in range(int(n_sweeps)):
+                KP = K @ P
+                P = P - float(omega) * (Dinv @ KP)
+        else:
+            for _ in range(int(n_sweeps)):
+                KP = control(K @ P)
+                P = control(P - float(omega) * (Dinv @ KP))
+
+        P_out = P.toarray()
+        self._lock_P_cache[cache_key] = P_out
+        return P_out
 
     def prolongate(self, coarse_soln: np.ndarray):
         dpn = self.dof_per_node
@@ -378,18 +482,20 @@ class HierarchicIsogeometricDispElement9:
         nnode_f = nx_f * ny_f
         ndof_f = dpn * nnode_f
 
-        R = self._build_2d_restr_matrix(nxe_c, nye_c)   # (nnode_c, nnode_f)
-        P = R.T                                         # (nnode_f, nnode_c)
+        # R = self._build_2d_restr_matrix(nxe_c, nye_c)   # (nnode_c, nnode_f)
+        # P = R.T                                         # (nnode_f, nnode_c)
+        # fine = np.zeros(ndof_f)
+        # wts  = np.zeros(ndof_f)
+        # ones_c = np.ones(nnode_c)
+        # for d in range(dpn):
+        #     fine[d::dpn] = P @ coarse_soln[d::dpn]
+        #     wts[d::dpn]  = P @ ones_c
+        # fine /= wts
 
-        fine = np.zeros(ndof_f)
-        wts  = np.zeros(ndof_f)
-        ones_c = np.ones(nnode_c)
+        
+        P = self._energy_smooth_jacobi_v1(nxe_c, n_sweeps=10, omega=0.5)
+        fine = np.dot(P, coarse_soln)
 
-        for d in range(dpn):
-            fine[d::dpn] = P @ coarse_soln[d::dpn]
-            wts[d::dpn]  = P @ ones_c
-
-        fine /= wts
         # if hasattr(self, "apply_bcs_2d"):  # optional
         fine = self.apply_bcs_2d(fine, nx_f, ny_f, mode="prolong")
         # self.check_bcs_2d(fine, nx_f, ny_f) # DEBUGGINg
@@ -407,11 +513,15 @@ class HierarchicIsogeometricDispElement9:
         nnode_c = nx_c * ny_c
         ndof_c = dpn * nnode_c
 
-        R = self._build_2d_restr_matrix(nxe_c, nye_c)   # (nnode_c, nnode_f)
+        # R = self._build_2d_restr_matrix(nxe_c, nye_c)   # (nnode_c, nnode_f)
+        # coarse = np.zeros(ndof_c)
+        # for d in range(dpn):
+        #     coarse[d::dpn] = R @ fine_defect[d::dpn]
 
-        coarse = np.zeros(ndof_c)
-        for d in range(dpn):
-            coarse[d::dpn] = R @ fine_defect[d::dpn]
+        P = self._energy_smooth_jacobi_v1(nxe_c, n_sweeps=10, omega=0.5)
+        R = P.T
+        coarse = np.dot(R, fine_defect)
+
 
         # if hasattr(self, "apply_bcs_2d"):  # optional
         coarse = self.apply_bcs_2d(coarse, nx_c, ny_c, mode="restrict")

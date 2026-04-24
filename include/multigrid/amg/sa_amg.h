@@ -21,12 +21,12 @@
 #include "fake_assembler.h"
 #include "sa_amg.cuh"
 
-template <typename T, class Smoother, bool ORTHOG_PROJECTOR = true>
+template <typename T, class FAKE_ASSEMBLER, class Smoother, bool ORTHOG_PROJECTOR = true>
 class SmoothAggregationAMG : public BaseSolver {
     /* based on python code in _py_demo/_src/bsr_aggregation.py */
    public:
-    using Assembler = FakeAssembler<T>;
-    using CoarseMG = SmoothAggregationAMG<T, Smoother, ORTHOG_PROJECTOR>;
+    using Assembler = FAKE_ASSEMBLER;
+    using CoarseMG = SmoothAggregationAMG<T, FAKE_ASSEMBLER, Smoother, ORTHOG_PROJECTOR>;
     using CoarseDirect = CusparseMGDirectLU<T, Assembler>;
 
     SmoothAggregationAMG(cublasHandle_t &cublasHandle_, cusparseHandle_t &cusparseHandle_,
@@ -80,6 +80,19 @@ class SmoothAggregationAMG : public BaseSolver {
         // _done_post_apply_bcs = false;
         compute_coarse_problem();
         // d_bcs = DeviceVec<int>(0);  // no bcs default
+    }
+
+    int get_total_nnzb() {
+        int c_nnzb = P_nnzb * 2 + kmat_nnzb;
+        if (is_coarse_mg) {
+            c_nnzb += coarse_mg->get_total_nnzb();
+        } else {
+            c_nnzb += coarse_direct->get_nnzb();
+        }
+        return c_nnzb;
+    }
+    T get_operator_complexity(int nofill_nnzb) {
+        return T(get_total_nnzb()) * 1.0 / T(nofill_nnzb);
     }
 
     void compute_coarse_problem() {

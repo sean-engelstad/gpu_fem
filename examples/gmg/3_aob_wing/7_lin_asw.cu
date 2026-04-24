@@ -66,7 +66,8 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
     using Physics = typename Assembler::Phys;
     using Data = typename Physics::Data;
     // using Smoother = ChebyshevPolynomialSmoother<Assembler>;
-    using Smoother = UnstructuredQuadElementAdditiveSchwarzSmoother<T, Assembler>;
+    using Smoother = UnstructuredQuadElementAdditiveSchwarzSmoother<T, Assembler, false>;
+    // using Smoother = UnstructuredQuadElementAdditiveSchwarzSmoother<T, Assembler, true>; // chebyshev additive schwarz not much difference
     // const bool is_bsr = true; // need this one if want to smooth prolongation
     const bool is_bsr = false; // no difference in intra-nodal (default old working prolong)
     using Prolongation = UnstructuredProlongation<Assembler, Basis, is_bsr>; 
@@ -122,7 +123,7 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
         int nvars = assembler.get_num_vars();
         int nnodes = assembler.get_num_nodes();
         HostVec<T> h_loads(nvars);
-        double load_mag = 10.0;
+        double load_mag = 1e3;
         double *my_loads = h_loads.getPtr();
         for (int inode = 0; inode < nnodes; inode++) {
             my_loads[6 * inode + 2] = load_mag;
@@ -217,6 +218,9 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
         int n_krylov = 500;
         kmg->init_outer_solver(cublasHandle, cusparseHandle, nsmooth, ninnercyc, 
             n_krylov, omega, atol, rtol, print_freq, print, double_smooth);    
+        // kmg->set_cycle_type("V");
+        kmg->set_cycle_type("W");
+        kmg->coarse_solver->factor();
     }
 
     CHECK_CUDA(cudaDeviceSynchronize());
