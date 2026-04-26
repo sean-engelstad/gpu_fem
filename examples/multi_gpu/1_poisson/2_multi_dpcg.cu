@@ -76,6 +76,7 @@ int main() {
     CHECK_CUDA(cudaSetDevice(0));
     int device_count = 0;
     CHECK_CUDA(cudaGetDeviceCount(&device_count));
+    printf("#GPUs = %d\n", device_count);
 
     cusparseHandle_t cusparseHandle = nullptr;
     CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
