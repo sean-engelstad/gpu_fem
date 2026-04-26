@@ -1,6 +1,6 @@
-#include "_utils.h"
-#include "../../../include/linalg/vec.h"
-#include "../../../include/solvers/linear_static/_cusparse_utils.h"
+#include "include/poisson.h"
+#include "linalg/vec.h"
+#include "solvers/linear_static/_cusparse_utils.h"
 #include <chrono>
 
 int main() {
@@ -152,7 +152,7 @@ int main() {
                                          mb, nnodes, block_dim, d_diag_vals, d_diag_rowp, d_diag_cols, trans_L,
                                          trans_U, policy_L, policy_U, dir);
 
-    // prelim vectors and data for BiCGStab
+    // prelim vectors and data for PCG
     // ------------------------------------
 
     // make temp vecs

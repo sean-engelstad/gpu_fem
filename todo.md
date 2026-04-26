@@ -1,15 +1,4 @@
 
-## Urgent Tasks
-
-1. [ ] submit thesis format check by April 23rd
-
-2. [ ] apply edits to thesis from Dr. Qian
-   - [ ] fix Christoffel symbols
-   - [ ] send thesis back out to committe with short document stating changes
-
-3. [ ] send around thesis approval docusign
-
-
 ## Journal paper plan
 
 - [ ] multigrid has these issues with MITC for thin shells
@@ -22,6 +11,7 @@
 
 ## Journal paper tasks
 
+- [ ] add README.md for gpu_fem to show highly scalable structural analysis pictures (and make people interested in using it)
 
 1. [ ] do unstructured wing problems with BDDC wraparound method
    - [x] fix BDDC code so it can do general BCs, just did equiv bcs on kmat_IEV (with duplicate nodes)

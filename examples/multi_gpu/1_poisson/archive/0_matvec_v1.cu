@@ -1,20 +1,13 @@
-#include "include/poisson.h"
-#include "linalg/vec.h"
-#include "solvers/linear_static/_cusparse_utils.h"
+#include "_utils.h"
+#include "../../../include/linalg/vec.h"
+#include "../../../include/solvers/linear_static/_cusparse_utils.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-#include <unordered_map>
 #include <algorithm>
-
-template <typename T>
-struct GhostCopy {
-    int src_gpu;
-    int src_local_node;
-    int dst_ext_node;
-};
 
 template <typename T>
 struct GPUData {
@@ -23,13 +16,8 @@ struct GPUData {
     int row_start_node = 0;
     int row_end_node = 0;
     int local_nnodes = 0;
-    int nghost = 0;
     int local_N = 0;
-    int ext_N = 0;
     int nnzb_local = 0;
-
-    std::vector<int> ghost_global_nodes;
-    std::vector<GhostCopy<T>> ghost_copies;
 
     int *h_rowp = nullptr;
     int *h_cols = nullptr;
@@ -39,98 +27,58 @@ struct GPUData {
     int *d_cols = nullptr;
     T *d_vals = nullptr;
 
-    T *d_x_owned = nullptr;
-    T *d_x_ext = nullptr;
-    T *d_y_owned = nullptr;
+    T *d_x_full = nullptr;
+    T *d_y_local = nullptr;
 
     cusparseHandle_t cusparseHandle = nullptr;
     cusparseMatDescr_t descrA = nullptr;
 };
 
-int ownerOfNode(int node, const std::vector<int> &starts, const std::vector<int> &ends) {
-    for (int g = 0; g < (int)starts.size(); g++) {
-        if (node >= starts[g] && node < ends[g]) return g;
-    }
-    return -1;
-}
-
 template <typename T>
-void extractLocalBSRRowsWithGhosts(
-    GPUData<T> &gd,
-    const std::vector<int> &starts,
-    const std::vector<int> &ends,
+void extractLocalBSRRows(
+    int row_start,
+    int row_end,
     const int *rowp,
     const int *cols,
     const T *vals,
-    int block_dim
+    int block_dim,
+    int **local_rowp_out,
+    int **local_cols_out,
+    T **local_vals_out,
+    int *local_nnzb_out
 ) {
-    int block_dim2 = block_dim * block_dim;
-
-    int row_start = gd.row_start_node;
-    int row_end = gd.row_end_node;
     int local_nrows = row_end - row_start;
+    int block_dim2 = block_dim * block_dim;
 
     int start_nnz = rowp[row_start];
     int end_nnz = rowp[row_end];
     int nnzb_local = end_nnz - start_nnz;
 
-    gd.h_rowp = (int*)malloc((local_nrows + 1) * sizeof(int));
-    gd.h_cols = (int*)malloc(nnzb_local * sizeof(int));
-    gd.h_vals = (T*)malloc(nnzb_local * block_dim2 * sizeof(T));
+    int *local_rowp = (int*)malloc((local_nrows + 1) * sizeof(int));
+    int *local_cols = (int*)malloc(nnzb_local * sizeof(int));
+    T *local_vals = (T*)malloc(nnzb_local * block_dim2 * sizeof(T));
 
-    gd.nnzb_local = nnzb_local;
-
-    std::unordered_map<int, int> ghost_map;
-
-    gd.h_rowp[0] = 0;
+    local_rowp[0] = 0;
     for (int i = 0; i < local_nrows; i++) {
-        gd.h_rowp[i + 1] = rowp[row_start + i + 1] - start_nnz;
+        local_rowp[i + 1] = rowp[row_start + i + 1] - start_nnz;
     }
 
     for (int k = 0; k < nnzb_local; k++) {
-        int global_col = cols[start_nnz + k];
-
-        if (global_col >= row_start && global_col < row_end) {
-            gd.h_cols[k] = global_col - row_start;
-        } else {
-            auto it = ghost_map.find(global_col);
-
-            if (it == ghost_map.end()) {
-                int ghost_id = (int)gd.ghost_global_nodes.size();
-                ghost_map[global_col] = ghost_id;
-                gd.ghost_global_nodes.push_back(global_col);
-
-                int src_gpu = ownerOfNode(global_col, starts, ends);
-                if (src_gpu < 0) {
-                    printf("ERROR: could not find owner for node %d\n", global_col);
-                    exit(1);
-                }
-
-                GhostCopy<T> cp;
-                cp.src_gpu = src_gpu;
-                cp.src_local_node = global_col - starts[src_gpu];
-                cp.dst_ext_node = local_nrows + ghost_id;
-                gd.ghost_copies.push_back(cp);
-
-                gd.h_cols[k] = local_nrows + ghost_id;
-            } else {
-                gd.h_cols[k] = local_nrows + it->second;
-            }
-        }
+        local_cols[k] = cols[start_nnz + k]; // keep GLOBAL block columns
     }
 
     for (int k = 0; k < nnzb_local * block_dim2; k++) {
-        gd.h_vals[k] = vals[start_nnz * block_dim2 + k];
+        local_vals[k] = vals[start_nnz * block_dim2 + k];
     }
 
-    gd.nghost = (int)gd.ghost_global_nodes.size();
-    gd.local_nnodes = local_nrows;
-    gd.local_N = gd.local_nnodes * block_dim;
-    gd.ext_N = (gd.local_nnodes + gd.nghost) * block_dim;
+    *local_rowp_out = local_rowp;
+    *local_cols_out = local_cols;
+    *local_vals_out = local_vals;
+    *local_nnzb_out = nnzb_local;
 }
 
 template <typename T>
-void setupGhostedMultiGPU(
+void setupMultiGPU(
     std::vector<GPUData<T>> &gpus,
     int ngpu,
     int N,
@@ -143,21 +91,26 @@ void setupGhostedMultiGPU(
 ) {
     gpus.resize(ngpu);
 
-    std::vector<int> starts(ngpu), ends(ngpu);
-    for (int g = 0; g < ngpu; g++) {
-        starts[g] = (g * nnodes) / ngpu;
-        ends[g] = ((g + 1) * nnodes) / ngpu;
-    }
-
     for (int g = 0; g < ngpu; g++) {
         CHECK_CUDA(cudaSetDevice(g));
 
-        gpus[g].dev = g;
-        gpus[g].row_start_node = starts[g];
-        gpus[g].row_end_node = ends[g];
+        int row_start = (g * nnodes) / ngpu;
+        int row_end = ((g + 1) * nnodes) / ngpu;
 
-        extractLocalBSRRowsWithGhosts<T>(
-            gpus[g], starts, ends, rowp, cols, vals, block_dim
+        gpus[g].dev = g;
+        gpus[g].row_start_node = row_start;
+        gpus[g].row_end_node = row_end;
+        gpus[g].local_nnodes = row_end - row_start;
+        gpus[g].local_N = gpus[g].local_nnodes * block_dim;
+
+        extractLocalBSRRows<T>(
+            row_start, row_end,
+            rowp, cols, vals,
+            block_dim,
+            &gpus[g].h_rowp,
+            &gpus[g].h_cols,
+            &gpus[g].h_vals,
+            &gpus[g].nnzb_local
         );
 
         CHECK_CUDA(cudaMalloc((void**)&gpus[g].d_rowp,
@@ -166,12 +119,9 @@ void setupGhostedMultiGPU(
                               gpus[g].nnzb_local * sizeof(int)));
         CHECK_CUDA(cudaMalloc((void**)&gpus[g].d_vals,
                               gpus[g].nnzb_local * block_dim2 * sizeof(T)));
-
-        CHECK_CUDA(cudaMalloc((void**)&gpus[g].d_x_owned,
-                              gpus[g].local_N * sizeof(T)));
-        CHECK_CUDA(cudaMalloc((void**)&gpus[g].d_x_ext,
-                              gpus[g].ext_N * sizeof(T)));
-        CHECK_CUDA(cudaMalloc((void**)&gpus[g].d_y_owned,
+        CHECK_CUDA(cudaMalloc((void**)&gpus[g].d_x_full,
+                              N * sizeof(T)));
+        CHECK_CUDA(cudaMalloc((void**)&gpus[g].d_y_local,
                               gpus[g].local_N * sizeof(T)));
 
         CHECK_CUDA(cudaMemcpy(gpus[g].d_rowp, gpus[g].h_rowp,
@@ -189,115 +139,37 @@ void setupGhostedMultiGPU(
         CHECK_CUSPARSE(cusparseSetMatType(gpus[g].descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
         CHECK_CUSPARSE(cusparseSetMatIndexBase(gpus[g].descrA, CUSPARSE_INDEX_BASE_ZERO));
 
-        printf("GPU %d owns block rows [%d, %d), local = %d, ghosts = %d, local nnzb = %d\n",
-               g,
-               gpus[g].row_start_node,
-               gpus[g].row_end_node,
-               gpus[g].local_nnodes,
-               gpus[g].nghost,
-               gpus[g].nnzb_local);
+        printf("GPU %d owns block rows [%d, %d), local_nnodes = %d, local nnzb = %d\n",
+               g, row_start, row_end, gpus[g].local_nnodes, gpus[g].nnzb_local);
     }
 }
 
 template <typename T>
-void scatterOwnedXToGPUs(
+void multiGpuBSRMatVec(
     std::vector<GPUData<T>> &gpus,
     int ngpu,
+    int N,
+    int nnodes,
     int block_dim,
-    const T *h_x
-) {
-    for (int g = 0; g < ngpu; g++) {
-        CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-
-        int scalar_start = gpus[g].row_start_node * block_dim;
-
-        CHECK_CUDA(cudaMemcpy(
-            gpus[g].d_x_owned,
-            &h_x[scalar_start],
-            gpus[g].local_N * sizeof(T),
-            cudaMemcpyHostToDevice
-        ));
-    }
-}
-
-template <typename T>
-void gatherOwnedYFromGPUs(
-    std::vector<GPUData<T>> &gpus,
-    int ngpu,
-    int block_dim,
+    const T *h_x,
     T *h_y
-) {
-    for (int g = 0; g < ngpu; g++) {
-        CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-
-        int scalar_start = gpus[g].row_start_node * block_dim;
-
-        CHECK_CUDA(cudaMemcpy(
-            &h_y[scalar_start],
-            gpus[g].d_y_owned,
-            gpus[g].local_N * sizeof(T),
-            cudaMemcpyDeviceToHost
-        ));
-    }
-}
-
-template <typename T>
-void exchangeGhosts(
-    std::vector<GPUData<T>> &gpus,
-    int ngpu,
-    int block_dim
-) {
-    for (int g = 0; g < ngpu; g++) {
-        CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-
-        CHECK_CUDA(cudaMemcpy(
-            gpus[g].d_x_ext,
-            gpus[g].d_x_owned,
-            gpus[g].local_N * sizeof(T),
-            cudaMemcpyDeviceToDevice
-        ));
-    }
-
-    for (int dst = 0; dst < ngpu; dst++) {
-        for (auto &cp : gpus[dst].ghost_copies) {
-            int src = cp.src_gpu;
-
-            CHECK_CUDA(cudaMemcpyPeer(
-                gpus[dst].d_x_ext + cp.dst_ext_node * block_dim,
-                gpus[dst].dev,
-                gpus[src].d_x_owned + cp.src_local_node * block_dim,
-                gpus[src].dev,
-                block_dim * sizeof(T)
-            ));
-        }
-    }
-
-    for (int g = 0; g < ngpu; g++) {
-        CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-        CHECK_CUDA(cudaDeviceSynchronize());
-    }
-}
-
-template <typename T>
-void multiGpuGhostedBSRMatVec(
-    std::vector<GPUData<T>> &gpus,
-    int ngpu,
-    int block_dim
 ) {
     T alpha = 1.0;
     T beta = 0.0;
 
-    exchangeGhosts<T>(gpus, ngpu, block_dim);
-
     for (int g = 0; g < ngpu; g++) {
         CHECK_CUDA(cudaSetDevice(gpus[g].dev));
+
+        CHECK_CUDA(cudaMemcpy(gpus[g].d_x_full, h_x,
+                              N * sizeof(T),
+                              cudaMemcpyHostToDevice));
 
         CHECK_CUSPARSE(cusparseDbsrmv(
             gpus[g].cusparseHandle,
             CUSPARSE_DIRECTION_ROW,
             CUSPARSE_OPERATION_NON_TRANSPOSE,
-            gpus[g].local_nnodes,
-            gpus[g].local_nnodes + gpus[g].nghost,
+            gpus[g].local_nnodes,  // local block rows
+            nnodes,                // global block cols because x is full
             gpus[g].nnzb_local,
             &alpha,
             gpus[g].descrA,
@@ -305,15 +177,21 @@ void multiGpuGhostedBSRMatVec(
             gpus[g].d_rowp,
             gpus[g].d_cols,
             block_dim,
-            gpus[g].d_x_ext,
+            gpus[g].d_x_full,
             &beta,
-            gpus[g].d_y_owned
+            gpus[g].d_y_local
         ));
     }
 
     for (int g = 0; g < ngpu; g++) {
         CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-        CHECK_CUDA(cudaDeviceSynchronize());
+
+        int scalar_start = gpus[g].row_start_node * block_dim;
+
+        CHECK_CUDA(cudaMemcpy(&h_y[scalar_start],
+                              gpus[g].d_y_local,
+                              gpus[g].local_N * sizeof(T),
+                              cudaMemcpyDeviceToHost));
     }
 }
 
@@ -325,9 +203,8 @@ void cleanupMultiGPU(std::vector<GPUData<T>> &gpus) {
         if (gd.d_rowp) cudaFree(gd.d_rowp);
         if (gd.d_cols) cudaFree(gd.d_cols);
         if (gd.d_vals) cudaFree(gd.d_vals);
-        if (gd.d_x_owned) cudaFree(gd.d_x_owned);
-        if (gd.d_x_ext) cudaFree(gd.d_x_ext);
-        if (gd.d_y_owned) cudaFree(gd.d_y_owned);
+        if (gd.d_x_full) cudaFree(gd.d_x_full);
+        if (gd.d_y_local) cudaFree(gd.d_y_local);
 
         if (gd.descrA) cusparseDestroyMatDescr(gd.descrA);
         if (gd.cusparseHandle) cusparseDestroy(gd.cusparseHandle);
@@ -375,7 +252,7 @@ int main() {
            N, nnodes, nz, nnzb);
 
     // -------------------------------------------------------
-    // Single GPU reference
+    // Single-GPU reference y_single = A*x on GPU 0
     // -------------------------------------------------------
 
     CHECK_CUDA(cudaSetDevice(0));
@@ -437,11 +314,16 @@ int main() {
                           cudaMemcpyDeviceToHost));
 
     // -------------------------------------------------------
-    // Ghosted multi GPU
+    // Multi-GPU row-split SpMV with replicated x
     // -------------------------------------------------------
 
     int device_count = 0;
     CHECK_CUDA(cudaGetDeviceCount(&device_count));
+
+    if (device_count <= 0) {
+        printf("No CUDA GPUs found.\n");
+        return 1;
+    }
 
     int requested_gpus = 4;
     int ngpu = std::min(requested_gpus, device_count);
@@ -450,7 +332,7 @@ int main() {
 
     std::vector<GPUData<T>> gpus;
 
-    setupGhostedMultiGPU<T>(
+    setupMultiGPU<T>(
         gpus,
         ngpu,
         N,
@@ -462,11 +344,15 @@ int main() {
         vals
     );
 
-    scatterOwnedXToGPUs<T>(gpus, ngpu, block_dim, x);
-
-    multiGpuGhostedBSRMatVec<T>(gpus, ngpu, block_dim);
-
-    gatherOwnedYFromGPUs<T>(gpus, ngpu, block_dim, y_multi);
+    multiGpuBSRMatVec<T>(
+        gpus,
+        ngpu,
+        N,
+        nnodes,
+        block_dim,
+        x,
+        y_multi
+    );
 
     // -------------------------------------------------------
     // Error check
@@ -485,16 +371,17 @@ int main() {
 
     double rel_err = sqrt(diff2 / norm2);
 
-    printf("\nGhosted multi-GPU BSR SpMV check:\n");
+    printf("\nSingle vs multi-GPU BSR SpMV check:\n");
     printf("  rel L2 error = %.15e\n", rel_err);
     printf("  max abs err  = %.15e\n", max_abs);
 
     if (rel_err < 1e-12) {
         printf("  PASS\n");
     } else {
-        printf("  FAIL\n");
+        printf("  FAIL / investigate BSR row split or block ordering\n");
     }
 
+    // cleanup
     cleanupMultiGPU<T>(gpus);
 
     CHECK_CUDA(cudaSetDevice(0));
