@@ -131,7 +131,7 @@ int main() {
     int print_freq = 10;
 
 
-    for (int g = 0; g < ngpus; g++) {
+    for (int g = 0; g < device_count; g++) {
         CHECK_CUDA(cudaSetDevice(g));
         CHECK_CUDA(cudaDeviceSynchronize());
     }
@@ -202,7 +202,7 @@ int main() {
 
 
     // print timing data
-    for (int g = 0; g < ngpus; g++) {
+    for (int g = 0; g < device_count; g++) {
         CHECK_CUDA(cudaSetDevice(g));
         CHECK_CUDA(cudaDeviceSynchronize());
     }
