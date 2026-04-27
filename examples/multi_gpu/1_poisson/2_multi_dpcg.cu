@@ -87,9 +87,12 @@ int main() {
     if (debug_gpu) {
         device_count = 5;
     }
+    printf("create x GPUvec\n"):
     auto x = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    printf("create kmat\n");
     auto kmat = new GPUbsrmat<T>(cublasHandle, cusparseHandle, rowp, cols, vals, 
         device_count, N, block_dim, debug_gpu);
+    printf("done with create kmat\n");
 
     // setup rhs vec (TBD)
     auto rhs = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);

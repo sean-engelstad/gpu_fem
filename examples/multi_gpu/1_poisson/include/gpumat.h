@@ -45,7 +45,9 @@ class GPUbsrmat {
             if (debug) printf("\tgpu[%d] nodes [%d,%d)\n", g, start_node[g], end_node[g]);
         }
 
+        printf("setup local gpu matrices\n");
         setup_local_gpu_matrices();
+        printf("setup ghost nodes\n");
         setup_ghost_nodes();
     }
 
@@ -392,6 +394,7 @@ class GPUbsrmat {
     }
 
     void expandVecToGhost(GPUvec<T> *x) {
+        printf("expandVecToGhost\n");
         for (int dst = 0; dst < ngpus; dst++) {
             // 1) Copy owned part into beginning of x_wghost[dst].
             CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
@@ -437,6 +440,7 @@ class GPUbsrmat {
     }
 
     void mult(T a, GPUvec<T> *x, T b, GPUvec<T> *y) {
+        printf("kmat mult method\n");
         expandVecToGhost(x);
 
         for (int g = 0; g < ngpus; g++) {
