@@ -84,9 +84,10 @@ int main() {
         device_count = 5;
     }
 
-    // one handle per logical GPU
+    // one handle + one stream per logical GPU
     cublasHandle_t *cublasHandles = new cublasHandle_t[device_count];
     cusparseHandle_t *cusparseHandles = new cusparseHandle_t[device_count];
+    cudaStream_t *streams = new cudaStream_t[device_count];
 
     for (int g = 0; g < device_count; g++) {
         CHECK_CUDA(cudaSetDevice(debug_gpu ? 0 : g));
@@ -94,47 +95,47 @@ int main() {
         cublasHandles[g] = nullptr;
         cusparseHandles[g] = nullptr;
 
+        CHECK_CUDA(cudaStreamCreate(&streams[g]));
+
         CHECK_CUBLAS(cublasCreate(&cublasHandles[g]));
         CHECK_CUSPARSE(cusparseCreate(&cusparseHandles[g]));
+
+        CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
+        CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
     }
 
     printf("create x GPUvec\n");
-    auto x = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+    auto x = new GPUvec<T>(cublasHandles, streams, device_count, N, block_dim, debug_gpu);
 
     printf("create kmat\n");
-    auto kmat = new GPUbsrmat<T>(cublasHandles, cusparseHandles,
+    auto kmat = new GPUbsrmat<T>(cublasHandles, cusparseHandles, streams,
                                 rowp, cols, vals,
                                 device_count, N, block_dim, debug_gpu);
 
     printf("done with create kmat\n");
 
-    // setup rhs vec
-    auto rhs = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+    auto rhs = new GPUvec<T>(cublasHandles, streams, device_count, N, block_dim, debug_gpu);
     rhs->setFromHost(h_rhs);
 
-    // setup diagonal matrix
-    auto Dinv_mat = new GPUdiagmat<T>(cublasHandles, cusparseHandles,
+    auto Dinv_mat = new GPUdiagmat<T>(cublasHandles, cusparseHandles, streams,
                                     rowp, cols, vals,
                                     device_count, N, block_dim, debug_gpu);
     Dinv_mat->factor();
 
-    // prelim vectors for PCG
-    // -------------------------
-    int max_iter = n_iter;
-    T a = 1.0, b = 0.0;
-
-    auto resid = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
-    auto tmp   = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
-    auto w     = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
-    auto p     = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
-    auto z     = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+    auto resid = new GPUvec<T>(cublasHandles, streams, device_count, N, block_dim, debug_gpu);
+    auto tmp   = new GPUvec<T>(cublasHandles, streams, device_count, N, block_dim, debug_gpu);
+    auto w     = new GPUvec<T>(cublasHandles, streams, device_count, N, block_dim, debug_gpu);
+    auto p     = new GPUvec<T>(cublasHandles, streams, device_count, N, block_dim, debug_gpu);
+    auto z     = new GPUvec<T>(cublasHandles, streams, device_count, N, block_dim, debug_gpu);
     bool can_print = true;
     int print_freq = 10;
 
+    int max_iter = n_iter;
+    T a = 1.0, b = 0.0; // util scalars
 
     for (int g = 0; g < device_count; g++) {
-        CHECK_CUDA(cudaSetDevice(g));
-        CHECK_CUDA(cudaDeviceSynchronize());
+        CHECK_CUDA(cudaSetDevice(debug_gpu ? 0 : g));
+        CHECK_CUDA(cudaStreamSynchronize(streams[g]));
     }
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -204,8 +205,8 @@ int main() {
 
     // print timing data
     for (int g = 0; g < device_count; g++) {
-        CHECK_CUDA(cudaSetDevice(g));
-        CHECK_CUDA(cudaDeviceSynchronize());
+        CHECK_CUDA(cudaSetDevice(debug_gpu ? 0 : g));
+        CHECK_CUDA(cudaStreamSynchronize(streams[g]));
     }
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
@@ -217,18 +218,10 @@ int main() {
     // CHECK solution (TODO)..
 
 
-    delete x;
-    delete kmat;
-    delete rhs;
-    delete Dinv_mat;
-    delete resid;
-    delete tmp;
-    delete w;
-    delete p;
-    delete z;
-
     for (int g = 0; g < device_count; g++) {
         CHECK_CUDA(cudaSetDevice(debug_gpu ? 0 : g));
+
+        CHECK_CUDA(cudaStreamSynchronize(streams[g]));
 
         if (cublasHandles[g]) {
             CHECK_CUBLAS(cublasDestroy(cublasHandles[g]));
@@ -237,8 +230,11 @@ int main() {
         if (cusparseHandles[g]) {
             CHECK_CUSPARSE(cusparseDestroy(cusparseHandles[g]));
         }
+
+        CHECK_CUDA(cudaStreamDestroy(streams[g]));
     }
 
     delete[] cublasHandles;
     delete[] cusparseHandles;
+    delete[] streams;
 }
