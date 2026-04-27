@@ -5,7 +5,6 @@
 #include "linalg/vec.h"
 #include "solvers/linear_static/_cusparse_utils.h"
 #include "include/multigpu_context.h"
-#include "include/gpu_pcg.h"
 #include <chrono>
 
 int main(int argc, char *argv[]) {
@@ -101,24 +100,106 @@ int main(int argc, char *argv[]) {
     auto Dinv_mat = new GPUdiagmat<T>(ctx, rowp, cols, vals, N, block_dim);
     Dinv_mat->factor();
 
+    auto resid = new GPUvec<T>(ctx, N, block_dim);
+    auto tmp   = new GPUvec<T>(ctx, N, block_dim);
+    auto w     = new GPUvec<T>(ctx, N, block_dim);
+    auto p     = new GPUvec<T>(ctx, N, block_dim);
+    auto z     = new GPUvec<T>(ctx, N, block_dim);
     bool can_print = true;
+    // int print_freq = 10;
     int print_freq = 50;
 
-    auto pcg = new GPU_PCG<T, GPUdiagmat<T>>(ctx, kmat, Dinv_mat, N, block_dim);
+    int max_iter = n_iter;
+    T a = 1.0, b = 0.0; // util scalars
 
-    int pcg_iters = pcg->solve(rhs, x,
-                            n_iter, abs_tol, rel_tol,
-                            print_freq, can_print);
+    ctx->sync();
+    auto start = std::chrono::high_resolution_clock::now();
 
-    if (pcg_iters < 0) {
-        printf("PCG did not converge in %d iterations\n", -pcg_iters);
+    int nrestarts = max_iter / n_iter;
+    int total_iter = 0;
+    bool converged = false;
+
+    // compute r_0 = b - A * x
+    rhs->copyTo(resid);
+    a = -1.0, b = 1.0;
+    printf("kmat mult startup\n");
+    kmat->mult(a, x, b, resid);
+
+    // compute residual norm
+    printf("get resid startup\n");
+    T init_resid_norm = resid->getResidual();
+    if (can_print) printf("PCG init_resid = %.8e\n", init_resid_norm);
+
+    // compute z = Dinv * r_0
+    printf("Dinvmat solve startup\n");
+    Dinv_mat->solve(resid, z);
+    printf("vec copy startup\n");
+    z->copyTo(p);
+
+    // inner loop
+    for (int j = 0; j < n_iter; j++, total_iter++) {
+        // w = A * p
+        a = 1.0, b = 0.0;
+	    // printf("kmat mult on iter %d\n", j);
+        kmat->mult(a, p, b, w);
+        
+        // alpha = <resid,z> / <w,p>, with dot products in rz0, wp0
+        T rz0 = resid->dotProd(z);
+        T wp0 = w->dotProd(p);
+        T alpha = rz0 / wp0;
+        // printf("rz0 %.2e, wp0 %.2e, alpha %.2e\n", rz0, wp0, alpha);
+
+        // update x += alpha * p and resid -= alpha * w
+        x->axpy(alpha, p);
+        a = -alpha;
+        resid->axpy(a, w);
+
+        // z = Dinv * resid
+        Dinv_mat->solve(resid, z);
+
+        // beta = <resid, z> / rz0
+        T rz1 = resid->dotProd(z);
+        T beta = rz1 / rz0;
+
+        // p = z + beta * p
+        p->scale(beta);
+        a = 1.0;
+        p->axpy(a, z);
+
+        // check for convergence
+        T resid_norm = resid->getResidual();
+        if (can_print && (j % print_freq == 0)) printf("PCG [%d] = %.8e\n", j, resid_norm);
+        if (abs(resid_norm) < (abs_tol + init_resid_norm * rel_tol)) {
+            converged = true;
+            // printf("in convergence\n");
+            if (can_print)
+                printf("\tPCG converged in %d iterations to %.9e resid\n", j + 1, resid_norm);
+            break;
+        }
+    }
+
+
+    // print timing data
+    ctx->sync();
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+    double dt = duration.count() / 1e6;
+    if (can_print) {
+        printf("\tfinished PCG with BSR ILU in %.4e sec\n", dt);
     }
 
     // CHECK solution (TODO)..
+
 
     delete x;
     delete kmat;
     delete rhs;
     delete Dinv_mat;
+    delete resid;
+    delete tmp;
+    delete w;
+    delete p;
+    delete z;
+
     delete ctx;
 }

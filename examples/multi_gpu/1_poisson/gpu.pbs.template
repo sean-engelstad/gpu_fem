@@ -34,10 +34,13 @@ echo "Allocated CPUs: $NPROCS"
 # clean old outputs
 rm -f gpu_*.txt
 
+# need larger problem size to see significant speedup of multi GPU to single GPU
+
 echo "===== 1 GPU run ====="
-CUDA_VISIBLE_DEVICES=0 mpiexec -n 1 ./2_multi_dpcg.out >> gpu_1gpu.txt
+CUDA_VISIBLE_DEVICES=0 mpiexec -n 1 ./2_multi_dpcg.out 16777216 >> gpu_1gpu.txt
 
 echo "===== 4 GPU run ====="
-CUDA_VISIBLE_DEVICES=0,1,2,3 mpiexec -n 1 ./2_multi_dpcg.out >> gpu_4gpu.txt
+CUDA_VISIBLE_DEVICES=0,1,2,3 mpiexec -n 1 ./2_multi_dpcg.out 16777216 >> gpu_4gpu.txt
+
 
 echo "===== PBS JOB END ====="
