@@ -398,7 +398,8 @@ class GPUbsrmat {
         for (int dst = 0; dst < ngpus; dst++) {
             // 1) Copy owned part into beginning of x_wghost[dst].
             CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
-            int loc_N = x->getLocalSize(dst);
+            printf("\towned copy on dst gpu %d\n", dst);
+	    int loc_N = x->getLocalSize(dst);
             T *loc_x = x->getPtr(dst);
             T *loc_xwg = x_wghost->getPtr(dst);
             CHECK_CUDA(cudaMemcpy(loc_xwg, loc_x, loc_N * sizeof(T), cudaMemcpyDeviceToDevice));
@@ -411,6 +412,7 @@ class GPUbsrmat {
 
                 // 2) On src GPU: pack needed source-owned nodes into d_xred[idx].
                 CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+		printf("copy ghostred on src gpu %d\n", src);
                 T *loc_x_src = x->getPtr(src);
                 T *loc_x_red = d_xred[idx];
                 int nnodes_red = N_red / block_dim;
@@ -427,6 +429,7 @@ class GPUbsrmat {
                     CHECK_CUDA(cudaMemcpy(loc_xwg + dst_offset, loc_x_red, N_red * sizeof(T),
                                           cudaMemcpyDeviceToDevice));
                 } else {
+		    printf("memcpy peer from src gpu %d => dst gpu %d\n", src, dst);
                     CHECK_CUDA(cudaMemcpyPeer(loc_xwg + dst_offset, dst, loc_x_red, src,
                                               N_red * sizeof(T)));
                 }
@@ -442,6 +445,7 @@ class GPUbsrmat {
     void mult(T a, GPUvec<T> *x, T b, GPUvec<T> *y) {
         printf("kmat mult method\n");
         expandVecToGhost(x);
+	printf("\tdone with expandVecToGhost\n");
 
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
@@ -455,6 +459,7 @@ class GPUbsrmat {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             CHECK_CUDA(cudaDeviceSynchronize());
         }
+	printf("\tdone with kmat mult\n");
     }
 
     void mult(GPUvec<T> *x, GPUvec<T> *y) {

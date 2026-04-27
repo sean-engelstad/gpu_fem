@@ -87,7 +87,7 @@ int main() {
     if (debug_gpu) {
         device_count = 5;
     }
-    printf("create x GPUvec\n"):
+    printf("create x GPUvec\n");
     auto x = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
     printf("create kmat\n");
     auto kmat = new GPUbsrmat<T>(cublasHandle, cusparseHandle, rowp, cols, vals, 
@@ -126,20 +126,25 @@ int main() {
     // compute r_0 = b - A * x
     rhs->copyTo(resid);
     a = -1.0, b = 1.0;
+    printf("kmat mult startup\n");
     kmat->mult(a, x, b, resid);
 
     // compute residual norm
+    printf("get resid startup\n");
     T init_resid_norm = resid->getResidual();
     if (can_print) printf("PCG init_resid = %.8e\n", init_resid_norm);
 
     // compute z = Dinv * r_0
+    printf("Dinvmat solve startup\n");
     Dinv_mat->solve(resid, z);
+    printf("vec copy startup\n");
     z->copyTo(p);
 
     // inner loop
     for (int j = 0; j < n_iter; j++, total_iter++) {
         // w = A * p
         a = 1.0, b = 0.0;
+	printf("kmat mult on iter %d\n", j);
         kmat->mult(a, p, b, w);
         
         // alpha = <resid,z> / <w,p>, with dot products in rz0, wp0
