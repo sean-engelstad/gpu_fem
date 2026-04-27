@@ -8,19 +8,11 @@
 #include "cuda_utils.h"
 #include "gpumat.cuh"
 #include "gpuvec.h"
-#include "multigpu_context.h"
 #include "utils.h"
 
 template <typename T>
 class GPUbsrmat {
    public:
-    GPUbsrmat(MultiGPUContext *ctx_, int *h_rowp_, int *h_cols_, T *h_vals_, int N_,
-              int block_dim_ = 6)
-        : GPUbsrmat(ctx_->cublasHandles, ctx_->cusparseHandles, ctx_->streams, h_rowp_, h_cols_,
-                    h_vals_, ctx_->ngpus, N_, block_dim_, ctx_->debug) {
-        ctx = ctx_;
-    }
-
     GPUbsrmat(cublasHandle_t *cublasHandles_, cusparseHandle_t *cusparseHandles_,
               cudaStream_t *streams_, int *h_rowp_, int *h_cols_, T *h_vals_, int ngpus_, int N_,
               int block_dim_ = 6, bool debug_ = false)
@@ -334,11 +326,7 @@ class GPUbsrmat {
     }
 
     void setup_ghost_nodes() {
-        if (ctx) {
-            x_wghost = new GPUvec<T>(ctx, loc_nb, N, block_dim);
-        } else {
-            x_wghost = new GPUvec<T>(cublasHandles, streams, loc_nb, ngpus, N, block_dim, debug);
-        }
+        x_wghost = new GPUvec<T>(cublasHandles, streams, loc_nb, ngpus, N, block_dim, debug);
 
         int npairs = ngpus * ngpus;
 
@@ -428,11 +416,6 @@ class GPUbsrmat {
     }
 
     void sync_all_streams() {
-        if (ctx) {
-            ctx->sync();
-            return;
-        }
-
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             CHECK_CUDA(cudaStreamSynchronize(streams[g]));
@@ -522,7 +505,6 @@ class GPUbsrmat {
     cublasHandle_t *cublasHandles = nullptr;
     cusparseHandle_t *cusparseHandles = nullptr;
     cudaStream_t *streams = nullptr;
-    MultiGPUContext *ctx = nullptr;
 
     cusparseMatDescr_t *descrA = nullptr;
 

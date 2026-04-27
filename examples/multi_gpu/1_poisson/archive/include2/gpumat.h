@@ -8,23 +8,14 @@
 #include "cuda_utils.h"
 #include "gpumat.cuh"
 #include "gpuvec.h"
-#include "multigpu_context.h"
 #include "utils.h"
 
 template <typename T>
 class GPUbsrmat {
    public:
-    GPUbsrmat(MultiGPUContext *ctx_, int *h_rowp_, int *h_cols_, T *h_vals_, int N_,
-              int block_dim_ = 6)
-        : GPUbsrmat(ctx_->cublasHandles, ctx_->cusparseHandles, ctx_->streams, h_rowp_, h_cols_,
-                    h_vals_, ctx_->ngpus, N_, block_dim_, ctx_->debug) {
-        ctx = ctx_;
-    }
-
-    GPUbsrmat(cublasHandle_t *cublasHandles_, cusparseHandle_t *cusparseHandles_,
-              cudaStream_t *streams_, int *h_rowp_, int *h_cols_, T *h_vals_, int ngpus_, int N_,
-              int block_dim_ = 6, bool debug_ = false)
-        : cublasHandles(cublasHandles_), cusparseHandles(cusparseHandles_), streams(streams_) {
+    GPUbsrmat(cublasHandle_t *cublasHandles_, cusparseHandle_t *cusparseHandles_, int *h_rowp_,
+              int *h_cols_, T *h_vals_, int ngpus_, int N_, int block_dim_ = 6, bool debug_ = false)
+        : cublasHandles(cublasHandles_), cusparseHandles(cusparseHandles_) {
         h_rowp = h_rowp_;
         h_cols = h_cols_;
         h_vals = h_vals_;
@@ -40,14 +31,21 @@ class GPUbsrmat {
         local_nnodes = new int[ngpus];
         local_N = new int[ngpus];
 
+        if (debug) printf("GPUbsrmat-internal vec with nnodes %d, ngpus %d\n", nnodes, ngpus);
+
         for (int g = 0; g < ngpus; g++) {
             start_node[g] = nnodes * g / ngpus;
             end_node[g] = nnodes * (g + 1) / ngpus;
             local_nnodes[g] = end_node[g] - start_node[g];
             local_N[g] = local_nnodes[g] * block_dim;
+
+            if (debug) printf("\tgpu[%d] nodes [%d,%d)\n", g, start_node[g], end_node[g]);
         }
 
+        printf("setup local gpu matrices\n");
         setup_local_gpu_matrices();
+
+        printf("setup ghost nodes\n");
         setup_ghost_nodes();
     }
 
@@ -72,8 +70,6 @@ class GPUbsrmat {
                 }
                 delete[] h_ghost_nodes[g];
             }
-
-            if (descrA && descrA[g]) cusparseDestroyMatDescr(descrA[g]);
         }
 
         if (d_xred) {
@@ -108,7 +104,7 @@ class GPUbsrmat {
 
         delete x_wghost;
 
-        delete[] descrA;
+        if (descrA) cusparseDestroyMatDescr(descrA);
 
         delete[] start_node;
         delete[] end_node;
@@ -152,6 +148,8 @@ class GPUbsrmat {
     }
 
     void setup_local_gpu_matrices() {
+        printf("create local gpu matrices\n");
+
         loc_mb = new int[ngpus];
         loc_nb = new int[ngpus];
         loc_nnzb = new int[ngpus];
@@ -169,8 +167,6 @@ class GPUbsrmat {
         ghost_nnodes = new int *[ngpus];
         h_ghost_nodes = new int **[ngpus];
 
-        descrA = new cusparseMatDescr_t[ngpus];
-
         memset(h_loc_rowp, 0, ngpus * sizeof(int *));
         memset(h_loc_cols, 0, ngpus * sizeof(int *));
         memset(h_loc_vals, 0, ngpus * sizeof(T *));
@@ -182,14 +178,13 @@ class GPUbsrmat {
         memset(h_cols_map, 0, ngpus * sizeof(int *));
         memset(ghost_nnodes, 0, ngpus * sizeof(int *));
         memset(h_ghost_nodes, 0, ngpus * sizeof(int **));
-        memset(descrA, 0, ngpus * sizeof(cusparseMatDescr_t));
+
+        CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA));
+        CHECK_CUSPARSE(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+        CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
 
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-
-            CHECK_CUSPARSE(cusparseCreateMatDescr(&descrA[g]));
-            CHECK_CUSPARSE(cusparseSetMatType(descrA[g], CUSPARSE_MATRIX_TYPE_GENERAL));
-            CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA[g], CUSPARSE_INDEX_BASE_ZERO));
 
             int _loc_nnodes = local_nnodes[g];
             int _start = start_node[g];
@@ -199,6 +194,7 @@ class GPUbsrmat {
             memset(h_loc_row_cts, 0, _loc_nnodes * sizeof(int));
 
             std::unordered_set<int> unique_cols_set;
+
             loc_nnzb[g] = 0;
 
             for (int row = _start; row < _end; row++) {
@@ -266,6 +262,7 @@ class GPUbsrmat {
 
                         if ((pass == 0 && is_owned) || (pass == 1 && !is_owned)) {
                             int offset = h_loc_row_cts[loc_row] + h_loc_rowp[g][loc_row];
+
                             h_loc_cols[g][offset] = jred;
 
                             for (int ii = 0; ii < block_dim2; ii++) {
@@ -276,6 +273,21 @@ class GPUbsrmat {
                             h_loc_row_cts[loc_row]++;
                         }
                     }
+                }
+            }
+
+            if (debug) {
+                printf("GPU[%d] mat with nrows %d x ncols %d\n", g, loc_mb[g], loc_nb[g]);
+
+                for (int row = 0; row < _loc_nnodes; row++) {
+                    printf("row %d: ", row);
+
+                    for (int jp = h_loc_rowp[g][row]; jp < h_loc_rowp[g][row + 1]; jp++) {
+                        int col = h_loc_cols[g][jp];
+                        printf(col < loc_mb[g] ? "%d," : "%dg,", col);
+                    }
+
+                    printf("\n");
                 }
             }
 
@@ -313,32 +325,36 @@ class GPUbsrmat {
                 }
             }
 
+            if (debug) {
+                for (int src = 0; src < ngpus; src++) {
+                    printf("h_ghost_nodes[%d => %d] (%d): ", src, g, ghost_nnodes[g][src]);
+                    printVec<int>(ghost_nnodes[g][src], h_ghost_nodes[g][src]);
+                }
+            }
+
             CHECK_CUDA(cudaMalloc((void **)&d_loc_rowp[g], (loc_mb[g] + 1) * sizeof(int)));
-            CHECK_CUDA(cudaMemcpyAsync(d_loc_rowp[g], h_loc_rowp[g], (loc_mb[g] + 1) * sizeof(int),
-                                       cudaMemcpyHostToDevice, streams[g]));
+
+            CHECK_CUDA(cudaMemcpy(d_loc_rowp[g], h_loc_rowp[g], (loc_mb[g] + 1) * sizeof(int),
+                                  cudaMemcpyHostToDevice));
 
             CHECK_CUDA(cudaMalloc((void **)&d_loc_cols[g], loc_nnzb[g] * sizeof(int)));
-            CHECK_CUDA(cudaMemcpyAsync(d_loc_cols[g], h_loc_cols[g], loc_nnzb[g] * sizeof(int),
-                                       cudaMemcpyHostToDevice, streams[g]));
+
+            CHECK_CUDA(cudaMemcpy(d_loc_cols[g], h_loc_cols[g], loc_nnzb[g] * sizeof(int),
+                                  cudaMemcpyHostToDevice));
 
             CHECK_CUDA(cudaMalloc((void **)&d_loc_vals[g], loc_nnz[g] * sizeof(T)));
-            CHECK_CUDA(cudaMemcpyAsync(d_loc_vals[g], h_loc_vals[g], loc_nnz[g] * sizeof(T),
-                                       cudaMemcpyHostToDevice, streams[g]));
+
+            CHECK_CUDA(cudaMemcpy(d_loc_vals[g], h_loc_vals[g], loc_nnz[g] * sizeof(T),
+                                  cudaMemcpyHostToDevice));
 
             delete[] temp;
             delete[] cols_imap;
             delete[] h_loc_row_cts;
         }
-
-        sync_all_streams();
     }
 
     void setup_ghost_nodes() {
-        if (ctx) {
-            x_wghost = new GPUvec<T>(ctx, loc_nb, N, block_dim);
-        } else {
-            x_wghost = new GPUvec<T>(cublasHandles, streams, loc_nb, ngpus, N, block_dim, debug);
-        }
+        x_wghost = new GPUvec<T>(cublasHandles, loc_nb, ngpus, N, block_dim, debug);
 
         int npairs = ngpus * ngpus;
 
@@ -416,44 +432,28 @@ class GPUbsrmat {
                 CHECK_CUDA(
                     cudaMalloc((void **)&d_srcred_map[idx], srcdest_nnodes[idx] * sizeof(int)));
 
-                CHECK_CUDA(cudaMemcpyAsync(d_srcred_map[idx], h_srcred_map[idx],
-                                           srcdest_nnodes[idx] * sizeof(int),
-                                           cudaMemcpyHostToDevice, streams[src]));
+                CHECK_CUDA(cudaMemcpy(d_srcred_map[idx], h_srcred_map[idx],
+                                      srcdest_nnodes[idx] * sizeof(int), cudaMemcpyHostToDevice));
 
                 CHECK_CUDA(cudaMalloc((void **)&d_xred[idx], xred_N[idx] * sizeof(T)));
             }
         }
-
-        sync_all_streams();
-    }
-
-    void sync_all_streams() {
-        if (ctx) {
-            ctx->sync();
-            return;
-        }
-
-        for (int g = 0; g < ngpus; g++) {
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUDA(cudaStreamSynchronize(streams[g]));
-        }
     }
 
     void expandVecToGhost(GPUvec<T> *x) {
-        // Owned x copies, one per dst stream.
+        // printf("expandVecToGhost\n");
+
         for (int dst = 0; dst < ngpus; dst++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+
+            // printf("\towned copy on dst gpu %d\n", dst);
 
             int loc_N = x->getLocalSize(dst);
             T *loc_x = x->getPtr(dst);
             T *loc_xwg = x_wghost->getPtr(dst);
 
-            CHECK_CUDA(cudaMemcpyAsync(loc_xwg, loc_x, loc_N * sizeof(T), cudaMemcpyDeviceToDevice,
-                                       streams[dst]));
-        }
+            CHECK_CUDA(cudaMemcpy(loc_xwg, loc_x, loc_N * sizeof(T), cudaMemcpyDeviceToDevice));
 
-        // Pack ghost data on source streams and peer-copy on those same source streams.
-        for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
 
@@ -464,6 +464,8 @@ class GPUbsrmat {
 
                 CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
 
+                // printf("copy ghostred on src gpu %d\n", src);
+
                 T *loc_x_src = x->getPtr(src);
                 T *loc_x_red = d_xred[idx];
 
@@ -473,44 +475,55 @@ class GPUbsrmat {
                 dim3 block(128);
                 dim3 grid((N_red + block.x - 1) / block.x);
 
-                k_copyghostred<T><<<grid, block, 0, streams[src]>>>(nnodes_red, block_dim, d_map,
-                                                                    loc_x_src, loc_x_red);
+                k_copyghostred<T>
+                    <<<grid, block>>>(nnodes_red, block_dim, d_map, loc_x_src, loc_x_red);
 
                 CHECK_CUDA(cudaGetLastError());
 
-                int dst_offset = dst_offset_nnodes[idx] * block_dim;
-                T *loc_xwg_dst = x_wghost->getPtr(dst);
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
 
-                if (debug) {
-                    CHECK_CUDA(cudaMemcpyAsync(loc_xwg_dst + dst_offset, loc_x_red,
-                                               N_red * sizeof(T), cudaMemcpyDeviceToDevice,
-                                               streams[src]));
+                int dst_offset = dst_offset_nnodes[idx] * block_dim;
+
+                if (debug || src == dst) {
+                    CHECK_CUDA(cudaMemcpy(loc_xwg + dst_offset, loc_x_red, N_red * sizeof(T),
+                                          cudaMemcpyDeviceToDevice));
                 } else {
-                    CHECK_CUDA(cudaMemcpyPeerAsync(loc_xwg_dst + dst_offset, dst, loc_x_red, src,
-                                                   N_red * sizeof(T), streams[src]));
+                    // printf("memcpy peer from src gpu %d => dst gpu %d\n", src, dst);
+
+                    CHECK_CUDA(cudaMemcpyPeer(loc_xwg + dst_offset, dst, loc_x_red, src,
+                                              N_red * sizeof(T)));
                 }
             }
         }
 
-        // Required before SpMV because peer copies issued on src streams write dst memory.
-        sync_all_streams();
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
     }
 
     void mult(T a, GPUvec<T> *x, T b, GPUvec<T> *y) {
+        // printf("kmat mult method\n");
+
         expandVecToGhost(x);
+
+        // printf("\tdone with expandVecToGhost\n");
 
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
 
-            CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
-
             CHECK_CUSPARSE(cusparseDbsrmv(
                 cusparseHandles[g], CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                loc_mb[g], loc_nb[g], loc_nnzb[g], &a, descrA[g], d_loc_vals[g], d_loc_rowp[g],
+                loc_mb[g], loc_nb[g], loc_nnzb[g], &a, descrA, d_loc_vals[g], d_loc_rowp[g],
                 d_loc_cols[g], block_dim, x_wghost->getPtr(g), &b, y->getPtr(g)));
         }
 
-        sync_all_streams();
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUDA(cudaDeviceSynchronize());
+        }
+
+        // printf("\tdone with kmat mult\n");
     }
 
     void mult(GPUvec<T> *x, GPUvec<T> *y) {
@@ -521,10 +534,8 @@ class GPUbsrmat {
 
     cublasHandle_t *cublasHandles = nullptr;
     cusparseHandle_t *cusparseHandles = nullptr;
-    cudaStream_t *streams = nullptr;
-    MultiGPUContext *ctx = nullptr;
 
-    cusparseMatDescr_t *descrA = nullptr;
+    cusparseMatDescr_t descrA = nullptr;
 
     int nnodes = 0;
     int block_dim = 0;

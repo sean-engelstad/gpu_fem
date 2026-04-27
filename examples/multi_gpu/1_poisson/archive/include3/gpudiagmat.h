@@ -5,20 +5,12 @@
 
 #include "cuda_utils.h"
 #include "gpuvec.h"
-#include "multigpu_context.h"
 #include "solvers/linear_static/_cusparse_utils.h"
 #include "utils.h"
 
 template <typename T>
 class GPUdiagmat {
    public:
-    GPUdiagmat(MultiGPUContext *ctx_, int *h_rowp_, int *h_cols_, T *h_vals_, int N_,
-               int block_dim_ = 6)
-        : GPUdiagmat(ctx_->cublasHandles, ctx_->cusparseHandles, ctx_->streams, h_rowp_, h_cols_,
-                     h_vals_, ctx_->ngpus, N_, block_dim_, ctx_->debug) {
-        ctx = ctx_;
-    }
-
     GPUdiagmat(cublasHandle_t *cublasHandles_, cusparseHandle_t *cusparseHandles_,
                cudaStream_t *streams_, int *h_rowp_, int *h_cols_, T *h_vals_, int ngpus_, int N_,
                int block_dim_ = 6, bool debug_ = false)
@@ -33,11 +25,7 @@ class GPUdiagmat {
         debug = debug_;
         block_dim2 = block_dim * block_dim;
 
-        if (ctx) {
-            tmp = new GPUvec<T>(ctx, N, block_dim);
-        } else {
-            tmp = new GPUvec<T>(cublasHandles, streams, ngpus, N, block_dim, debug);
-        }
+        tmp = new GPUvec<T>(cublasHandles, streams, ngpus, N, block_dim, debug);
 
         start_node = new int[ngpus];
         end_node = new int[ngpus];
@@ -190,11 +178,6 @@ class GPUdiagmat {
     }
 
     void sync_all_streams() const {
-        if (ctx) {
-            ctx->sync();
-            return;
-        }
-
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             CHECK_CUDA(cudaStreamSynchronize(streams[g]));
@@ -249,7 +232,6 @@ class GPUdiagmat {
     cublasHandle_t *cublasHandles = nullptr;
     cusparseHandle_t *cusparseHandles = nullptr;
     cudaStream_t *streams = nullptr;
-    MultiGPUContext *ctx = nullptr;
 
     int nnodes = 0;
     int block_dim = 0;

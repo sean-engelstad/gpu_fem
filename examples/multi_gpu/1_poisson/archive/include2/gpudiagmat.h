@@ -5,24 +5,16 @@
 
 #include "cuda_utils.h"
 #include "gpuvec.h"
-#include "multigpu_context.h"
 #include "solvers/linear_static/_cusparse_utils.h"
 #include "utils.h"
 
 template <typename T>
 class GPUdiagmat {
    public:
-    GPUdiagmat(MultiGPUContext *ctx_, int *h_rowp_, int *h_cols_, T *h_vals_, int N_,
-               int block_dim_ = 6)
-        : GPUdiagmat(ctx_->cublasHandles, ctx_->cusparseHandles, ctx_->streams, h_rowp_, h_cols_,
-                     h_vals_, ctx_->ngpus, N_, block_dim_, ctx_->debug) {
-        ctx = ctx_;
-    }
-
-    GPUdiagmat(cublasHandle_t *cublasHandles_, cusparseHandle_t *cusparseHandles_,
-               cudaStream_t *streams_, int *h_rowp_, int *h_cols_, T *h_vals_, int ngpus_, int N_,
-               int block_dim_ = 6, bool debug_ = false)
-        : cublasHandles(cublasHandles_), cusparseHandles(cusparseHandles_), streams(streams_) {
+    GPUdiagmat(cublasHandle_t *cublasHandles_, cusparseHandle_t *cusparseHandles_, int *h_rowp_,
+               int *h_cols_, T *h_vals_, int ngpus_, int N_, int block_dim_ = 6,
+               bool debug_ = false)
+        : cublasHandles(cublasHandles_), cusparseHandles(cusparseHandles_) {
         h_rowp = h_rowp_;
         h_cols = h_cols_;
         h_vals = h_vals_;
@@ -33,11 +25,7 @@ class GPUdiagmat {
         debug = debug_;
         block_dim2 = block_dim * block_dim;
 
-        if (ctx) {
-            tmp = new GPUvec<T>(ctx, N, block_dim);
-        } else {
-            tmp = new GPUvec<T>(cublasHandles, streams, ngpus, N, block_dim, debug);
-        }
+        tmp = new GPUvec<T>(cublasHandles, ngpus, N, block_dim, debug);
 
         start_node = new int[ngpus];
         end_node = new int[ngpus];
@@ -74,6 +62,8 @@ class GPUdiagmat {
         memset(info_L, 0, ngpus * sizeof(bsrsv2Info_t));
         memset(info_U, 0, ngpus * sizeof(bsrsv2Info_t));
 
+        if (debug) printf("GPUdiagmat with nnodes %d, ngpus %d\n", nnodes, ngpus);
+
         for (int g = 0; g < ngpus; g++) {
             start_node[g] = nnodes * g / ngpus;
             end_node[g] = nnodes * (g + 1) / ngpus;
@@ -81,14 +71,11 @@ class GPUdiagmat {
             local_N[g] = local_nnodes[g] * block_dim;
 
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
 
             CHECK_CUSPARSE(cusparseCreateMatDescr(&descr_L[g]));
             CHECK_CUSPARSE(cusparseCreateMatDescr(&descr_U[g]));
-
             CHECK_CUSPARSE(cusparseSetMatType(descr_L[g], CUSPARSE_MATRIX_TYPE_GENERAL));
             CHECK_CUSPARSE(cusparseSetMatType(descr_U[g], CUSPARSE_MATRIX_TYPE_GENERAL));
-
             CHECK_CUSPARSE(cusparseSetMatIndexBase(descr_L[g], CUSPARSE_INDEX_BASE_ZERO));
             CHECK_CUSPARSE(cusparseSetMatIndexBase(descr_U[g], CUSPARSE_INDEX_BASE_ZERO));
 
@@ -109,6 +96,15 @@ class GPUdiagmat {
                 h_diag_cols[g][i] = i;
             }
 
+            CHECK_CUDA(cudaMalloc((void **)&d_diag_rowp[g], (mb + 1) * sizeof(int)));
+            CHECK_CUDA(cudaMalloc((void **)&d_diag_cols[g], mb * sizeof(int)));
+
+            CHECK_CUDA(cudaMemcpy(d_diag_rowp[g], h_diag_rowp[g], (mb + 1) * sizeof(int),
+                                  cudaMemcpyHostToDevice));
+
+            CHECK_CUDA(cudaMemcpy(d_diag_cols[g], h_diag_cols[g], mb * sizeof(int),
+                                  cudaMemcpyHostToDevice));
+
             h_diag_vals[g] = new T[block_dim2 * mb];
             memset(h_diag_vals[g], 0, block_dim2 * mb * sizeof(T));
 
@@ -127,26 +123,14 @@ class GPUdiagmat {
                 }
             }
 
-            CHECK_CUDA(cudaMalloc((void **)&d_diag_rowp[g], (mb + 1) * sizeof(int)));
-            CHECK_CUDA(cudaMalloc((void **)&d_diag_cols[g], mb * sizeof(int)));
             CHECK_CUDA(cudaMalloc((void **)&d_diag_vals[g], mb * block_dim2 * sizeof(T)));
 
-            CHECK_CUDA(cudaMemcpyAsync(d_diag_rowp[g], h_diag_rowp[g], (mb + 1) * sizeof(int),
-                                       cudaMemcpyHostToDevice, streams[g]));
-
-            CHECK_CUDA(cudaMemcpyAsync(d_diag_cols[g], h_diag_cols[g], mb * sizeof(int),
-                                       cudaMemcpyHostToDevice, streams[g]));
-
-            CHECK_CUDA(cudaMemcpyAsync(d_diag_vals[g], h_diag_vals[g], mb * block_dim2 * sizeof(T),
-                                       cudaMemcpyHostToDevice, streams[g]));
+            CHECK_CUDA(cudaMemcpy(d_diag_vals[g], h_diag_vals[g], mb * block_dim2 * sizeof(T),
+                                  cudaMemcpyHostToDevice));
         }
-
-        sync_all_streams();
     }
 
     ~GPUdiagmat() {
-        sync_all_streams();
-
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
 
@@ -189,22 +173,9 @@ class GPUdiagmat {
         delete tmp;
     }
 
-    void sync_all_streams() const {
-        if (ctx) {
-            ctx->sync();
-            return;
-        }
-
-        for (int g = 0; g < ngpus; g++) {
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUDA(cudaStreamSynchronize(streams[g]));
-        }
-    }
-
     void factor() {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
 
             int mb = local_nnodes[g];
             int nnzb = diag_nnzb[g];
@@ -214,14 +185,11 @@ class GPUdiagmat {
                 nnzb, block_dim, d_diag_vals[g], d_diag_rowp[g], d_diag_cols[g], trans_L, trans_U,
                 policy_L, policy_U, dir);
         }
-
-        sync_all_streams();
     }
 
     void solve(GPUvec<T> *x, GPUvec<T> *y) {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
 
             int mb = local_nnodes[g];
             int nnzb = diag_nnzb[g];
@@ -242,14 +210,10 @@ class GPUdiagmat {
                                                  d_diag_cols[g], block_dim, info_U[g], loc_tmp,
                                                  loc_y, policy_U, pBuffer[g]));
         }
-
-        sync_all_streams();
     }
 
     cublasHandle_t *cublasHandles = nullptr;
     cusparseHandle_t *cusparseHandles = nullptr;
-    cudaStream_t *streams = nullptr;
-    MultiGPUContext *ctx = nullptr;
 
     int nnodes = 0;
     int block_dim = 0;

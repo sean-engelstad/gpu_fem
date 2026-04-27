@@ -4,22 +4,10 @@
 #include <cstring>
 
 #include "cuda_utils.h"
-#include "multigpu_context.h"
 
 template <typename T>
 class GPUvec {
    public:
-    GPUvec(MultiGPUContext *ctx_, int N_, int block_dim_ = 6)
-        : GPUvec(ctx_->cublasHandles, ctx_->streams, ctx_->ngpus, N_, block_dim_, ctx_->debug) {
-        ctx = ctx_;
-    }
-
-    GPUvec(MultiGPUContext *ctx_, const int *local_nnodes_, int N_, int block_dim_ = 6)
-        : GPUvec(ctx_->cublasHandles, ctx_->streams, local_nnodes_, ctx_->ngpus, N_, block_dim_,
-                 ctx_->debug) {
-        ctx = ctx_;
-    }
-
     GPUvec(cublasHandle_t *cublasHandles_, cudaStream_t *streams_, int ngpus_, int N_,
            int block_dim_ = 6, bool debug_ = false)
         : cublasHandles(cublasHandles_),
@@ -29,7 +17,33 @@ class GPUvec {
           N(N_),
           debug(debug_),
           owns_layout(true) {
-        init_uniform_layout();
+        nnodes = N / block_dim;
+
+        start_node = new int[ngpus];
+        end_node = new int[ngpus];
+        local_nnodes = new int[ngpus];
+        local_N = new int[ngpus];
+        d_vals_owned = new T *[ngpus];
+
+        memset(d_vals_owned, 0, ngpus * sizeof(T *));
+
+        if (debug) printf("GPUvec with nnodes %d, ngpus %d\n", nnodes, ngpus);
+
+        for (int g = 0; g < ngpus; g++) {
+            start_node[g] = nnodes * g / ngpus;
+            end_node[g] = nnodes * (g + 1) / ngpus;
+            local_nnodes[g] = end_node[g] - start_node[g];
+            local_N[g] = local_nnodes[g] * block_dim;
+
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
+
+            CHECK_CUDA(cudaMalloc((void **)&d_vals_owned[g], local_N[g] * sizeof(T)));
+
+            CHECK_CUDA(cudaMemsetAsync(d_vals_owned[g], 0, local_N[g] * sizeof(T), streams[g]));
+        }
+
+        sync_all_streams();
     }
 
     GPUvec(cublasHandle_t *cublasHandles_, cudaStream_t *streams_, const int *local_nnodes_,
@@ -41,7 +55,36 @@ class GPUvec {
           N(N_),
           debug(debug_),
           owns_layout(true) {
-        init_custom_layout(local_nnodes_);
+        nnodes = N / block_dim;
+
+        start_node = new int[ngpus];
+        end_node = new int[ngpus];
+        local_nnodes = new int[ngpus];
+        local_N = new int[ngpus];
+        d_vals_owned = new T *[ngpus];
+
+        memset(d_vals_owned, 0, ngpus * sizeof(T *));
+
+        if (debug) printf("GPUvec with custom local sizes, ngpus %d\n", ngpus);
+
+        int node_offset = 0;
+
+        for (int g = 0; g < ngpus; g++) {
+            start_node[g] = node_offset;
+            local_nnodes[g] = local_nnodes_[g];
+            end_node[g] = start_node[g] + local_nnodes[g];
+            node_offset = end_node[g];
+            local_N[g] = local_nnodes[g] * block_dim;
+
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
+
+            CHECK_CUDA(cudaMalloc((void **)&d_vals_owned[g], local_N[g] * sizeof(T)));
+
+            CHECK_CUDA(cudaMemsetAsync(d_vals_owned[g], 0, local_N[g] * sizeof(T), streams[g]));
+        }
+
+        sync_all_streams();
     }
 
     ~GPUvec() {
@@ -61,70 +104,7 @@ class GPUvec {
         delete[] local_N;
     }
 
-    void init_common_storage() {
-        nnodes = N / block_dim;
-
-        start_node = new int[ngpus];
-        end_node = new int[ngpus];
-        local_nnodes = new int[ngpus];
-        local_N = new int[ngpus];
-
-        d_vals_owned = new T *[ngpus];
-        memset(d_vals_owned, 0, ngpus * sizeof(T *));
-    }
-
-    void init_uniform_layout() {
-        init_common_storage();
-
-        if (debug) printf("GPUvec with nnodes %d, ngpus %d\n", nnodes, ngpus);
-
-        for (int g = 0; g < ngpus; g++) {
-            start_node[g] = nnodes * g / ngpus;
-            end_node[g] = nnodes * (g + 1) / ngpus;
-            local_nnodes[g] = end_node[g] - start_node[g];
-            local_N[g] = local_nnodes[g] * block_dim;
-
-            allocate_on_gpu(g);
-        }
-
-        sync_all_streams();
-    }
-
-    void init_custom_layout(const int *local_nnodes_) {
-        init_common_storage();
-
-        if (debug) printf("GPUvec with custom local sizes, ngpus %d\n", ngpus);
-
-        int node_offset = 0;
-
-        for (int g = 0; g < ngpus; g++) {
-            start_node[g] = node_offset;
-            local_nnodes[g] = local_nnodes_[g];
-            end_node[g] = start_node[g] + local_nnodes[g];
-            node_offset = end_node[g];
-            local_N[g] = local_nnodes[g] * block_dim;
-
-            allocate_on_gpu(g);
-        }
-
-        sync_all_streams();
-    }
-
-    void allocate_on_gpu(int g) {
-        CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-        CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
-
-        CHECK_CUDA(cudaMalloc((void **)&d_vals_owned[g], local_N[g] * sizeof(T)));
-
-        CHECK_CUDA(cudaMemsetAsync(d_vals_owned[g], 0, local_N[g] * sizeof(T), streams[g]));
-    }
-
     void sync_all_streams() const {
-        if (ctx) {
-            ctx->sync();
-            return;
-        }
-
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             CHECK_CUDA(cudaStreamSynchronize(streams[g]));
@@ -257,8 +237,6 @@ class GPUvec {
     int getLocalSize(int g) const { return local_N[g]; }
     int getStartNode(int g) const { return start_node[g]; }
     int getEndNode(int g) const { return end_node[g]; }
-
-    MultiGPUContext *ctx = nullptr;
 
     int ngpus = 0;
     int block_dim = 0;

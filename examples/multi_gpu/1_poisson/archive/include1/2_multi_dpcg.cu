@@ -4,10 +4,9 @@
 #include "include/gpudiagmat.h"
 #include "linalg/vec.h"
 #include "solvers/linear_static/_cusparse_utils.h"
-#include "include/multigpu_context.h"
 #include <chrono>
 
-int main(int argc, char *argv[]) {
+int main() {
     using T = double;
 
     // case inputs
@@ -15,16 +14,7 @@ int main(int argc, char *argv[]) {
 
     constexpr bool test_mult = false;
     constexpr bool check_mat_data = false;
-
-    int N = 16384; // default
-
-    if (argc > 1) {
-        N = atoi(argv[1]);
-    }
-
-    // int N = 16777216; // need larger problem size to see good speedup of multi GPU to single GPU (for poisson)
-    // int N = 1048576;
-    // int N = 16384; // 16384
+    int N = 16384; // 16384
     // int N = 64;
     // int N = 16;
     // int n_iter = min(N, 200);
@@ -83,35 +73,50 @@ int main(int argc, char *argv[]) {
     // create data on each GPU
     // ---------------------------------
 
-    bool debug_gpu = true && N < 100;
-    auto ctx = new MultiGPUContext(debug_gpu);
-
-    int device_count = ctx->ngpus;
+    CHECK_CUDA(cudaSetDevice(0));
+    int device_count = 0;
+    CHECK_CUDA(cudaGetDeviceCount(&device_count));
     printf("#GPUs = %d\n", device_count);
 
-    auto x = new GPUvec<T>(ctx, N, block_dim);
+    cusparseHandle_t cusparseHandle = nullptr;
+    CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
+    cublasHandle_t cublasHandle = NULL;
+    CHECK_CUBLAS(cublasCreate(&cublasHandle));
 
-    auto kmat = new GPUbsrmat<T>(ctx, rowp, cols, vals, N, block_dim);
+    bool debug_gpu = true && N < 100; // meaning we can build it like multi-GPU (on a single GPU)
+    if (debug_gpu) {
+        device_count = 5;
+    }
+    printf("create x GPUvec\n");
+    auto x = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    printf("create kmat\n");
+    auto kmat = new GPUbsrmat<T>(cublasHandle, cusparseHandle, rowp, cols, vals, 
+        device_count, N, block_dim, debug_gpu);
+    printf("done with create kmat\n");
 
-    auto rhs = new GPUvec<T>(ctx, N, block_dim);
+    // setup rhs vec (TBD)
+    auto rhs = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
     rhs->setFromHost(h_rhs);
 
-    auto Dinv_mat = new GPUdiagmat<T>(ctx, rowp, cols, vals, N, block_dim);
+    // TODO : setup diagonal matrix on GPU also
+    auto Dinv_mat = new GPUdiagmat<T>(cublasHandle, cusparseHandle, rowp, cols,
+        vals, device_count, N, block_dim, debug_gpu);
     Dinv_mat->factor();
 
-    auto resid = new GPUvec<T>(ctx, N, block_dim);
-    auto tmp   = new GPUvec<T>(ctx, N, block_dim);
-    auto w     = new GPUvec<T>(ctx, N, block_dim);
-    auto p     = new GPUvec<T>(ctx, N, block_dim);
-    auto z     = new GPUvec<T>(ctx, N, block_dim);
-    bool can_print = true;
-    // int print_freq = 10;
-    int print_freq = 50;
-
+    // prelim vectors for PCG
+    // -------------------------
     int max_iter = n_iter;
     T a = 1.0, b = 0.0; // util scalars
 
-    ctx->sync();
+    auto resid = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    auto tmp = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    auto w = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    auto p = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    auto z = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    bool can_print = true;
+    int print_freq = 10;
+
+
     auto start = std::chrono::high_resolution_clock::now();
 
     int nrestarts = max_iter / n_iter;
@@ -139,14 +144,13 @@ int main(int argc, char *argv[]) {
     for (int j = 0; j < n_iter; j++, total_iter++) {
         // w = A * p
         a = 1.0, b = 0.0;
-	    // printf("kmat mult on iter %d\n", j);
+	printf("kmat mult on iter %d\n", j);
         kmat->mult(a, p, b, w);
         
         // alpha = <resid,z> / <w,p>, with dot products in rz0, wp0
         T rz0 = resid->dotProd(z);
         T wp0 = w->dotProd(p);
         T alpha = rz0 / wp0;
-        // printf("rz0 %.2e, wp0 %.2e, alpha %.2e\n", rz0, wp0, alpha);
 
         // update x += alpha * p and resid -= alpha * w
         x->axpy(alpha, p);
@@ -179,7 +183,6 @@ int main(int argc, char *argv[]) {
 
 
     // print timing data
-    ctx->sync();
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     double dt = duration.count() / 1e6;
@@ -189,16 +192,4 @@ int main(int argc, char *argv[]) {
 
     // CHECK solution (TODO)..
 
-
-    delete x;
-    delete kmat;
-    delete rhs;
-    delete Dinv_mat;
-    delete resid;
-    delete tmp;
-    delete w;
-    delete p;
-    delete z;
-
-    delete ctx;
 }
