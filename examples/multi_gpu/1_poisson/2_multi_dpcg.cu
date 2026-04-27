@@ -131,6 +131,10 @@ int main() {
     int print_freq = 10;
 
 
+    for (int g = 0; g < ngpus; g++) {
+        CHECK_CUDA(cudaSetDevice(g));
+        CHECK_CUDA(cudaDeviceSynchronize());
+    }
     auto start = std::chrono::high_resolution_clock::now();
 
     int nrestarts = max_iter / n_iter;
@@ -198,6 +202,10 @@ int main() {
 
 
     // print timing data
+    for (int g = 0; g < ngpus; g++) {
+        CHECK_CUDA(cudaSetDevice(g));
+        CHECK_CUDA(cudaDeviceSynchronize());
+    }
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     double dt = duration.count() / 1e6;
