@@ -31,7 +31,6 @@ class GPUdiagmat {
         end_node = new int[ngpus];
         local_nnodes = new int[ngpus];
         local_N = new int[ngpus];
-
         diag_nnzb = new int[ngpus];
 
         h_diag_rowp = new int *[ngpus];
@@ -44,6 +43,11 @@ class GPUdiagmat {
 
         pBuffer = new void *[ngpus];
 
+        descr_L = new cusparseMatDescr_t[ngpus];
+        descr_U = new cusparseMatDescr_t[ngpus];
+        info_L = new bsrsv2Info_t[ngpus];
+        info_U = new bsrsv2Info_t[ngpus];
+
         memset(h_diag_rowp, 0, ngpus * sizeof(int *));
         memset(h_diag_cols, 0, ngpus * sizeof(int *));
         memset(h_diag_vals, 0, ngpus * sizeof(T *));
@@ -53,6 +57,10 @@ class GPUdiagmat {
         memset(d_diag_vals, 0, ngpus * sizeof(T *));
 
         memset(pBuffer, 0, ngpus * sizeof(void *));
+        memset(descr_L, 0, ngpus * sizeof(cusparseMatDescr_t));
+        memset(descr_U, 0, ngpus * sizeof(cusparseMatDescr_t));
+        memset(info_L, 0, ngpus * sizeof(bsrsv2Info_t));
+        memset(info_U, 0, ngpus * sizeof(bsrsv2Info_t));
 
         if (debug) printf("GPUdiagmat with nnodes %d, ngpus %d\n", nnodes, ngpus);
 
@@ -62,9 +70,17 @@ class GPUdiagmat {
             local_nnodes[g] = end_node[g] - start_node[g];
             local_N[g] = local_nnodes[g] * block_dim;
 
-            if (debug) printf("\tgpu[%d] nodes [%d,%d)\n", g, start_node[g], end_node[g]);
-
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+
+            CHECK_CUSPARSE(cusparseCreateMatDescr(&descr_L[g]));
+            CHECK_CUSPARSE(cusparseCreateMatDescr(&descr_U[g]));
+            CHECK_CUSPARSE(cusparseSetMatType(descr_L[g], CUSPARSE_MATRIX_TYPE_GENERAL));
+            CHECK_CUSPARSE(cusparseSetMatType(descr_U[g], CUSPARSE_MATRIX_TYPE_GENERAL));
+            CHECK_CUSPARSE(cusparseSetMatIndexBase(descr_L[g], CUSPARSE_INDEX_BASE_ZERO));
+            CHECK_CUSPARSE(cusparseSetMatIndexBase(descr_U[g], CUSPARSE_INDEX_BASE_ZERO));
+
+            CHECK_CUSPARSE(cusparseCreateBsrsv2Info(&info_L[g]));
+            CHECK_CUSPARSE(cusparseCreateBsrsv2Info(&info_U[g]));
 
             int mb = local_nnodes[g];
             diag_nnzb[g] = mb;
@@ -81,7 +97,6 @@ class GPUdiagmat {
             }
 
             CHECK_CUDA(cudaMalloc((void **)&d_diag_rowp[g], (mb + 1) * sizeof(int)));
-
             CHECK_CUDA(cudaMalloc((void **)&d_diag_cols[g], mb * sizeof(int)));
 
             CHECK_CUDA(cudaMemcpy(d_diag_rowp[g], h_diag_rowp[g], (mb + 1) * sizeof(int),
@@ -127,13 +142,17 @@ class GPUdiagmat {
             if (h_diag_rowp && h_diag_rowp[g]) delete[] h_diag_rowp[g];
             if (h_diag_cols && h_diag_cols[g]) delete[] h_diag_cols[g];
             if (h_diag_vals && h_diag_vals[g]) delete[] h_diag_vals[g];
+
+            if (descr_L && descr_L[g]) cusparseDestroyMatDescr(descr_L[g]);
+            if (descr_U && descr_U[g]) cusparseDestroyMatDescr(descr_U[g]);
+            if (info_L && info_L[g]) cusparseDestroyBsrsv2Info(info_L[g]);
+            if (info_U && info_U[g]) cusparseDestroyBsrsv2Info(info_U[g]);
         }
 
         delete[] start_node;
         delete[] end_node;
         delete[] local_nnodes;
         delete[] local_N;
-
         delete[] diag_nnzb;
 
         delete[] h_diag_rowp;
@@ -146,6 +165,11 @@ class GPUdiagmat {
 
         delete[] pBuffer;
 
+        delete[] descr_L;
+        delete[] descr_U;
+        delete[] info_L;
+        delete[] info_U;
+
         delete tmp;
     }
 
@@ -156,10 +180,10 @@ class GPUdiagmat {
             int mb = local_nnodes[g];
             int nnzb = diag_nnzb[g];
 
-            CUSPARSE::perform_ilu0_factorization(cusparseHandles[g], descr_L, descr_U, info_L,
-                                                 info_U, &pBuffer[g], mb, nnzb, block_dim,
-                                                 d_diag_vals[g], d_diag_rowp[g], d_diag_cols[g],
-                                                 trans_L, trans_U, policy_L, policy_U, dir);
+            CUSPARSE::perform_ilu0_factorization(
+                cusparseHandles[g], descr_L[g], descr_U[g], info_L[g], info_U[g], &pBuffer[g], mb,
+                nnzb, block_dim, d_diag_vals[g], d_diag_rowp[g], d_diag_cols[g], trans_L, trans_U,
+                policy_L, policy_U, dir);
         }
     }
 
@@ -177,14 +201,14 @@ class GPUdiagmat {
             T *loc_y = y->getPtr(g);
 
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandles[g], dir, trans_L, mb, nnzb, &a,
-                                                 descr_L, d_diag_vals[g], d_diag_rowp[g],
-                                                 d_diag_cols[g], block_dim, info_L, loc_x, loc_tmp,
-                                                 policy_L, pBuffer[g]));
+                                                 descr_L[g], d_diag_vals[g], d_diag_rowp[g],
+                                                 d_diag_cols[g], block_dim, info_L[g], loc_x,
+                                                 loc_tmp, policy_L, pBuffer[g]));
 
             CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandles[g], dir, trans_U, mb, nnzb, &a,
-                                                 descr_U, d_diag_vals[g], d_diag_rowp[g],
-                                                 d_diag_cols[g], block_dim, info_U, loc_tmp, loc_y,
-                                                 policy_U, pBuffer[g]));
+                                                 descr_U[g], d_diag_vals[g], d_diag_rowp[g],
+                                                 d_diag_cols[g], block_dim, info_U[g], loc_tmp,
+                                                 loc_y, policy_U, pBuffer[g]));
         }
     }
 
@@ -218,11 +242,11 @@ class GPUdiagmat {
     int **d_diag_cols = nullptr;
     T **d_diag_vals = nullptr;
 
-    cusparseMatDescr_t descr_L = 0;
-    cusparseMatDescr_t descr_U = 0;
+    cusparseMatDescr_t *descr_L = nullptr;
+    cusparseMatDescr_t *descr_U = nullptr;
 
-    bsrsv2Info_t info_L = 0;
-    bsrsv2Info_t info_U = 0;
+    bsrsv2Info_t *info_L = nullptr;
+    bsrsv2Info_t *info_U = nullptr;
 
     void **pBuffer = nullptr;
 

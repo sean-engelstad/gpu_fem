@@ -158,13 +158,14 @@ int main() {
     for (int j = 0; j < n_iter; j++, total_iter++) {
         // w = A * p
         a = 1.0, b = 0.0;
-	printf("kmat mult on iter %d\n", j);
+	    // printf("kmat mult on iter %d\n", j);
         kmat->mult(a, p, b, w);
         
         // alpha = <resid,z> / <w,p>, with dot products in rz0, wp0
         T rz0 = resid->dotProd(z);
         T wp0 = w->dotProd(p);
         T alpha = rz0 / wp0;
+        // printf("rz0 %.2e, wp0 %.2e, alpha %.2e\n", rz0, wp0, alpha);
 
         // update x += alpha * p and resid -= alpha * w
         x->axpy(alpha, p);
