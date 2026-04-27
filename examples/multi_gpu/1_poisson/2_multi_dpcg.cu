@@ -14,7 +14,8 @@ int main() {
 
     constexpr bool test_mult = false;
     constexpr bool check_mat_data = false;
-    int N = 16384; // 16384
+    int N = 1048576;
+    // int N = 16384; // 16384
     // int N = 64;
     // int N = 16;
     // int n_iter = min(N, 200);
