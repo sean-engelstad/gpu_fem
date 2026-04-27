@@ -7,12 +7,10 @@
 
 template <typename T>
 class GPUvec {
-    // a vector class for multi-GPU parallelism
-
    public:
-    GPUvec(cublasHandle_t &cublasHandle_, int ngpus_, int N_, int block_dim_ = 6,
+    GPUvec(cublasHandle_t *cublasHandles_, int ngpus_, int N_, int block_dim_ = 6,
            bool debug_ = false)
-        : cublasHandle(cublasHandle_),
+        : cublasHandles(cublasHandles_),
           ngpus(ngpus_),
           block_dim(block_dim_),
           N(N_),
@@ -28,11 +26,13 @@ class GPUvec {
         memset(d_vals_owned, 0, ngpus * sizeof(T *));
 
         if (debug) printf("GPUvec with nnodes %d, ngpus %d\n", nnodes, ngpus);
+
         for (int i = 0; i < ngpus; i++) {
             start_node[i] = nnodes * i / ngpus;
             end_node[i] = nnodes * (i + 1) / ngpus;
             local_nnodes[i] = end_node[i] - start_node[i];
             local_N[i] = local_nnodes[i] * block_dim;
+
             if (debug) printf("\tgpu[%d] nodes [%d,%d)\n", i, start_node[i], end_node[i]);
 
             CHECK_CUDA(cudaSetDevice(debug ? 0 : i));
@@ -41,9 +41,9 @@ class GPUvec {
         }
     }
 
-    GPUvec(cublasHandle_t &cublasHandle_, const int *local_nnodes_, int ngpus_, int N_,
+    GPUvec(cublasHandle_t *cublasHandles_, const int *local_nnodes_, int ngpus_, int N_,
            int block_dim_ = 6, bool debug_ = false)
-        : cublasHandle(cublasHandle_),
+        : cublasHandles(cublasHandles_),
           ngpus(ngpus_),
           block_dim(block_dim_),
           N(N_),
@@ -59,6 +59,7 @@ class GPUvec {
         memset(d_vals_owned, 0, ngpus * sizeof(T *));
 
         if (debug) printf("GPUvec with custom local sizes, ngpus %d\n", ngpus);
+
         int node_offset = 0;
         for (int i = 0; i < ngpus; i++) {
             start_node[i] = node_offset;
@@ -89,11 +90,11 @@ class GPUvec {
     }
 
     void setFromHost(const T *h_vals) {
-        for (int i = 0; i < ngpus; i++) {
-            int start = start_node[i];
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : i));
-            CHECK_CUDA(cudaMemcpy(d_vals_owned[i], &h_vals[block_dim * start],
-                                  local_N[i] * sizeof(T), cudaMemcpyHostToDevice));
+        for (int g = 0; g < ngpus; g++) {
+            int start = start_node[g];
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUDA(cudaMemcpy(d_vals_owned[g], &h_vals[block_dim * start],
+                                  local_N[g] * sizeof(T), cudaMemcpyHostToDevice));
         }
     }
 
@@ -108,13 +109,17 @@ class GPUvec {
 
     T getResidual() {
         T total_dot2 = 0.0;
+
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             T *loc_x = getPtr(g);
             T loc_dot2 = 0.0;
-            CHECK_CUBLAS(cublasDdot(cublasHandle, local_N[g], loc_x, 1, loc_x, 1, &loc_dot2));
+
+            CHECK_CUBLAS(cublasDdot(cublasHandles[g], local_N[g], loc_x, 1, loc_x, 1, &loc_dot2));
+
             total_dot2 += loc_dot2;
         }
+
         return sqrt(total_dot2);
     }
 
@@ -122,20 +127,25 @@ class GPUvec {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             T *loc_x = getPtr(g);
-            CHECK_CUBLAS(cublasDscal(cublasHandle, local_N[g], &alpha, loc_x, 1));
+
+            CHECK_CUBLAS(cublasDscal(cublasHandles[g], local_N[g], &alpha, loc_x, 1));
         }
     }
 
     T dotProd(GPUvec<T> *y) {
         T total_dot = 0.0;
+
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             T *loc_x = getPtr(g);
             T *loc_y = y->getPtr(g);
             T loc_dot = 0.0;
-            CHECK_CUBLAS(cublasDdot(cublasHandle, local_N[g], loc_x, 1, loc_y, 1, &loc_dot));
+
+            CHECK_CUBLAS(cublasDdot(cublasHandles[g], local_N[g], loc_x, 1, loc_y, 1, &loc_dot));
+
             total_dot += loc_dot;
         }
+
         return total_dot;
     }
 
@@ -144,7 +154,8 @@ class GPUvec {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             T *loc_x = x->getPtr(g);
             T *loc_y = getPtr(g);
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, local_N[g], &alpha, loc_x, 1, loc_y, 1));
+
+            CHECK_CUBLAS(cublasDaxpy(cublasHandles[g], local_N[g], &alpha, loc_x, 1, loc_y, 1));
         }
     }
 
@@ -153,12 +164,15 @@ class GPUvec {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             T *loc_x = x->getPtr(g);
             T *loc_y = getPtr(g);
-            CHECK_CUBLAS(cublasDscal(cublasHandle, local_N[g], &beta, loc_y, 1));
-            CHECK_CUBLAS(cublasDaxpy(cublasHandle, local_N[g], &alpha, loc_x, 1, loc_y, 1));
+
+            CHECK_CUBLAS(cublasDscal(cublasHandles[g], local_N[g], &beta, loc_y, 1));
+
+            CHECK_CUBLAS(cublasDaxpy(cublasHandles[g], local_N[g], &alpha, loc_x, 1, loc_y, 1));
         }
     }
 
     T *getPtr(int g) { return d_vals_owned[g]; }
+
     int getLocalSize(int g) const { return local_N[g]; }
     int getStartNode(int g) const { return start_node[g]; }
     int getEndNode(int g) const { return end_node[g]; }
@@ -166,11 +180,14 @@ class GPUvec {
     int ngpus, block_dim, N, nnodes;
     bool debug = false;
     bool owns_layout = true;
+
     int *start_node = nullptr;
     int *end_node = nullptr;
     int *local_nnodes = nullptr;
     int *local_N = nullptr;
 
     T **d_vals_owned = nullptr;
-    cublasHandle_t &cublasHandle;
+
+    // one cuBLAS handle per physical GPU
+    cublasHandle_t *cublasHandles = nullptr;
 };

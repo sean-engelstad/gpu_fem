@@ -78,41 +78,55 @@ int main() {
     CHECK_CUDA(cudaGetDeviceCount(&device_count));
     printf("#GPUs = %d\n", device_count);
 
-    cusparseHandle_t cusparseHandle = nullptr;
-    CHECK_CUSPARSE(cusparseCreate(&cusparseHandle));
-    cublasHandle_t cublasHandle = NULL;
-    CHECK_CUBLAS(cublasCreate(&cublasHandle));
-
-    bool debug_gpu = true && N < 100; // meaning we can build it like multi-GPU (on a single GPU)
+    bool debug_gpu = true && N < 100; // meaning we can build it like multi-GPU on one GPU
     if (debug_gpu) {
         device_count = 5;
     }
+
+    // one handle per logical GPU
+    cublasHandle_t *cublasHandles = new cublasHandle_t[device_count];
+    cusparseHandle_t *cusparseHandles = new cusparseHandle_t[device_count];
+
+    for (int g = 0; g < device_count; g++) {
+        CHECK_CUDA(cudaSetDevice(debug_gpu ? 0 : g));
+
+        cublasHandles[g] = nullptr;
+        cusparseHandles[g] = nullptr;
+
+        CHECK_CUBLAS(cublasCreate(&cublasHandles[g]));
+        CHECK_CUSPARSE(cusparseCreate(&cusparseHandles[g]));
+    }
+
     printf("create x GPUvec\n");
-    auto x = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    auto x = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+
     printf("create kmat\n");
-    auto kmat = new GPUbsrmat<T>(cublasHandle, cusparseHandle, rowp, cols, vals, 
-        device_count, N, block_dim, debug_gpu);
+    auto kmat = new GPUbsrmat<T>(cublasHandles, cusparseHandles,
+                                rowp, cols, vals,
+                                device_count, N, block_dim, debug_gpu);
+
     printf("done with create kmat\n");
 
-    // setup rhs vec (TBD)
-    auto rhs = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    // setup rhs vec
+    auto rhs = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
     rhs->setFromHost(h_rhs);
 
-    // TODO : setup diagonal matrix on GPU also
-    auto Dinv_mat = new GPUdiagmat<T>(cublasHandle, cusparseHandle, rowp, cols,
-        vals, device_count, N, block_dim, debug_gpu);
+    // setup diagonal matrix
+    auto Dinv_mat = new GPUdiagmat<T>(cublasHandles, cusparseHandles,
+                                    rowp, cols, vals,
+                                    device_count, N, block_dim, debug_gpu);
     Dinv_mat->factor();
 
     // prelim vectors for PCG
     // -------------------------
     int max_iter = n_iter;
-    T a = 1.0, b = 0.0; // util scalars
+    T a = 1.0, b = 0.0;
 
-    auto resid = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
-    auto tmp = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
-    auto w = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
-    auto p = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
-    auto z = new GPUvec<T>(cublasHandle, device_count, N, block_dim, debug_gpu);
+    auto resid = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+    auto tmp   = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+    auto w     = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+    auto p     = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
+    auto z     = new GPUvec<T>(cublasHandles, device_count, N, block_dim, debug_gpu);
     bool can_print = true;
     int print_freq = 10;
 
@@ -192,4 +206,29 @@ int main() {
 
     // CHECK solution (TODO)..
 
+
+    delete x;
+    delete kmat;
+    delete rhs;
+    delete Dinv_mat;
+    delete resid;
+    delete tmp;
+    delete w;
+    delete p;
+    delete z;
+
+    for (int g = 0; g < device_count; g++) {
+        CHECK_CUDA(cudaSetDevice(debug_gpu ? 0 : g));
+
+        if (cublasHandles[g]) {
+            CHECK_CUBLAS(cublasDestroy(cublasHandles[g]));
+        }
+
+        if (cusparseHandles[g]) {
+            CHECK_CUSPARSE(cusparseDestroy(cusparseHandles[g]));
+        }
+    }
+
+    delete[] cublasHandles;
+    delete[] cusparseHandles;
 }
