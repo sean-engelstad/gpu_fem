@@ -1,0 +1,43 @@
+#!/bin/bash
+#PBS -q gpu_devel
+#PBS -l select=1:model=mil_a100:ngpus=4:ncpus=8:mem=192GB
+#PBS -l walltime=00:15:00
+
+# ===== REQUIRED: replace DUMMY_GROUP before submitting =====
+#PBS -W group_list=DUMMY_GROUP
+
+#PBS -N gpu_job
+#PBS -o gpu.log
+#PBS -e gpu.err
+
+echo "===== PBS JOB START ====="
+
+echo "Working directory: $PBS_O_WORKDIR"
+cd $PBS_O_WORKDIR
+
+echo "Host: $(hostname)"
+echo "Time: $(date)"
+echo "Directory: $(pwd)"
+
+echo "Node file:"
+cat $PBS_NODEFILE
+
+source ~/.bashrc
+
+# MPI / CUDA settings (optional)
+# export OMPI_MCA_opal_cuda_support=false
+# export OMPI_MCA_btl_smcuda_use_cuda_ipc=0
+
+export NPROCS=$(wc -l < $PBS_NODEFILE)
+echo "Allocated CPUs: $NPROCS"
+
+# clean old outputs
+rm -f gpu_*.txt
+
+echo "===== 1 GPU run ====="
+CUDA_VISIBLE_DEVICES=0 mpiexec -n 1 ./2_multi_dpcg.out >> gpu_1gpu.txt
+
+echo "===== 4 GPU run ====="
+CUDA_VISIBLE_DEVICES=0,1,2,3 mpiexec -n 1 ./2_multi_dpcg.out >> gpu_4gpu.txt
+
+echo "===== PBS JOB END ====="
