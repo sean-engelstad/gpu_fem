@@ -293,7 +293,8 @@ int main(int argc, char **argv) {
     int nxe = 256; // default value
     double SR = 100.0; // default
     int n_vcycles = 50;
-    double omega = 0.3;
+    // double omega = 0.3;
+    double omega = 0.15;
 
     int nsmooth = 2; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle
