@@ -6,7 +6,7 @@
 
 #include "gpuvec.h"
 
-template <class Assembler>
+template <typename T, class Assembler>
 void printToVTK_v2(Assembler assembler, T *soln, std::string filename) {
     // NOTE : better to use F5 binary for large cases, we will handle that
 
@@ -30,7 +30,7 @@ void printToVTK_v2(Assembler assembler, T *soln, std::string filename) {
 
     // print all the xpts coordinates
     auto h_xpts = assembler.getXpts();
-    double *xpts_ptr = h_xpts.getPtr();
+    double *xpts_ptr = h_xpts->getPtr();
 
     using Phys = typename Assembler::Phys;
     int vpn = Phys::vars_per_node;
@@ -49,7 +49,7 @@ void printToVTK_v2(Assembler assembler, T *soln, std::string filename) {
     myfile << "CELLS " << num_elems << " " << num_elem_nodes << "\n";
 
     auto h_vars_conn = assembler.getConn();
-    int *conn_ptr = h_vars_conn.getPtr();
+    int *conn_ptr = h_vars_conn->getPtr();
 
     if (nodes_per_elem == 4) {
         const int32_t local_perm[4] = {0, 1, 3, 2};
@@ -157,17 +157,17 @@ void printToVTK_v2(Assembler assembler, T *soln, std::string filename) {
     // }
 
     // write thicknesses
-    double *h_dvs = d_dvs.createHostVec().getPtr();
-    int *h_elem_comp = elem_components.createHostVec().getPtr();
-    int ndvs_per_comp = d_dvs.getSize() / assembler.get_num_components();
-    myfile << "CELL_DATA " << num_elems << "\n";
-    scalarName = "thickness";
-    myfile << "SCALARS " << scalarName << " double64 1\n";
-    myfile << "LOOKUP_TABLE default\n";
-    for (int ielem = 0; ielem < num_elems; ielem++) {
-        int comp_id = h_elem_comp[ielem];
-        myfile << h_dvs[ndvs_per_comp * comp_id] << "\n";
-    }
+    // double *h_dvs = d_dvs.createHostVec().getPtr();
+    // int *h_elem_comp = elem_components.createHostVec().getPtr();
+    // int ndvs_per_comp = d_dvs.getSize() / assembler.get_num_components();
+    // myfile << "CELL_DATA " << num_elems << "\n";
+    // scalarName = "thickness";
+    // myfile << "SCALARS " << scalarName << " double64 1\n";
+    // myfile << "LOOKUP_TABLE default\n";
+    // for (int ielem = 0; ielem < num_elems; ielem++) {
+    //     int comp_id = h_elem_comp[ielem];
+    //     myfile << h_dvs[ndvs_per_comp * comp_id] << "\n";
+    // }
 
     // if (ndvs_per_comp > 1) {
     //     // like stiffened panel, writeout additional DVs also

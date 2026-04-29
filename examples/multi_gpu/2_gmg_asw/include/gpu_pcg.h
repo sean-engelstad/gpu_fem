@@ -3,15 +3,19 @@
 #include "gpuvec.h"
 #include "multigpu_context.h"
 
-template <typename T, class PRECOND>
+template <typename T, class Partitioner, class PRECOND>
 class GPU_PCG {
    public:
-    GPU_PCG(MultiGPUContext *ctx_, GPUbsrmat<T> *A_, PRECOND *M_, int N_, int block_dim_ = 6)
-        : ctx(ctx_), A(A_), M(M_), N(N_), block_dim(block_dim_) {
-        resid = new GPUvec<T>(ctx, N, block_dim);
-        w = new GPUvec<T>(ctx, N, block_dim);
-        p = new GPUvec<T>(ctx, N, block_dim);
-        z = new GPUvec<T>(ctx, N, block_dim);
+    using Vec = GPUvec<T, Partitioner>;
+    using Mat = GPUbsrmat<T, Partitioner>;
+
+    GPU_PCG(MultiGPUContext *ctx_, const Partitioner *part_, Mat *A_, PRECOND *M_, int N_,
+            int block_dim_ = 6)
+        : ctx(ctx_), part(part_), A(A_), M(M_), N(N_), block_dim(block_dim_) {
+        resid = new Vec(ctx, part, block_dim);
+        w = new Vec(ctx, part, block_dim);
+        p = new Vec(ctx, part, block_dim);
+        z = new Vec(ctx, part, block_dim);
     }
 
     ~GPU_PCG() {
@@ -21,7 +25,7 @@ class GPU_PCG {
         delete z;
     }
 
-    int solve(GPUvec<T> *rhs, GPUvec<T> *x, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
+    int solve(Vec *rhs, Vec *x, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,
               int print_freq = 50, bool can_print = true) {
         T a = 0.0;
         T b = 0.0;
@@ -35,7 +39,7 @@ class GPU_PCG {
         b = 1.0;
         A->mult(a, x, b, resid);
 
-        T init_resid_norm = resid->getResidual();
+        T init_resid_norm = resid->norm();
 
         if (can_print) {
             printf("PCG init_resid = %.8e\n", init_resid_norm);
@@ -70,7 +74,7 @@ class GPU_PCG {
             a = 1.0;
             p->axpy(a, z);
 
-            T resid_norm = resid->getResidual();
+            T resid_norm = resid->norm();
 
             if (can_print && (j % print_freq == 0)) {
                 printf("PCG [%d] = %.8e\n", j, resid_norm);
@@ -100,14 +104,15 @@ class GPU_PCG {
     }
 
     MultiGPUContext *ctx = nullptr;
-    GPUbsrmat<T> *A = nullptr;
+    const Partitioner *part = nullptr;
+    Mat *A = nullptr;
     PRECOND *M = nullptr;
 
     int N = 0;
     int block_dim = 0;
 
-    GPUvec<T> *resid = nullptr;
-    GPUvec<T> *w = nullptr;
-    GPUvec<T> *p = nullptr;
-    GPUvec<T> *z = nullptr;
+    Vec *resid = nullptr;
+    Vec *w = nullptr;
+    Vec *p = nullptr;
+    Vec *z = nullptr;
 };

@@ -1,11 +1,14 @@
 #pragma once
+#include "cuda_utils.h"
+#include "element/shell/strains/basic_utils.h"
+#include "element/shell/strains/strain_types.h"
 
 template <typename T, int elems_per_block, class ElemGroup>
 __GLOBAL__ static void k_add_multigpu_jacobian_fast(
     int32_t loc_num_nodes,
     int32_t loc_num_elements,
     int cols_per_elem,
-    const T *loc_elem_comps,
+    const int *loc_elem_comps,
     const int32_t *loc_elem_conn,
     const T *loc_xpts,
     const T *loc_vars,
@@ -196,7 +199,7 @@ template <typename T, int elems_per_block, class ElemGroup>
 __GLOBAL__ static void k_add_multigpu_residual_fast(
     int32_t loc_num_nodes,
     int32_t loc_num_elements,
-    const T *loc_elem_comps,
+    const int *loc_elem_comps,
     const int32_t *loc_row_elem_conn,
     const int32_t *loc_col_elem_conn,
     const T *loc_xpts,

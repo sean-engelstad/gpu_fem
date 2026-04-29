@@ -79,10 +79,11 @@ Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, dou
     }
 
     // make hostvec of bcs now
-    HostVec<int> bcs(my_bcs.size());
+    auto bcs = new HostVec<int>(my_bcs.size());
+    int *bcs_ptr = bcs->getPtr();
     // deep copy here
     for (int ibc = 0; ibc < my_bcs.size(); ibc++) {
-        bcs[ibc] = my_bcs.at(ibc);
+        bcs_ptr[ibc] = my_bcs.at(ibc);
     }
 
     // now initialize the element connectivity
@@ -118,19 +119,19 @@ Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, dou
     }
 
     // make element connectivities now
-    HostVec<int32_t> geo_conn(N, elem_conn);
-    HostVec<int32_t> vars_conn(N, elem_conn);
+    auto conn = new HostVec<int>(N, elem_conn);
 
     // now set the xyz-coordinates of the cylinder
     int32_t num_xpts = Geo::spatial_dim * num_nodes;
-    HostVec<T> xpts(num_xpts);
+    auto xpts = new HostVec<T>(num_xpts);
+    T *xpts_ptr = xpts->getPtr();
     T dx = L / (nnx - 1);
     T dth = 2 * M_PI / nnh;
     for (int ih = 0; ih < nnh; ih++) {
         for (int ix = 0; ix < nnx; ix++) {
             int inode = nnx * ih + ix;
 
-            T *xpt_node = &xpts[Geo::spatial_dim * inode];
+            T *xpt_node = &xpts_ptr[Geo::spatial_dim * inode];
             T x[1] = {0}, th[1] = {0}, R_mid[1] = {0};
             if constexpr (Basis::order == 1) {
                 x[0] = dx * ix;
@@ -176,7 +177,7 @@ Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, dou
         }
     }
 
-    HostVec<Data> physData(num_elements, Data(E, nu, thick, rho, ys));
+    auto physData = new HostVec<Data>(num_elements, Data(E, nu, thick, rho, ys));
 
     // make elem_components
     assert(nxe % nx_comp == 0);
@@ -185,7 +186,8 @@ Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, dou
     int nxe_per_comp = nxe / nx_comp;
     int nye_per_comp = nhe / ny_comp;
 
-    HostVec<int> elem_components(num_elements);
+    auto elem_components = new HostVec<int>(num_elements);
+    int *elem_comp_ptr = elem_components->getPtr();
     for (int iye = 0; iye < nhe; iye++) {
         for (int ixe = 0; ixe < nxe; ixe++) {
             int ielem = nxe * iye + ixe;
@@ -194,19 +196,23 @@ Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, dou
 
             int icomp = nx_comp * iy_comp + ix_comp;
 
-            elem_components[ielem] = icomp;
+            elem_comp_ptr[ielem] = icomp;
         }
     }
 
+    // printf("h_elem_conn[%d]: ", num_elements);
+    // printVec<int>(4 * num_elements, elem_conn);
+
     // make the assembler
-    Assembler assembler(ctx, num_nodes, num_nodes, num_elements, &vars_conn, &xpts, &bcs, &physData,
-                        num_components, &elem_components);
+    printf("create assembler\n");
+    Assembler assembler(ctx, num_nodes, num_elements, conn, xpts, bcs, physData, num_components,
+                        elem_components);
 
     return assembler;
 }
 
 template <typename T, class Basis, class Phys, int load_case = 2>
-T *getCylinderLoads(int nxe, int nhe, double L, double R, double load_mag) {
+T *getCylinderLoads2(int nxe, int nhe, double L, double R, double load_mag) {
     /*
     make compressive loads on the xpos edge of cylinder whose axis is in the (1,0,0) or x-direction
     TODO : later we will switch from this load control to disp control

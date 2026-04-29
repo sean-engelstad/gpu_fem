@@ -49,58 +49,121 @@ __GLOBAL__ void k_vec_apply_bcs(int nbcs, int *bcs, T *data) {
         data[idof] = 0.0;
     }
 }
-
 template <typename T, bool ones_on_diag = true>
-__GLOBAL__ void k_mat_apply_row_bcs(const int block_dim, int n_owned_bcs, int *d_owned_bcs, 
-    const int *rowp, const int *cols, T *values) {
-    int this_thread_bc = blockIdx.x * blockDim.x + threadIdx.x;
+__GLOBAL__ void k_mat_apply_row_bcs(
+    const int block_dim,
+    const int mb,
+    int n_owned_bcs,
+    const int *d_owned_bcs,
+    const int *owned_to_local_map,
+    const int *rowp,
+    const int *cols,
+    T *values) {
+
+    int ibc = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ibc >= n_owned_bcs) return;
+
     int block_dim2 = block_dim * block_dim;
 
-    if (this_thread_bc < n_owned_bcs) {
-        // get data associated with the row of this BC in the BSR matrix
-        int bc_dof = d_owned_bcs[this_thread_bc];
-        int block_row = bc_dof / block_dim;
-        // int _block_row = bc_dof / block_dim;
-        // int block_row = iperm[_block_row]; // old to new brow
-        int inner_row = bc_dof % block_dim;
-        int global_row = block_dim * block_row + inner_row;
-        for (int jp = rowp[block_row]; jp < rowp[block_row+1]; jp++) {
-            int block_col = cols[jp];
-            for (int inner_col = 0; inner_col < block_dim; inner_col++) {
-                int inner_block = block_dim * inner_row + inner_col;
-                int global_col = block_dim * block_col + inner_col;
-                T diag_val = ones_on_diag ? 1.0 : 0.0;
-                values[block_dim2 * jp + inner_block] = (global_col == global_row) ? diag_val : 0.0;
-            }
+    int bc_dof = d_owned_bcs[ibc];
+    int block_row = bc_dof / block_dim;
+    int inner_row = bc_dof % block_dim;
+
+    if (block_row < 0 || block_row >= mb) return;
+
+    int diag_local_col = owned_to_local_map[block_row];
+    if (diag_local_col < 0) return;
+
+    for (int jp = rowp[block_row]; jp < rowp[block_row + 1]; jp++) {
+        int block_col = cols[jp];
+
+        for (int inner_col = 0; inner_col < block_dim; inner_col++) {
+            int inner_block = block_dim * inner_row + inner_col;
+
+            bool is_diag =
+                (block_col == diag_local_col) &&
+                (inner_col == inner_row);
+
+            T diag_val = ones_on_diag ? 1.0 : 0.0;
+            values[block_dim2 * jp + inner_block] = is_diag ? diag_val : 0.0;
         }
     }
 }
 
-
 template <typename T, bool ones_on_diag = true>
-__GLOBAL__ void k_mat_apply_col_bcs(const int block_dim, int n_local_bcs, int *d_local_bcs, 
-    const int *tr_rowp, const int *tr_cols, const int *tr_map, T *values) {
-    int this_thread_bc = blockIdx.x * blockDim.x + threadIdx.x;
+__GLOBAL__ void k_mat_apply_col_bcs(
+    const int block_dim,
+    const int nb,
+    int n_local_bcs,
+    const int *d_local_bcs,
+    const int *local_to_owned_map,
+    const int *tr_rowp,
+    const int *tr_cols,
+    const int *tr_block_map,
+    T *values) {
+
+    int ibc = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ibc >= n_local_bcs) return;
+
     int block_dim2 = block_dim * block_dim;
 
-    if (this_thread_bc < n_local_bcs) {
-        int bc_dof = d_local_bcs[this_thread_bc];
-        // get data associated with the row of this BC in the BSR matrix
-        // int _block_col = bc_dof / block_dim;
-        // int block_col = iperm[_block_col]; // old to new bcol
-        int block_col = bc_dof / block_dim;
-        int inner_col = bc_dof % block_dim;
-        int global_col = block_dim * block_col + inner_col;
-        for (int jp_tr = tr_rowp[block_col]; jp_tr < tr_rowp[block_col+1]; jp_tr++) {
-            int block_row = tr_cols[jp_tr];
-            
-            for (int inner_row = 0; inner_row < block_dim; inner_row++) {
-                int inner_block = block_dim * inner_row + inner_col;
-                int global_row = block_dim * block_row + inner_row;
-                int jp = tr_block_map[jp_tr];
-                T diag_val = ones_on_diag ? 1.0 : 0.0;
-                values[block_dim2 * jp + inner_block] = (global_col == global_row) ? diag_val : 0.0;
-            }
+    int bc_dof = d_local_bcs[ibc];
+    int block_col = bc_dof / block_dim;
+    int inner_col = bc_dof % block_dim;
+
+    if (block_col < 0 || block_col >= nb) return;
+
+    int diag_owned_row = local_to_owned_map[block_col];
+
+    for (int jp_tr = tr_rowp[block_col]; jp_tr < tr_rowp[block_col + 1]; jp_tr++) {
+        int block_row = tr_cols[jp_tr];
+        int jp = tr_block_map[jp_tr];
+
+        for (int inner_row = 0; inner_row < block_dim; inner_row++) {
+            int inner_block = block_dim * inner_row + inner_col;
+
+            bool is_diag =
+                (block_row == diag_owned_row) &&
+                (inner_row == inner_col);
+
+            T diag_val = ones_on_diag ? 1.0 : 0.0;
+            values[block_dim2 * jp + inner_block] = is_diag ? diag_val : 0.0;
         }
     }
+}
+
+template <typename T>
+__global__ void k_set_owned_from_global_host_order(
+    int nnodes,
+    int block_dim,
+    const int *owned_nodes,
+    const T *global_vals,
+    T *owned_vals) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = nnodes * block_dim;
+    if (tid >= N) return;
+
+    int i = tid / block_dim;
+    int idof = tid % block_dim;
+    int global_node = owned_nodes[i];
+
+    owned_vals[tid] = global_vals[global_node * block_dim + idof];
+}
+
+template <typename T>
+__global__ void k_get_owned_to_global_host_order(
+    int nnodes,
+    int block_dim,
+    const int *owned_nodes,
+    const T *owned_vals,
+    T *global_vals) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = nnodes * block_dim;
+    if (tid >= N) return;
+
+    int i = tid / block_dim;
+    int idof = tid % block_dim;
+    int global_node = owned_nodes[i];
+
+    global_vals[global_node * block_dim + idof] = owned_vals[tid];
 }

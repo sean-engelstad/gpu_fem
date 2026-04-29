@@ -1,3 +1,4 @@
+#pragma once
 #include "cuda_utils.h"
 
 template <typename T, template <typename> class Vec>

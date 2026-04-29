@@ -35,10 +35,15 @@ class MultiGPUElementASW {
         size4 = nodes_per_elem * nodes_per_elem;
         n = nodes_per_elem * block_dim;
 
+        printf("ASW - allocate_arrays\n");
         allocate_arrays();
+        printf("ASW - build_maps\n");
         build_maps();
+        printf("ASW - allocate_batched_memory\n");
         allocate_batched_memory();
+        printf("ASW - move_maps_to_device\n");
         move_maps_to_device();
+        printf("ASW - done with constructor\n");
 
         temp = new GPUvec<T, Partitioner>(ctx, part, block_dim);
         defect = new GPUvec<T, Partitioner>(ctx, part, block_dim);
@@ -361,5 +366,6 @@ class MultiGPUElementASW {
 
             CHECK_CUDA(cudaGetLastError());
         }
+        ctx->sync();
     }
 };

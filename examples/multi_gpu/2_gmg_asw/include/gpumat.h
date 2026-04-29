@@ -9,6 +9,10 @@
 #include "gpuvec.h"
 #include "matvec.cuh"
 #include "multigpu_context.h"
+
+// in order to work with cusparse index_t has to be int
+typedef int index_t;
+
 #include "sparse_utils/sparse_matrix.h"
 #include "sparse_utils/sparse_symbolic.h"
 
@@ -87,20 +91,31 @@ class GPUbsrmat {
 
     void apply_bcs(int *n_owned_bcs, int **d_owned_bcs, int *n_local_bcs, int **d_local_bcs) {
         for (int g = 0; g < ngpus; g++) {
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUDA(cudaSetDevice(g));
             CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
 
             // TODO : add perm + iperm into the matrices later..
+            printf("GPU[%d] - apply row bcs to matrix\n", g);
             dim3 block(32);
-            dim3 grid1((n_owned_bcs[g] + 31) / 32);
-            k_mat_apply_row_bcs<T><<<grid1, block, 0, streams[g]>>>(block_dim, n_owned_bcs[g],
-                                                                    d_owned_bcs[g], d_loc_rowp[g],
-                                                                    d_loc_cols[g], d_loc_vals[g]);
+            if (n_owned_bcs[g] > 0) {
+                dim3 grid1((n_owned_bcs[g] + 31) / 32);
+                k_mat_apply_row_bcs<T><<<grid1, block, 0, streams[g]>>>(
+                    block_dim, loc_mb[g], n_owned_bcs[g], d_owned_bcs[g],
+                    part->d_owned_to_local_map[g], d_loc_rowp[g], d_loc_cols[g], d_loc_vals[g]);
 
-            dim3 grid2((n_local_bcs[g] + 31) / 32);
-            k_mat_apply_col_bcs<T><<<grid2, block, 0, streams[g]>>>(
-                block_dim, n_local_bcs[g], d_local_bcs[g], d_tr_loc_rowp[g], d_tr_loc_cols[g],
-                d_tr_block_map[g], d_loc_vals[g]);
+                CHECK_CUDA(cudaGetLastError());
+            }
+
+            printf("GPU[%d] - apply col bcs to matrix\n", g);
+            if (n_local_bcs[g] > 0) {
+                dim3 grid2((n_local_bcs[g] + 31) / 32);
+                k_mat_apply_col_bcs<T><<<grid2, block, 0, streams[g]>>>(
+                    block_dim, loc_nb[g], n_local_bcs[g], d_local_bcs[g],
+                    part->d_local_to_owned_map[g], d_tr_loc_rowp[g], d_tr_loc_cols[g],
+                    d_tr_block_map[g], d_loc_vals[g]);
+
+                CHECK_CUDA(cudaGetLastError());
+            }
         }
         ctx->sync();
     }
@@ -136,9 +151,12 @@ class GPUbsrmat {
         mult(alpha, x, beta, y);
     }
 
+    int *getHostRowRedElemConn(int g) { return h_row_red_elem_conn[g]; }
+    int *getHostColRedElemConn(int g) { return h_col_red_elem_conn[g]; }
+    int *getHostLocalElemIndMap(int g) { return h_loc_elem_ind_map[g]; }
+
     int *getRowRedElemConn(int g) { return d_row_red_elem_conn[g]; }
     int *getColRedElemConn(int g) { return d_col_red_elem_conn[g]; }
-
     int *getLocalElemIndMap(int g) { return d_loc_elem_ind_map[g]; }
 
     int *getLocalRowp(int g) { return d_loc_rowp[g]; }
@@ -408,7 +426,7 @@ class GPUbsrmat {
         }
     }
 
-    void void move_matrix_pattern_to_device() {
+    void move_matrix_pattern_to_device() {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
 

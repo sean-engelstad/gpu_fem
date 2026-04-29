@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cuda_utils.h"
+#include "utils.h"
 
 enum NodeType { INTERIOR = 0, INTERFACE = 1 };
 
@@ -18,12 +19,23 @@ class StructuredGPUPartitioner {
           num_elements(num_elements_),
           nodes_per_elem(nodes_per_elem_),
           h_elem_conn(h_elem_conn_) {
+        printf("temp\n");
+        printf("h_elem_conn[%d]: ", num_elements);
+        printVec<int>(4 * num_elements, h_elem_conn);
+
+        printf("split element connectivity\n");
         split_elem_connectivity();
+        printf("assign owned nodes\n");
         assign_owned_nodes();
+        printf("build_owned_node_lists\n");
         build_owned_node_lists();
+        printf("build_local_node_maps\n");
         build_local_node_maps();
+        printf("build_ghost_node_maps\n");
         build_ghost_node_maps();
-        build_owned_to_local_maps();
+        printf("build_owned_local_maps\n");
+        build_owned_local_maps();
+        printf("move_maps_to_device\n");
         move_maps_to_device();
     }
 
@@ -88,8 +100,8 @@ class StructuredGPUPartitioner {
             if (start_elem[g] <= elem && elem < end_elem[g]) return g;
         return -1;
     }
-    int *getNumOwnedNodes(const int g) { return owned_nnodes[g]; }
-    int *getNumLocalNodes(const int g) { return local_nnodes[g]; }
+    int getNumOwnedNodes(const int g) { return owned_nnodes[g]; }
+    int getNumLocalNodes(const int g) { return local_nnodes[g]; }
     int *getOwnedNodesPtr(const int g) { return h_owned_nodes[g]; }
     int *getLocalNodesPtr(const int g) { return h_local_nodes[g]; }
 
@@ -243,15 +255,23 @@ class StructuredGPUPartitioner {
         }
     }
 
-    void build_owned_to_local_maps() {
+    void build_owned_local_maps() {
         h_owned_to_local_map = new int *[ngpus];
         d_owned_to_local_map = new int *[ngpus];
 
+        h_local_to_owned_map = new int *[ngpus];
+        d_local_to_owned_map = new int *[ngpus];
+
         std::memset(h_owned_to_local_map, 0, ngpus * sizeof(int *));
         std::memset(d_owned_to_local_map, 0, ngpus * sizeof(int *));
+        std::memset(h_local_to_owned_map, 0, ngpus * sizeof(int *));
+        std::memset(d_local_to_owned_map, 0, ngpus * sizeof(int *));
 
         for (int g = 0; g < ngpus; g++) {
             h_owned_to_local_map[g] = new int[owned_nnodes[g]];
+            h_local_to_owned_map[g] = new int[local_nnodes[g]];
+
+            std::fill(h_local_to_owned_map[g], h_local_to_owned_map[g] + local_nnodes[g], -1);
 
             int *global_to_local = new int[num_nodes];
             std::memset(global_to_local, -1, num_nodes * sizeof(int));
@@ -263,13 +283,18 @@ class StructuredGPUPartitioner {
 
             for (int i = 0; i < owned_nnodes[g]; i++) {
                 int node = h_owned_nodes[g][i];
-                h_owned_to_local_map[g][i] = global_to_local[node];
+                int local = global_to_local[node];
+
+                h_owned_to_local_map[g][i] = local;
+
+                if (local >= 0) {
+                    h_local_to_owned_map[g][local] = i;
+                }
             }
 
             delete[] global_to_local;
         }
     }
-
     void build_ghost_node_maps() {
         int npairs = ngpus * ngpus;
 
@@ -349,6 +374,10 @@ class StructuredGPUPartitioner {
             CHECK_CUDA(cudaMalloc(&d_owned_to_local_map[g], owned_nnodes[g] * sizeof(int)));
             CHECK_CUDA(cudaMemcpy(d_owned_to_local_map[g], h_owned_to_local_map[g],
                                   owned_nnodes[g] * sizeof(int), cudaMemcpyHostToDevice));
+
+            CHECK_CUDA(cudaMalloc(&d_local_to_owned_map[g], local_nnodes[g] * sizeof(int)));
+            CHECK_CUDA(cudaMemcpy(d_local_to_owned_map[g], h_local_to_owned_map[g],
+                                  local_nnodes[g] * sizeof(int), cudaMemcpyHostToDevice));
         }
 
         for (int dst = 0; dst < ngpus; dst++) {
@@ -395,6 +424,8 @@ class StructuredGPUPartitioner {
 
     int **h_owned_to_local_map = nullptr;
     int **d_owned_to_local_map = nullptr;
+    int **h_local_to_owned_map = nullptr;
+    int **d_local_to_owned_map = nullptr;
 
     int *ghost_nnodes = nullptr;
     int *srcdest_nnodes = nullptr;

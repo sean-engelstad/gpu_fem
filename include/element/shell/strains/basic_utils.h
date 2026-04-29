@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../cuda_utils.h"
+#include "a2dcore.h"
 
 template <typename T>
 __HOST_DEVICE__ void assembleFrame(const T a[], const T b[], const T c[], T frame[]) {
@@ -87,7 +88,8 @@ __HOST_DEVICE__ void ShellComputeNodeNormals(const T Xpts[], T fn[]) {
 
 // compute XdinvT and other shell rotations
 template <typename T, class Basis, class Data>
-__HOST_DEVICE__ void computeXdinvT(const T pt[], const T refAxis[], const T xpts[], const T fn[], T XdinvT[]) {
+__HOST_DEVICE__ void computeXdinvT(const T pt[], const T refAxis[], const T xpts[], const T fn[],
+                                   T XdinvT[]) {
     // interpolation of normals and xpts for disp grads
     T Xxi[3], Xeta[3], nxi[3], neta[3], n0[3];
     Basis::template interpFields<3, 3>(pt, fn, n0);
@@ -112,8 +114,8 @@ __HOST_DEVICE__ void computeXdinvT(const T pt[], const T refAxis[], const T xpts
 
 // compute XdinvT and other shell rotations
 template <typename T, class Basis, class Data>
-__HOST_DEVICE__ void computeShellRotations(const T pt[], const T refAxis[], const T xpts[], 
-    const T fn[], T Tmat[], T XdinvT[], T XdinvzT[]) {
+__HOST_DEVICE__ void computeShellRotations(const T pt[], const T refAxis[], const T xpts[],
+                                           const T fn[], T Tmat[], T XdinvT[], T XdinvzT[]) {
     // Xd, Xdz frame assembly scope
     T Xd[9], Xdz[9];
     {
@@ -153,7 +155,7 @@ __HOST_DEVICE__ void computeShellRotations(const T pt[], const T refAxis[], cons
 template <typename T>
 __HOST_DEVICE__ static void computeEngineerTyingStrains(A2D::SymMat<T, 3> &e0ty) {
     // double the shear tying strains
-    e0ty[1] *= 2.0; // e12 membrane
-    e0ty[2] *= 2.0; // e13 trv shear
-    e0ty[4] *= 2.0; // e23 trv shear
+    e0ty[1] *= 2.0;  // e12 membrane
+    e0ty[2] *= 2.0;  // e13 trv shear
+    e0ty[4] *= 2.0;  // e23 trv shear
 }

@@ -152,30 +152,47 @@ class GPUvec {
 
     void setValuesFromHost(const T *h_vals) {
         for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
+            if (owned_N[g] == 0) continue;
 
-            int offset = part->owned_start_node[g] * block_dim;
+            T *h_owned_tmp = new T[owned_N[g]];
+
+            for (int i = 0; i < part->owned_nnodes[g]; i++) {
+                int global_node = part->h_owned_nodes[g][i];
+                for (int idof = 0; idof < block_dim; idof++) {
+                    h_owned_tmp[i * block_dim + idof] = h_vals[global_node * block_dim + idof];
+                }
+            }
 
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUDA(cudaMemcpyAsync(d_vals_owned[g], &h_vals[offset], Nowned * sizeof(T),
+            CHECK_CUDA(cudaMemcpyAsync(d_vals_owned[g], h_owned_tmp, owned_N[g] * sizeof(T),
                                        cudaMemcpyHostToDevice, streams[g]));
+
+            CHECK_CUDA(cudaStreamSynchronize(streams[g]));
+            delete[] h_owned_tmp;
         }
-        sync();
     }
 
     void getValuesToHost(T *h_vals) const {
         for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
+            if (owned_N[g] == 0) continue;
 
-            int offset = part->owned_start_node[g] * block_dim;
+            T *h_owned_tmp = new T[owned_N[g]];
 
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUDA(cudaMemcpyAsync(&h_vals[offset], d_vals_owned[g], Nowned * sizeof(T),
+            CHECK_CUDA(cudaMemcpyAsync(h_owned_tmp, d_vals_owned[g], owned_N[g] * sizeof(T),
                                        cudaMemcpyDeviceToHost, streams[g]));
+
+            CHECK_CUDA(cudaStreamSynchronize(streams[g]));
+
+            for (int i = 0; i < part->owned_nnodes[g]; i++) {
+                int global_node = part->h_owned_nodes[g][i];
+                for (int idof = 0; idof < block_dim; idof++) {
+                    h_vals[global_node * block_dim + idof] = h_owned_tmp[i * block_dim + idof];
+                }
+            }
+
+            delete[] h_owned_tmp;
         }
-        sync();
     }
 
     void packGhostReduced() {

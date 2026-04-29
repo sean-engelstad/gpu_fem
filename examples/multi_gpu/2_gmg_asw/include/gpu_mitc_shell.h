@@ -2,8 +2,8 @@
 
 #include "a2dcore.h"
 #include "element/shell/a2d/a2dsymmatrotateframe.h"
+#include "element/shell/strains/_all.h"
 #include "gpu_assembler.h"
-#include "strains/_all.h"
 
 template <typename T, class Partitioner, class Director_, class Basis_, class Phys_>
 class GPU_MITCShellAssembler
@@ -39,7 +39,7 @@ class GPU_MITCShellAssembler
         : Base(ctx_, num_nodes_, num_elements_, h_elem_conn_, xpts, bcs_, compData, num_components_,
                elem_component) {}
 
-    Partitioner *getPartitioner() { return part; }
+    Partitioner *getPartitioner() { return this->part; }
 
     template <class Data, STRAIN strain = ALL>
     __DEVICE__ static void add_element_quadpt_residual_fast(
