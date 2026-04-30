@@ -29,6 +29,13 @@
    - [ ] implement nested dissection ordering instead of AMD
    - [ ] cleanup and remove redundant code across different subdomain splitting algorithms
 
+1. [ ] alterative is just do structured BDDC on all wing cases: uCRM, HSCT
+   - [ ] uCRM : make an ESP/CAPS meshing script..
+   - [ ] HSCT : make a structured triangle mesh
+      - [ ] make triangle element MITC.. (different basis)? Anything else different?
+   - [ ] in paper: show that many unstructured BDDC splittings are inferior to structured mesh BDDC (key insight) for thin shells
+      * do edge constraints or MITC9 elements affect this finding?
+
 2. in paper, show different subdomain splittings affect thick-ind
    - [ ] different BDDC unstructured subdomain algorithms may have different thick-ind ranks
    - [ ] BDDC wraparound, etc.
@@ -40,7 +47,7 @@
       * would be better if use edge constraints for more irregular subdomains?
    - [ ] try machine learning / optimization to improve quality of subdomains?
 
-3. develop multiple GPUs for bddc
+3. develop multiple GPUs
    - [ ] subdomain parallelism for the K_II and K_{IE,IE} subdomain parallel matrices
    - [ ] multi-GPU Schur complement for Direct-LU solve with CuDSS (only for coarse vertex)
    - [ ] multi-GPU for GMG-ASW and BDDC-LU

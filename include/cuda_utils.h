@@ -22,6 +22,7 @@
 #ifdef USE_GPU
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
+#include <cusparse_v2.h>
 #endif
 
 template <uint32_t xdim = 1, uint32_t ydim = 1, uint32_t zdim = 1,

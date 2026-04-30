@@ -1,0 +1,1 @@
+../../gmg/2_cylinder/3_static_asw.cu
