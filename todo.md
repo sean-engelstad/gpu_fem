@@ -2,9 +2,15 @@
 ## Journal paper plan
 
 - [ ] multigrid has these issues with MITC for thin shells
+- [ ] show some of the beam multigrid stuff (only subset of elements cite dissertation).. (adding this in) - C1 is important
+- [ ] do include plate +/or cylinder very briefly
+   * then this shows multigrid good solver but not fully robust to thin shells (with MITC4), and limitations of mixed IGA methods explain.
 - [ ] BDDC-LU improves performance but requires wraparound subdomain splitting
+   - [ ] add multilevel BDDC dots into the cylinder + wing plots
 - [ ] empirical / theoretical evidence of wraparound method
    * run a bunch of different multi-patch structures, with wraparound fraction
+- [ ] push more on the unstructured mesh BDDC
+   * Dr. K said can I just add a vertex node on subdomain boundaries that are missing a vertex node (even though not 3 or more subdomain connections there). Yes this could be good solution, need robust here.
 - [ ] demonstrate GPU (GPU-CPU) speedups + linear solver comparison
 - [ ] optimization demonstration
 
