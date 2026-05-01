@@ -80,6 +80,8 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omega, st
 
     // T omegaLS_min = 0.25, omegaLS_max = 2.0;
     T omegaLS_min = 1e-2, omegaLS_max = 4.0;
+    // T omegaLS_min = 1e-3, omegaLS_max = 4.0;
+    // T omegaLS_min = 1e-4, omegaLS_max = 4.0;
 
     cublasHandle_t cublasHandle = NULL;
     CHECK_CUBLAS(cublasCreate(&cublasHandle));
@@ -147,6 +149,7 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omega, st
         printf("nsmooth %d, omega = %.4e\n", nsmooth, omega);
         auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, 
             omega, nsmooth);
+        smoother->factor();
         auto prolongation = new Prolongation(assembler);
         auto grid = GRID(assembler, prolongation, smoother, kmat, loads, cublasHandle, cusparseHandle, omegaLS_min, omegaLS_max);
         
@@ -315,7 +318,9 @@ int main(int argc, char **argv) {
     // int nxe = 32; // for comparison with python GMG
     double SR = 100.0; // default
     // int n_vcycles = 50;
-    double omega = 0.2; // smaller omega for ASW
+    // double omega = 0.2; // smaller omega for ASW
+    // double omega = 0.3;
+    double omega = 0.15;
 
     int nsmooth = 2; // typically faster right now
     int ninnercyc = 1; // inner V-cycles to precond K-cycle (ends up being a bit faster here..)
