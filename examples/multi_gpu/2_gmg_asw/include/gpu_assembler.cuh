@@ -185,6 +185,7 @@ __GLOBAL__ static void k_add_multigpu_jacobian_fast(
             if (glob_block_ind < 0) continue;
 
             int inz = elem_inner_row * block_dim + elem_inner_col;
+            // int inz = elem_inner_col * block_dim + elem_inner_row;
 
             atomicAdd(
                 &loc_mat_vals[glob_block_ind * block_dim2 + inz],

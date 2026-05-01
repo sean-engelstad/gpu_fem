@@ -161,6 +161,35 @@ class GPUElementAssembler {
         return d_vec;
     }
 
+    void printMatrixOnHost(Mat *mat) {
+        for (int g = 0; g < ngpus; g++) {
+            int loc_mb = mat->getLocalNumBlockRows(g);
+            int loc_nb = mat->getLocalNumBlockCols(g);
+            int loc_nnzb = mat->getLocalNumNonzeroBlocks(g);
+            int loc_nnz = mat->getLocalNumNonzeros(g);
+
+            int *h_loc_rowp = mat->getHostLocalRowp(g);
+            int *h_loc_cols = mat->getHostLocalCols(g);
+
+            T *d_loc_mat_vals = mat->getLocalVals(g);
+            T *h_loc_mat_vals = DeviceVec<T>(loc_nnz, d_loc_mat_vals).createHostVec().getPtr();
+
+            printf("Loc mat GPU[%d] with nnz(%d) ------\n", g, loc_nnz);
+            for (int row = 0; row < loc_mb; row++) {
+                for (int jp = h_loc_rowp[row]; jp < h_loc_rowp[row + 1]; jp++) {
+                    int col = h_loc_cols[jp];
+                    T *h_block = &h_loc_mat_vals[36 * jp];
+
+                    printf("block (%d,%d)\n", row, col);
+                    for (int i = 0; i < 6; i++) {
+                        T *h_row = &h_block[6 * i];
+                        printVec<T>(6, h_row);
+                    }
+                }
+            }
+        }
+    }
+
     // void set_variables(Vec<T> &newVars) { newVars.copyValuesTo(this->vars); }
     // void set_component_data(Vec<Data> &newCompData) { newCompData.copyValuesTo(compData); }
 
@@ -284,6 +313,9 @@ class GPUElementAssembler {
         // divide bcs into row and col local bcs (row bcs can be used on owned vec, col on expanded
         // vec with ghost aka local vec)
         nbcs = bcs->getSize();
+        n_owned_bcs = new int[ngpus];
+        n_local_bcs = new int[ngpus];
+
         int *h_bcs_ptr = bcs->getPtr();
         h_owned_bcs = new int *[ngpus];
         h_local_bcs = new int *[ngpus];
@@ -341,12 +373,14 @@ class GPUElementAssembler {
 
             // now assign owned and local bcs to host + device
             h_owned_bcs[g] = new int[g_owned_bcs.size()];
+            n_owned_bcs[g] = g_owned_bcs.size();
             for (int i = 0; i < g_owned_bcs.size(); i++) {
                 int bc = g_owned_bcs[i];
                 h_owned_bcs[g][i] = bc;
             }
 
             h_local_bcs[g] = new int[g_local_bcs.size()];
+            n_local_bcs[g] = g_local_bcs.size();
             for (int i = 0; i < g_local_bcs.size(); i++) {
                 int bc = g_local_bcs[i];
                 h_local_bcs[g][i] = bc;

@@ -159,6 +159,8 @@ class GPUbsrmat {
     int *getColRedElemConn(int g) { return d_col_red_elem_conn[g]; }
     int *getLocalElemIndMap(int g) { return d_loc_elem_ind_map[g]; }
 
+    int *getHostLocalRowp(int g) { return h_loc_rowp[g]; }
+    int *getHostLocalCols(int g) { return h_loc_cols[g]; }
     int *getLocalRowp(int g) { return d_loc_rowp[g]; }
     int *getLocalCols(int g) { return d_loc_cols[g]; }
     T *getLocalVals(int g) { return d_loc_vals[g]; }

@@ -20,8 +20,8 @@ class StructuredGPUPartitioner {
           nodes_per_elem(nodes_per_elem_),
           h_elem_conn(h_elem_conn_) {
         printf("temp\n");
-        printf("h_elem_conn[%d]: ", num_elements);
-        printVec<int>(4 * num_elements, h_elem_conn);
+        // printf("h_elem_conn[%d]: ", num_elements);
+        // printVec<int>(4 * num_elements, h_elem_conn);
 
         printf("split element connectivity\n");
         split_elem_connectivity();
@@ -113,6 +113,9 @@ class StructuredGPUPartitioner {
         h_local_elem_conn = new int *[ngpus];
         d_local_elem_conn = new int *[ngpus];
 
+        printf("h_elem_conn[%d]: ", num_elements);
+        printVec<int>(num_elements * 4, h_elem_conn);
+
         for (int g = 0; g < ngpus; g++) {
             start_elem[g] = num_elements * g / ngpus;
             end_elem[g] = num_elements * (g + 1) / ngpus;
@@ -124,6 +127,9 @@ class StructuredGPUPartitioner {
             h_local_elem_conn[g] = new int[local_conn_size];
             std::memcpy(h_local_elem_conn[g], &h_elem_conn[global_conn_offset],
                         local_conn_size * sizeof(int));
+
+            printf("GPU[%d] - h_local_elem_conn[%d]: ", g, local_nelems[g]);
+            printVec<int>(local_nelems[g] * 4, h_local_elem_conn[g]);
 
             CHECK_CUDA(cudaSetDevice(g));
             CHECK_CUDA(cudaMalloc(&d_local_elem_conn[g], local_conn_size * sizeof(int)));

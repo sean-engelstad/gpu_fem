@@ -112,16 +112,60 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
     auto lin_soln = assembler.createVarsVec();
     auto vars = assembler.createVarsVec();
     auto loads2 = assembler.createVarsVec();
-    int N = res.getSize();
+    int N = res.getSize();    
 
     // assemble the kmat
     auto startkmat = std::chrono::high_resolution_clock::now();
     assembler.add_jacobian_fast(kmat);
-    assembler.apply_bcs(kmat);
+
     CHECK_CUDA(cudaDeviceSynchronize());
     auto endkmat = std::chrono::high_resolution_clock::now();
+
+    // printout kmat for debugging purposes
+    int mb = bsr_data.mb;
+    int nb = bsr_data.nb;
+    int nnzb = bsr_data.nnzb;
+    int nnz = 36 * nnzb;
+    int *h_rowp = DeviceVec<int>(mb + 1, bsr_data.rowp).createHostVec().getPtr();
+    int *h_cols = DeviceVec<int>(nnzb, bsr_data.cols).createHostVec().getPtr();
+    T *h_vals = DeviceVec<T>(nnz, kmat.getPtr()).createHostVec().getPtr();
+    if (mb <= 30) {
+        printf("Kmat before bcs on single GPU with nnz(%d) ------\n", nnz);
+        for (int row = 0; row < mb; row++) {
+            for (int jp = h_rowp[row]; jp < h_rowp[row + 1]; jp++) {
+                int col = h_cols[jp];
+                T *h_block = &h_vals[36 * jp];
+
+                printf("block (%d,%d)\n", row, col);
+                for (int i = 0; i < 6; i++) {
+                    T *h_row = &h_block[6 * i];
+                    printVec<T>(6, h_row);
+                }
+            }
+        }
+    }
+
+    assembler.apply_bcs(kmat);
+    CHECK_CUDA(cudaDeviceSynchronize());
     std::chrono::duration<double> assembly_time = endkmat - startkmat;
     printf("\tassemble kmat in %.3e sec\n", assembly_time.count());
+
+    T *h_vals2 = DeviceVec<T>(nnz, kmat.getPtr()).createHostVec().getPtr();
+    if (mb <= 30) {
+        printf("Kmat after bcs on single GPU with nnz(%d) ------\n", nnz);
+        for (int row = 0; row < mb; row++) {
+            for (int jp = h_rowp[row]; jp < h_rowp[row + 1]; jp++) {
+                int col = h_cols[jp];
+                T *h_block = &h_vals2[36 * jp];
+
+                printf("block (%d,%d)\n", row, col);
+                for (int i = 0; i < 6; i++) {
+                    T *h_row = &h_block[6 * i];
+                    printVec<T>(6, h_row);
+                }
+            }
+        }
+    }
 
     // build smoother and prolongations..
     // auto smoother = new Smoother(cublasHandle, cusparseHandle, assembler, kmat, h_color_rowp, omegaMC, false, nsmooth);
@@ -185,7 +229,7 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
     // // print to VTK (permuting from solve to vis order)
     int *d_perm = linear_solver->grid->d_perm;
     auto h_soln = lin_soln.createPermuteVec(6, d_perm).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(linear_solver->grid->assembler, h_soln, "./out/plate_kry_lin.vtk");
+    printToVTK<Assembler,HostVec<T>>(linear_solver->grid->assembler, h_soln, "./out/plate_kry_lin_single.vtk");
     T lin_max_disp = get_max_disp(lin_soln);
 
     int nx = nxe + 1;
@@ -359,7 +403,7 @@ void solve_direct(int nxe, double SR, T pressure = 5.0e7) {
     // // print to VTK (permuting from solve to vis order)
     int *d_perm = linear_solver->grid->d_perm;
     auto h_soln = lin_soln.createPermuteVec(6, d_perm).createHostVec();
-    printToVTK<Assembler,HostVec<T>>(linear_solver->grid->assembler, h_soln, "./out/plate_kry_lin.vtk");
+    printToVTK<Assembler,HostVec<T>>(linear_solver->grid->assembler, h_soln, "out/plate_kry_lin.vtk");
     T lin_max_disp = get_max_disp(lin_soln);
 
     if (!fail) {

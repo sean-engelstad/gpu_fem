@@ -45,9 +45,9 @@ int main(int argc, char *argv[]) {
     int nxe = 128; // default
     double SR = 1e1;
     // double SR = 1e3;
-    double pressure = 1e6;
+    double pressure = 8e6;
 
-    // just type ./2_multi_asw.out 256 >> out.txt for instance
+    // just type ./2_multi_asw.out 256 >> out.txt for instance (no --nxe)
     if (argc > 1) {
         nxe = atoi(argv[1]);
     }
@@ -131,10 +131,20 @@ int main(int argc, char *argv[]) {
     printf("add jacobian post-sync\n");
     ctx->sync();
 
+    if (nxe * nxe <= 30) {
+        printf("kmat before bcs\n");
+        assembler.printMatrixOnHost(kmat);
+    }
+
     printf("apply bcs to kmat\n");
     assembler.apply_bcs(kmat);
     printf("apply bcs to rhs\n");
     assembler.apply_bcs(rhs);
+
+    if (nxe * nxe <= 30) {
+        printf("kmat after bcs\n");
+        assembler.printMatrixOnHost(kmat);
+    }
 
     // ---------------------------------------------
     // build the ASW preconditioner
@@ -171,5 +181,5 @@ int main(int argc, char *argv[]) {
     T *h_soln = new T[N];
     memset(h_soln, 0, N * sizeof(T));
     soln->getValuesToHost(h_soln);
-    printToVTK_v2<T, Assembler>(assembler, h_soln, "/out/plate_kry_lin.vtk");
+    printToVTK_v2<T, Assembler>(assembler, h_soln, "./out/plate_kry_lin.vtk");
 };
