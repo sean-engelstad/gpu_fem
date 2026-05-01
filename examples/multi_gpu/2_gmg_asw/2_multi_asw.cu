@@ -144,6 +144,9 @@ int main(int argc, char *argv[]) {
     if (nxe * nxe <= 30) {
         printf("kmat after bcs\n");
         assembler.printMatrixOnHost(kmat);
+
+        printf("rhs vec after bcs\n");
+        rhs->printValuesOnHost();
     }
 
     // ---------------------------------------------

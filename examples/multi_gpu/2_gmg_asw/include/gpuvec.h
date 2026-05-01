@@ -4,6 +4,7 @@
 
 #include "cuda_utils.h"
 #include "linalg/vec.cuh"
+#include "linalg/vec.h"
 #include "matvec.cuh"
 #include "multigpu_context.h"
 
@@ -67,6 +68,20 @@ class GPUvec {
     void free() {}
 
     int pair_index(int dst, int src) const { return ngpus * dst + src; }
+
+    void printValuesOnHost() {
+        // prints owned values only from each GPU
+        for (int g = 0; g < ngpus; g++) {
+            T *h_vals_owned = DeviceVec<T>(owned_N[g], d_vals_owned[g]).createHostVec().getPtr();
+            int owned_nnodes = owned_N[g] / block_dim;
+            printf("h_vec(nnodes=%d) on GPU[%d]\n", owned_nnodes, g);
+            for (int i = 0; i < owned_nnodes; i++) {
+                T *h_block = &h_vals_owned[block_dim * i];
+                printf("GPU[%d]-node[%d]: ", g, i);
+                printVec<T>(block_dim, h_block);
+            }
+        }
+    }
 
     void allocate_owned() {
         owned_N = new int[ngpus];

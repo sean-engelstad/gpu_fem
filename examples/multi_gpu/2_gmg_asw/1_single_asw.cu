@@ -114,6 +114,16 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
     auto loads2 = assembler.createVarsVec();
     int N = res.getSize();    
 
+
+    printf("rhs after bcs\n");
+    T *h_loads = loads.createHostVec().getPtr();
+    printf("h_vec(nnodes=%d) single GPU\n", (int)N/6);
+    for (int i = 0; i < (int)(N/6); i++) {
+        T *h_block = &h_loads[6 * i];
+        printf("singleGPU-node[%d]: ", i);
+        printVec<T>(6, h_block);
+    }
+
     // assemble the kmat
     auto startkmat = std::chrono::high_resolution_clock::now();
     assembler.add_jacobian_fast(kmat);

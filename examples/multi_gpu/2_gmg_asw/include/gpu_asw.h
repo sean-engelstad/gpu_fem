@@ -30,7 +30,7 @@ class MultiGPUElementASW {
         static_assert(std::is_same<T, double>::value,
                       "This ASW implementation currently assumes double.");
 
-        size = 2;
+        size = (int)sqrt(nodes_per_elem);
         size2 = nodes_per_elem;
         size4 = nodes_per_elem * nodes_per_elem;
         n = nodes_per_elem * block_dim;
@@ -112,6 +112,9 @@ class MultiGPUElementASW {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
             CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
+
+            CHECK_CUDA(cudaMemsetAsync(d_Adata[g], 0, (size_t)batch_size[g] * n * n * sizeof(T),
+                                       streams[g]));
 
             int nvals = n_batch_blocks[g] * block_dim2;
             dim3 block(128);
@@ -282,6 +285,39 @@ class MultiGPUElementASW {
         std::memset(d_InfoArray, 0, ngpus * sizeof(int *));
     }
 
+    // void build_maps() {
+    //     for (int g = 0; g < ngpus; g++) {
+    //         batch_size[g] = part->local_nelems[g];
+    //         n_batch_blocks[g] = batch_size[g] * size4;
+    //         n_rhs_blocks[g] = batch_size[g] * size2;
+
+    //         h_block_inds[g] = new int[n_batch_blocks[g]];
+    //         h_rhs_local_map[g] = new int[n_rhs_blocks[g]];
+    //         h_rhs_owned_map[g] = new int[n_rhs_blocks[g]];
+
+    //         std::memset(h_block_inds[g], 0, n_batch_blocks[g] * sizeof(int));
+    //         std::memset(h_rhs_local_map[g], 0, n_rhs_blocks[g] * sizeof(int));
+    //         std::memset(h_rhs_owned_map[g], -1, n_rhs_blocks[g] * sizeof(int));
+
+    //         int *elem_ind_map = A->getHostLocalElemIndMap(g);  // add this getter
+    //         int *row_conn = A->getHostRowRedElemConn(g);       // add this getter
+    //         int *col_conn = A->getHostColRedElemConn(g);       // add this getter
+
+    //         for (int e = 0; e < batch_size[g]; e++) {
+    //             for (int ij = 0; ij < size4; ij++) {
+    //                 int ind = e * size4 + ij;
+    //                 h_block_inds[g][ind] = elem_ind_map[ind];
+    //             }
+
+    //             for (int a = 0; a < size2; a++) {
+    //                 int ind = e * size2 + a;
+    //                 h_rhs_local_map[g][ind] = col_conn[e * size2 + a];
+    //                 h_rhs_owned_map[g][ind] = row_conn[e * size2 + a];
+    //             }
+    //         }
+    //     }
+    // }
+
     void build_maps() {
         for (int g = 0; g < ngpus; g++) {
             batch_size[g] = part->local_nelems[g];
@@ -292,24 +328,40 @@ class MultiGPUElementASW {
             h_rhs_local_map[g] = new int[n_rhs_blocks[g]];
             h_rhs_owned_map[g] = new int[n_rhs_blocks[g]];
 
-            std::memset(h_block_inds[g], 0, n_batch_blocks[g] * sizeof(int));
-            std::memset(h_rhs_local_map[g], 0, n_rhs_blocks[g] * sizeof(int));
-            std::memset(h_rhs_owned_map[g], -1, n_rhs_blocks[g] * sizeof(int));
+            std::fill(h_block_inds[g], h_block_inds[g] + n_batch_blocks[g], -1);
+            std::fill(h_rhs_local_map[g], h_rhs_local_map[g] + n_rhs_blocks[g], -1);
+            std::fill(h_rhs_owned_map[g], h_rhs_owned_map[g] + n_rhs_blocks[g], -1);
 
-            int *elem_ind_map = A->getHostLocalElemIndMap(g);  // add this getter
-            int *row_conn = A->getHostRowRedElemConn(g);       // add this getter
-            int *col_conn = A->getHostColRedElemConn(g);       // add this getter
+            int *row_conn = A->getHostRowRedElemConn(g);  // owned-row ids, -1 for ghost rows
+            int *col_conn = A->getHostColRedElemConn(g);  // local ids, includes ghosts
+            int *rowp = A->getHostLocalRowp(g);
+            int *cols = A->getHostLocalCols(g);
 
             for (int e = 0; e < batch_size[g]; e++) {
                 for (int ij = 0; ij < size4; ij++) {
-                    int ind = e * size4 + ij;
-                    h_block_inds[g][ind] = elem_ind_map[ind];
+                    int a = ij % size2;  // local patch row node
+                    int b = ij / size2;  // local patch col node
+
+                    int row = row_conn[e * size2 + a];
+                    int col = col_conn[e * size2 + b];
+
+                    int jp = -1;
+                    if (row >= 0 && col >= 0) {
+                        for (int p = rowp[row]; p < rowp[row + 1]; p++) {
+                            if (cols[p] == col) {
+                                jp = p;
+                                break;
+                            }
+                        }
+                    }
+
+                    h_block_inds[g][e * size4 + ij] = jp;
                 }
 
                 for (int a = 0; a < size2; a++) {
                     int ind = e * size2 + a;
-                    h_rhs_local_map[g][ind] = col_conn[e * size2 + a];
-                    h_rhs_owned_map[g][ind] = row_conn[e * size2 + a];
+                    h_rhs_local_map[g][ind] = col_conn[ind];
+                    h_rhs_owned_map[g][ind] = row_conn[ind];
                 }
             }
         }
