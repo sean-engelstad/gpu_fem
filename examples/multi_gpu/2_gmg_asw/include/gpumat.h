@@ -130,7 +130,9 @@ class GPUbsrmat {
     }
 
     void mult(T alpha, GPUvec<T, Partitioner> *x, T beta, GPUvec<T, Partitioner> *y) {
+        printf("before expandToLocal in mult\n");
         x->expandToLocal();
+        printf("after expandToLocal in mult\n");
 
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));

@@ -241,14 +241,14 @@ class GPUvec {
     void expandToLocal() {
         zeroLocal();
 
+        // 1) Scatter owned values into each GPU's local vector
         for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
+            if (part->owned_nnodes[g] == 0) continue;
 
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
 
             dim3 block(128);
-            dim3 grid((Nowned + block.x - 1) / block.x);
+            dim3 grid((part->owned_nnodes[g] + block.x - 1) / block.x);
 
             k_scatter_owned_to_local<T><<<grid, block, 0, streams[g]>>>(
                 part->owned_nnodes[g], block_dim, part->d_owned_to_local_map[g], d_vals_owned[g],
@@ -257,8 +257,10 @@ class GPUvec {
             CHECK_CUDA(cudaGetLastError());
         }
 
+        // 2) Pack ghost values on source GPUs
         packGhostReduced();
 
+        // 3) Peer-copy packed ghost values from src GPU to dst GPU
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -268,8 +270,10 @@ class GPUvec {
 
                 if (Nred == 0) continue;
 
+                // streams[src] belongs to the source GPU, so current device must be src
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+
                 if (debug) {
-                    CHECK_CUDA(cudaSetDevice(0));
                     CHECK_CUDA(cudaMemcpyAsync(d_vals_red_dst[idx], d_vals_red[idx],
                                                Nred * sizeof(T), cudaMemcpyDeviceToDevice,
                                                streams[src]));
@@ -280,9 +284,13 @@ class GPUvec {
             }
         }
 
+        // Make sure all src-side peer copies are complete before dst-side placement
         sync();
 
+        // 4) Place received ghost values into destination local vectors
         for (int dst = 0; dst < ngpus; dst++) {
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
 
@@ -291,13 +299,13 @@ class GPUvec {
 
                 if (Nred == 0) continue;
 
-                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+                int nred_nodes = Nred / block_dim;
 
                 dim3 block(128);
-                dim3 grid((Nred + block.x - 1) / block.x);
+                dim3 grid((nred_nodes + block.x - 1) / block.x);
 
                 k_place_ghost_red<T><<<grid, block, 0, streams[dst]>>>(
-                    Nred / block_dim, block_dim, part->d_dstred_map[idx], d_vals_red_dst[idx],
+                    nred_nodes, block_dim, part->d_dstred_map[idx], d_vals_red_dst[idx],
                     d_vals_local[dst]);
 
                 CHECK_CUDA(cudaGetLastError());
