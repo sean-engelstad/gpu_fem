@@ -72,6 +72,7 @@ class GPUvec {
     void printValuesOnHost() {
         // prints owned values only from each GPU
         for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
             T *h_vals_owned = DeviceVec<T>(owned_N[g], d_vals_owned[g]).createHostVec().getPtr();
             int owned_nnodes = owned_N[g] / block_dim;
             printf("h_vec(nnodes=%d) on GPU[%d]\n", owned_nnodes, g);
@@ -82,6 +83,8 @@ class GPUvec {
                 printVec<T>(block_dim, h_block);
             }
         }
+
+        ctx->sync();
     }
 
     void allocate_owned() {

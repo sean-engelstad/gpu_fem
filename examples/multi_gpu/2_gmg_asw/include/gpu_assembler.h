@@ -163,6 +163,7 @@ class GPUElementAssembler {
 
     void printMatrixOnHost(Mat *mat) {
         for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
             int loc_mb = mat->getLocalNumBlockRows(g);
             int loc_nb = mat->getLocalNumBlockCols(g);
             int loc_nnzb = mat->getLocalNumNonzeroBlocks(g);
@@ -180,7 +181,10 @@ class GPUElementAssembler {
                     int col = h_loc_cols[jp];
                     T *h_block = &h_loc_mat_vals[36 * jp];
 
-                    printf("block (%d,%d)\n", row, col);
+                    int grow = part->h_owned_nodes[g][row];
+                    int gcol = part->h_local_nodes[g][col];
+
+                    printf("block (%d,%d)\n", grow, gcol);
                     for (int i = 0; i < 6; i++) {
                         T *h_row = &h_block[6 * i];
                         printVec<T>(6, h_row);
@@ -188,6 +192,8 @@ class GPUElementAssembler {
                 }
             }
         }
+
+        ctx->sync();
     }
 
     // void set_variables(Vec<T> &newVars) { newVars.copyValuesTo(this->vars); }
