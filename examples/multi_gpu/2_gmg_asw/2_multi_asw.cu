@@ -131,10 +131,10 @@ int main(int argc, char *argv[]) {
     printf("add jacobian post-sync\n");
     ctx->sync();
 
-    if (nxe * nxe <= 30) {
-        printf("kmat before bcs\n");
-        assembler.printMatrixOnHost(kmat);
-    }
+    // if (nxe * nxe <= 30) {
+    //     printf("kmat before bcs\n");
+    //     assembler.printMatrixOnHost(kmat);
+    // }
 
     printf("apply bcs to kmat\n");
     assembler.apply_bcs(kmat);
@@ -142,11 +142,23 @@ int main(int argc, char *argv[]) {
     assembler.apply_bcs(rhs);
 
     if (nxe * nxe <= 30) {
-        printf("kmat after bcs\n");
-        assembler.printMatrixOnHost(kmat);
+        // printf("kmat after bcs\n");
+        // assembler.printMatrixOnHost(kmat);
 
         printf("rhs vec after bcs\n");
         rhs->printValuesOnHost();
+    }
+
+    // ------------------------------
+    // prelim DEBUG part 1
+    // ------------------------------
+
+    auto test_vec = new GPUvec<T, Partitioner>(ctx, part, block_dim);
+    kmat->mult(rhs, test_vec);
+
+    if (nxe * nxe <= 30) {
+        printf("test mat-vec\n");
+        test_vec->printValuesOnHost();
     }
 
     // ---------------------------------------------

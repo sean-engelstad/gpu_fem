@@ -76,8 +76,9 @@ class GPUvec {
             int owned_nnodes = owned_N[g] / block_dim;
             printf("h_vec(nnodes=%d) on GPU[%d]\n", owned_nnodes, g);
             for (int i = 0; i < owned_nnodes; i++) {
+                int global_node = part->h_owned_nodes[g][i];
                 T *h_block = &h_vals_owned[block_dim * i];
-                printf("GPU[%d]-node[%d]: ", g, i);
+                printf("GPU[%d]-node[%d]: ", g, global_node);
                 printVec<T>(block_dim, h_block);
             }
         }

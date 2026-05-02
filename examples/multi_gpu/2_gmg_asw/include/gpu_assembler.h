@@ -270,7 +270,7 @@ class GPUElementAssembler {
             CHECK_CUDA(cudaGetLastError());
         }
 
-        sync();
+        ctx->sync();
     }
 
     // util functions
