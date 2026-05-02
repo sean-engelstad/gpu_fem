@@ -226,7 +226,7 @@ class GPUvec {
 
                 CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
 
-                dim3 block(128);
+                dim3 block(32);
                 dim3 grid((Nred + block.x - 1) / block.x);
 
                 k_pack_ghost_red<T><<<grid, block, 0, streams[src]>>>(
@@ -239,16 +239,18 @@ class GPUvec {
     }
 
     void expandToLocal() {
+        printf("zeroLocal\n");
         zeroLocal();
 
         // 1) Scatter owned values into each GPU's local vector
+        printf("Scatter owned values to local\n");
         for (int g = 0; g < ngpus; g++) {
             if (part->owned_nnodes[g] == 0) continue;
 
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
 
-            dim3 block(128);
-            dim3 grid((part->owned_nnodes[g] + block.x - 1) / block.x);
+            dim3 block(32);
+            dim3 grid((part->owned_N[g] + block.x - 1) / block.x);
 
             k_scatter_owned_to_local<T><<<grid, block, 0, streams[g]>>>(
                 part->owned_nnodes[g], block_dim, part->d_owned_to_local_map[g], d_vals_owned[g],
@@ -258,9 +260,11 @@ class GPUvec {
         }
 
         // 2) Pack ghost values on source GPUs
+        printf("packGhostReduced\n");
         packGhostReduced();
 
         // 3) Peer-copy packed ghost values from src GPU to dst GPU
+        printf("peer copy packed ghost values\n");
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -288,6 +292,7 @@ class GPUvec {
         sync();
 
         // 4) Place received ghost values into destination local vectors
+        printf("place received ghost values into destination local\n");
         for (int dst = 0; dst < ngpus; dst++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
 
@@ -301,8 +306,8 @@ class GPUvec {
 
                 int nred_nodes = Nred / block_dim;
 
-                dim3 block(128);
-                dim3 grid((nred_nodes + block.x - 1) / block.x);
+                dim3 block(32);
+                dim3 grid((Nred + block.x - 1) / block.x);
 
                 k_place_ghost_red<T><<<grid, block, 0, streams[dst]>>>(
                     nred_nodes, block_dim, part->d_dstred_map[idx], d_vals_red_dst[idx],
