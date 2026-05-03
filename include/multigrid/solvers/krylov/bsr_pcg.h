@@ -245,6 +245,15 @@ class PCGSolver : public BaseSolver {
         d_z_vec.free();
     }
 
+    void test_mult(DeviceVec<T> vec_in, DeviceVec<T> out) {
+        a = 1.0, b = 0.0;
+        CHECK_CUSPARSE(cusparseDbsrmv(
+            cusparseHandle, CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE, mb, mb, nnzb,
+            &a, descrK, d_vals, d_rowp, d_cols, block_dim, vec_in.getPtr(), &b, out.getPtr()));
+    }
+
+    void test_precond(DeviceVec<T> vec_in, DeviceVec<T> out) { pc->solve(vec_in, out); }
+
     GRID *grid;
     BaseSolver *pc;
     SolverOptions options;

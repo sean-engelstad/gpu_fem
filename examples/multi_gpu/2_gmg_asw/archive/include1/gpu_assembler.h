@@ -258,8 +258,8 @@ class GPUElementAssembler {
             int *loc_elem_comps = d_loc_elem_components[g];
             Data *loc_comp_data_ptr = d_loc_comp_data[g];
 
-            // local element connectivity, used for both rows and columns
-            int *loc_elem_conn_ptr = mat->getLocalElemConn(g);
+            // use this connectivity for extracting xpts, vars
+            int *loc_elem_conn_ptr = mat->getColRedElemConn(g);
             int *loc_elem_ind_map = mat->getLocalElemIndMap(g);
             T *loc_mat_vals = mat->getLocalVals(g);
 

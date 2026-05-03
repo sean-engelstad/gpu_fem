@@ -196,6 +196,23 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
     // PCG solver
     auto linear_solver = new PCG(cublasHandle, cusparseHandle, grid, pc, options);
 
+    // TEST before solve
+    // -----------------------------
+
+    auto d_test_vec = assembler.createVarsVec();
+    int nnodes = assembler.get_num_vars() / 6;
+    if (nxe * nxe < 30) {
+        linear_solver->test_mult(loads, d_test_vec);
+        auto h_test_vec = d_test_vec.createHostVec();
+        T *h_test_ptr = h_test_vec.getPtr();
+        printf("test mat-vec\n");
+        for (int i = 0; i < nnodes; i++) {
+            T *h_block = &h_test_ptr[6 * i];
+            printf("test node[%d]: ", i);
+            printVec<T>(6, h_block);
+        }
+    }
+
     // // can maybe use BiCGStab if need be..
     // // only use GMRES if SR > 100
     // const int N_SUBSPACE = 200; // 100
@@ -217,6 +234,20 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
 
     pc->factor(); // ASW factor time
 
+    if (nxe * nxe < 30) {
+        d_test_vec.zeroValues();
+        linear_solver->test_precond(loads, d_test_vec);
+        auto h_test_vec2 = d_test_vec.createHostVec();
+        T *h_test_ptr2 = h_test_vec2.getPtr();
+        printf("test precond-vec\n");
+        for (int i = 0; i < nnodes; i++) {
+            T *h_block = &h_test_ptr2[6 * i];
+            printf("test node[%d]: ", i);
+            printVec<T>(6, h_block);
+        }
+
+    }
+    
     // get initial residual
     T init_resid = linear_solver->getResidualNorm(grid->d_defect, lin_soln);
 

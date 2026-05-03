@@ -4,11 +4,13 @@
 #include <unordered_set>
 #include <vector>
 
+// dependency to smdogroup/sparse-utils repo
 #include "cuda_utils.h"
 #include "gpuvec.h"
 #include "matvec.cuh"
 #include "multigpu_context.h"
 
+// in order to work with cusparse index_t has to be int
 typedef int index_t;
 
 #include "sparse_utils/sparse_matrix.h"
@@ -27,7 +29,7 @@ class GPUbsrmat {
           num_nodes(part_->num_nodes),
           block_dim(block_dim_),
           block_dim2(block_dim_ * block_dim_) {
-        build_local_element_connectivity();
+        build_reduced_element_connectivity();
         build_element_bsr_sparsity();
         build_transpose_pattern();
         build_element_ind_map();
@@ -41,27 +43,21 @@ class GPUbsrmat {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
 
-            if (d_loc_elem_conn && d_loc_elem_conn[g]) cudaFree(d_loc_elem_conn[g]);
+            if (d_row_red_elem_conn && d_row_red_elem_conn[g]) cudaFree(d_row_red_elem_conn[g]);
+            if (d_col_red_elem_conn && d_col_red_elem_conn[g]) cudaFree(d_col_red_elem_conn[g]);
             if (d_loc_elem_ind_map && d_loc_elem_ind_map[g]) cudaFree(d_loc_elem_ind_map[g]);
 
             if (d_loc_rowp && d_loc_rowp[g]) cudaFree(d_loc_rowp[g]);
             if (d_loc_cols && d_loc_cols[g]) cudaFree(d_loc_cols[g]);
             if (d_loc_vals && d_loc_vals[g]) cudaFree(d_loc_vals[g]);
 
-            if (d_tr_loc_rowp && d_tr_loc_rowp[g]) cudaFree(d_tr_loc_rowp[g]);
-            if (d_tr_loc_cols && d_tr_loc_cols[g]) cudaFree(d_tr_loc_cols[g]);
-            if (d_tr_block_map && d_tr_block_map[g]) cudaFree(d_tr_block_map[g]);
-
-            if (h_loc_elem_conn && h_loc_elem_conn[g]) delete[] h_loc_elem_conn[g];
+            if (h_row_red_elem_conn && h_row_red_elem_conn[g]) delete[] h_row_red_elem_conn[g];
+            if (h_col_red_elem_conn && h_col_red_elem_conn[g]) delete[] h_col_red_elem_conn[g];
             if (h_loc_elem_ind_map && h_loc_elem_ind_map[g]) delete[] h_loc_elem_ind_map[g];
 
             if (h_loc_rowp && h_loc_rowp[g]) delete[] h_loc_rowp[g];
             if (h_loc_cols && h_loc_cols[g]) delete[] h_loc_cols[g];
             if (h_loc_vals && h_loc_vals[g]) delete[] h_loc_vals[g];
-
-            if (h_tr_loc_rowp && h_tr_loc_rowp[g]) delete[] h_tr_loc_rowp[g];
-            if (h_tr_loc_cols && h_tr_loc_cols[g]) delete[] h_tr_loc_cols[g];
-            if (h_tr_block_map && h_tr_block_map[g]) delete[] h_tr_block_map[g];
 
             if (descrA && descrA[g]) cusparseDestroyMatDescr(descrA[g]);
         }
@@ -69,10 +65,12 @@ class GPUbsrmat {
         delete[] elem_conn_N;
         delete[] elem_ind_map_N;
 
-        delete[] h_loc_elem_conn;
+        delete[] h_row_red_elem_conn;
+        delete[] h_col_red_elem_conn;
         delete[] h_loc_elem_ind_map;
 
-        delete[] d_loc_elem_conn;
+        delete[] d_row_red_elem_conn;
+        delete[] d_col_red_elem_conn;
         delete[] d_loc_elem_ind_map;
 
         delete[] loc_mb;
@@ -88,14 +86,6 @@ class GPUbsrmat {
         delete[] d_loc_cols;
         delete[] d_loc_vals;
 
-        delete[] h_tr_loc_rowp;
-        delete[] h_tr_loc_cols;
-        delete[] h_tr_block_map;
-
-        delete[] d_tr_loc_rowp;
-        delete[] d_tr_loc_cols;
-        delete[] d_tr_block_map;
-
         delete[] descrA;
     }
 
@@ -104,13 +94,11 @@ class GPUbsrmat {
             CHECK_CUDA(cudaSetDevice(g));
             CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
 
+            // TODO : add perm + iperm into the matrices later..
+            printf("GPU[%d] - apply row bcs to matrix\n", g);
             dim3 block(32);
-
-            printf("GPU[%d] - apply row bcs to local-local matrix\n", g);
             if (n_owned_bcs[g] > 0) {
-                dim3 grid1((n_owned_bcs[g] + block.x - 1) / block.x);
-
-                // owned BC dofs are mapped into local rows with d_owned_to_local_map
+                dim3 grid1((n_owned_bcs[g] + 31) / 32);
                 k_mat_apply_row_bcs<T><<<grid1, block, 0, streams[g]>>>(
                     block_dim, loc_mb[g], n_owned_bcs[g], d_owned_bcs[g],
                     part->d_owned_to_local_map[g], d_loc_rowp[g], d_loc_cols[g], d_loc_vals[g]);
@@ -118,13 +106,9 @@ class GPUbsrmat {
                 CHECK_CUDA(cudaGetLastError());
             }
 
-            printf("GPU[%d] - apply col bcs to local-local matrix\n", g);
+            printf("GPU[%d] - apply col bcs to matrix\n", g);
             if (n_local_bcs[g] > 0) {
-                dim3 grid2((n_local_bcs[g] + block.x - 1) / block.x);
-
-                // local BC dofs are already local ids
-                // If your old k_mat_apply_col_bcs expects a local->owned map,
-                // you may need a local-identity / local map version here.
+                dim3 grid2((n_local_bcs[g] + 31) / 32);
                 k_mat_apply_col_bcs<T><<<grid2, block, 0, streams[g]>>>(
                     block_dim, loc_nb[g], n_local_bcs[g], d_local_bcs[g],
                     part->d_local_to_owned_map[g], d_tr_loc_rowp[g], d_tr_loc_cols[g],
@@ -133,8 +117,7 @@ class GPUbsrmat {
                 CHECK_CUDA(cudaGetLastError());
             }
         }
-
-        sync();
+        ctx->sync();
     }
 
     void zeroValues() {
@@ -147,17 +130,9 @@ class GPUbsrmat {
     }
 
     void mult(T alpha, GPUvec<T, Partitioner> *x, T beta, GPUvec<T, Partitioner> *y) {
+        printf("before expandToLocal in mult\n");
         x->expandToLocal();
-
-        // The local-local matvec writes into y local.
-        // Then y reduces local owned+ghost row contributions back to owned storage.
-        if (beta == 0.0) {
-            y->zeroLocal();
-        } else {
-            // Assumes y local is already consistent if beta != 0.
-            // Safer default for Krylov use is usually beta = 0.
-            y->expandToLocal();
-        }
+        printf("after expandToLocal in mult\n");
 
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
@@ -166,12 +141,10 @@ class GPUbsrmat {
             CHECK_CUSPARSE(cusparseDbsrmv(
                 cusparseHandles[g], CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 loc_mb[g], loc_nb[g], loc_nnzb[g], &alpha, descrA[g], d_loc_vals[g], d_loc_rowp[g],
-                d_loc_cols[g], block_dim, x->getLocalPtr(g), &beta, y->getLocalPtr(g)));
+                d_loc_cols[g], block_dim, x->getLocalPtr(g), &beta, y->getPtr(g)));
         }
 
         sync();
-
-        y->reduceFromLocal();
     }
 
     void mult(GPUvec<T, Partitioner> *x, GPUvec<T, Partitioner> *y) {
@@ -180,15 +153,16 @@ class GPUbsrmat {
         mult(alpha, x, beta, y);
     }
 
-    int *getHostLocalElemConn(int g) { return h_loc_elem_conn[g]; }
+    int *getHostRowRedElemConn(int g) { return h_row_red_elem_conn[g]; }
+    int *getHostColRedElemConn(int g) { return h_col_red_elem_conn[g]; }
     int *getHostLocalElemIndMap(int g) { return h_loc_elem_ind_map[g]; }
 
-    int *getLocalElemConn(int g) { return d_loc_elem_conn[g]; }
+    int *getRowRedElemConn(int g) { return d_row_red_elem_conn[g]; }
+    int *getColRedElemConn(int g) { return d_col_red_elem_conn[g]; }
     int *getLocalElemIndMap(int g) { return d_loc_elem_ind_map[g]; }
 
     int *getHostLocalRowp(int g) { return h_loc_rowp[g]; }
     int *getHostLocalCols(int g) { return h_loc_cols[g]; }
-
     int *getLocalRowp(int g) { return d_loc_rowp[g]; }
     int *getLocalCols(int g) { return d_loc_cols[g]; }
     T *getLocalVals(int g) { return d_loc_vals[g]; }
@@ -214,15 +188,20 @@ class GPUbsrmat {
     }
 
    private:
-    void build_local_element_connectivity() {
+    void build_reduced_element_connectivity() {
         elem_conn_N = new int[ngpus];
 
-        h_loc_elem_conn = new int *[ngpus];
-        d_loc_elem_conn = new int *[ngpus];
+        h_row_red_elem_conn = new int *[ngpus];
+        h_col_red_elem_conn = new int *[ngpus];
+
+        d_row_red_elem_conn = new int *[ngpus];
+        d_col_red_elem_conn = new int *[ngpus];
 
         std::memset(elem_conn_N, 0, ngpus * sizeof(int));
-        std::memset(h_loc_elem_conn, 0, ngpus * sizeof(int *));
-        std::memset(d_loc_elem_conn, 0, ngpus * sizeof(int *));
+        std::memset(h_row_red_elem_conn, 0, ngpus * sizeof(int *));
+        std::memset(h_col_red_elem_conn, 0, ngpus * sizeof(int *));
+        std::memset(d_row_red_elem_conn, 0, ngpus * sizeof(int *));
+        std::memset(d_col_red_elem_conn, 0, ngpus * sizeof(int *));
 
         for (int g = 0; g < ngpus; g++) {
             int nelems = part->local_nelems[g];
@@ -230,9 +209,15 @@ class GPUbsrmat {
             int conn_size = nelems * npe;
 
             elem_conn_N[g] = conn_size;
-            h_loc_elem_conn[g] = new int[conn_size];
+            h_row_red_elem_conn[g] = new int[conn_size];
+            h_col_red_elem_conn[g] = new int[conn_size];
 
+            std::vector<int> global_to_owned(part->num_nodes, -1);
             std::vector<int> global_to_local(part->num_nodes, -1);
+
+            for (int i = 0; i < part->owned_nnodes[g]; i++) {
+                global_to_owned[part->h_owned_nodes[g][i]] = i;
+            }
 
             for (int i = 0; i < part->local_nnodes[g]; i++) {
                 global_to_local[part->h_local_nodes[g][i]] = i;
@@ -242,7 +227,9 @@ class GPUbsrmat {
 
             for (int i = 0; i < conn_size; i++) {
                 int node = conn[i];
-                h_loc_elem_conn[g][i] = global_to_local[node];
+
+                h_row_red_elem_conn[g][i] = global_to_owned[node];
+                h_col_red_elem_conn[g][i] = global_to_local[node];
             }
         }
     }
@@ -277,22 +264,24 @@ class GPUbsrmat {
         std::memset(d_loc_vals, 0, ngpus * sizeof(T *));
 
         for (int g = 0; g < ngpus; g++) {
-            loc_mb[g] = part->local_nnodes[g];
+            loc_mb[g] = part->owned_nnodes[g];
             loc_nb[g] = part->local_nnodes[g];
 
             std::vector<std::unordered_set<int>> row_cols(loc_mb[g]);
 
             int nelems = part->local_nelems[g];
             int npe = part->nodes_per_elem;
-            int *elem_conn = h_loc_elem_conn[g];
+
+            int *row_conn = h_row_red_elem_conn[g];
+            int *col_conn = h_col_red_elem_conn[g];
 
             for (int e = 0; e < nelems; e++) {
                 for (int a = 0; a < npe; a++) {
-                    int row = elem_conn[e * npe + a];
+                    int row = row_conn[e * npe + a];
                     if (row < 0) continue;
 
                     for (int b = 0; b < npe; b++) {
-                        int col = elem_conn[e * npe + b];
+                        int col = col_conn[e * npe + b];
                         if (col >= 0) row_cols[row].insert(col);
                     }
                 }
@@ -358,6 +347,7 @@ class GPUbsrmat {
 
             std::memset(h_tr_loc_rowp[g], 0, (nb + 1) * sizeof(int));
 
+            // Count entries in each transpose row = original column counts
             for (int row = 0; row < mb; row++) {
                 for (int jp = rowp[row]; jp < rowp[row + 1]; jp++) {
                     int col = cols[jp];
@@ -365,12 +355,17 @@ class GPUbsrmat {
                 }
             }
 
+            // Prefix sum
             for (int i = 0; i < nb; i++) {
                 h_tr_loc_rowp[g][i + 1] += h_tr_loc_rowp[g][i];
             }
 
             std::vector<int> offset(nb, 0);
 
+            // Fill transpose cols and map:
+            // original block:     A(row, col) at jp
+            // transpose pattern:  A^T(col, row) at jp_tr
+            // map:                jp_tr -> jp
             for (int row = 0; row < mb; row++) {
                 for (int jp = rowp[row]; jp < rowp[row + 1]; jp++) {
                     int col = cols[jp];
@@ -400,18 +395,19 @@ class GPUbsrmat {
             elem_ind_map_N[g] = nelems * blocks_per_elem;
             h_loc_elem_ind_map[g] = new int[elem_ind_map_N[g]];
 
-            int *elem_conn = h_loc_elem_conn[g];
+            int *row_conn = h_row_red_elem_conn[g];
+            int *col_conn = h_col_red_elem_conn[g];
             int *rowp = h_loc_rowp[g];
             int *cols = h_loc_cols[g];
 
             for (int e = 0; e < nelems; e++) {
                 for (int a = 0; a < npe; a++) {
-                    int row = elem_conn[e * npe + a];
+                    int row = row_conn[e * npe + a];
 
                     for (int b = 0; b < npe; b++) {
                         int elem_block = a * npe + b;
                         int map_index = e * blocks_per_elem + elem_block;
-                        int col = elem_conn[e * npe + b];
+                        int col = col_conn[e * npe + b];
 
                         if (row < 0 || col < 0) {
                             h_loc_elem_ind_map[g][map_index] = -1;
@@ -442,11 +438,16 @@ class GPUbsrmat {
             CHECK_CUSPARSE(cusparseSetMatType(descrA[g], CUSPARSE_MATRIX_TYPE_GENERAL));
             CHECK_CUSPARSE(cusparseSetMatIndexBase(descrA[g], CUSPARSE_INDEX_BASE_ZERO));
 
-            CHECK_CUDA(cudaMalloc((void **)&d_loc_elem_conn[g], elem_conn_N[g] * sizeof(int)));
+            CHECK_CUDA(cudaMalloc((void **)&d_row_red_elem_conn[g], elem_conn_N[g] * sizeof(int)));
+            CHECK_CUDA(cudaMalloc((void **)&d_col_red_elem_conn[g], elem_conn_N[g] * sizeof(int)));
             CHECK_CUDA(
                 cudaMalloc((void **)&d_loc_elem_ind_map[g], elem_ind_map_N[g] * sizeof(int)));
 
-            CHECK_CUDA(cudaMemcpyAsync(d_loc_elem_conn[g], h_loc_elem_conn[g],
+            CHECK_CUDA(cudaMemcpyAsync(d_row_red_elem_conn[g], h_row_red_elem_conn[g],
+                                       elem_conn_N[g] * sizeof(int), cudaMemcpyHostToDevice,
+                                       streams[g]));
+
+            CHECK_CUDA(cudaMemcpyAsync(d_col_red_elem_conn[g], h_col_red_elem_conn[g],
                                        elem_conn_N[g] * sizeof(int), cudaMemcpyHostToDevice,
                                        streams[g]));
 
@@ -502,10 +503,12 @@ class GPUbsrmat {
     int *elem_conn_N = nullptr;
     int *elem_ind_map_N = nullptr;
 
-    int **h_loc_elem_conn = nullptr;
+    int **h_row_red_elem_conn = nullptr;
+    int **h_col_red_elem_conn = nullptr;
     int **h_loc_elem_ind_map = nullptr;
 
-    int **d_loc_elem_conn = nullptr;
+    int **d_row_red_elem_conn = nullptr;
+    int **d_col_red_elem_conn = nullptr;
     int **d_loc_elem_ind_map = nullptr;
 
     int *loc_mb = nullptr;

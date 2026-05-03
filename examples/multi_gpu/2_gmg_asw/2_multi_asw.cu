@@ -131,10 +131,10 @@ int main(int argc, char *argv[]) {
     printf("add jacobian post-sync\n");
     ctx->sync();
 
-    // if (nxe * nxe <= 30) {
-    //     printf("kmat before bcs\n");
-    //     assembler.printMatrixOnHost(kmat);
-    // }
+    if (nxe * nxe <= 30) {
+        printf("kmat before bcs\n");
+        assembler.printMatrixOnHost(kmat);
+    }
 
     printf("apply bcs to kmat\n");
     assembler.apply_bcs(kmat);
@@ -179,6 +179,15 @@ int main(int argc, char *argv[]) {
     // factor before solve
     printf("factor ASW precond\n");
     pc->factor();
+
+    // test precond
+    test_vec->zero();
+    test_vec->zeroLocal();
+    pc->solve(rhs, test_vec);
+    if (nxe * nxe <= 30) {
+        printf("test precond-vec\n");
+        test_vec->printValuesOnHost();
+    }
 
     // then solve
     int max_iter = 500, print_freq = 10;

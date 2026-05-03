@@ -239,11 +239,11 @@ class GPUvec {
     }
 
     void expandToLocal() {
-        // printf("zeroLocal\n");
+        printf("zeroLocal\n");
         zeroLocal();
 
         // 1) Scatter owned values into each GPU's local vector
-        // printf("Scatter owned values to local\n");
+        printf("Scatter owned values to local\n");
         for (int g = 0; g < ngpus; g++) {
             if (part->owned_nnodes[g] == 0) continue;
 
@@ -260,11 +260,11 @@ class GPUvec {
         }
 
         // 2) Pack ghost values on source GPUs
-        // printf("packGhostReduced\n");
+        printf("packGhostReduced\n");
         packGhostReduced();
 
         // 3) Peer-copy packed ghost values from src GPU to dst GPU
-        // printf("peer copy packed ghost values\n");
+        printf("peer copy packed ghost values\n");
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -292,7 +292,7 @@ class GPUvec {
         sync();
 
         // 4) Place received ghost values into destination local vectors
-        // printf("place received ghost values into destination local\n");
+        printf("place received ghost values into destination local\n");
         for (int dst = 0; dst < ngpus; dst++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
 
@@ -312,103 +312,6 @@ class GPUvec {
                 k_place_ghost_red<T><<<grid, block, 0, streams[dst]>>>(
                     nred_nodes, block_dim, part->d_dstred_map[idx], d_vals_red_dst[idx],
                     d_vals_local[dst]);
-
-                CHECK_CUDA(cudaGetLastError());
-            }
-        }
-
-        sync();
-    }
-
-    void reduceFromLocal() {
-        zero();  // zero owned (since we first copy owned nodes from local to owned vec)
-
-        // 1) Add owned-row local contributions into owned vector.
-        // Caller is responsible for zeroing d_vals_owned first if overwrite semantics are desired.
-        for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
-
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-
-            dim3 block(32);
-            dim3 grid((Nowned + block.x - 1) / block.x);
-
-            k_add_local_owned_to_owned<T><<<grid, block, 0, streams[g]>>>(
-                Nowned, block_dim, part->d_owned_to_local_map[g], d_vals_local[g], d_vals_owned[g]);
-
-            CHECK_CUDA(cudaGetLastError());
-        }
-
-        sync();
-
-        // 2) Pack ghost-row contributions on dst GPUs.
-        // Pair convention:
-        //   idx = pair_index(dst, src)
-        //   dst has ghost nodes owned by src.
-        //   d_dstred_map[idx]: red node -> local ghost node on dst
-        //   d_srcred_map[idx]: red node -> owned node on src
-        for (int dst = 0; dst < ngpus; dst++) {
-            for (int src = 0; src < ngpus; src++) {
-                if (src == dst) continue;
-
-                int idx = pair_index(dst, src);
-                int Nred = red_N[idx];
-                if (Nred == 0) continue;
-
-                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
-
-                dim3 block(32);
-                dim3 grid((Nred + block.x - 1) / block.x);
-
-                k_pack_local_ghost_red<T>
-                    <<<grid, block, 0, streams[dst]>>>(Nred, block_dim, part->d_dstred_map[idx],
-                                                       d_vals_local[dst], d_vals_red_dst[idx]);
-
-                CHECK_CUDA(cudaGetLastError());
-            }
-        }
-
-        // 3) Copy packed ghost contributions dst -> src.
-        for (int dst = 0; dst < ngpus; dst++) {
-            for (int src = 0; src < ngpus; src++) {
-                if (src == dst) continue;
-
-                int idx = pair_index(dst, src);
-                int Nred = red_N[idx];
-                if (Nred == 0) continue;
-
-                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
-
-                if (debug) {
-                    CHECK_CUDA(cudaMemcpyAsync(d_vals_red[idx], d_vals_red_dst[idx],
-                                               Nred * sizeof(T), cudaMemcpyDeviceToDevice,
-                                               streams[dst]));
-                } else {
-                    CHECK_CUDA(cudaMemcpyPeerAsync(d_vals_red[idx], src, d_vals_red_dst[idx], dst,
-                                                   Nred * sizeof(T), streams[dst]));
-                }
-            }
-        }
-
-        sync();
-
-        // 4) Add received ghost contributions into owned vector on src GPUs.
-        for (int dst = 0; dst < ngpus; dst++) {
-            for (int src = 0; src < ngpus; src++) {
-                if (src == dst) continue;
-
-                int idx = pair_index(dst, src);
-                int Nred = red_N[idx];
-                if (Nred == 0) continue;
-
-                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
-
-                dim3 block(32);
-                dim3 grid((Nred + block.x - 1) / block.x);
-
-                k_add_red_to_owned<T><<<grid, block, 0, streams[src]>>>(
-                    Nred, block_dim, part->d_srcred_map[idx], d_vals_red[idx], d_vals_owned[src]);
 
                 CHECK_CUDA(cudaGetLastError());
             }

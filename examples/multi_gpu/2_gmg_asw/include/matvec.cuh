@@ -41,6 +41,25 @@ __global__ void k_scatter_owned_to_local(int nnodes, int block_dim, const int *m
 }
 
 template <typename T>
+__GLOBAL__ void k_add_local_owned_to_owned(
+    int Nowned,
+    int block_dim,
+    const int *owned_to_local_map,
+    const T *local_vals,
+    T *owned_vals) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (tid < Nowned) {
+        int owned_node = tid / block_dim;
+        int idof = tid % block_dim;
+
+        int local_node = owned_to_local_map[owned_node];
+
+        owned_vals[tid] += local_vals[block_dim * local_node + idof];
+    }
+}
+
+template <typename T>
 __GLOBAL__ void k_vec_apply_bcs(int nbcs, int *bcs, T *data) {
     // no need for perm here since this is called on unreordered state of vectors like res, loads, etc.
     int start = blockIdx.x * blockDim.x + threadIdx.x;
@@ -49,6 +68,55 @@ __GLOBAL__ void k_vec_apply_bcs(int nbcs, int *bcs, T *data) {
         data[idof] = 0.0;
     }
 }
+
+template <typename T>
+__GLOBAL__ void k_copy_local_owned_to_owned(const int owned_nnodes, const int block_dim,
+                                            const int *owned_to_local_map,
+                                            const T *local_vals, T *owned_vals) {
+    int inode = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (inode < owned_nnodes) {
+        int local_node = owned_to_local_map[inode];
+
+        for (int idof = 0; idof < block_dim; idof++) {
+            owned_vals[block_dim * inode + idof] =
+                local_vals[block_dim * local_node + idof];
+        }
+    }
+}
+
+template <typename T>
+__GLOBAL__ void k_pack_local_ghost_red(const int nred_nodes, const int block_dim,
+                                       const int *dstred_map,
+                                       const T *local_vals, T *red_vals) {
+    int inode = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (inode < nred_nodes) {
+        int local_node = dstred_map[inode];
+
+        for (int idof = 0; idof < block_dim; idof++) {
+            red_vals[block_dim * inode + idof] =
+                local_vals[block_dim * local_node + idof];
+        }
+    }
+}
+
+template <typename T>
+__GLOBAL__ void k_add_red_to_owned(const int nred_nodes, const int block_dim,
+                                   const int *srcred_map,
+                                   const T *red_vals, T *owned_vals) {
+    int inode = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (inode < nred_nodes) {
+        int owned_node = srcred_map[inode];
+
+        for (int idof = 0; idof < block_dim; idof++) {
+            owned_vals[block_dim * owned_node + idof] +=
+                red_vals[block_dim * inode + idof];
+        }
+    }
+}
+
 template <typename T, bool ones_on_diag = true>
 __GLOBAL__ void k_mat_apply_row_bcs(
     const int block_dim,

@@ -88,13 +88,13 @@ __global__ void k_copyLocalRHSIntoBatched(
 }
 
 template <typename T>
-__global__ void k_copyBatchedIntoOwnedSoln(
+__global__ void k_addBatchedIntoLocalSoln(
     int n_rhs_vals,
     int block_dim,
     int size,
-    const int *__restrict__ owned_node_map,
+    const int *__restrict__ local_node_map,
     T **__restrict__ Yarray,
-    T *__restrict__ soln_owned) {
+    T *__restrict__ soln_local) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= n_rhs_vals) return;
 
@@ -105,12 +105,12 @@ __global__ void k_copyBatchedIntoOwnedSoln(
 
     int batch = node_entry / size2;
     int local_slot = node_entry % size2;
-    int owned_node = owned_node_map[node_entry];
+    int local_node = local_node_map[node_entry];
 
-    if (owned_node < 0) return;
+    if (local_node < 0) return;
 
     const T *y = Yarray[batch];
     T val = y[local_slot * block_dim + idof];
 
-    atomicAdd(&soln_owned[owned_node * block_dim + idof], val);
+    atomicAdd(&soln_local[local_node * block_dim + idof], val);
 }
