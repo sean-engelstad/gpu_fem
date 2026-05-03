@@ -405,7 +405,7 @@ class GPUvec {
                 int idx = pair_index(dst, src);
                 int Nred = red_N[idx];
                 if (Nred == 0) continue;
-                red_nnodes = Nred / block_dim;
+                int red_nnodes = Nred / block_dim;
 
                 CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
 
