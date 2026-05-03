@@ -333,9 +333,11 @@ class GPUvec {
 
             dim3 block(32);
             dim3 grid((Nowned + block.x - 1) / block.x);
+            int owned_nnodes = Nowned / block_dim;
 
             k_add_local_owned_to_owned<T><<<grid, block, 0, streams[g]>>>(
-                Nowned, block_dim, part->d_owned_to_local_map[g], d_vals_local[g], d_vals_owned[g]);
+                owned_nnodes, block_dim, part->d_owned_to_local_map[g], d_vals_local[g],
+                d_vals_owned[g]);
 
             CHECK_CUDA(cudaGetLastError());
         }
@@ -356,14 +358,16 @@ class GPUvec {
                 int Nred = red_N[idx];
                 if (Nred == 0) continue;
 
+                int red_nnodes = Nred / block_dim;
+
                 CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
 
                 dim3 block(32);
                 dim3 grid((Nred + block.x - 1) / block.x);
 
-                k_pack_local_ghost_red<T>
-                    <<<grid, block, 0, streams[dst]>>>(Nred, block_dim, part->d_dstred_map[idx],
-                                                       d_vals_local[dst], d_vals_red_dst[idx]);
+                k_pack_local_ghost_red<T><<<grid, block, 0, streams[dst]>>>(
+                    red_nnodes, block_dim, part->d_dstred_map[idx], d_vals_local[dst],
+                    d_vals_red_dst[idx]);
 
                 CHECK_CUDA(cudaGetLastError());
             }
@@ -401,6 +405,7 @@ class GPUvec {
                 int idx = pair_index(dst, src);
                 int Nred = red_N[idx];
                 if (Nred == 0) continue;
+                red_nnodes = Nred / block_dim;
 
                 CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
 
@@ -408,7 +413,8 @@ class GPUvec {
                 dim3 grid((Nred + block.x - 1) / block.x);
 
                 k_add_red_to_owned<T><<<grid, block, 0, streams[src]>>>(
-                    Nred, block_dim, part->d_srcred_map[idx], d_vals_red[idx], d_vals_owned[src]);
+                    red_nnodes, block_dim, part->d_srcred_map[idx], d_vals_red[idx],
+                    d_vals_owned[src]);
 
                 CHECK_CUDA(cudaGetLastError());
             }

@@ -80,8 +80,12 @@ int main(int argc, char *argv[]) {
     // start multi GPU device context
     // ---------------------------------------------
     auto ctx = new MultiGPUContext();
+
+    ctx->ngpus = 4; // debug
+
     int device_count = ctx->ngpus;
     printf("#GPUs = %d\n", device_count);
+
 
     // ---------------------------------------------
     // create FEA problem
@@ -131,7 +135,7 @@ int main(int argc, char *argv[]) {
     printf("add jacobian post-sync\n");
     ctx->sync();
 
-    if (nxe * nxe <= 30) {
+    if (nxe * nxe <= 100) {
         printf("kmat before bcs\n");
         assembler.printMatrixOnHost(kmat);
     }
@@ -144,7 +148,9 @@ int main(int argc, char *argv[]) {
     if (nxe * nxe <= 30) {
         printf("kmat after bcs\n");
         assembler.printMatrixOnHost(kmat);
+    }
 
+    if (nxe * nxe <= 100) {
         printf("rhs vec after bcs\n");
         rhs->printValuesOnHost();
     }
@@ -156,7 +162,7 @@ int main(int argc, char *argv[]) {
     auto test_vec = new GPUvec<T, Partitioner>(ctx, part, block_dim);
     kmat->mult(rhs, test_vec);
 
-    if (nxe * nxe <= 30) {
+    if (nxe * nxe <= 100) {
         printf("test mat-vec\n");
         test_vec->printValuesOnHost();
     }
