@@ -190,7 +190,7 @@ int main(int argc, char *argv[]) {
     test_vec->zero();
     test_vec->zeroLocal();
     pc->solve(rhs, test_vec);
-    if (nxe * nxe <= 30) {
+    if (nxe * nxe <= 100) {
         printf("test precond-vec\n");
         test_vec->printValuesOnHost();
     }
