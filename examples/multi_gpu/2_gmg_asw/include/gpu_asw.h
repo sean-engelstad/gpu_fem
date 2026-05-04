@@ -40,7 +40,8 @@ class MultiGPUElementASW {
         printf("ASW - build_maps\n");
         build_maps();
         printf("ASW - build_ghost_maps\n");
-        build_ghost_maps();
+        build_ghost_maps(true);
+        // build_ghost_maps(false);
         printf("ASW - allocate_batched_memory\n");
         allocate_batched_memory();
         printf("ASW - allocate_ghost_batched_memory\n");
@@ -497,7 +498,80 @@ class MultiGPUElementASW {
 
     int pair_index(int dst, int src) const { return ngpus * dst + src; }
 
-    void build_ghost_maps() {
+    // void build_ghost_maps() {
+    //     for (int dst = 0; dst < ngpus; dst++) {
+    //         int *dst_conn = A->getHostLocalElemConn(dst);
+
+    //         for (int e = 0; e < batch_size[dst]; e++) {
+    //             for (int ij = 0; ij < size4; ij++) {
+    //                 int i = ij % size2;
+    //                 int j = ij / size2;
+
+    //                 int dst_row_node = dst_conn[e * size2 + i];
+    //                 int dst_col_node = dst_conn[e * size2 + j];
+
+    //                 if (dst_row_node < 0 || dst_col_node < 0) continue;
+
+    //                 // Only patch ghost x ghost blocks on dst
+    //                 if (dst_row_node < part->owned_nnodes[dst]) continue;
+    //                 if (dst_col_node < part->owned_nnodes[dst]) continue;
+
+    //                 int glob_row = part->h_local_nodes[dst][dst_row_node];
+    //                 int glob_col = part->h_local_nodes[dst][dst_col_node];
+
+    //                 for (int src = 0; src < ngpus; src++) {
+    //                     if (src == dst) continue;
+
+    //                     int *src_rowp = A->getHostLocalRowp(src);
+    //                     int *src_cols = A->getHostLocalCols(src);
+
+    //                     int src_row_node = -1;
+    //                     int src_col_node = -1;
+
+    //                     for (int a = 0; a < part->local_nnodes[src]; a++) {
+    //                         int gnode = part->h_local_nodes[src][a];
+    //                         if (gnode == glob_row) src_row_node = a;
+    //                         if (gnode == glob_col) src_col_node = a;
+    //                     }
+
+    //                     if (src_row_node < 0 || src_col_node < 0) continue;
+
+    //                     int jp_found = -1;
+    //                     for (int jp = src_rowp[src_row_node]; jp < src_rowp[src_row_node + 1];
+    //                          jp++) {
+    //                         if (src_cols[jp] == src_col_node) {
+    //                             jp_found = jp;
+    //                             break;
+    //                         }
+    //                     }
+
+    //                     if (jp_found >= 0) {
+    //                         int idx = pair_index(dst, src);
+    //                         h_ghost_asw_blocks[idx].push_back(e * size4 + ij);
+    //                         h_ghost_kmat_blocks[idx].push_back(jp_found);
+    //                         break;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     for (int dst = 0; dst < ngpus; dst++) {
+    //         for (int src = 0; src < ngpus; src++) {
+    //             if (src == dst) continue;
+    //             int idx = pair_index(dst, src);
+    //             ghost_pair_nblocks[idx] = (int)h_ghost_asw_blocks[idx].size();
+    //         }
+    //     }
+    // }
+
+    void build_ghost_maps(bool debug_print = true) {
+        int total_candidates = 0;
+        int total_found = 0;
+
+        int max_print = 10;  // limit sample prints
+        int printed = 0;
+
         for (int dst = 0; dst < ngpus; dst++) {
             int *dst_conn = A->getHostLocalElemConn(dst);
 
@@ -511,9 +585,16 @@ class MultiGPUElementASW {
 
                     if (dst_row_node < 0 || dst_col_node < 0) continue;
 
-                    // Only patch ghost x ghost blocks on dst
+                    // only ghost × ghost on dst
                     if (dst_row_node < part->owned_nnodes[dst]) continue;
                     if (dst_col_node < part->owned_nnodes[dst]) continue;
+
+                    total_candidates++;
+
+                    int dst_batch_block = e * size4 + ij;
+
+                    // skip if already exists locally
+                    if (h_block_inds[dst][dst_batch_block] >= 0) continue;
 
                     int glob_row = part->h_local_nodes[dst][dst_row_node];
                     int glob_col = part->h_local_nodes[dst][dst_col_node];
@@ -535,6 +616,10 @@ class MultiGPUElementASW {
 
                         if (src_row_node < 0 || src_col_node < 0) continue;
 
+                        // enforce ghost×ghost on source too
+                        if (src_row_node < part->owned_nnodes[src]) continue;
+                        if (src_col_node < part->owned_nnodes[src]) continue;
+
                         int jp_found = -1;
                         for (int jp = src_rowp[src_row_node]; jp < src_rowp[src_row_node + 1];
                              jp++) {
@@ -546,8 +631,17 @@ class MultiGPUElementASW {
 
                         if (jp_found >= 0) {
                             int idx = pair_index(dst, src);
-                            h_ghost_asw_blocks[idx].push_back(e * size4 + ij);
+                            h_ghost_asw_blocks[idx].push_back(dst_batch_block);
                             h_ghost_kmat_blocks[idx].push_back(jp_found);
+
+                            total_found++;
+
+                            if (debug_print && printed < max_print) {
+                                printf("[ghost-map] dst %d <- src %d | elem %d block(%d,%d)\n", dst,
+                                       src, e, i, j);
+                                printed++;
+                            }
+
                             break;
                         }
                     }
@@ -555,12 +649,24 @@ class MultiGPUElementASW {
             }
         }
 
+        // summarize per pair
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
+
                 int idx = pair_index(dst, src);
                 ghost_pair_nblocks[idx] = (int)h_ghost_asw_blocks[idx].size();
+
+                if (debug_print && ghost_pair_nblocks[idx] > 0) {
+                    printf("[ghost-map] dst %d <- src %d : %d blocks\n", dst, src,
+                           ghost_pair_nblocks[idx]);
+                }
             }
+        }
+
+        if (debug_print) {
+            printf("[ghost-map] total candidates = %d, total matched = %d\n", total_candidates,
+                   total_found);
         }
     }
 
