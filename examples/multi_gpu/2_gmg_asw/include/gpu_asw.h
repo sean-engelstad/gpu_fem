@@ -585,18 +585,20 @@ class MultiGPUElementASW {
 
                     if (dst_row_node < 0 || dst_col_node < 0) continue;
 
-                    // Only ghost x ghost candidates on dst
-                    if (dst_row_node < part->owned_nnodes[dst]) continue;
-                    if (dst_col_node < part->owned_nnodes[dst]) continue;
+                    int glob_row = part->h_local_nodes[dst][dst_row_node];
+                    int glob_col = part->h_local_nodes[dst][dst_col_node];
+
+                    bool dst_row_is_ghost = (part->h_node_gpu_ind[glob_row] != dst);
+                    bool dst_col_is_ghost = (part->h_node_gpu_ind[glob_col] != dst);
+
+                    // Only destination ghost x ghost blocks
+                    if (!dst_row_is_ghost || !dst_col_is_ghost) continue;
 
                     total_candidates++;
 
                     int dst_batch_block = e * size4 + ij;
                     bool already_local = (h_block_inds[dst][dst_batch_block] >= 0);
                     if (already_local) total_already_local++;
-
-                    int glob_row = part->h_local_nodes[dst][dst_row_node];
-                    int glob_col = part->h_local_nodes[dst][dst_col_node];
 
                     bool found_src_nodes = false;
                     bool found_src_block = false;
@@ -620,7 +622,6 @@ class MultiGPUElementASW {
                         }
 
                         if (src_row_node < 0 || src_col_node < 0) continue;
-
                         found_src_nodes = true;
 
                         int jp_found = -1;
@@ -633,18 +634,12 @@ class MultiGPUElementASW {
                         }
 
                         if (jp_found < 0) continue;
-
                         found_src_block = true;
 
-                        // For now: only fill missing dst blocks.
-                        // If already_local == true for all candidates and matrices still differ,
-                        // switch this to overwrite existing ghost x ghost blocks too.
-                        if (!already_local) {
-                            int idx = pair_index(dst, src);
-                            h_ghost_asw_blocks[idx].push_back(dst_batch_block);
-                            h_ghost_kmat_blocks[idx].push_back(jp_found);
-                            total_pushed++;
-                        }
+                        int idx = pair_index(dst, src);
+                        h_ghost_asw_blocks[idx].push_back(dst_batch_block);
+                        h_ghost_kmat_blocks[idx].push_back(jp_found);
+                        total_pushed++;
 
                         break;
                     }
