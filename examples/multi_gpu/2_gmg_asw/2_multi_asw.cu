@@ -151,7 +151,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (nxe * nxe <= 100) {
-        printf("rhs vec after bcs\n");
+        T rhs_norm = rhs->norm();
+        printf("rhs vec after bcs with norm %.4e\n", rhs_norm);
         rhs->printValuesOnHost();
     }
 
