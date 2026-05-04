@@ -130,26 +130,22 @@ template <typename T, bool ones_on_diag = true>
 __GLOBAL__ void k_mat_apply_row_bcs(
     const int block_dim,
     const int mb,
-    int n_owned_bcs,
-    const int *d_owned_bcs,
-    const int *owned_to_local_map,
+    const int n_local_bcs,
+    const int *d_local_bcs,
     const int *rowp,
     const int *cols,
     T *values) {
-
+    
     int ibc = blockIdx.x * blockDim.x + threadIdx.x;
-    if (ibc >= n_owned_bcs) return;
+    if (ibc >= n_local_bcs) return;
 
-    int block_dim2 = block_dim * block_dim;
+    const int block_dim2 = block_dim * block_dim;
 
-    int bc_dof = d_owned_bcs[ibc];
+    int bc_dof = d_local_bcs[ibc];
     int block_row = bc_dof / block_dim;
     int inner_row = bc_dof % block_dim;
 
     if (block_row < 0 || block_row >= mb) return;
-
-    int diag_local_col = owned_to_local_map[block_row];
-    if (diag_local_col < 0) return;
 
     for (int jp = rowp[block_row]; jp < rowp[block_row + 1]; jp++) {
         int block_col = cols[jp];
@@ -158,11 +154,12 @@ __GLOBAL__ void k_mat_apply_row_bcs(
             int inner_block = block_dim * inner_row + inner_col;
 
             bool is_diag =
-                (block_col == diag_local_col) &&
+                (block_col == block_row) &&
                 (inner_col == inner_row);
 
-            T diag_val = ones_on_diag ? 1.0 : 0.0;
-            values[block_dim2 * jp + inner_block] = is_diag ? diag_val : 0.0;
+            T diag_val = ones_on_diag ? T(1.0) : T(0.0);
+            values[block_dim2 * jp + inner_block] =
+                is_diag ? diag_val : T(0.0);
         }
     }
 }
@@ -171,26 +168,23 @@ template <typename T, bool ones_on_diag = true>
 __GLOBAL__ void k_mat_apply_col_bcs(
     const int block_dim,
     const int nb,
-    int n_local_bcs,
+    const int n_local_bcs,
     const int *d_local_bcs,
-    const int *local_to_owned_map,
     const int *tr_rowp,
     const int *tr_cols,
     const int *tr_block_map,
     T *values) {
-
+    
     int ibc = blockIdx.x * blockDim.x + threadIdx.x;
     if (ibc >= n_local_bcs) return;
 
-    int block_dim2 = block_dim * block_dim;
+    const int block_dim2 = block_dim * block_dim;
 
     int bc_dof = d_local_bcs[ibc];
     int block_col = bc_dof / block_dim;
     int inner_col = bc_dof % block_dim;
 
     if (block_col < 0 || block_col >= nb) return;
-
-    int diag_owned_row = local_to_owned_map[block_col];
 
     for (int jp_tr = tr_rowp[block_col]; jp_tr < tr_rowp[block_col + 1]; jp_tr++) {
         int block_row = tr_cols[jp_tr];
@@ -200,11 +194,12 @@ __GLOBAL__ void k_mat_apply_col_bcs(
             int inner_block = block_dim * inner_row + inner_col;
 
             bool is_diag =
-                (block_row == diag_owned_row) &&
+                (block_row == block_col) &&
                 (inner_row == inner_col);
 
-            T diag_val = ones_on_diag ? 1.0 : 0.0;
-            values[block_dim2 * jp + inner_block] = is_diag ? diag_val : 0.0;
+            T diag_val = ones_on_diag ? T(1.0) : T(0.0);
+            values[block_dim2 * jp + inner_block] =
+                is_diag ? diag_val : T(0.0);
         }
     }
 }

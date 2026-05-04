@@ -104,31 +104,26 @@ class GPUbsrmat {
             CHECK_CUDA(cudaSetDevice(g));
             CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
 
-            dim3 block(32);
+            dim3 block(128);
 
             printf("GPU[%d] - apply row bcs to local-local matrix\n", g);
-            if (n_owned_bcs[g] > 0) {
-                dim3 grid1((n_owned_bcs[g] + block.x - 1) / block.x);
+            if (n_local_bcs[g] > 0) {
+                dim3 grid((n_local_bcs[g] + block.x - 1) / block.x);
 
-                // owned BC dofs are mapped into local rows with d_owned_to_local_map
-                k_mat_apply_row_bcs<T><<<grid1, block, 0, streams[g]>>>(
-                    block_dim, loc_mb[g], n_owned_bcs[g], d_owned_bcs[g],
-                    part->d_owned_to_local_map[g], d_loc_rowp[g], d_loc_cols[g], d_loc_vals[g]);
+                k_mat_apply_row_bcs<T><<<grid, block, 0, streams[g]>>>(
+                    block_dim, loc_mb[g], n_local_bcs[g], d_local_bcs[g], d_loc_rowp[g],
+                    d_loc_cols[g], d_loc_vals[g]);
 
                 CHECK_CUDA(cudaGetLastError());
             }
 
             printf("GPU[%d] - apply col bcs to local-local matrix\n", g);
             if (n_local_bcs[g] > 0) {
-                dim3 grid2((n_local_bcs[g] + block.x - 1) / block.x);
+                dim3 grid((n_local_bcs[g] + block.x - 1) / block.x);
 
-                // local BC dofs are already local ids
-                // If your old k_mat_apply_col_bcs expects a local->owned map,
-                // you may need a local-identity / local map version here.
-                k_mat_apply_col_bcs<T><<<grid2, block, 0, streams[g]>>>(
-                    block_dim, loc_nb[g], n_local_bcs[g], d_local_bcs[g],
-                    part->d_local_to_owned_map[g], d_tr_loc_rowp[g], d_tr_loc_cols[g],
-                    d_tr_block_map[g], d_loc_vals[g]);
+                k_mat_apply_col_bcs<T><<<grid, block, 0, streams[g]>>>(
+                    block_dim, loc_nb[g], n_local_bcs[g], d_local_bcs[g], d_tr_loc_rowp[g],
+                    d_tr_loc_cols[g], d_tr_block_map[g], d_loc_vals[g]);
 
                 CHECK_CUDA(cudaGetLastError());
             }
