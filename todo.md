@@ -21,6 +21,7 @@
 
 1. [ ] Finish multi-GPU development
    - [ ] GMG-ASW on multi-GPU
+      - [ ] speedup setup time for multi-GPU ASW precond ghost flags.. maybe for matrix copy (see where host side bottleneck)
    - [ ] 2-level BDDC-LU on multi-GPU
       - [ ] CuDSS multi-GPU Schur complement for coarse direct solve
    - [ ] maybe also try multi CPU + GPU (for really high DOF problems)? Is it worth it for more than 4 GPUs?
