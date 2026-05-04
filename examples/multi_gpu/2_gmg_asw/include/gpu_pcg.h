@@ -33,11 +33,11 @@ class GPU_PCG {
         ctx->sync();
         auto start = std::chrono::high_resolution_clock::now();
 
+        rhs->copyTo(resid);
+
         a = -1.0;
         b = 0.0;
         A->mult(a, x, b, resid);
-
-        resid->axpy(1.0, rhs);
 
         T init_resid_norm = resid->norm();
 

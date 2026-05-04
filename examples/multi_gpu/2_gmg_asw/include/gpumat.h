@@ -33,6 +33,8 @@ class GPUbsrmat {
         build_element_ind_map();
         move_matrix_pattern_to_device();
         sync();
+
+        temp = new GPUvec<T>(ctx, part, block_dim);
     }
 
     ~GPUbsrmat() {
@@ -144,29 +146,25 @@ class GPUbsrmat {
     void mult(T alpha, GPUvec<T, Partitioner> *x, T beta, GPUvec<T, Partitioner> *y) {
         x->expandToLocal();
 
-        // The local-local matvec writes into y local.
-        // Then y reduces local owned+ghost row contributions back to owned storage.
-        if (beta == 0.0) {
-            y->zeroLocal();
-        } else {
-            // Assumes y local is already consistent if beta != 0.
-            // Safer default for Krylov use is usually beta = 0.
-            y->expandToLocal();
-        }
+        temp->zero();
+        temp->zeroLocal();
 
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
             CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
 
+            T a = 1.0, b = 0.0;
+
             CHECK_CUSPARSE(cusparseDbsrmv(
                 cusparseHandles[g], CUSPARSE_DIRECTION_ROW, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                loc_mb[g], loc_nb[g], loc_nnzb[g], &alpha, descrA[g], d_loc_vals[g], d_loc_rowp[g],
-                d_loc_cols[g], block_dim, x->getLocalPtr(g), &beta, y->getLocalPtr(g)));
+                loc_mb[g], loc_nb[g], loc_nnzb[g], &a, descrA[g], d_loc_vals[g], d_loc_rowp[g],
+                d_loc_cols[g], block_dim, x->getLocalPtr(g), &b, temp->getLocalPtr(g)));
         }
 
         sync();
 
-        y->reduceFromLocal();
+        temp->reduceFromLocal();
+        y->axpy(alpha, temp, beta);
     }
 
     void mult(GPUvec<T, Partitioner> *x, GPUvec<T, Partitioner> *y) {
@@ -488,6 +486,8 @@ class GPUbsrmat {
     cusparseHandle_t *cusparseHandles = nullptr;
     cudaStream_t *streams = nullptr;
     cusparseMatDescr_t *descrA = nullptr;
+
+    GPUvec<T> *temp;
 
     int ngpus = 0;
     int num_nodes = 0;
