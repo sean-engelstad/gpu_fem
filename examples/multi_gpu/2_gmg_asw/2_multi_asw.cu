@@ -163,7 +163,8 @@ int main(int argc, char *argv[]) {
     kmat->mult(rhs, test_vec);
 
     if (nxe * nxe <= 100) {
-        printf("test mat-vec\n");
+        T test_nrm = test_vec->norm();
+        printf("test mat-vec with nrm %.8e\n", test_nrm);
         test_vec->printValuesOnHost();
     }
 
@@ -191,7 +192,8 @@ int main(int argc, char *argv[]) {
     test_vec->zeroLocal();
     pc->solve(rhs, test_vec);
     if (nxe * nxe <= 100) {
-        printf("test precond-vec\n");
+        T test_nrm = test_vec->norm();
+        printf("test precond-vec with nrm %.8e\n", test_nrm);
         test_vec->printValuesOnHost();
     }
 
