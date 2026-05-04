@@ -32,6 +32,8 @@ class StructuredGPUPartitioner {
         build_owned_node_lists();
         printf("build_local_node_maps\n");
         build_local_node_maps();
+        printf("build_local_ghost_flags\n");
+        build_local_ghost_flags();
         printf("build_ghost_node_maps\n");
         build_ghost_node_maps();
         printf("build_owned_local_maps\n");
@@ -51,6 +53,7 @@ class StructuredGPUPartitioner {
             if (h_owned_nodes && h_owned_nodes[g]) delete[] h_owned_nodes[g];
             if (h_local_nodes && h_local_nodes[g]) delete[] h_local_nodes[g];
             if (h_owned_to_local_map && h_owned_to_local_map[g]) delete[] h_owned_to_local_map[g];
+            if (h_is_local_ghost && h_is_local_ghost[g]) delete[] h_is_local_ghost[g];
         }
 
         int npairs = ngpus * ngpus;
@@ -90,6 +93,7 @@ class StructuredGPUPartitioner {
         delete[] d_dstred_map;
         delete[] h_owned_to_local_map;
         delete[] d_owned_to_local_map;
+        delete[] h_is_local_ghost;
     }
 
     int pair_index(int dst, int src) const { return ngpus * dst + src; }
@@ -282,6 +286,35 @@ class StructuredGPUPartitioner {
         }
     }
 
+    void build_local_ghost_flags() {
+        h_is_local_ghost = new bool *[ngpus];
+        std::memset(h_is_local_ghost, 0, ngpus * sizeof(bool *));
+
+        for (int g = 0; g < ngpus; g++) {
+            h_is_local_ghost[g] = new bool[local_nnodes[g]];
+            std::fill(h_is_local_ghost[g], h_is_local_ghost[g] + local_nnodes[g], false);
+        }
+
+        for (int dst = 0; dst < ngpus; dst++) {
+            for (int dst_loc = 0; dst_loc < local_nnodes[dst]; dst_loc++) {
+                int node = h_local_nodes[dst][dst_loc];
+
+                for (int src = 0; src < ngpus; src++) {
+                    if (src == dst) continue;
+
+                    for (int src_loc = 0; src_loc < local_nnodes[src]; src_loc++) {
+                        if (h_local_nodes[src][src_loc] == node) {
+                            h_is_local_ghost[dst][dst_loc] = true;
+                            break;
+                        }
+                    }
+
+                    if (h_is_local_ghost[dst][dst_loc]) break;
+                }
+            }
+        }
+    }
+
     void build_owned_local_maps() {
         h_owned_to_local_map = new int *[ngpus];
         d_owned_to_local_map = new int *[ngpus];
@@ -468,4 +501,6 @@ class StructuredGPUPartitioner {
     int **h_dstred_map = nullptr;
     int **d_srcred_map = nullptr;
     int **d_dstred_map = nullptr;
+
+    bool **h_is_local_ghost = nullptr;
 };

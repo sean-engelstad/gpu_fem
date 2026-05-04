@@ -588,8 +588,12 @@ class MultiGPUElementASW {
                     int glob_row = part->h_local_nodes[dst][dst_row_node];
                     int glob_col = part->h_local_nodes[dst][dst_col_node];
 
-                    bool dst_row_is_ghost = (part->h_node_gpu_ind[glob_row] != dst);
-                    bool dst_col_is_ghost = (part->h_node_gpu_ind[glob_col] != dst);
+                    // bool dst_row_is_ghost = (part->h_node_gpu_ind[glob_row] != dst);
+                    // bool dst_col_is_ghost = (part->h_node_gpu_ind[glob_col] != dst);
+
+                    // not if it's owned, but if this node also appears on other proc is ghost here
+                    bool dst_row_is_ghost = part->h_is_local_ghost[dst][dst_row_node];
+                    bool dst_col_is_ghost = part->h_is_local_ghost[dst][dst_col_node];
 
                     // Only destination ghost x ghost blocks
                     if (!dst_row_is_ghost || !dst_col_is_ghost) continue;
