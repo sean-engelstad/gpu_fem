@@ -567,10 +567,10 @@ class MultiGPUElementASW {
 
     void build_ghost_maps(bool debug_print = true) {
         int total_candidates = 0;
-        int total_found = 0;
-
-        int max_print = 10;  // limit sample prints
-        int printed = 0;
+        int total_already_local = 0;
+        int total_src_nodes_found = 0;
+        int total_src_block_found = 0;
+        int total_pushed = 0;
 
         for (int dst = 0; dst < ngpus; dst++) {
             int *dst_conn = A->getHostLocalElemConn(dst);
@@ -585,19 +585,21 @@ class MultiGPUElementASW {
 
                     if (dst_row_node < 0 || dst_col_node < 0) continue;
 
-                    // only ghost × ghost on dst
+                    // Only ghost x ghost candidates on dst
                     if (dst_row_node < part->owned_nnodes[dst]) continue;
                     if (dst_col_node < part->owned_nnodes[dst]) continue;
 
                     total_candidates++;
 
                     int dst_batch_block = e * size4 + ij;
-
-                    // skip if already exists locally
-                    if (h_block_inds[dst][dst_batch_block] >= 0) continue;
+                    bool already_local = (h_block_inds[dst][dst_batch_block] >= 0);
+                    if (already_local) total_already_local++;
 
                     int glob_row = part->h_local_nodes[dst][dst_row_node];
                     int glob_col = part->h_local_nodes[dst][dst_col_node];
+
+                    bool found_src_nodes = false;
+                    bool found_src_block = false;
 
                     for (int src = 0; src < ngpus; src++) {
                         if (src == dst) continue;
@@ -610,15 +612,16 @@ class MultiGPUElementASW {
 
                         for (int a = 0; a < part->local_nnodes[src]; a++) {
                             int gnode = part->h_local_nodes[src][a];
+
                             if (gnode == glob_row) src_row_node = a;
                             if (gnode == glob_col) src_col_node = a;
+
+                            if (src_row_node >= 0 && src_col_node >= 0) break;
                         }
 
                         if (src_row_node < 0 || src_col_node < 0) continue;
 
-                        // // enforce ghost×ghost on source too
-                        // if (src_row_node < part->owned_nnodes[src]) continue;
-                        // if (src_col_node < part->owned_nnodes[src]) continue;
+                        found_src_nodes = true;
 
                         int jp_found = -1;
                         for (int jp = src_rowp[src_row_node]; jp < src_rowp[src_row_node + 1];
@@ -629,27 +632,29 @@ class MultiGPUElementASW {
                             }
                         }
 
-                        if (jp_found >= 0) {
+                        if (jp_found < 0) continue;
+
+                        found_src_block = true;
+
+                        // For now: only fill missing dst blocks.
+                        // If already_local == true for all candidates and matrices still differ,
+                        // switch this to overwrite existing ghost x ghost blocks too.
+                        if (!already_local) {
                             int idx = pair_index(dst, src);
                             h_ghost_asw_blocks[idx].push_back(dst_batch_block);
                             h_ghost_kmat_blocks[idx].push_back(jp_found);
-
-                            total_found++;
-
-                            if (debug_print && printed < max_print) {
-                                printf("[ghost-map] dst %d <- src %d | elem %d block(%d,%d)\n", dst,
-                                       src, e, i, j);
-                                printed++;
-                            }
-
-                            break;
+                            total_pushed++;
                         }
+
+                        break;
                     }
+
+                    if (found_src_nodes) total_src_nodes_found++;
+                    if (found_src_block) total_src_block_found++;
                 }
             }
         }
 
-        // summarize per pair
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -665,8 +670,11 @@ class MultiGPUElementASW {
         }
 
         if (debug_print) {
-            printf("[ghost-map] total candidates = %d, total matched = %d\n", total_candidates,
-                   total_found);
+            printf(
+                "[ghost-map] candidates=%d already_local=%d "
+                "src_nodes_found=%d src_block_found=%d pushed=%d\n",
+                total_candidates, total_already_local, total_src_nodes_found, total_src_block_found,
+                total_pushed);
         }
     }
 
