@@ -37,7 +37,7 @@ class GPU_PCG {
         b = 0.0;
         A->mult(a, x, b, resid);
 
-        rhs->axpy(1.0, resid);
+        resid->axpy(1.0, rhs);
 
         T init_resid_norm = resid->norm();
 
