@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     // ---------------------------------------------
     auto ctx = new MultiGPUContext();
 
-    ctx->ngpus = 4; // debug
+    // ctx->ngpus = 4; // debug
 
     int device_count = ctx->ngpus;
     printf("#GPUs = %d\n", device_count);

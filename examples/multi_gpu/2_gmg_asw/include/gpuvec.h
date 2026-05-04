@@ -333,11 +333,9 @@ class GPUvec {
 
             dim3 block(32);
             dim3 grid((Nowned + block.x - 1) / block.x);
-            int owned_nnodes = Nowned / block_dim;
 
             k_add_local_owned_to_owned<T><<<grid, block, 0, streams[g]>>>(
-                owned_nnodes, block_dim, part->d_owned_to_local_map[g], d_vals_local[g],
-                d_vals_owned[g]);
+                Nowned, block_dim, part->d_owned_to_local_map[g], d_vals_local[g], d_vals_owned[g]);
 
             CHECK_CUDA(cudaGetLastError());
         }

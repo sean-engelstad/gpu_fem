@@ -72,8 +72,8 @@ class GPUElementAssembler {
 
         // make the multi-GPU domain decomp partitioner
         printf("create partitioner\n");
-        bool debug = true;
-        // bool debug = false;
+        // bool debug = true;
+        bool debug = false;
         part = new Partitioner(ngpus, num_nodes, num_elements, vars_nodes_per_elem,
                                h_elem_conn->getPtr(), debug);
         printf("\tdone creating partitioner\n");
