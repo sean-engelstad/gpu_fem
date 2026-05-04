@@ -216,10 +216,10 @@ class StructuredGPUPartitioner {
         }
 
         // debug printout
-        printf("h_node_gpu_ind: ");
-        printVec<int>(num_nodes, h_node_gpu_ind);
-        printf("owned_node_cts: ");
-        printVec<int>(ngpus, owned_node_cts);
+        // printf("h_node_gpu_ind: ");
+        // printVec<int>(num_nodes, h_node_gpu_ind);
+        // printf("owned_node_cts: ");
+        // printVec<int>(ngpus, owned_node_cts);
 
         delete[] h_ne_cts;
         delete[] h_ne_ptr;
