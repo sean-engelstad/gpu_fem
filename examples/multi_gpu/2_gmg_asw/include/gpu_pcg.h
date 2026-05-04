@@ -36,7 +36,7 @@ class GPU_PCG {
         rhs->copyTo(resid);
 
         a = -1.0;
-        b = 0.0;
+        b = 1.0;
         A->mult(a, x, b, resid);
 
         T init_resid_norm = resid->norm();

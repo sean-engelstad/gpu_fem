@@ -34,7 +34,7 @@ class GPUbsrmat {
         move_matrix_pattern_to_device();
         sync();
 
-        temp = new GPUvec<T>(ctx, part, block_dim);
+        temp = new GPUvec<T, Partitioner>(ctx, part, block_dim);
     }
 
     ~GPUbsrmat() {
@@ -146,9 +146,6 @@ class GPUbsrmat {
     void mult(T alpha, GPUvec<T, Partitioner> *x, T beta, GPUvec<T, Partitioner> *y) {
         x->expandToLocal();
 
-        temp->zero();
-        temp->zeroLocal();
-
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
             CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
@@ -164,7 +161,7 @@ class GPUbsrmat {
         sync();
 
         temp->reduceFromLocal();
-        y->axpy(alpha, temp, beta);
+        y->axpby(alpha, temp, beta);
     }
 
     void mult(GPUvec<T, Partitioner> *x, GPUvec<T, Partitioner> *y) {
@@ -487,7 +484,7 @@ class GPUbsrmat {
     cudaStream_t *streams = nullptr;
     cusparseMatDescr_t *descrA = nullptr;
 
-    GPUvec<T> *temp;
+    GPUvec<T, Partitioner> *temp;
 
     int ngpus = 0;
     int num_nodes = 0;
