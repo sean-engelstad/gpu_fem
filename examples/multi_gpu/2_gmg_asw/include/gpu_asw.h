@@ -616,9 +616,9 @@ class MultiGPUElementASW {
 
                         if (src_row_node < 0 || src_col_node < 0) continue;
 
-                        // enforce ghost×ghost on source too
-                        if (src_row_node < part->owned_nnodes[src]) continue;
-                        if (src_col_node < part->owned_nnodes[src]) continue;
+                        // // enforce ghost×ghost on source too
+                        // if (src_row_node < part->owned_nnodes[src]) continue;
+                        // if (src_col_node < part->owned_nnodes[src]) continue;
 
                         int jp_found = -1;
                         for (int jp = src_rowp[src_row_node]; jp < src_rowp[src_row_node + 1];
