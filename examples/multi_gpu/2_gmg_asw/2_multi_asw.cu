@@ -188,17 +188,22 @@ int main(int argc, char *argv[]) {
     pc->factor();
 
     // test precond
-    test_vec->zero();
-    test_vec->zeroLocal();
-    pc->solve(rhs, test_vec);
     if (nxe * nxe <= 100) {
+        test_vec->zero();
+        test_vec->zeroLocal();
+        pc->solve(rhs, test_vec);
+
         T test_nrm = test_vec->norm();
         printf("test precond-vec with nrm %.8e\n", test_nrm);
         test_vec->printValuesOnHost();
 
         printf("ASW printMatValues\n");
         pc->printSubdomainMatValues();
+
+        // reset host values after debug
+        rhs->setValuesFromHost(my_loads);
     }
+
 
     // then solve
     int max_iter = 500, print_freq = 10;
