@@ -13,8 +13,8 @@ class MultiGPUElementASW {
    public:
     static constexpr int nodes_per_elem = 4;
 
-    MultiGPUElementASW(MultiGPUContext *ctx_, const Partitioner *part_,
-                       GPUbsrmat<T, Partitioner> *A_, T omega_ = 0.25, int iters_ = 5)
+    MultiGPUElementASW(MultiGPUContext *ctx_, Partitioner *part_, GPUbsrmat<T, Partitioner> *A_,
+                       T omega_ = 0.25, int iters_ = 5)
         : ctx(ctx_),
           part(part_),
           A(A_),
@@ -39,10 +39,17 @@ class MultiGPUElementASW {
         allocate_arrays();
         printf("ASW - build_maps\n");
         build_maps();
+        printf("ASW - build_ghost_maps\n");
+        build_ghost_maps();
         printf("ASW - allocate_batched_memory\n");
         allocate_batched_memory();
+        printf("ASW - allocate_ghost_batched_memory\n");
+        allocate_ghost_batched_memory();
+
         printf("ASW - move_maps_to_device\n");
         move_maps_to_device();
+        printf("ASW - move_ghost_maps_to_device\n");
+        move_ghost_maps_to_device();
         printf("ASW - done with constructor\n");
 
         temp = new GPUvec<T, Partitioner>(ctx, part, block_dim);
@@ -106,6 +113,40 @@ class MultiGPUElementASW {
 
         delete[] d_PivotArray;
         delete[] d_InfoArray;
+
+        int npairs = ngpus * ngpus;
+        for (int idx = 0; idx < npairs; idx++) {
+            int dst = idx / ngpus;
+            int src = idx % ngpus;
+
+            if (d_ghost_asw_blocks[idx]) {
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+                cudaFree(d_ghost_asw_blocks[idx]);
+            }
+
+            if (d_ghost_kmat_blocks[idx]) {
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+                cudaFree(d_ghost_kmat_blocks[idx]);
+            }
+
+            if (d_ghost_vals_red[idx]) {
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+                cudaFree(d_ghost_vals_red[idx]);
+            }
+
+            if (d_ghost_vals_red_dst[idx]) {
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+                cudaFree(d_ghost_vals_red_dst[idx]);
+            }
+        }
+
+        delete[] ghost_pair_nblocks;
+        delete[] h_ghost_asw_blocks;
+        delete[] h_ghost_kmat_blocks;
+        delete[] d_ghost_asw_blocks;
+        delete[] d_ghost_kmat_blocks;
+        delete[] d_ghost_vals_red;
+        delete[] d_ghost_vals_red_dst;
     }
 
     void factor() {
@@ -124,6 +165,15 @@ class MultiGPUElementASW {
                 nvals, block_dim, size, d_block_inds[g], A->getLocalVals(g), d_Adata[g]);
 
             CHECK_CUDA(cudaGetLastError());
+        }
+
+        ctx->sync();
+
+        add_ghost_ghost_blocks_to_batched();
+
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
 
             CHECK_CUBLAS(cublasDgetrfBatched(cublasHandles[g], n, d_Aarray[g], n, d_PivotArray[g],
                                              d_InfoArray[g], batch_size[g]));
@@ -193,9 +243,77 @@ class MultiGPUElementASW {
         }
     }
 
+    template <bool SET_VALUES = false>
+    void printSubdomainMatValues() {
+        if constexpr (SET_VALUES) {
+            for (int g = 0; g < ngpus; g++) {
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+                CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
+
+                CHECK_CUDA(cudaMemsetAsync(d_Adata[g], 0, (size_t)batch_size[g] * n * n * sizeof(T),
+                                           streams[g]));
+
+                int nvals = n_batch_blocks[g] * block_dim2;
+                dim3 block(128);
+                dim3 grid((nvals + block.x - 1) / block.x);
+
+                k_copyMatValuesToBatchedContiguous<T><<<grid, block, 0, streams[g]>>>(
+                    nvals, block_dim, size, d_block_inds[g], A->getLocalVals(g), d_Adata[g]);
+
+                CHECK_CUDA(cudaGetLastError());
+            }
+            ctx->sync();
+        }
+
+        T **h_Adata = new T *[ngpus];
+
+        for (int g = 0; g < ngpus; g++) {
+            size_t nmat_vals = (size_t)batch_size[g] * n * n;
+            h_Adata[g] = new T[nmat_vals];
+
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+            CHECK_CUDA(
+                cudaMemcpy(h_Adata[g], d_Adata[g], nmat_vals * sizeof(T), cudaMemcpyDeviceToHost));
+        }
+
+        for (int g = 0; g < ngpus; g++) {
+            printf("MultiGPU ASW elem blocks on GPU[%d / %d]\n", g, ngpus);
+            printf("---------------------------\n");
+
+            for (int ibatch = 0; ibatch < batch_size[g]; ibatch++) {
+                int global_elem = ibatch + part->getStartElem(g);
+                printf("ASW subdomain mat elem %d on GPU[%d]\n", ibatch, g);
+
+                T *Aelem = &h_Adata[g][(size_t)ibatch * n * n];
+
+                for (int brow = 0; brow < size2; brow++) {
+                    for (int bcol = 0; bcol < size2; bcol++) {
+                        printf("\tblock node (%d,%d)\n", brow, bcol);
+
+                        for (int ii = 0; ii < block_dim; ii++) {
+                            for (int jj = 0; jj < block_dim; jj++) {
+                                int row = brow * block_dim + ii;
+                                int col = bcol * block_dim + jj;
+
+                                // column-major dense storage for cuBLAS
+                                printf(" % .6e", Aelem[row + n * col]);
+                            }
+                            printf("\n");
+                        }
+                    }
+                }
+            }
+        }
+
+        for (int g = 0; g < ngpus; g++) {
+            delete[] h_Adata[g];
+        }
+        delete[] h_Adata;
+    }
+
    private:
     MultiGPUContext *ctx = nullptr;
-    const Partitioner *part = nullptr;
+    Partitioner *part = nullptr;
     GPUbsrmat<T, Partitioner> *A = nullptr;
 
     cublasHandle_t *cublasHandles = nullptr;
@@ -233,6 +351,16 @@ class MultiGPUElementASW {
 
     int **d_PivotArray = nullptr;
     int **d_InfoArray = nullptr;
+
+    int *ghost_pair_nblocks = nullptr;
+
+    // ghost data
+    std::vector<int> *h_ghost_asw_blocks = nullptr;
+    std::vector<int> *h_ghost_kmat_blocks = nullptr;
+    int **d_ghost_asw_blocks = nullptr;
+    int **d_ghost_kmat_blocks = nullptr;
+    T **d_ghost_vals_red = nullptr;      // allocated on src
+    T **d_ghost_vals_red_dst = nullptr;  // allocated on dst
 
     GPUvec<T, Partitioner> *temp = nullptr;
     GPUvec<T, Partitioner> *defect = nullptr;
@@ -287,6 +415,23 @@ class MultiGPUElementASW {
 
         std::memset(d_PivotArray, 0, ngpus * sizeof(int *));
         std::memset(d_InfoArray, 0, ngpus * sizeof(int *));
+
+        int npairs = ngpus * ngpus;
+
+        ghost_pair_nblocks = new int[npairs];
+        h_ghost_asw_blocks = new std::vector<int>[npairs];
+        h_ghost_kmat_blocks = new std::vector<int>[npairs];
+
+        d_ghost_asw_blocks = new int *[npairs];
+        d_ghost_kmat_blocks = new int *[npairs];
+        d_ghost_vals_red = new T *[npairs];
+        d_ghost_vals_red_dst = new T *[npairs];
+
+        std::memset(ghost_pair_nblocks, 0, npairs * sizeof(int));
+        std::memset(d_ghost_asw_blocks, 0, npairs * sizeof(int *));
+        std::memset(d_ghost_kmat_blocks, 0, npairs * sizeof(int *));
+        std::memset(d_ghost_vals_red, 0, npairs * sizeof(T *));
+        std::memset(d_ghost_vals_red_dst, 0, npairs * sizeof(T *));
     }
 
     void build_maps() {
@@ -350,6 +495,153 @@ class MultiGPUElementASW {
         }
     }
 
+    int pair_index(int dst, int src) const { return ngpus * dst + src; }
+
+    void build_ghost_maps() {
+        for (int dst = 0; dst < ngpus; dst++) {
+            int *dst_conn = A->getHostLocalElemConn(dst);
+
+            for (int e = 0; e < batch_size[dst]; e++) {
+                for (int ij = 0; ij < size4; ij++) {
+                    int i = ij % size2;
+                    int j = ij / size2;
+
+                    int dst_row_node = dst_conn[e * size2 + i];
+                    int dst_col_node = dst_conn[e * size2 + j];
+
+                    if (dst_row_node < 0 || dst_col_node < 0) continue;
+
+                    // Only patch ghost x ghost blocks on dst
+                    if (dst_row_node < part->owned_nnodes[dst]) continue;
+                    if (dst_col_node < part->owned_nnodes[dst]) continue;
+
+                    int glob_row = part->h_local_nodes[dst][dst_row_node];
+                    int glob_col = part->h_local_nodes[dst][dst_col_node];
+
+                    for (int src = 0; src < ngpus; src++) {
+                        if (src == dst) continue;
+
+                        int *src_rowp = A->getHostLocalRowp(src);
+                        int *src_cols = A->getHostLocalCols(src);
+
+                        int src_row_node = -1;
+                        int src_col_node = -1;
+
+                        for (int a = 0; a < part->local_nnodes[src]; a++) {
+                            int gnode = part->h_local_nodes[src][a];
+                            if (gnode == glob_row) src_row_node = a;
+                            if (gnode == glob_col) src_col_node = a;
+                        }
+
+                        if (src_row_node < 0 || src_col_node < 0) continue;
+
+                        int jp_found = -1;
+                        for (int jp = src_rowp[src_row_node]; jp < src_rowp[src_row_node + 1];
+                             jp++) {
+                            if (src_cols[jp] == src_col_node) {
+                                jp_found = jp;
+                                break;
+                            }
+                        }
+
+                        if (jp_found >= 0) {
+                            int idx = pair_index(dst, src);
+                            h_ghost_asw_blocks[idx].push_back(e * size4 + ij);
+                            h_ghost_kmat_blocks[idx].push_back(jp_found);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (int dst = 0; dst < ngpus; dst++) {
+            for (int src = 0; src < ngpus; src++) {
+                if (src == dst) continue;
+                int idx = pair_index(dst, src);
+                ghost_pair_nblocks[idx] = (int)h_ghost_asw_blocks[idx].size();
+            }
+        }
+    }
+
+    void add_ghost_ghost_blocks_to_batched() {
+        // 1) Pack source K blocks on src GPU
+        for (int dst = 0; dst < ngpus; dst++) {
+            for (int src = 0; src < ngpus; src++) {
+                if (src == dst) continue;
+
+                int idx = pair_index(dst, src);
+                int nb = ghost_pair_nblocks[idx];
+                if (nb == 0) continue;
+
+                int nvals = nb * block_dim2;
+
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+
+                dim3 block(128);
+                dim3 grid((nvals + block.x - 1) / block.x);
+
+                k_packGhostGhostMatBlocks<T>
+                    <<<grid, block, 0, streams[src]>>>(nvals, block_dim, d_ghost_kmat_blocks[idx],
+                                                       A->getLocalVals(src), d_ghost_vals_red[idx]);
+
+                CHECK_CUDA(cudaGetLastError());
+            }
+        }
+
+        // 2) Peer-copy src packed values to dst
+        for (int dst = 0; dst < ngpus; dst++) {
+            for (int src = 0; src < ngpus; src++) {
+                if (src == dst) continue;
+
+                int idx = pair_index(dst, src);
+                int nb = ghost_pair_nblocks[idx];
+                if (nb == 0) continue;
+
+                size_t bytes = (size_t)nb * block_dim2 * sizeof(T);
+
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+
+                if (debug) {
+                    CHECK_CUDA(cudaMemcpyAsync(d_ghost_vals_red_dst[idx], d_ghost_vals_red[idx],
+                                               bytes, cudaMemcpyDeviceToDevice, streams[src]));
+                } else {
+                    CHECK_CUDA(cudaMemcpyPeerAsync(d_ghost_vals_red_dst[idx], dst,
+                                                   d_ghost_vals_red[idx], src, bytes,
+                                                   streams[src]));
+                }
+            }
+        }
+
+        ctx->sync();
+
+        // 3) Add received ghost x ghost blocks into dst batched matrices
+        for (int dst = 0; dst < ngpus; dst++) {
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+
+            for (int src = 0; src < ngpus; src++) {
+                if (src == dst) continue;
+
+                int idx = pair_index(dst, src);
+                int nb = ghost_pair_nblocks[idx];
+                if (nb == 0) continue;
+
+                int nvals = nb * block_dim2;
+
+                dim3 block(128);
+                dim3 grid((nvals + block.x - 1) / block.x);
+
+                k_addGhostGhostMatBlocksToBatched<T><<<grid, block, 0, streams[dst]>>>(
+                    nvals, block_dim, size, d_ghost_asw_blocks[idx], d_ghost_vals_red_dst[idx],
+                    d_Adata[dst]);
+
+                CHECK_CUDA(cudaGetLastError());
+            }
+        }
+
+        ctx->sync();
+    }
+
     void move_maps_to_device() {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
@@ -368,6 +660,31 @@ class MultiGPUElementASW {
                                        n_rhs_blocks[g] * sizeof(int), cudaMemcpyHostToDevice,
                                        streams[g]));
         }
+    }
+
+    void move_ghost_maps_to_device() {
+        for (int dst = 0; dst < ngpus; dst++) {
+            for (int src = 0; src < ngpus; src++) {
+                if (src == dst) continue;
+
+                int idx = pair_index(dst, src);
+                int nb = ghost_pair_nblocks[idx];
+                if (nb == 0) continue;
+
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+                CHECK_CUDA(cudaMalloc((void **)&d_ghost_asw_blocks[idx], nb * sizeof(int)));
+                CHECK_CUDA(cudaMemcpyAsync(d_ghost_asw_blocks[idx], h_ghost_asw_blocks[idx].data(),
+                                           nb * sizeof(int), cudaMemcpyHostToDevice, streams[dst]));
+
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+                CHECK_CUDA(cudaMalloc((void **)&d_ghost_kmat_blocks[idx], nb * sizeof(int)));
+                CHECK_CUDA(cudaMemcpyAsync(d_ghost_kmat_blocks[idx],
+                                           h_ghost_kmat_blocks[idx].data(), nb * sizeof(int),
+                                           cudaMemcpyHostToDevice, streams[src]));
+            }
+        }
+
+        ctx->sync();
     }
 
     void allocate_batched_memory() {
@@ -401,6 +718,28 @@ class MultiGPUElementASW {
 
             CHECK_CUDA(cudaGetLastError());
         }
+        ctx->sync();
+    }
+
+    void allocate_ghost_batched_memory() {
+        for (int dst = 0; dst < ngpus; dst++) {
+            for (int src = 0; src < ngpus; src++) {
+                if (src == dst) continue;
+
+                int idx = pair_index(dst, src);
+                int nb = ghost_pair_nblocks[idx];
+                if (nb == 0) continue;
+
+                size_t bytes = (size_t)nb * block_dim2 * sizeof(T);
+
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
+                CHECK_CUDA(cudaMalloc((void **)&d_ghost_vals_red[idx], bytes));
+
+                CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
+                CHECK_CUDA(cudaMalloc((void **)&d_ghost_vals_red_dst[idx], bytes));
+            }
+        }
+
         ctx->sync();
     }
 };

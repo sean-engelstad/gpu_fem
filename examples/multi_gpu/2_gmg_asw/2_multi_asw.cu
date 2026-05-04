@@ -195,6 +195,9 @@ int main(int argc, char *argv[]) {
         T test_nrm = test_vec->norm();
         printf("test precond-vec with nrm %.8e\n", test_nrm);
         test_vec->printValuesOnHost();
+
+        printf("ASW printMatValues\n");
+        pc->printSubdomainMatValues();
     }
 
     // then solve

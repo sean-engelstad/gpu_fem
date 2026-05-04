@@ -114,3 +114,62 @@ __global__ void k_addBatchedIntoLocalSoln(
 
     atomicAdd(&soln_local[local_node * block_dim + idof], val);
 }
+
+template <typename T>
+__global__ void k_packGhostGhostMatBlocks(
+    int nvals,
+    int block_dim,
+    const int *__restrict__ kmat_blocks,
+    const T *__restrict__ vals,
+    T *__restrict__ red_vals) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nvals) return;
+
+    int block_dim2 = block_dim * block_dim;
+    int iblock = tid / block_dim2;
+    int inner = tid % block_dim2;
+
+    int jp = kmat_blocks[iblock];
+    if (jp < 0) {
+        red_vals[tid] = 0.0;
+    } else {
+        red_vals[tid] = vals[(size_t)jp * block_dim2 + inner];
+    }
+}
+
+template <typename T>
+__global__ void k_addGhostGhostMatBlocksToBatched(
+    int nvals,
+    int block_dim,
+    int size,
+    const int *__restrict__ asw_blocks,
+    const T *__restrict__ red_vals,
+    T *__restrict__ Adata) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nvals) return;
+
+    int block_dim2 = block_dim * block_dim;
+    int size2 = size * size;
+    int size4 = size2 * size2;
+    int n = size2 * block_dim;
+
+    int iblock = tid / block_dim2;
+    int inner = tid % block_dim2;
+
+    int batch_block = asw_blocks[iblock];
+    if (batch_block < 0) return;
+
+    int batch = batch_block / size4;
+    int inner_block = batch_block % size4;
+
+    int i_node = inner_block % size2;
+    int j_node = inner_block / size2;
+
+    int p = inner / block_dim;
+    int q = inner % block_dim;
+
+    int row = i_node * block_dim + p;
+    int col = j_node * block_dim + q;
+
+    atomicAdd(&Adata[(size_t)batch * n * n + row + col * n], red_vals[tid]);
+}
