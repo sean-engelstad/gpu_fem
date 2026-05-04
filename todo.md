@@ -23,6 +23,7 @@
    - [ ] GMG-ASW on multi-GPU
    - [ ] 2-level BDDC-LU on multi-GPU
       - [ ] CuDSS multi-GPU Schur complement for coarse direct solve
+   - [ ] maybe also try multi CPU + GPU (for really high DOF problems)? Is it worth it for more than 4 GPUs?
 
 2. [ ] finish unstructured BDDC (do need this for paper)
    - [ ] unstructured BDDC on plate/cylinder case

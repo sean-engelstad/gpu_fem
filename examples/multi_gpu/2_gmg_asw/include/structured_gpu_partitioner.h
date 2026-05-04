@@ -133,8 +133,8 @@ class StructuredGPUPartitioner {
             std::memcpy(h_local_elem_conn[g], &h_elem_conn[global_conn_offset],
                         local_conn_size * sizeof(int));
 
-            printf("GPU[%d] - h_local_elem_conn[%d]: ", g, local_nelems[g]);
-            printVec<int>(local_nelems[g] * 4, h_local_elem_conn[g]);
+            // printf("GPU[%d] - h_local_elem_conn[%d]: ", g, local_nelems[g]);
+            // printVec<int>(local_nelems[g] * 4, h_local_elem_conn[g]);
 
             if (!debug) {
                 CHECK_CUDA(cudaSetDevice(g));
@@ -252,10 +252,10 @@ class StructuredGPUPartitioner {
             h_owned_nodes[g][ct[g]++] = n;
         }
 
-        for (int g = 0; g < ngpus; g++) {
-            printf("owned nodes on GPU[%d]\n", g);
-            printVec<int>(owned_nnodes[g], h_owned_nodes[g]);
-        }
+        // for (int g = 0; g < ngpus; g++) {
+        //     printf("owned nodes on GPU[%d]\n", g);
+        //     printVec<int>(owned_nnodes[g], h_owned_nodes[g]);
+        // }
 
         delete[] ct;
     }
@@ -281,8 +281,8 @@ class StructuredGPUPartitioner {
 
             for (int i = 0; i < local_nnodes[g]; i++) h_local_nodes[g][i] = nodes[i];
 
-            printf("local nodes on GPU[%d]\n", g);
-            printVec<int>(local_nnodes[g], h_local_nodes[g]);
+            // printf("local nodes on GPU[%d]\n", g);
+            // printVec<int>(local_nnodes[g], h_local_nodes[g]);
         }
     }
 
@@ -411,12 +411,12 @@ class StructuredGPUPartitioner {
                 h_dstred_map[idx][i] = dst_maps[idx][i];
             }
 
-            int src = idx % ngpus, dst = idx / ngpus;
-            printf("h_srcredmap from GPU %d to %d\n", src, dst);
-            printVec<int>(srcdest_nnodes[idx], h_srcred_map[idx]);
+            // int src = idx % ngpus, dst = idx / ngpus;
+            // printf("h_srcredmap from GPU %d to %d\n", src, dst);
+            // printVec<int>(srcdest_nnodes[idx], h_srcred_map[idx]);
 
-            printf("h_dstredmap from GPU %d to %d\n", src, dst);
-            printVec<int>(srcdest_nnodes[idx], h_dstred_map[idx]);
+            // printf("h_dstredmap from GPU %d to %d\n", src, dst);
+            // printVec<int>(srcdest_nnodes[idx], h_dstred_map[idx]);
         }
 
         delete[] owned_pos;
