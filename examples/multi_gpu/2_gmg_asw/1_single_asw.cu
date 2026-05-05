@@ -115,14 +115,17 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
     int N = res.getSize();    
 
 
-    printf("rhs after bcs\n");
-    T *h_loads = loads.createHostVec().getPtr();
-    printf("h_vec(nnodes=%d) single GPU\n", (int)N/6);
-    for (int i = 0; i < (int)(N/6); i++) {
-        T *h_block = &h_loads[6 * i];
-        printf("singleGPU-node[%d]: ", i);
-        printVec<T>(6, h_block);
+    if (nxe * nxe < 100) {
+        printf("rhs after bcs\n");
+        T *h_loads = loads.createHostVec().getPtr();
+        printf("h_vec(nnodes=%d) single GPU\n", (int)N/6);
+        for (int i = 0; i < (int)(N/6); i++) {
+            T *h_block = &h_loads[6 * i];
+            printf("singleGPU-node[%d]: ", i);
+            printVec<T>(6, h_block);
+        }
     }
+    
 
     // assemble the kmat
     auto startkmat = std::chrono::high_resolution_clock::now();
@@ -139,7 +142,7 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
     int *h_rowp = DeviceVec<int>(mb + 1, bsr_data.rowp).createHostVec().getPtr();
     int *h_cols = DeviceVec<int>(nnzb, bsr_data.cols).createHostVec().getPtr();
     T *h_vals = DeviceVec<T>(nnz, kmat.getPtr()).createHostVec().getPtr();
-    if (mb <= 30) {
+    if (mb <= 100) {
         printf("Kmat before bcs on single GPU with nnz(%d) ------\n", nnz);
         for (int row = 0; row < mb; row++) {
             for (int jp = h_rowp[row]; jp < h_rowp[row + 1]; jp++) {
@@ -161,7 +164,7 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
     printf("\tassemble kmat in %.3e sec\n", assembly_time.count());
 
     T *h_vals2 = DeviceVec<T>(nnz, kmat.getPtr()).createHostVec().getPtr();
-    if (mb <= 30) {
+    if (mb <= 100) {
         printf("Kmat after bcs on single GPU with nnz(%d) ------\n", nnz);
         for (int row = 0; row < mb; row++) {
             for (int jp = h_rowp[row]; jp < h_rowp[row + 1]; jp++) {
@@ -201,7 +204,7 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
 
     auto d_test_vec = assembler.createVarsVec();
     int nnodes = assembler.get_num_vars() / 6;
-    if (nxe * nxe < 30) {
+    if (nxe * nxe < 100) {
         linear_solver->test_mult(loads, d_test_vec);
         auto h_test_vec = d_test_vec.createHostVec();
         T *h_test_ptr = h_test_vec.getPtr();
@@ -234,7 +237,7 @@ void asw_solve(int nxe, double SR, T omega, int n_smooth, int size, T pressure =
 
     pc->factor(); // ASW factor time
 
-    if (nxe * nxe < 30) {
+    if (nxe * nxe < 100) {
         d_test_vec.zeroValues();
         linear_solver->test_precond(loads, d_test_vec);
         auto h_test_vec2 = d_test_vec.createHostVec();

@@ -4,9 +4,9 @@
 #include <unordered_set>
 #include <vector>
 
+#include "_matvec.cuh"
 #include "cuda_utils.h"
 #include "gpuvec.h"
-#include "matvec.cuh"
 #include "multigpu_context.h"
 
 typedef int index_t;

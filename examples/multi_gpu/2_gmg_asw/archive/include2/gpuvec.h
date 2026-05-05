@@ -24,7 +24,6 @@ class GPUvec {
         allocate_owned();
         allocate_local();
         allocate_reduced();
-        allocate_single_gpu_transfer();
         ctx->sync();
     }
 
@@ -57,21 +56,6 @@ class GPUvec {
             }
         }
 
-        if (d_single_gpu_owned_nodes) {
-            CHECK_CUDA(cudaSetDevice(0));
-            for (int g = 0; g < ngpus; g++) {
-                if (d_single_gpu_owned_nodes[g]) cudaFree(d_single_gpu_owned_nodes[g]);
-                if (d_single_gpu_pack[g]) cudaFree(d_single_gpu_pack[g]);
-            }
-        }
-
-        if (d_single_pack) {
-            for (int g = 0; g < ngpus; g++) {
-                CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-                if (d_single_pack[g]) cudaFree(d_single_pack[g]);
-            }
-        }
-
         delete[] owned_N;
         delete[] local_N;
         delete[] red_N;
@@ -79,10 +63,6 @@ class GPUvec {
         delete[] d_vals_local;
         delete[] d_vals_red;
         delete[] d_vals_red_dst;
-
-        delete[] d_single_gpu_owned_nodes;
-        delete[] d_single_pack;
-        delete[] d_single_gpu_pack;
     }
 
     void free() {}
@@ -164,37 +144,6 @@ class GPUvec {
         }
     }
 
-    void allocate_single_gpu_transfer() {
-        d_single_gpu_owned_nodes = new int *[ngpus];
-        d_single_pack = new T *[ngpus];
-        d_single_gpu_pack = new T *[ngpus];
-
-        std::memset(d_single_gpu_owned_nodes, 0, ngpus * sizeof(int *));
-        std::memset(d_single_pack, 0, ngpus * sizeof(T *));
-        std::memset(d_single_gpu_pack, 0, ngpus * sizeof(T *));
-
-        for (int g = 0; g < ngpus; g++) {
-            int owned_nnodes = part->owned_nnodes[g];
-            int Nowned = owned_nnodes * block_dim;
-            if (Nowned == 0) continue;
-
-            // GPU-0 copy of owned global-node map for final scatter/gather
-            CHECK_CUDA(cudaSetDevice(0));
-            CHECK_CUDA(
-                cudaMalloc((void **)&d_single_gpu_owned_nodes[g], owned_nnodes * sizeof(int)));
-            CHECK_CUDA(cudaMemcpy(d_single_gpu_owned_nodes[g], part->h_owned_nodes[g],
-                                  owned_nnodes * sizeof(int), cudaMemcpyHostToDevice));
-
-            CHECK_CUDA(cudaMalloc((void **)&d_single_gpu_pack[g], Nowned * sizeof(T)));
-
-            // Per-GPU contiguous pack buffer
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUDA(cudaMalloc((void **)&d_single_pack[g], Nowned * sizeof(T)));
-        }
-
-        ctx->sync();
-    }
-
     void zero() {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
@@ -217,121 +166,6 @@ class GPUvec {
             CHECK_CUDA(cudaMemcpyAsync(y->d_vals_owned[g], d_vals_owned[g], owned_N[g] * sizeof(T),
                                        cudaMemcpyDeviceToDevice, streams[g]));
         }
-        sync();
-    }
-
-    void copyToSingleGPU(T *d_single_gpu_vals, bool zero_single_gpu_vals = true) {
-        // d_single_gpu_vals lives on GPU 0 and has size N = num_nodes * block_dim
-
-        if (zero_single_gpu_vals) {
-            CHECK_CUDA(cudaSetDevice(0));
-            CHECK_CUDA(cudaMemsetAsync(d_single_gpu_vals, 0, N * sizeof(T), streams[0]));
-        }
-
-        // 1) Copy owned values into contiguous per-GPU pack buffers
-        for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
-
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUDA(cudaMemcpyAsync(d_single_pack[g], d_vals_owned[g], Nowned * sizeof(T),
-                                       cudaMemcpyDeviceToDevice, streams[g]));
-        }
-
-        sync();
-
-        // 2) Peer-copy per-GPU packs to GPU 0 packs
-        for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
-
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-
-            if (debug || g == 0) {
-                CHECK_CUDA(cudaMemcpyAsync(d_single_gpu_pack[g], d_single_pack[g],
-                                           Nowned * sizeof(T), cudaMemcpyDeviceToDevice,
-                                           streams[g]));
-            } else {
-                CHECK_CUDA(cudaMemcpyPeerAsync(d_single_gpu_pack[g], 0, d_single_pack[g], g,
-                                               Nowned * sizeof(T), streams[g]));
-            }
-        }
-
-        sync();
-
-        // 3) Scatter GPU 0 packs into full single-GPU vector
-        CHECK_CUDA(cudaSetDevice(0));
-
-        for (int g = 0; g < ngpus; g++) {
-            int owned_nnodes = part->owned_nnodes[g];
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
-
-            dim3 block(128);
-            dim3 grid((Nowned + block.x - 1) / block.x);
-
-            k_scatter_single_pack_to_global<T><<<grid, block, 0, streams[0]>>>(
-                owned_nnodes, block_dim, d_single_gpu_owned_nodes[g], d_single_gpu_pack[g],
-                d_single_gpu_vals);
-
-            CHECK_CUDA(cudaGetLastError());
-        }
-
-        sync();
-    }
-
-    void copyFromSingleGPU(const T *d_single_gpu_vals) {
-        // d_single_gpu_vals lives on GPU 0 and has size N = num_nodes * block_dim
-
-        CHECK_CUDA(cudaSetDevice(0));
-
-        // 1) Gather full single-GPU vector into GPU 0 packs
-        for (int g = 0; g < ngpus; g++) {
-            int owned_nnodes = part->owned_nnodes[g];
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
-
-            dim3 block(128);
-            dim3 grid((Nowned + block.x - 1) / block.x);
-
-            k_gather_global_to_single_pack<T><<<grid, block, 0, streams[0]>>>(
-                owned_nnodes, block_dim, d_single_gpu_owned_nodes[g], d_single_gpu_vals,
-                d_single_gpu_pack[g]);
-
-            CHECK_CUDA(cudaGetLastError());
-        }
-
-        sync();
-
-        // 2) Peer-copy GPU 0 packs back to per-GPU packs
-        for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
-
-            CHECK_CUDA(cudaSetDevice(0));
-
-            if (debug || g == 0) {
-                CHECK_CUDA(cudaMemcpyAsync(d_single_pack[g], d_single_gpu_pack[g],
-                                           Nowned * sizeof(T), cudaMemcpyDeviceToDevice,
-                                           streams[0]));
-            } else {
-                CHECK_CUDA(cudaMemcpyPeerAsync(d_single_pack[g], g, d_single_gpu_pack[g], 0,
-                                               Nowned * sizeof(T), streams[0]));
-            }
-        }
-
-        sync();
-
-        // 3) Copy contiguous per-GPU packs into owned vectors
-        for (int g = 0; g < ngpus; g++) {
-            int Nowned = owned_N[g];
-            if (Nowned == 0) continue;
-
-            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
-            CHECK_CUDA(cudaMemcpyAsync(d_vals_owned[g], d_single_pack[g], Nowned * sizeof(T),
-                                       cudaMemcpyDeviceToDevice, streams[g]));
-        }
-
         sync();
     }
 
@@ -405,8 +239,11 @@ class GPUvec {
     }
 
     void expandToLocal() {
+        // printf("zeroLocal\n");
         zeroLocal();
 
+        // 1) Scatter owned values into each GPU's local vector
+        // printf("Scatter owned values to local\n");
         for (int g = 0; g < ngpus; g++) {
             if (part->owned_nnodes[g] == 0) continue;
 
@@ -422,8 +259,12 @@ class GPUvec {
             CHECK_CUDA(cudaGetLastError());
         }
 
+        // 2) Pack ghost values on source GPUs
+        // printf("packGhostReduced\n");
         packGhostReduced();
 
+        // 3) Peer-copy packed ghost values from src GPU to dst GPU
+        // printf("peer copy packed ghost values\n");
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -433,6 +274,7 @@ class GPUvec {
 
                 if (Nred == 0) continue;
 
+                // streams[src] belongs to the source GPU, so current device must be src
                 CHECK_CUDA(cudaSetDevice(debug ? 0 : src));
 
                 if (debug) {
@@ -446,8 +288,11 @@ class GPUvec {
             }
         }
 
+        // Make sure all src-side peer copies are complete before dst-side placement
         sync();
 
+        // 4) Place received ghost values into destination local vectors
+        // printf("place received ghost values into destination local\n");
         for (int dst = 0; dst < ngpus; dst++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : dst));
 
@@ -476,8 +321,10 @@ class GPUvec {
     }
 
     void reduceFromLocal() {
-        zero();
+        zero();  // zero owned (since we first copy owned nodes from local to owned vec)
 
+        // 1) Add owned-row local contributions into owned vector.
+        // Caller is responsible for zeroing d_vals_owned first if overwrite semantics are desired.
         for (int g = 0; g < ngpus; g++) {
             int Nowned = owned_N[g];
             if (Nowned == 0) continue;
@@ -495,6 +342,12 @@ class GPUvec {
 
         sync();
 
+        // 2) Pack ghost-row contributions on dst GPUs.
+        // Pair convention:
+        //   idx = pair_index(dst, src)
+        //   dst has ghost nodes owned by src.
+        //   d_dstred_map[idx]: red node -> local ghost node on dst
+        //   d_srcred_map[idx]: red node -> owned node on src
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -518,6 +371,7 @@ class GPUvec {
             }
         }
 
+        // 3) Copy packed ghost contributions dst -> src.
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -541,6 +395,7 @@ class GPUvec {
 
         sync();
 
+        // 4) Add received ghost contributions into owned vector on src GPUs.
         for (int dst = 0; dst < ngpus; dst++) {
             for (int src = 0; src < ngpus; src++) {
                 if (src == dst) continue;
@@ -680,8 +535,4 @@ class GPUvec {
     T **d_vals_local = nullptr;
     T **d_vals_red = nullptr;
     T **d_vals_red_dst = nullptr;
-
-    int **d_single_gpu_owned_nodes = nullptr;
-    T **d_single_pack = nullptr;
-    T **d_single_gpu_pack = nullptr;
 };

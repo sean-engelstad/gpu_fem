@@ -73,6 +73,42 @@ __global__ void k_vec_apply_bcs(int nbcs, const int *bcs, T *data) {
 }
 
 template <typename T>
+__GLOBAL__ void k_scatter_single_pack_to_global(
+    int owned_nnodes,
+    int block_dim,
+    const int *owned_nodes,
+    const T *pack_vals,
+    T *global_vals) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = owned_nnodes * block_dim;
+    if (tid >= N) return;
+
+    int inode = tid / block_dim;
+    int idof = tid % block_dim;
+
+    int global_node = owned_nodes[inode];
+    global_vals[global_node * block_dim + idof] = pack_vals[tid];
+}
+
+template <typename T>
+__GLOBAL__ void k_gather_global_to_single_pack(
+    int owned_nnodes,
+    int block_dim,
+    const int *owned_nodes,
+    const T *global_vals,
+    T *pack_vals) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = owned_nnodes * block_dim;
+    if (tid >= N) return;
+
+    int inode = tid / block_dim;
+    int idof = tid % block_dim;
+
+    int global_node = owned_nodes[inode];
+    pack_vals[tid] = global_vals[global_node * block_dim + idof];
+}
+
+template <typename T>
 __global__ void k_copy_local_owned_to_owned(int nnodes, int block_dim,
                                             const int *owned_to_local_map,
                                             const T *local_vals,
@@ -202,6 +238,24 @@ __GLOBAL__ void k_mat_apply_col_bcs(
                 is_diag ? diag_val : T(0.0);
         }
     }
+}
+
+
+template <typename T>
+__GLOBAL__ void k_copy_nofill_vals_to_lu_vals(int nofill_nnzb, int block_dim2,
+                                              const int *dest_blocks, const T *src_vals,
+                                              T *dst_vals) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = nofill_nnzb * block_dim2;
+    if (tid >= N) return;
+
+    int src_block = tid / block_dim2;
+    int inner = tid % block_dim2;
+
+    int dst_block = dest_blocks[src_block];
+    if (dst_block < 0) return;
+
+    dst_vals[dst_block * block_dim2 + inner] = src_vals[src_block * block_dim2 + inner];
 }
 
 template <typename T>

@@ -41,7 +41,7 @@
   - [x] Build ASW patches from owned elements
   - [x] Use ghost values via partition maps in `smoothDefect`
   - [x] Accumulate corrections only to owned nodes
-- [ ] Validate ASW smoothing against single-GPU behavior
+- [x] Validate ASW smoothing against single-GPU behavior
 
 ### 5. Multi-GPU GMG Transfer Operators
 - [ ] Implement multi-GPU prolongation/restriction

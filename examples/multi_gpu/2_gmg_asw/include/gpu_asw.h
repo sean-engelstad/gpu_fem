@@ -3,7 +3,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "asw.cuh"
+#include "_asw.cuh"
 #include "cuda_utils.h"
 #include "gpumat.h"
 #include "gpuvec.h"

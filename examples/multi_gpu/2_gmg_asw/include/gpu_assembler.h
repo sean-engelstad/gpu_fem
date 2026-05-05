@@ -7,7 +7,7 @@
 #include "mesh/TACSMeshLoader.h"
 
 #ifdef USE_GPU
-#include "gpu_assembler.cuh"
+#include "_gpu_assembler.cuh"
 #endif  // USE_GPU
 
 // linear algebra formats
