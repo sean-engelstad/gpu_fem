@@ -52,7 +52,7 @@ class MultiGPUGeometricMultigrid {
         for (int STEP = 0; STEP < MAX_STEPS; STEP++) {
             // restrict + pre-smooth from fine to coarse
             for (int level = 0; level < nlevels - 1; level++) {
-                // pre-smooth
+                // pre-smooth (solve here is equivalent to smoothDefect)
                 smoothers[level]->solve(d_defects[level], d_solns[level]);
 
                 // restrict

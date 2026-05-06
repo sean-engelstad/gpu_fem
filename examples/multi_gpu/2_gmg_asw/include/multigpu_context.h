@@ -31,6 +31,31 @@ class MultiGPUContext {
         }
     }
 
+    MultiGPUContext(int ngpus_override_) : debug(false) {
+        CHECK_CUDA(cudaSetDevice(0));
+        // CHECK_CUDA(cudaGetDeviceCount(&ngpus));
+        ngpus = ngpus_override_;
+
+        cublasHandles = new cublasHandle_t[ngpus];
+        cusparseHandles = new cusparseHandle_t[ngpus];
+        streams = new cudaStream_t[ngpus];
+
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(debug ? 0 : g));
+
+            cublasHandles[g] = nullptr;
+            cusparseHandles[g] = nullptr;
+
+            CHECK_CUDA(cudaStreamCreate(&streams[g]));
+
+            CHECK_CUBLAS(cublasCreate(&cublasHandles[g]));
+            CHECK_CUSPARSE(cusparseCreate(&cusparseHandles[g]));
+
+            CHECK_CUBLAS(cublasSetStream(cublasHandles[g], streams[g]));
+            CHECK_CUSPARSE(cusparseSetStream(cusparseHandles[g], streams[g]));
+        }
+    }
+
     ~MultiGPUContext() {
         sync();
 

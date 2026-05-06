@@ -98,6 +98,8 @@ int main(int argc, char *argv[]) {
     // start multi GPU device context
     // ---------------------------------------------
     auto ctx = new MultiGPUContext();
+    int ngpus_override = 1; // for single gpu format
+    auto sgpu_ctx = new MultiGPUContext(ngpus_override); // for coarse direct solver
 
     int device_count = ctx->ngpus;
     printf("#GPUs = %d\n", device_count);
@@ -187,14 +189,16 @@ int main(int argc, char *argv[]) {
         if (c_nxe == nxe_min) {
             // rebuild assembler in SingleGPU partition format
             // TODO : need some way to build single GPU partitioned assembler here..
-            auto singlegpu_assembler = new createGPUCylinderAssembler<Assembler>(ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
+            auto sgpu_assembler = new createGPUCylinderAssembler<Assembler>(sgpu_ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
                 imperfection, imp_x, imp_hoop);
-            auto singlegpu_part = singlegpu_assembler->part;
+            auto sgpu_part = singlegpu_assembler->part;
             // TODO : does this make a matrix on a singleGPU?
             // need a different context too?
-            auto singlegpu_mat = new GPUbsrmat<T, Partitioner>(ctx, part, block_dim);
+            auto sgpu_mat = new GPUbsrmat<T, Partitioner>(sgpu_ctx, sgpu_part, block_dim);
+            sgpu_assembler->add_jacobian(sgpu_mat);
+            sgpu_assembler->apply_bcs(sgpu_mat);
 
-            coarse_solver = new CoarseSolver(ctx, part, singlegpu_part, singlegpu_mat);
+            coarse_solver = new CoarseSolver(ctx, part, sgpu_part, sgpu_mat);
         }
     }
 
