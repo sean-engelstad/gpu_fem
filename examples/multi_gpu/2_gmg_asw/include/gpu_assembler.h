@@ -125,6 +125,87 @@ class GPUElementAssembler {
         printf("\tdone with main assembler constructor\n");
     }
 
+    GPUElementAssembler(int nactive_gpus, MultiGPUContext *ctx_, int32_t num_nodes_,
+                        int32_t num_elements_, HostVec<int> *h_elem_conn_, HostVec<T> *xpts,
+                        HostVec<int> *bcs_, HostVec<Data> *compData, int32_t num_components_ = 1,
+                        HostVec<int> *elem_component = new HostVec<int>(1))
+        : ctx(ctx_),
+          cublasHandles(ctx_->cublasHandles),
+          streams(ctx_->streams),
+          bcs(bcs_),
+          ngpus(ctx_->ngpus),
+          num_nodes(num_nodes_),
+          num_elements(num_elements_),
+          num_components(num_components_) {
+        // for single GPU version of assembler
+
+        // get host versions for output
+        h_xpts = xpts;
+        h_elem_conn = h_elem_conn_;
+        h_elem_components = elem_component;
+        h_compData = compData;
+        h_vars = new HostVec<T>(num_nodes * vars_per_node);
+
+        printf("in main assembler constructor\n");
+
+        // printf("h_elem_conn[%d] v2: ", num_elements);
+        // printVec<int>(4 * num_elements, h_elem_conn->getPtr());
+
+        // make the multi-GPU domain decomp partitioner
+        printf("create partitioner\n");
+        // bool debug = true;
+        bool debug = false;
+        part = new Partitioner(ngpus, num_nodes, num_elements, vars_nodes_per_elem,
+                               h_elem_conn->getPtr(), debug);
+        printf("\tdone creating partitioner\n");
+
+        d_xpts = new Vec(ctx, part, spatial_dim);
+        d_vars = new Vec(ctx, part, vars_per_node);
+        d_res = new Vec(ctx, part, vars_per_node);
+
+        // set xpts from host
+        printf("set xpts values from host\n");
+        d_xpts->setValuesFromHost(xpts->getPtr());
+
+        h_loc_elem_components = new int *[ngpus];
+        d_loc_elem_components = new int *[ngpus];
+        int *elem_comp_ptr = elem_component->getPtr();
+        printf("get loc elem components\n");
+        for (int g = 0; g < ngpus; g++) {
+            int local_nelems = part->getLocalNumElements(g);
+            h_loc_elem_components[g] = new int[local_nelems];
+            int start_elem = part->getStartElem(g);
+            for (int le = 0; le < local_nelems; le++) {
+                int e = le + start_elem;
+                h_loc_elem_components[g][le] = elem_comp_ptr[e];
+            }
+
+            CHECK_CUDA(cudaSetDevice(g));
+            CHECK_CUDA(cudaMalloc(&d_loc_elem_components[g], local_nelems * sizeof(int)));
+            CHECK_CUDA(cudaMemcpy(d_loc_elem_components[g], h_loc_elem_components[g],
+                                  local_nelems * sizeof(int), cudaMemcpyHostToDevice));
+        }
+        ctx->sync();
+
+        // copy compData pointer to all GPUs (not subdivided, since usually #components small this
+        // is fine)
+        printf("get loc comp data\n");
+        Data *h_comp_data_ptr = compData->getPtr();
+        d_loc_comp_data = new Data *[ngpus];
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
+            CHECK_CUDA(cudaMalloc(&d_loc_comp_data[g], num_components * sizeof(Data)));
+            CHECK_CUDA(cudaMemcpy(d_loc_comp_data[g], h_comp_data_ptr,
+                                  num_components * sizeof(Data), cudaMemcpyHostToDevice));
+        }
+        ctx->sync();
+
+        printf("allocate reduced bcs\n");
+        allocate_reduced_bcs();
+
+        printf("\tdone with main assembler constructor\n");
+    }
+
     Partitioner *getPartitioner() { return part; }
     // void moveBsrDataToDevice() { this->bsr_data = bsr_data.createDeviceBsrData(); }
     // void moveBsrDataToHost() { this->bsr_data = bsr_data.createHostBsrData(); }
@@ -157,11 +238,15 @@ class GPUElementAssembler {
     void apply_bcs(Vec *vec) { vec->apply_bcs(n_owned_bcs, d_owned_bcs, n_local_bcs, d_local_bcs); }
     void apply_bcs(Mat *mat) { mat->apply_bcs(n_owned_bcs, d_owned_bcs, n_local_bcs, d_local_bcs); }
 
-    DeviceVec<T> createGPUVec(T *h_data = nullptr) {
-        Vec *d_vec = Vec(ctx, part, vars_per_node);
-        d_vec->setValuesFromHost(h_data);
+    Vec *createGPUVec(T *h_data = nullptr) {
+        auto d_vec = new Vec(ctx, part, vars_per_node);
+        if (h_data != nullptr) {
+            d_vec->setValuesFromHost(h_data);
+        }
         return d_vec;
     }
+
+    Partitioner *getPartition() { return part; }
 
     void printMatrixOnHost(Mat *mat) {
         for (int g = 0; g < ngpus; g++) {

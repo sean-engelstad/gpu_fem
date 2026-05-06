@@ -29,6 +29,14 @@ class MultiGPUGeometricMultigrid {
         print_freq = print_freq_;
         PRINT = PRINT_;
         rtol = rtol_, atol = atol_;
+
+        // make vecs on each level
+        for (int level = 0; level < nlevels; level++) {
+            d_defects[level] = assemblers[level]->createGPUVec();
+            d_solns[level] = assemblers[level]->createGPUVec();
+            d_temp[level] = assemblers[level]->createGPUVec();
+            d_temp_defect[level] = assemblers[level]->createGPUVec();
+        }
     }
 
     void solve(VEC *rhs, FINE_VEC *soln) {
