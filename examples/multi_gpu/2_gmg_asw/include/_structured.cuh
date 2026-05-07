@@ -50,8 +50,6 @@ __global__ static void k_structured_weights(
             for (int idof = 0; idof < block_dim; idof++) {
                 int coarse_dof = block_dim * coarse_node + idof;
                 int fine_dof = block_dim * fine_node + idof;
-                T val = coarse_soln_in[coarse_dof];
-                val *= scale;
 
                 atomicAdd(&fine_weights[fine_dof], scale);
             }

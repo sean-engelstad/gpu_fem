@@ -3,10 +3,10 @@
 #include <chrono>
 #include <cstring>
 
-#include "../solve_utils.h"
 #include "_matvec.cuh"
 #include "linalg/bsr_data.h"
 #include "linalg/vec.h"  // for DeviceVec
+#include "multigrid/solvers/solve_utils.h"
 
 template <typename T, class MultiGPUPartition, class SingleGPUPartition>
 class SingleGPUDirectLU {
@@ -61,7 +61,7 @@ class SingleGPUDirectLU {
 
     void compute_reorderedLU_pattern() {
         h_nofill_bsr_data = BsrData(spart->num_elements, spart->num_nodes, spart->nodes_per_elem,
-                                    spart->block_dim, spart->h_elem_conn);
+                                    mat->getBlockDim(), spart->h_elem_conn);
 
         num_nodes = h_nofill_bsr_data.mb;
         mb = num_nodes;
@@ -70,17 +70,19 @@ class SingleGPUDirectLU {
         h_nofill_rowp = h_nofill_bsr_data.rowp;
         h_nofill_cols = h_nofill_bsr_data.cols;
 
-        h_lu_bsr_data = h_nofill_bsr_data.AMD_reordering();
-        h_lu_bsr_data = h_lu_bsr_data.compute_full_LU_pattern();
+        // auto h_lu_bsr_data = h_nofill_bsr_data.AMD_reordering();
+        // h_lu_bsr_data = h_lu_bsr_data.compute_full_LU_pattern();
+        h_nofill_bsr_data.AMD_reordering();
+        h_nofill_bsr_data.compute_full_LU_pattern();
 
-        h_perm = h_lu_bsr_data.perm;
-        h_iperm = h_lu_bsr_data.iperm;
-        h_rowp = h_lu_bsr_data.rowp;
-        h_cols = h_lu_bsr_data.cols;
+        h_perm = h_nofill_bsr_data.perm;
+        h_iperm = h_nofill_bsr_data.iperm;
+        h_rowp = h_nofill_bsr_data.rowp;
+        h_cols = h_nofill_bsr_data.cols;
 
         CHECK_CUDA(cudaSetDevice(0));
 
-        d_lu_bsr_data = h_lu_bsr_data.createDeviceBsrData();
+        d_lu_bsr_data = h_nofill_bsr_data.createDeviceBsrData();
 
         d_perm = d_lu_bsr_data.perm;
         d_iperm = d_lu_bsr_data.iperm;

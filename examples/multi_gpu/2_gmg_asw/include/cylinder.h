@@ -204,7 +204,7 @@ Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, dou
     // printVec<int>(4 * num_elements, elem_conn);
 
     // make the assembler
-    printf("create assembler\n");
+    // printf("create assembler\n");
     Assembler assembler(ctx, num_nodes, num_elements, conn, xpts, bcs, physData, num_components,
                         elem_components);
 

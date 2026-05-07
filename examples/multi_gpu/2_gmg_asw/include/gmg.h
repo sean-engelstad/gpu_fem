@@ -2,13 +2,16 @@
 
 #include <vector>
 
+#include "gpumat.h"
+#include "gpuvec.h"
 #include "multigpu_context.h"
 
 template <typename T, class PARTITION, class ASSEMBLER, class SMOOTHER, class PROLONGATION,
           class COARSE_SOLVER>
 class MultiGPUGeometricMultigrid {
    public:
-    using VEC = GPUVec<T, PARTITION>;
+    using VEC = GPUvec<T, PARTITION>;
+    using MAT = GPUbsrmat<T, PARTITION>;
 
     MultiGPUGeometricMultigrid(MultiGPUContext *ctx_, std::vector<ASSEMBLER *> assemblers_,
                                std::vector<MAT *> mats_, std::vector<SMOOTHER *> smoothers_,
@@ -31,17 +34,22 @@ class MultiGPUGeometricMultigrid {
         rtol = rtol_, atol = atol_;
 
         // make vecs on each level
+        printf("create GMG vecs\n");
         for (int level = 0; level < nlevels; level++) {
-            d_defects[level] = assemblers[level]->createGPUVec();
-            d_solns[level] = assemblers[level]->createGPUVec();
-            d_temp[level] = assemblers[level]->createGPUVec();
-            d_temp_defect[level] = assemblers[level]->createGPUVec();
+            printf("create GMG vecs on level %d\n", level);
+            d_defects.push_back(assemblers[level]->createGPUVec());
+            d_solns.push_back(assemblers[level]->createGPUVec());
+            d_temp.push_back(assemblers[level]->createGPUVec());
+            d_temp_defect.push_back(assemblers[level]->createGPUVec());
         }
+        printf("\tdone creating GMG vecs\n");
     }
 
-    void solve(VEC *rhs, FINE_VEC *soln) {
+    void solve(VEC *rhs, VEC *soln) {
         // V-cycle solve here..
         OBSERVED_STEPS = 0;
+
+        printf("Vcyc solve\n");
 
         // somehow set fine grid defect from rhs
         rhs->copyTo(d_defects[0]);
@@ -53,23 +61,28 @@ class MultiGPUGeometricMultigrid {
             // restrict + pre-smooth from fine to coarse
             for (int level = 0; level < nlevels - 1; level++) {
                 // pre-smooth (solve here is equivalent to smoothDefect)
+                printf("Vcyc step %d: pre-smooth on level %d\n", STEP, level);
                 smoothers[level]->solve(d_defects[level], d_solns[level]);
 
                 // restrict
+                printf("Vcyc step %d: restrict on level %d\n", STEP, level);
                 prolongations[level]->restrict_vec(d_defects[level], d_defects[level + 1]);
                 assemblers[level + 1]->apply_bcs(d_defects[level + 1]);
             }
 
             // coarse solve
+            printf("Vcyc step %d: coarse direct solve\n", STEP);
             coarse_solver->solve(d_defects[nlevels - 1], d_solns[nlevels - 1]);
 
             // prolong + post-smooth back up from coarse to fine
             for (int level = nlevels - 2; level >= 0; level--) {
                 // initial prolong
+                printf("Vcyc step %d: prolongate on level %d\n", STEP, level);
                 prolongations[level]->prolongate(d_solns[level + 1], d_temp[level]);
                 assemblers[level]->apply_bcs(d_temp[level]);
 
                 // line search on d_temp
+                printf("Vcyc step %d: line search on level %d\n", STEP, level);
                 mats[level]->mult(d_temp[level], d_temp_defect[level]);
                 T dp1 = d_temp[level]->dotProd(d_defects[level]);
                 T dp2 = d_temp[level]->dotProd(d_temp_defect[level]);
@@ -79,22 +92,24 @@ class MultiGPUGeometricMultigrid {
                 d_defects[level]->axpy(-omega, d_temp_defect[level]);
 
                 // post-smooth
+                printf("Vcyc step %d: post-smooth on level %d\n", STEP, level);
                 smoothers[level]->solve(d_defects[level], d_solns[level]);
             }
 
             // convergence check
+            printf("Vcyc step %d: outer convergence check\n", STEP);
             T defect_nrm = d_defects[0]->norm();
             final_defect_norm = defect_nrm;
             if (STEP % print_freq == 0 && PRINT) {
                 printf("V-cycle step %d, ||defect|| = %.3e\n", STEP, defect_nrm);
             }
             if (defect_nrm < converged_nrm) {
+                OBSERVED_STEPS = STEP + 1;
                 if (PRINT) {
                     printf(
                         "V-cycle GMG converged in %d steps to defect nrm %.2e from init_nrm %.2e\n",
-                        i_vcycle + 1, defect_nrm, init_defect_nrm);
+                        OBSERVED_STEPS, defect_nrm, init_defect_norm);
                 }
-                OBSERVED_STEPS = STEP + 1;
                 break;
             }
         }

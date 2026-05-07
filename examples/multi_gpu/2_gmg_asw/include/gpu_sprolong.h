@@ -1,16 +1,18 @@
 #pragma once
+#include "_structured.cuh"
 #include "gpumat.h"
 #include "gpuvec.h"
 #include "multigpu_context.h"
 
-template <typename T, class Partition, class Basis, ProlongationGeom geom>
+template <typename T, class Partitioner, class Basis, ProlongationGeom geom>
 class MultiGPUStructuredProlongation {
    public:
     using Vec = GPUvec<T, Partitioner>;
     // using Mat = GPUbsrmat<T, Partitioner>;
 
     MultiGPUStructuredProlongation(MultiGPUContext *ctx_, Partitioner *fine_part_,
-                                   Partitioner *coarse_part_, int nxe_fine_, int nxe_coarse_)
+                                   Partitioner *coarse_part_, int nxe_fine_, int nxe_coarse_,
+                                   int block_dim_)
         : ctx(ctx_), fine_part(fine_part_), coarse_part(coarse_part_) {
         fine_num_nodes = fine_part->num_nodes;
         coarse_num_nodes = coarse_part->num_nodes;
@@ -19,7 +21,7 @@ class MultiGPUStructuredProlongation {
         ngpus = ctx->ngpus;
         cublasHandles = ctx->cublasHandles;
         streams = ctx->streams;
-        block_dim = ctx->block_dim;
+        block_dim = block_dim_;
         nxe_fine = nxe_fine_, nxe_coarse = nxe_coarse_;
         weights = new Vec(ctx, fine_part, block_dim);
 
@@ -36,8 +38,8 @@ class MultiGPUStructuredProlongation {
             T *loc_weights = weights->getLocalPtr(g);
 
             dim3 block(32);
-            dim3 grid((loc_nelems + block.x - 1) / block.x);
-            k_structured_weights<T, Partition, Basis, geom><<<grid, block, 0, streams[g]>>>(
+            dim3 grid((loc_fine_nelems + block.x - 1) / block.x);
+            k_structured_weights<T, Basis, geom><<<grid, block, 0, streams[g]>>>(
                 block_dim, nxe_coarse, nxe_fine, loc_fine_nelems, loc_weights);
             CHECK_CUDA(cudaGetLastError());
         }
@@ -58,8 +60,8 @@ class MultiGPUStructuredProlongation {
             T *loc_weights = weights->getLocalPtr(g);
 
             dim3 block(32);
-            dim3 grid((loc_nelems + block.x - 1) / block.x);
-            k_structured_prolongate<T, Partition, Basis, geom>
+            dim3 grid((loc_fine_nelems + block.x - 1) / block.x);
+            k_structured_prolongate<T, Basis, geom>
                 <<<grid, block, 0, streams[g]>>>(block_dim, nxe_coarse, nxe_fine, loc_fine_nelems,
                                                  loc_weights, loc_coarse, loc_fine);
             CHECK_CUDA(cudaGetLastError());
@@ -78,10 +80,10 @@ class MultiGPUStructuredProlongation {
             T *loc_weights = weights->getLocalPtr(g);
 
             dim3 block(32);
-            dim3 grid((loc_nelems + block.x - 1) / block.x);
-            k_structured_restrict<T, Partition, Basis, geom>
-                <<<grid, block>>>(block_dim, nxe_coarse, nxe_fine, loc_fine_nelems, loc_weights,
-                                  loc_fine, loc_coarse);
+            dim3 grid((loc_fine_nelems + block.x - 1) / block.x);
+            k_structured_restrict<T, Basis, geom><<<grid, block>>>(block_dim, nxe_coarse, nxe_fine,
+                                                                   loc_fine_nelems, loc_weights,
+                                                                   loc_fine, loc_coarse);
             CHECK_CUDA(cudaGetLastError());
         }
 

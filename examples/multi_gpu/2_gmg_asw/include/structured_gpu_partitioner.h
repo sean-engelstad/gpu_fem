@@ -20,25 +20,25 @@ class StructuredGPUPartitioner {
           nodes_per_elem(nodes_per_elem_),
           h_elem_conn(h_elem_conn_),
           debug(debug_) {
-        printf("temp\n");
+        // printf("temp\n");
         // printf("h_elem_conn[%d]: ", num_elements);
         // printVec<int>(4 * num_elements, h_elem_conn);
 
-        printf("split element connectivity\n");
+        // printf("split element connectivity\n");
         split_elem_connectivity();
-        printf("assign owned nodes\n");
+        // printf("assign owned nodes\n");
         assign_owned_nodes();
-        printf("build_owned_node_lists\n");
+        // printf("build_owned_node_lists\n");
         build_owned_node_lists();
-        printf("build_local_node_maps\n");
+        // printf("build_local_node_maps\n");
         build_local_node_maps();
-        printf("build_local_ghost_flags\n");
+        // printf("build_local_ghost_flags\n");
         build_local_ghost_flags();
-        printf("build_ghost_node_maps\n");
+        // printf("build_ghost_node_maps\n");
         build_ghost_node_maps();
-        printf("build_owned_local_maps\n");
+        // printf("build_owned_local_maps\n");
         build_owned_local_maps();
-        printf("move_maps_to_device\n");
+        // printf("move_maps_to_device\n");
         if (!debug) move_maps_to_device();
     }
 

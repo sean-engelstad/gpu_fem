@@ -50,7 +50,8 @@ T get_max_disp(DeviceVec<T> &d_soln, int idof = 2) {
 
 
 int main(int argc, char *argv[]) {
-    int nxe = 128; // default
+    // int nxe = 128; // default
+    int nxe = 64;
     double SR = 1e1;
     // double SR = 1e3;
     double pressure = 8e6;
@@ -87,7 +88,7 @@ int main(int argc, char *argv[]) {
     using GMG = MultiGPUGeometricMultigrid<T, Partitioner, Assembler, ASW, Prolongation, CoarseSolver>;
 
     // outer krylov
-    using PCG = GPU_PCG<T, Partitioner, ASW>;
+    using PCG = GPU_PCG<T, Partitioner, GMG>;
 
     const int block_dim = Physics::vars_per_node;
 
@@ -126,8 +127,8 @@ int main(int argc, char *argv[]) {
         // double rho = 2500, ys = 350e6;
         bool imperfection = false; // option for geom imperfection
         int imp_x = 1, imp_hoop = 1; // no imperfection this input doesn't matter rn..
-        printf("create GPU cylinder assembler\n");
-        auto assembler = new createGPUCylinderAssembler<Assembler>(ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
+        printf("nxe=%d: create GPU cylinder assembler\n", c_nxe);
+        auto assembler = createGPUCylinderAssembler<Assembler>(ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
             imperfection, imp_x, imp_hoop);
         constexpr bool compressive = false;
         const int load_case = 3; // petal and chirp load
@@ -135,43 +136,42 @@ int main(int argc, char *argv[]) {
         double nodal_loads = uniform_force; // / (nxe - 1) / (nxe - 1);
         nodal_loads *= (100.0 / SR) * (100.0 / SR) * (100.0 / SR);
         double Q = 1.0; // load magnitude
-        printf("create cylinder loads\n");
+        printf("\tcreate cylinder loads\n");
         T *my_loads = getCylinderLoads2<T, Basis, Physics, load_case>(c_nxe, c_nxe, L, R, nodal_loads);
-        printf("making grid with nxe %d\n", c_nxe);
 
-        assemblers.push_back(assembler);
+        assemblers.push_back(&assembler);
 
         
         // ---------------------------------------------
         // get mesh partitioner
-        printf("get mesh partitioner\n");
-        auto part = assembler->getPartitioner();
+        // printf("\tget mesh partitioner\n");
+        auto part = assembler.getPartitioner();
         
         // build matrix and vectors
         // ---------------------------------------------
-        printf("make GPUbsrmat\n");
+        printf("\tmake GPUbsrmat\n");
         auto kmat = new GPUbsrmat<T, Partitioner>(ctx, part, block_dim);
-        printf("make GPUvecs\n");
+        // printf("\tmake GPUvecs\n");
         auto rhs = new GPUvec<T, Partitioner>(ctx, part, block_dim);
         auto soln = new GPUvec<T, Partitioner>(ctx, part, block_dim);
-        int N = assembler->get_num_vars();
+        int N = assembler.get_num_vars();
 
         // ---------------------------------------------
         // assemble the jacobian and get rhs
         // ---------------------------------------------
-        printf("rhs->setValuesFromHost\n");
+        // printf("\trhs->setValuesFromHost\n");
         rhs->setValuesFromHost(my_loads);
-        printf("add jacobian\n");
-        assembler->add_jacobian(kmat);
-        assembler->apply_bcs(kmat);
-        assembler->apply_bcs(rhs);
+        printf("\tadd jacobian\n");
+        assembler.add_jacobian(kmat);
+        assembler.apply_bcs(kmat);
+        assembler.apply_bcs(rhs);
         
         ctx->sync();
 
         mats.push_back(kmat);
         if (c_nxe == nxe) {
             fine_rhs = rhs;
-            fine_soln = assembler->createGPUVec();
+            fine_soln = assembler.createGPUVec();
             fine_N = N;
         }
 
@@ -180,8 +180,9 @@ int main(int argc, char *argv[]) {
         // ---------------------------------------------
         T omega = 0.2;
         int nsmooth = 2;
-        printf("build ASW preconditioner\n");
+        printf("\tbuild ASW preconditioner\n");
         auto smoother = new ASW(ctx, part, kmat, omega, nsmooth);
+        printf("\tASW->factor()\n");
         smoother->factor();
         smoothers.push_back(smoother);
 
@@ -189,15 +190,18 @@ int main(int argc, char *argv[]) {
         if (c_nxe == nxe_min) {
             // rebuild assembler in SingleGPU partition format
             // TODO : need some way to build single GPU partitioned assembler here..
-            auto sgpu_assembler = new createGPUCylinderAssembler<Assembler>(sgpu_ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
+            printf("coarse mesh: create single GPU cylinder assembler\n");
+            auto sgpu_assembler = createGPUCylinderAssembler<Assembler>(sgpu_ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
                 imperfection, imp_x, imp_hoop);
-            auto sgpu_part = singlegpu_assembler->part;
+            auto sgpu_part = sgpu_assembler.getPartition();
             // TODO : does this make a matrix on a singleGPU?
             // need a different context too?
+            printf("\tcoarse mesh: single GPU add jacobian\n");
             auto sgpu_mat = new GPUbsrmat<T, Partitioner>(sgpu_ctx, sgpu_part, block_dim);
-            sgpu_assembler->add_jacobian(sgpu_mat);
-            sgpu_assembler->apply_bcs(sgpu_mat);
+            sgpu_assembler.add_jacobian(sgpu_mat);
+            sgpu_assembler.apply_bcs(sgpu_mat);
 
+            printf("\tcoarse mesh: build CoarseSolver\n");
             coarse_solver = new CoarseSolver(ctx, part, sgpu_part, sgpu_mat);
         }
     }
@@ -212,7 +216,8 @@ int main(int argc, char *argv[]) {
         auto fine_part = fine_assembler->getPartition();
         auto coarse_part = coarse_assembler->getPartition();
 
-        auto prolongation = Prolongation(ctx, fine_part, coarse_part, nxe_fine, nxe_coarse);
+        printf("level %d: create prolongation\n", level);
+        auto prolongation = new Prolongation(ctx, fine_part, coarse_part, nxe_fine, nxe_coarse, block_dim);
         prolongations.push_back(prolongation);
     }
 
@@ -221,13 +226,18 @@ int main(int argc, char *argv[]) {
     T rtol = 1e-6, atol = 1e-30, LS_min = 1e-2, LS_max = 2.0;
     bool PRINT = false; // no print on Vcyc for K-cycle GMG
     int print_freq = 10; // but not printing anyways
+    printf("Build GMG object\n");
     auto gmg = new GMG(ctx, assemblers, mats, smoothers, prolongations, coarse_solver, 
         NSTEPS, rtol, atol, PRINT, print_freq, LS_min, LS_max);
 
     // now build Krylov PCG
     auto pc = gmg;   
     printf("build PCG\n");
-    auto pcg = new PCG(ctx, part, kmat, pc, N, block_dim);
+    auto fine_assembler = assemblers[0];
+    auto fine_part = fine_assembler->getPartition();
+    auto fine_kmat = mats[0];
+
+    auto pcg = new PCG(ctx, fine_part, fine_kmat, pc, fine_N, block_dim);
     printf("\tdone build PCG\n");
 
     // ---------------------------------------------
@@ -250,5 +260,5 @@ int main(int argc, char *argv[]) {
     T *h_soln = new T[fine_N];
     memset(h_soln, 0, fine_N * sizeof(T));
     fine_soln->getValuesToHost(h_soln);
-    printToVTK_v2<T, Assembler>(assembler, h_soln, "./out/plate_kry_lin.vtk");
+    printToVTK_v2<T, Assembler>(*fine_assembler, h_soln, "./out/plate_kry_lin.vtk");
 };
