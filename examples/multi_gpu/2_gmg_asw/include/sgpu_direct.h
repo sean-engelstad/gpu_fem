@@ -60,36 +60,45 @@ class SingleGPUDirectLU {
     }
 
     void compute_reorderedLU_pattern() {
+        CHECK_CUDA(cudaSetDevice(0));
+
+        // Original no-fill matrix pattern in the original node ordering
         h_nofill_bsr_data = BsrData(spart->num_elements, spart->num_nodes, spart->nodes_per_elem,
                                     mat->getBlockDim(), spart->h_elem_conn);
+
+        printf("spart num_elements=%d, num_nodes=%d\n", spart->num_elements, spart->num_nodes);
 
         num_nodes = h_nofill_bsr_data.mb;
         mb = num_nodes;
 
         nofill_nnzb = h_nofill_bsr_data.nnzb;
-        h_nofill_rowp = h_nofill_bsr_data.rowp;
-        h_nofill_cols = h_nofill_bsr_data.cols;
+        h_nofill_rowp = new int[num_nodes + 1];
+        h_nofill_cols = new int[nofill_nnzb];
+        memcpy(h_nofill_rowp, h_nofill_bsr_data.rowp, (num_nodes + 1) * sizeof(int));
+        memcpy(h_nofill_cols, h_nofill_bsr_data.cols, nofill_nnzb * sizeof(int));
 
-        // auto h_lu_bsr_data = h_nofill_bsr_data.AMD_reordering();
-        // h_lu_bsr_data = h_lu_bsr_data.compute_full_LU_pattern();
-        h_nofill_bsr_data.AMD_reordering();
-        h_nofill_bsr_data.compute_full_LU_pattern();
+        // Separate LU pattern object
+        h_lu_bsr_data = h_nofill_bsr_data;
+        h_lu_bsr_data.AMD_reordering();
+        h_lu_bsr_data.compute_full_LU_pattern();
 
-        h_perm = h_nofill_bsr_data.perm;
-        h_iperm = h_nofill_bsr_data.iperm;
-        h_rowp = h_nofill_bsr_data.rowp;
-        h_cols = h_nofill_bsr_data.cols;
+        nnzb = h_lu_bsr_data.nnzb;
+        h_perm = new int[num_nodes];
+        h_iperm = new int[num_nodes];
+        h_rowp = new int[num_nodes + 1];
+        h_cols = new int[nnzb];
+        memcpy(h_perm, h_lu_bsr_data.perm, num_nodes * sizeof(int));
+        memcpy(h_iperm, h_lu_bsr_data.iperm, num_nodes * sizeof(int));
+        memcpy(h_rowp, h_lu_bsr_data.rowp, (num_nodes + 1) * sizeof(int));
+        memcpy(h_cols, h_lu_bsr_data.cols, nnzb * sizeof(int));
 
-        CHECK_CUDA(cudaSetDevice(0));
-
-        d_lu_bsr_data = h_nofill_bsr_data.createDeviceBsrData();
+        d_lu_bsr_data = h_lu_bsr_data.createDeviceBsrData();
 
         d_perm = d_lu_bsr_data.perm;
         d_iperm = d_lu_bsr_data.iperm;
         d_rowp = d_lu_bsr_data.rowp;
         d_cols = d_lu_bsr_data.cols;
 
-        nnzb = d_lu_bsr_data.nnzb;
         block_dim = d_lu_bsr_data.block_dim;
         block_dim2 = block_dim * block_dim;
 
@@ -104,24 +113,27 @@ class SingleGPUDirectLU {
         s_rhs = new DeviceVec<T>(N);
         s_temp = new DeviceVec<T>(N);
         s_soln = new DeviceVec<T>(N);
+
+        CHECK_CUDA(cudaStreamSynchronize(streams[0]));
     }
 
     void compute_block_copy_maps() {
+        CHECK_CUDA(cudaSetDevice(0));
+
         h_dest_blocks = new int[nofill_nnzb];
         std::fill(h_dest_blocks, h_dest_blocks + nofill_nnzb, -1);
 
         for (int i = 0; i < num_nodes; i++) {
+            int i_lu = h_iperm[i];
+
             for (int jp = h_nofill_rowp[i]; jp < h_nofill_rowp[i + 1]; jp++) {
                 int j = h_nofill_cols[jp];
+                int j_lu = h_iperm[j];
 
-                int i2 = h_iperm[i];
                 int matching_block = -1;
 
-                for (int kp = h_rowp[i2]; kp < h_rowp[i2 + 1]; kp++) {
-                    int k2 = h_cols[kp];
-                    int k = h_perm[k2];
-
-                    if (k == j) {
+                for (int kp = h_rowp[i_lu]; kp < h_rowp[i_lu + 1]; kp++) {
+                    if (h_cols[kp] == j_lu) {
                         matching_block = kp;
                         break;
                     }
@@ -130,13 +142,14 @@ class SingleGPUDirectLU {
                 if (matching_block >= 0) {
                     h_dest_blocks[jp] = matching_block;
                 } else {
-                    printf("SingleGPUDirectLU error: missing nofill block (%d,%d) in LU pattern\n",
-                           i, j);
+                    printf(
+                        "SingleGPUDirectLU error: missing nofill block "
+                        "original (%d,%d), reordered (%d,%d)\n",
+                        i, j, i_lu, j_lu);
                 }
             }
         }
 
-        CHECK_CUDA(cudaSetDevice(0));
         CHECK_CUDA(cudaMalloc((void **)&d_dest_blocks, nofill_nnzb * sizeof(int)));
         CHECK_CUDA(cudaMemcpyAsync(d_dest_blocks, h_dest_blocks, nofill_nnzb * sizeof(int),
                                    cudaMemcpyHostToDevice, streams[0]));
@@ -211,7 +224,7 @@ class SingleGPUDirectLU {
 
         T *d_mat_nofill_vals = mat->getLocalVals(0);
 
-        dim3 block(256);
+        dim3 block(128);
         dim3 grid((nofill_nnz + block.x - 1) / block.x);
 
         k_copy_nofill_vals_to_lu_vals<T><<<grid, block, 0, streams[0]>>>(
@@ -219,6 +232,8 @@ class SingleGPUDirectLU {
 
         CHECK_CUDA(cudaGetLastError());
         CHECK_CUDA(cudaStreamSynchronize(streams[0]));
+
+        // printMatValues();  // for debug
 
         CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandle, dir, mb, nnzb, descr_M, d_mat_lu_vals,
                                          d_rowp, d_cols, block_dim, info_M, policy_M, pBuffer));
@@ -231,14 +246,17 @@ class SingleGPUDirectLU {
         CHECK_CUDA(cudaStreamSynchronize(streams[0]));
     }
 
+    void printMatValues() {  // TODO
+    }
+
     void solve(MultiGPUVec *rhs, MultiGPUVec *soln) {
         rhs->copyToSingleGPU(s_rhs->getPtr());
 
         CHECK_CUDA(cudaSetDevice(0));
-        s_rhs->permuteData(block_dim, d_iperm);
-        ctx->sync();
+        CHECK_CUDA(cudaStreamSynchronize(streams[0]));
 
-        CHECK_CUDA(cudaSetDevice(0));
+        s_rhs->permuteData(block_dim, d_iperm);
+        CHECK_CUDA(cudaStreamSynchronize(streams[0]));
 
         const T alpha = 1.0;
 
@@ -250,11 +268,13 @@ class SingleGPUDirectLU {
             cusparseHandle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_mat_lu_vals, d_rowp, d_cols,
             block_dim, info_U, s_temp->getPtr(), s_soln->getPtr(), policy_U, pBuffer));
 
-        CHECK_CUDA(cudaSetDevice(0));
+        CHECK_CUDA(cudaStreamSynchronize(streams[0]));
+
         s_soln->permuteData(block_dim, d_perm);
-        ctx->sync();
+        CHECK_CUDA(cudaStreamSynchronize(streams[0]));
 
         soln->copyFromSingleGPU(s_soln->getPtr());
+        ctx->sync();
     }
 
    private:

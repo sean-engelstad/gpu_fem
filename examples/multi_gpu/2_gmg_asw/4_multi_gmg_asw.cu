@@ -52,9 +52,10 @@ T get_max_disp(DeviceVec<T> &d_soln, int idof = 2) {
 int main(int argc, char *argv[]) {
     // int nxe = 128; // default
     // int nxe = 64;
-    int nxe = 16;
+    int nxe = 8;
 
     double SR = 1e1;
+    // double SR = 1e2;
     // double SR = 1e3;
     double pressure = 8e6;
 
@@ -95,7 +96,7 @@ int main(int argc, char *argv[]) {
     const int block_dim = Physics::vars_per_node;
 
 
-    int nxe_min = (nxe > 32) ? 32 : 8;
+    int nxe_min = (nxe > 32) ? 32 : (nxe / 2);
 
     // ---------------------------------------------
     // start multi GPU device context
@@ -114,9 +115,10 @@ int main(int argc, char *argv[]) {
     std::vector<ASW*> smoothers;
     std::vector<Prolongation*> prolongations;
     std::vector<int> nxe_vec;
+    Assembler* coarse_assembler;
     CoarseSolver *coarse_solver;
 
-    Vec *fine_rhs, *fine_soln;
+    Vec *fine_rhs, *fine_soln, *fine_test;
     int fine_N;
 
     for (int c_nxe = nxe; c_nxe >= nxe_min; c_nxe /= 2) {
@@ -141,13 +143,13 @@ int main(int argc, char *argv[]) {
         printf("\tcreate cylinder loads\n");
         T *my_loads = getCylinderLoads2<T, Basis, Physics, load_case>(c_nxe, c_nxe, L, R, nodal_loads);
 
-        assemblers.push_back(&assembler);
+        assemblers.push_back(assembler);
 
         
         // ---------------------------------------------
         // get mesh partitioner
         // printf("\tget mesh partitioner\n");
-        auto part = assembler.getPartitioner();
+        auto part = assembler->getPartitioner();
         
         // build matrix and vectors
         // ---------------------------------------------
@@ -156,7 +158,7 @@ int main(int argc, char *argv[]) {
         // printf("\tmake GPUvecs\n");
         auto rhs = new GPUvec<T, Partitioner>(ctx, part, block_dim);
         auto soln = new GPUvec<T, Partitioner>(ctx, part, block_dim);
-        int N = assembler.get_num_vars();
+        int N = assembler->get_num_vars();
 
         // ---------------------------------------------
         // assemble the jacobian and get rhs
@@ -164,29 +166,59 @@ int main(int argc, char *argv[]) {
         // printf("\trhs->setValuesFromHost\n");
         rhs->setValuesFromHost(my_loads);
         printf("\tadd jacobian\n");
-        assembler.add_jacobian(kmat);
-        assembler.apply_bcs(kmat);
-        assembler.apply_bcs(rhs);
+        assembler->add_jacobian(kmat);
+        assembler->apply_bcs(kmat);
+        assembler->apply_bcs(rhs);
+
+        auto test_vec = new GPUvec<T, Partitioner>(ctx, part, block_dim);
+        kmat->mult(rhs, test_vec);
+
+        // if (nxe * nxe <= 100) {
+        //     // printf("kmat before bcs\n");
+        //     // assembler->printMatrixOnHost(kmat);
+        //     T rhs_norm = rhs->norm();
+        //     printf("rhs vec [nxe=%d] after bcs with norm %.4e\n", c_nxe, rhs_norm);
+        //     rhs->printValuesOnHost();
+
+        //     T test_nrm = test_vec->norm();
+        //     printf("test mat-vec [nxe=%d] with nrm %.8e\n", c_nxe, test_nrm);
+        //     test_vec->printValuesOnHost();
+        // }
         
         ctx->sync();
 
         mats.push_back(kmat);
         if (c_nxe == nxe) {
             fine_rhs = rhs;
-            fine_soln = assembler.createGPUVec();
+            fine_soln = assembler->createGPUVec();
             fine_N = N;
+            fine_test = test_vec;
         }
 
         // ---------------------------------------------
         // build the ASW smoother
         // ---------------------------------------------
-        T omega = 0.2;
+        // T omega = 0.2;
+        T omega = 0.15;
         int nsmooth = 2;
         printf("\tbuild ASW preconditioner\n");
         auto smoother = new ASW(ctx, part, kmat, omega, nsmooth);
         printf("\tASW->factor()\n");
         smoother->factor();
         smoothers.push_back(smoother);
+
+        // if (nxe * nxe <= 100) {
+        //     test_vec->zero();
+        //     test_vec->zeroLocal();
+        //     smoother->solve(rhs, test_vec);
+
+        //     T test_nrm = test_vec->norm();
+        //     printf("test precond-vec [nxe=%d] with nrm %.8e\n", c_nxe, test_nrm);
+        //     test_vec->printValuesOnHost();
+
+        //     // reset host values after debug
+        //     rhs->setValuesFromHost(my_loads);
+        // }
 
         // build coarse solver
         if (c_nxe == nxe_min) {
@@ -195,16 +227,43 @@ int main(int argc, char *argv[]) {
             printf("coarse mesh: create single GPU cylinder assembler\n");
             auto sgpu_assembler = createGPUCylinderAssembler<Assembler>(sgpu_ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
                 imperfection, imp_x, imp_hoop);
-            auto sgpu_part = sgpu_assembler.getPartition();
+            coarse_assembler = sgpu_assembler;
+            auto sgpu_part = sgpu_assembler->getPartition();
             // TODO : does this make a matrix on a singleGPU?
             // need a different context too?
             printf("\tcoarse mesh: single GPU add jacobian\n");
             auto sgpu_mat = new GPUbsrmat<T, Partitioner>(sgpu_ctx, sgpu_part, block_dim);
-            sgpu_assembler.add_jacobian(sgpu_mat);
-            sgpu_assembler.apply_bcs(sgpu_mat);
+            sgpu_assembler->add_jacobian(sgpu_mat);
+            sgpu_assembler->apply_bcs(sgpu_mat);
 
             printf("\tcoarse mesh: build CoarseSolver\n");
             coarse_solver = new CoarseSolver(ctx, part, sgpu_part, sgpu_mat);
+            coarse_solver->factor();
+
+            // if (nxe * nxe <= 100) {
+            //     test_vec->zero();
+            //     test_vec->zeroLocal();
+            //     sgpu_mat->mult(rhs, test_vec);
+
+            //     T test_nrm = test_vec->norm();
+            //     printf("test SingleGPU coarse mat-vec [nxe=%d] with nrm %.8e\n", c_nxe, test_nrm);
+            //     test_vec->printValuesOnHost();
+
+            //     test_vec->zero();
+            //     test_vec->zeroLocal();
+            //     coarse_solver->solve(rhs, test_vec);
+            //     T test_nrm2 = test_vec->norm();
+            //     printf("test SingleGPU coarse LUsolve-vec [nxe=%d] with nrm %.8e\n", c_nxe, test_nrm2);
+            //     test_vec->printValuesOnHost();
+
+            //     // reset host values after debug
+            //     rhs->setValuesFromHost(my_loads);
+            // }
+        }
+
+        if (c_nxe == nxe) {
+            fine_rhs->setValuesFromHost(my_loads);
+            assemblers[0]->apply_bcs(fine_rhs);
         }
     }
 
@@ -220,11 +279,19 @@ int main(int argc, char *argv[]) {
 
         printf("level %d: create prolongation\n", level);
         auto prolongation = new Prolongation(ctx, fine_part, coarse_part, nxe_fine, nxe_coarse, block_dim);
+        printf("\tdone create prolongation on level %d\n", level);
         prolongations.push_back(prolongation);
     }
 
+    auto fine_assembler = assemblers[0];
+    auto fine_part = fine_assembler->getPartition();
+    auto fine_kmat = mats[0];
+
+
+    // -------------------------------------------
     // now build final GMG object
     int NSTEPS = 1; // for K-cycle GMG just one V-cycle per solve
+    // int NSTEPS = 100;
     T rtol = 1e-6, atol = 1e-30, LS_min = 1e-2, LS_max = 2.0;
     bool PRINT = false; // no print on Vcyc for K-cycle GMG
     int print_freq = 10; // but not printing anyways
@@ -232,12 +299,57 @@ int main(int argc, char *argv[]) {
     auto gmg = new GMG(ctx, assemblers, mats, smoothers, prolongations, coarse_solver, 
         NSTEPS, rtol, atol, PRINT, print_freq, LS_min, LS_max);
 
+    // -------------------------------------------
+    // DEBUG section
+    // -------------------------------------------
+
+    if (nxe * nxe < 100) {
+        printf("fine_rhs\n");
+        fine_rhs->printValuesOnHost();
+        auto fine_defect = assemblers[0]->createGPUVec();
+        fine_rhs->copyTo(fine_defect);
+
+        auto crs_defect = assemblers[1]->createGPUVec();
+        prolongations[0]->restrict_vec(fine_defect, crs_defect);
+        assemblers[1]->apply_bcs(crs_defect);
+        printf("crs defect after restrict\n");
+        crs_defect->printValuesOnHost();
+
+        // do coarse soln
+        auto crs_soln = assemblers[1]->createGPUVec();
+        coarse_solver->solve(crs_defect, crs_soln);
+        printf("crs soln\n");
+        crs_soln->printValuesOnHost();
+
+        // prolongate
+        auto fine_temp = assemblers[0]->createGPUVec();
+        auto fine_soln = assemblers[0]->createGPUVec();
+        crs_soln->copyTo(gmg->d_solns[1]);
+        fine_defect->copyTo(gmg->d_defects[0]);
+        fine_soln->copyTo(gmg->d_solns[0]);
+
+        prolongations[0]->prolongate(crs_soln, fine_soln);
+        printf("fine soln w reg prolong\n");
+        fine_soln->printValuesOnHost();
+
+        gmg->prolongate_line_search(0);
+        gmg->d_solns[0]->copyTo(fine_soln);
+        printf("fine soln with prolong line search\n");
+        fine_soln->printValuesOnHost();
+    }
+
+    // return;
+
+    // ------------------------------------------
     // now build Krylov PCG
+    // ------------------------------------------
+
     auto pc = gmg;   
     printf("build PCG\n");
-    auto fine_assembler = assemblers[0];
-    auto fine_part = fine_assembler->getPartition();
-    auto fine_kmat = mats[0];
+
+    // debug
+    gmg->MAX_STEPS = 100;
+    gmg->solve(fine_rhs, fine_soln);
 
     auto pcg = new PCG(ctx, fine_part, fine_kmat, pc, fine_N, block_dim);
     printf("\tdone build PCG\n");
@@ -262,7 +374,7 @@ int main(int argc, char *argv[]) {
     T *h_soln = new T[fine_N];
     memset(h_soln, 0, fine_N * sizeof(T));
     fine_soln->getValuesToHost(h_soln);
-    printToVTK_v2<T, Assembler>(*fine_assembler, h_soln, "./out/plate_kry_lin.vtk");
+    printToVTK_v2<T, Assembler>(*fine_assembler, h_soln, "./out/cyl_gmg4.vtk");
 
     // FREE
     // TODO : free section

@@ -193,6 +193,11 @@ class GPUvec {
         ctx->sync();
     }
 
+    void zeroAll() {
+        zero();
+        zeroLocal();
+    }
+
     void zero() {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(debug ? 0 : g));

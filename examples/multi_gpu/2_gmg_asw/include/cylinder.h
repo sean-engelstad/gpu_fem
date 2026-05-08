@@ -9,10 +9,10 @@
 #include "utils.h"
 
 template <class Assembler>
-Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, double L, double R,
-                                     double E, double nu, double thick, bool imperfection = false,
-                                     int imp_x = 5, int imp_hoop = 4, double rho = 2500,
-                                     double ys = 350e6, int nx_comp = 1, int ny_comp = 1) {
+Assembler *createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, double L, double R,
+                                      double E, double nu, double thick, bool imperfection = false,
+                                      int imp_x = 5, int imp_hoop = 4, double rho = 2500,
+                                      double ys = 350e6, int nx_comp = 1, int ny_comp = 1) {
     using T = typename Assembler::T;
     using Basis = typename Assembler::Basis;
     using Geo = typename Assembler::Geo;
@@ -205,8 +205,8 @@ Assembler createGPUCylinderAssembler(MultiGPUContext *ctx, int nxe, int nhe, dou
 
     // make the assembler
     // printf("create assembler\n");
-    Assembler assembler(ctx, num_nodes, num_elements, conn, xpts, bcs, physData, num_components,
-                        elem_components);
+    auto assembler = new Assembler(ctx, num_nodes, num_elements, conn, xpts, bcs, physData,
+                                   num_components, elem_components);
 
     return assembler;
 }

@@ -53,6 +53,8 @@ class MultiGPUStructuredProlongation {
     }
 
     void prolongate(Vec *coarse_in, Vec *fine_out) {
+        coarse_in->expandToLocal();
+        fine_out->zeroAll();
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
 
@@ -69,10 +71,15 @@ class MultiGPUStructuredProlongation {
             CHECK_CUDA(cudaGetLastError());
         }
 
+        // TODO : does reduceFromLocal give equivalent result to single GPU with multi GPUs?
+        fine_out->reduceFromLocal();
+
         ctx->sync();
     }
 
     void restrict_vec(Vec *fine_in, Vec *coarse_out) {
+        fine_in->expandToLocal();
+        coarse_out->zeroAll();
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
 
@@ -88,6 +95,7 @@ class MultiGPUStructuredProlongation {
                                                                    loc_fine, loc_coarse);
             CHECK_CUDA(cudaGetLastError());
         }
+        coarse_out->reduceFromLocal();
 
         ctx->sync();
     }

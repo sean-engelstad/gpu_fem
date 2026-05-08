@@ -103,7 +103,7 @@ __global__ static void k_structured_prolongate(
                 int coarse_dof = block_dim * coarse_node + idof;
                 int fine_dof = block_dim * fine_node + idof;
                 T val = coarse_soln_in[coarse_dof];
-                val *= scale / fine_weights[fine_dof];
+                val *= scale / (1e-12 + fine_weights[fine_dof]);
 
                 atomicAdd(&dx_fine[fine_dof], val);
             }
@@ -158,7 +158,8 @@ __global__ static void k_structured_restrict(
                 int coarse_dof = block_dim * coarse_node + idof;
                 int fine_dof = block_dim * fine_node + idof;
                 T val = defect_fine_in[fine_dof];
-                val *= scale / fine_weights[fine_dof];
+                val *= scale;
+                // val *= scale / fine_weights[fine_dof];
 
                 atomicAdd(&defect_coarse_out[coarse_dof], val);
             }
