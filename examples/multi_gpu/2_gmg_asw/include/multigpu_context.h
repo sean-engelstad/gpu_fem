@@ -56,7 +56,7 @@ class MultiGPUContext {
         }
     }
 
-    ~MultiGPUContext() {
+    void free() {
         sync();
 
         for (int g = 0; g < ngpus; g++) {

@@ -36,7 +36,7 @@ class SingleGPUDirectLU {
         setup_LU_solves();
     }
 
-    ~SingleGPUDirectLU() {
+    void free() {
         CHECK_CUDA(cudaSetDevice(0));
 
         if (pBuffer) cudaFree(pBuffer);
@@ -234,7 +234,9 @@ class SingleGPUDirectLU {
     void solve(MultiGPUVec *rhs, MultiGPUVec *soln) {
         rhs->copyToSingleGPU(s_rhs->getPtr());
 
+        CHECK_CUDA(cudaSetDevice(0));
         s_rhs->permuteData(block_dim, d_iperm);
+        ctx->sync();
 
         CHECK_CUDA(cudaSetDevice(0));
 
@@ -248,7 +250,9 @@ class SingleGPUDirectLU {
             cusparseHandle, dir, trans_U, mb, nnzb, &alpha, descr_U, d_mat_lu_vals, d_rowp, d_cols,
             block_dim, info_U, s_temp->getPtr(), s_soln->getPtr(), policy_U, pBuffer));
 
+        CHECK_CUDA(cudaSetDevice(0));
         s_soln->permuteData(block_dim, d_perm);
+        ctx->sync();
 
         soln->copyFromSingleGPU(s_soln->getPtr());
     }

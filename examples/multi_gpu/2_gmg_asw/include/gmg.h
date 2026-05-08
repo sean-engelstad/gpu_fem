@@ -118,6 +118,10 @@ class MultiGPUGeometricMultigrid {
         d_solns[0]->copyTo(soln);
     }
 
+    void free() {
+        // TBD
+    }
+
    private:
     int nlevels;
     MultiGPUContext *ctx;

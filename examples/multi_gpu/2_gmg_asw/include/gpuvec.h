@@ -28,7 +28,7 @@ class GPUvec {
         ctx->sync();
     }
 
-    ~GPUvec() {
+    void free() {
         sync();
 
         if (d_vals_owned) {
@@ -84,8 +84,6 @@ class GPUvec {
         delete[] d_single_pack;
         delete[] d_single_gpu_pack;
     }
-
-    void free() {}
 
     int pair_index(int dst, int src) const { return ngpus * dst + src; }
 

@@ -18,11 +18,11 @@ class GPU_PCG {
         z = new Vec(ctx, part, block_dim);
     }
 
-    ~GPU_PCG() {
-        delete resid;
-        delete w;
-        delete p;
-        delete z;
+    void free() {
+        resid->free();
+        w->free();
+        p->free();
+        z->free();
     }
 
     int solve(Vec *rhs, Vec *x, int max_iter = 500, T abs_tol = 1e-8, T rel_tol = 1e-8,

@@ -42,7 +42,7 @@ class StructuredGPUPartitioner {
         if (!debug) move_maps_to_device();
     }
 
-    ~StructuredGPUPartitioner() {
+    void free() {
         for (int g = 0; g < ngpus; g++) {
             CHECK_CUDA(cudaSetDevice(g));
             if (d_local_elem_conn && d_local_elem_conn[g]) cudaFree(d_local_elem_conn[g]);

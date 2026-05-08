@@ -59,7 +59,7 @@ class MultiGPUElementASW {
         ctx->sync();
     }
 
-    ~MultiGPUElementASW() {
+    void free() {
         ctx->sync();
 
         for (int g = 0; g < ngpus; g++) {
@@ -87,8 +87,8 @@ class MultiGPUElementASW {
             delete[] h_rhs_owned_map[g];
         }
 
-        delete temp;
-        delete defect;
+        temp->free();
+        defect->free();
 
         delete[] batch_size;
         delete[] n_batch_blocks;

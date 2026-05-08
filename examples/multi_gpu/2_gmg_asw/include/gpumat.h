@@ -37,7 +37,7 @@ class GPUbsrmat {
         temp = new GPUvec<T, Partitioner>(ctx, part, block_dim);
     }
 
-    ~GPUbsrmat() {
+    void free() {
         sync();
 
         for (int g = 0; g < ngpus; g++) {

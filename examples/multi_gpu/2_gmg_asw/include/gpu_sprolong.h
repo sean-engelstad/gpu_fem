@@ -48,6 +48,8 @@ class MultiGPUStructuredProlongation {
         // reduce add then broadcasts from owned to local
         weights->reduceFromLocal();
         weights->expandToLocal();
+
+        // weights->printValuesOnHost();
     }
 
     void prolongate(Vec *coarse_in, Vec *fine_out) {
@@ -88,6 +90,10 @@ class MultiGPUStructuredProlongation {
         }
 
         ctx->sync();
+    }
+
+    void free() {
+        // TBD
     }
 
    private:

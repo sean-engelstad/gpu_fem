@@ -51,7 +51,9 @@ T get_max_disp(DeviceVec<T> &d_soln, int idof = 2) {
 
 int main(int argc, char *argv[]) {
     // int nxe = 128; // default
-    int nxe = 64;
+    // int nxe = 64;
+    int nxe = 16;
+
     double SR = 1e1;
     // double SR = 1e3;
     double pressure = 8e6;
@@ -261,4 +263,7 @@ int main(int argc, char *argv[]) {
     memset(h_soln, 0, fine_N * sizeof(T));
     fine_soln->getValuesToHost(h_soln);
     printToVTK_v2<T, Assembler>(*fine_assembler, h_soln, "./out/plate_kry_lin.vtk");
+
+    // FREE
+    // TODO : free section
 };
