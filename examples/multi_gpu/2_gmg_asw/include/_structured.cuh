@@ -7,11 +7,14 @@ enum ProlongationGeom : int {
 
 template <typename T, class Basis, ProlongationGeom geom>
 __global__ static void k_structured_weights(
+    const int start_fine_elem, const int start_crs_elem, 
+    const int *loc_fine_elem_conn, const int *loc_crs_elem_conn,
     const int block_dim, const int nxe_coarse, const int nxe_fine, 
-    const int nelems_fine, T *fine_weights) {
+    const int loc_nelems_fine, T *fine_weights) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    int fine_elem = tid;
-    if (fine_elem >= nelems_fine) return;
+    int loc_fine_elem = tid;
+    int fine_elem = loc_fine_elem + start_fine_elem;
+    if (loc_fine_elem >= loc_nelems_fine) return;
 
     const int order = Basis::order;
     const int nx = Basis::nx;
@@ -19,6 +22,8 @@ __global__ static void k_structured_weights(
     int ixe_f = fine_elem % nxe_fine, iye_f = fine_elem / nxe_fine;
     int ixe_c = ixe_f / 2, iye_c = iye_f / 2;
     int nx2 = nx * nx; // num nodes in each element
+    int crs_elem = nxe_coarse * iye_c + ixe_c;
+    int loc_crs_elem = crs_elem - start_crs_elem;
 
     for (int local_fine = 0; local_fine < nx2; local_fine++) {
         int ix_f = order * ixe_f + local_fine % nx, iy_f = order * iye_f + local_fine / nx;      
@@ -43,13 +48,15 @@ __global__ static void k_structured_weights(
             }
 
             // get fine and coarse indices now..
-            int coarse_node = nx_c * iy_c + ix_c;
-            int fine_node = iy_f * nx_f + ix_f;
+            // int coarse_node = nx_c * iy_c + ix_c;
+            // int fine_node = iy_f * nx_f + ix_f;
+            int fine_loc_node = loc_fine_elem_conn[nx2 * loc_fine_elem + local_fine];
+            int crs_loc_node = loc_crs_elem_conn[nx2 * loc_crs_elem + local_coarse];
 
             // now loop over each DOF..
             for (int idof = 0; idof < block_dim; idof++) {
-                int coarse_dof = block_dim * coarse_node + idof;
-                int fine_dof = block_dim * fine_node + idof;
+                int coarse_dof = block_dim * crs_loc_node + idof;
+                int fine_dof = block_dim * fine_loc_node + idof;
 
                 atomicAdd(&fine_weights[fine_dof], scale);
             }
@@ -59,11 +66,14 @@ __global__ static void k_structured_weights(
 
 template <typename T, class Basis, ProlongationGeom geom>
 __global__ static void k_structured_prolongate(
+    const int start_fine_elem, const int start_crs_elem, 
+    const int *loc_fine_elem_conn, const int *loc_crs_elem_conn,
     const int block_dim, const int nxe_coarse, const int nxe_fine, 
-    const int nelems_fine, const T *fine_weights, const T *coarse_soln_in, T *dx_fine) {
+    const int loc_nelems_fine, const T *fine_weights, const T *coarse_soln_in, T *dx_fine) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    int fine_elem = tid;
-    if (fine_elem >= nelems_fine) return;
+    int loc_fine_elem = tid;
+    int fine_elem = loc_fine_elem + start_fine_elem;
+    if (loc_fine_elem >= loc_nelems_fine) return;
 
     const int order = Basis::order;
     const int nx = Basis::nx;
@@ -71,6 +81,8 @@ __global__ static void k_structured_prolongate(
     int ixe_f = fine_elem % nxe_fine, iye_f = fine_elem / nxe_fine;
     int ixe_c = ixe_f / 2, iye_c = iye_f / 2;
     int nx2 = nx * nx; // num nodes in each element
+    int crs_elem = nxe_coarse * iye_c + ixe_c;
+    int loc_crs_elem = crs_elem - start_crs_elem;
 
     for (int local_fine = 0; local_fine < nx2; local_fine++) {
         int ix_f = order * ixe_f + local_fine % nx, iy_f = order * iye_f + local_fine / nx;      
@@ -95,13 +107,15 @@ __global__ static void k_structured_prolongate(
             }
 
             // get fine and coarse indices now..
-            int coarse_node = nx_c * iy_c + ix_c;
-            int fine_node = iy_f * nx_f + ix_f;
+            // int coarse_node = nx_c * iy_c + ix_c;
+            // int fine_node = iy_f * nx_f + ix_f;
+            int fine_loc_node = loc_fine_elem_conn[nx2 * loc_fine_elem + local_fine];
+            int crs_loc_node = loc_crs_elem_conn[nx2 * loc_crs_elem + local_coarse];
 
             // now loop over each DOF..
             for (int idof = 0; idof < block_dim; idof++) {
-                int coarse_dof = block_dim * coarse_node + idof;
-                int fine_dof = block_dim * fine_node + idof;
+                int coarse_dof = block_dim * crs_loc_node + idof;
+                int fine_dof = block_dim * fine_loc_node + idof;
                 T val = coarse_soln_in[coarse_dof];
                 val *= scale / (1e-12 + fine_weights[fine_dof]);
 
@@ -113,12 +127,15 @@ __global__ static void k_structured_prolongate(
 
 template <typename T, class Basis, ProlongationGeom geom>
 __global__ static void k_structured_restrict(
+    const int start_fine_elem, const int start_crs_elem, 
+    const int *loc_fine_elem_conn, const int *loc_crs_elem_conn,
     const int block_dim, const int nxe_coarse, const int nxe_fine, 
-    const int nelems_fine, const T *fine_weights, const T *defect_fine_in, T *defect_coarse_out) {
+    const int loc_nelems_fine, const T *fine_weights, const T *defect_fine_in, T *defect_coarse_out) {
 
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    int fine_elem = tid;
-    if (fine_elem >= nelems_fine) return;
+    int loc_fine_elem = tid;
+    int fine_elem = loc_fine_elem + start_fine_elem;
+    if (loc_fine_elem >= loc_nelems_fine) return;
 
     const int order = Basis::order;
     const int nx = Basis::nx;
@@ -126,6 +143,8 @@ __global__ static void k_structured_restrict(
     int ixe_f = fine_elem % nxe_fine, iye_f = fine_elem / nxe_fine;
     int ixe_c = ixe_f / 2, iye_c = iye_f / 2;
     int nx2 = nx * nx; // num nodes in each element
+    int crs_elem = nxe_coarse * iye_c + ixe_c;
+    int loc_crs_elem = crs_elem - start_crs_elem;
 
     for (int local_fine = 0; local_fine < nx2; local_fine++) {
         int ix_f = order * ixe_f + local_fine % nx, iy_f = order * iye_f + local_fine / nx;      
@@ -150,13 +169,15 @@ __global__ static void k_structured_restrict(
             }    
 
             // get fine and coarse indices now..
-            int coarse_node = nx_c * iy_c + ix_c;
-            int fine_node = iy_f * nx_f + ix_f;
+            // int coarse_node = nx_c * iy_c + ix_c;
+            // int fine_node = iy_f * nx_f + ix_f;
+            int fine_loc_node = loc_fine_elem_conn[nx2 * loc_fine_elem + local_fine];
+            int crs_loc_node = loc_crs_elem_conn[nx2 * loc_crs_elem + local_coarse];
 
             // now loop over each DOF..
             for (int idof = 0; idof < block_dim; idof++) {
-                int coarse_dof = block_dim * coarse_node + idof;
-                int fine_dof = block_dim * fine_node + idof;
+                int coarse_dof = block_dim * crs_loc_node + idof;
+                int fine_dof = block_dim * fine_loc_node + idof;
                 T val = defect_fine_in[fine_dof];
                 val *= scale;
                 // val *= scale / fine_weights[fine_dof];

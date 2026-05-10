@@ -278,7 +278,8 @@ int main(int argc, char *argv[]) {
         auto coarse_part = coarse_assembler->getPartition();
 
         printf("level %d: create prolongation\n", level);
-        auto prolongation = new Prolongation(ctx, fine_part, coarse_part, nxe_fine, nxe_coarse, block_dim);
+        auto prolongation = new Prolongation(ctx, fine_part, coarse_part, 
+            nxe_fine, nxe_coarse, block_dim, mats[level], mats[level+1]);
         // printf("\tdone create prolongation on level %d\n", level);
         prolongations.push_back(prolongation);
     }
