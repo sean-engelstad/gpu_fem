@@ -20,8 +20,10 @@
 - [ ] add README.md for gpu_fem to show highly scalable structural analysis pictures (and make people interested in using it)
 
 1. [ ] Finish multi-GPU development
-   - [ ] GMG-ASW on multi-GPU
+   - [x] GMG-ASW on multi-GPU
       - [ ] speedup setup time for multi-GPU ASW precond ghost flags.. maybe for matrix copy (see where host side bottleneck)
+      - [ ] do unstructured prolong for wing case now (with ghost)
+      - [ ] do multi-CPU + multi-GPU for it?
    - [ ] 2-level BDDC-LU on multi-GPU
       - [ ] CuDSS multi-GPU Schur complement for coarse direct solve
    - [ ] maybe also try multi CPU + GPU (for really high DOF problems)? Is it worth it for more than 4 GPUs?

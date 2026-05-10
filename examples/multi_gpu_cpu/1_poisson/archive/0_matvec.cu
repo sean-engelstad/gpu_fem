@@ -76,21 +76,21 @@ struct RemoteSend {
     int global_node = -1;
 };
 
-// template <typename T>
-// struct RankCommPlan {
-//     int rank = -1;
+template <typename T>
+struct RankCommPlan {
+    int rank = -1;
 
-//     std::vector<RemoteRecv<T>> recvs;
-//     std::vector<RemoteSend<T>> sends;
+    std::vector<RemoteRecv<T>> recvs;
+    std::vector<RemoteSend<T>> sends;
 
-//     T *h_send = nullptr;
-//     T *h_recv = nullptr;
-//     T *d_send = nullptr;
-//     T *d_recv = nullptr;
+    T *h_send = nullptr;
+    T *h_recv = nullptr;
+    T *d_send = nullptr;
+    T *d_recv = nullptr;
 
-//     int send_nodes = 0;
-//     int recv_nodes = 0;
-// };
+    int send_nodes = 0;
+    int recv_nodes = 0;
+};
 
 template <typename T>
 struct GPUData {
@@ -128,83 +128,6 @@ struct Owner {
     int rank = -1;
     int gpu = -1;
     int local_node = -1;
-};
-
-// -----------------------------------------------------------------------------
-// Add near the top, after structs/includes
-// -----------------------------------------------------------------------------
-
-template <typename T>
-__global__ void k_gather_remote_send(
-    int n_nodes,
-    int block_dim,
-    const int *src_local_nodes,
-    const T *x_owned,
-    T *send_buf) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int N = n_nodes * block_dim;
-    if (tid >= N) return;
-
-    int inode = tid / block_dim;
-    int idof  = tid % block_dim;
-
-    int src_node = src_local_nodes[inode];
-    send_buf[inode * block_dim + idof] =
-        x_owned[src_node * block_dim + idof];
-}
-
-template <typename T>
-__global__ void k_scatter_remote_recv(
-    int n_nodes,
-    int block_dim,
-    const int *dst_ext_nodes,
-    const T *recv_buf,
-    T *x_ext) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int N = n_nodes * block_dim;
-    if (tid >= N) return;
-
-    int inode = tid / block_dim;
-    int idof  = tid % block_dim;
-
-    int dst_node = dst_ext_nodes[inode];
-    x_ext[dst_node * block_dim + idof] =
-        recv_buf[inode * block_dim + idof];
-}
-
-template <typename T>
-struct PeerGpuLink {
-    int peer_rank = -1;
-
-    // local source GPU for sends, local destination GPU for receives
-    int local_gpu = -1;
-
-    // remote destination GPU for sends, remote source GPU for receives
-    int remote_gpu = -1;
-
-    int count = 0;
-
-    // send-side map
-    std::vector<int> h_send_src_nodes_vec;
-    int *d_send_src_nodes = nullptr;
-
-    // recv-side map
-    std::vector<int> h_recv_dst_ext_nodes_vec;
-    int *d_recv_dst_ext_nodes = nullptr;
-
-    T *h_buf = nullptr;
-    T *d_buf = nullptr;
-};
-
-template <typename T>
-struct RankCommPlan {
-    int rank = -1;
-
-    // One contiguous message per peer/sourceGPU/destinationGPU.
-    // send_links: this rank sends from local_gpu to peer rank's remote_gpu.
-    // recv_links: this rank receives from peer rank's remote_gpu into local_gpu.
-    std::vector<PeerGpuLink<T>> send_links;
-    std::vector<PeerGpuLink<T>> recv_links;
 };
 
 static inline int ownerOfNode1D(int node, const std::vector<int> &starts,
@@ -461,222 +384,104 @@ void buildRankCommPlans(std::vector<GPUData<T>> &gpus,
                         int nranks,
                         int ngpu,
                         int block_dim,
-                        const std::vector<int> &rank_starts,
-                        const std::vector<int> &rank_ends,
-                        const std::vector<std::vector<int>> &gpu_starts,
-                        const std::vector<std::vector<int>> &gpu_ends,
                         std::vector<RankCommPlan<T>> &plans) {
     plans.resize(nranks);
     for (int r = 0; r < nranks; r++) {
         plans[r].rank = r;
     }
 
-    // Request triples:
-    //   [global_node, dst_gpu_on_requesting_rank, dst_ext_node_on_requesting_rank]
-    std::vector<std::vector<int>> outgoing_req_ints(nranks);
+    // Local ghost consumers. These are the values this rank must receive from
+    // other ranks and place into each local GPU's extended vector.
+    std::vector<int> request_counts(nranks, 0);
+    for (int dst_gpu = 0; dst_gpu < ngpu; dst_gpu++) {
+        for (const auto &cp : gpus[dst_gpu].ghost_copies) {
+            if (cp.src_rank != my_rank) request_counts[cp.src_rank]++;
+        }
+    }
+
+    std::vector<int> request_displs(nranks + 1, 0);
+    for (int r = 0; r < nranks; r++) request_displs[r + 1] = request_displs[r] + request_counts[r];
+    std::vector<int> request_nodes(request_displs[nranks]);
+    std::vector<int> cursor = request_displs;
 
     for (int dst_gpu = 0; dst_gpu < ngpu; dst_gpu++) {
         for (const auto &cp : gpus[dst_gpu].ghost_copies) {
-            if (cp.src_rank == my_rank) continue;
+            if (cp.src_rank != my_rank) {
+                int p = cursor[cp.src_rank]++;
+                request_nodes[p] = cp.global_node;
 
-            auto &v = outgoing_req_ints[cp.src_rank];
-            v.push_back(cp.global_node);
-            v.push_back(dst_gpu);
-            v.push_back(cp.dst_ext_node);
+                RemoteRecv<T> rr;
+                rr.src_rank = cp.src_rank;
+                rr.local_gpu = dst_gpu;
+                rr.dst_ext_node = cp.dst_ext_node;
+                rr.global_node = cp.global_node;
+                plans[cp.src_rank].recvs.push_back(rr);
+            }
         }
     }
 
-    std::vector<int> send_counts(nranks, 0);
-    std::vector<int> recv_counts(nranks, 0);
+    // Exchange request counts.
+    std::vector<int> incoming_counts(nranks, 0);
+    MPI_Alltoall(request_counts.data(), 1, MPI_INT,
+                 incoming_counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
 
-    for (int r = 0; r < nranks; r++) {
-        send_counts[r] = (int)outgoing_req_ints[r].size();
-    }
+    std::vector<int> incoming_displs(nranks + 1, 0);
+    for (int r = 0; r < nranks; r++) incoming_displs[r + 1] = incoming_displs[r] + incoming_counts[r];
+    std::vector<int> incoming_nodes(incoming_displs[nranks]);
 
-    MPI_Alltoall(send_counts.data(), 1, MPI_INT,
-                 recv_counts.data(), 1, MPI_INT,
-                 MPI_COMM_WORLD);
-
-    std::vector<int> send_displs(nranks + 1, 0);
-    std::vector<int> recv_displs(nranks + 1, 0);
-
-    for (int r = 0; r < nranks; r++) {
-        send_displs[r + 1] = send_displs[r] + send_counts[r];
-        recv_displs[r + 1] = recv_displs[r] + recv_counts[r];
-    }
-
-    std::vector<int> send_buf(send_displs[nranks]);
-    std::vector<int> recv_buf(recv_displs[nranks]);
-
-    for (int r = 0; r < nranks; r++) {
-        std::copy(outgoing_req_ints[r].begin(),
-                  outgoing_req_ints[r].end(),
-                  send_buf.begin() + send_displs[r]);
-    }
-
-    MPI_Alltoallv(send_buf.data(), send_counts.data(), send_displs.data(), MPI_INT,
-                  recv_buf.data(), recv_counts.data(), recv_displs.data(), MPI_INT,
+    MPI_Alltoallv(request_nodes.data(), request_counts.data(), request_displs.data(), MPI_INT,
+                  incoming_nodes.data(), incoming_counts.data(), incoming_displs.data(), MPI_INT,
                   MPI_COMM_WORLD);
 
-    // ------------------------------------------------------------------
-    // Build receive links.
-    // This rank knows what it requested from each peer.
-    // Group by:
-    //   peer rank
-    //   remote source GPU
-    //   local destination GPU
-    // ------------------------------------------------------------------
-    for (int peer = 0; peer < nranks; peer++) {
-        if (peer == my_rank) continue;
-
-        for (int p = 0; p < send_counts[peer]; p += 3) {
-            int global_node = send_buf[send_displs[peer] + p + 0];
-            int local_dst_gpu = send_buf[send_displs[peer] + p + 1];
-            int dst_ext_node = send_buf[send_displs[peer] + p + 2];
-
-            Owner src = ownerOfGlobalNode(global_node, rank_starts, rank_ends,
-                                          gpu_starts, gpu_ends);
-
-            if (src.rank != peer) {
-                printf("rank %d ERROR: bad owner for requested node %d\n",
-                       my_rank, global_node);
-                MPI_Abort(MPI_COMM_WORLD, 10);
-            }
-
-            PeerGpuLink<T> *link = nullptr;
-
-            for (auto &L : plans[peer].recv_links) {
-                if (L.peer_rank == peer &&
-                    L.remote_gpu == src.gpu &&
-                    L.local_gpu == local_dst_gpu) {
-                    link = &L;
-                    break;
-                }
-            }
-
-            if (!link) {
-                PeerGpuLink<T> L;
-                L.peer_rank = peer;
-                L.remote_gpu = src.gpu;
-                L.local_gpu = local_dst_gpu;
-                plans[peer].recv_links.push_back(L);
-                link = &plans[peer].recv_links.back();
-            }
-
-            link->h_recv_dst_ext_nodes_vec.push_back(dst_ext_node);
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Build send links.
-    // Peer requests arrived in recv_buf. They tell us:
-    //   global_node to send
-    //   remote destination GPU
-    //   remote destination ext node
-    //
-    // We only need global_node + remote dst GPU for packing.
-    // Group by:
-    //   peer rank
-    //   local source GPU
-    //   remote destination GPU
-    // ------------------------------------------------------------------
-    for (int peer = 0; peer < nranks; peer++) {
-        if (peer == my_rank) continue;
-
-        for (int p = recv_displs[peer]; p < recv_displs[peer + 1]; p += 3) {
-            int global_node = recv_buf[p + 0];
-            int remote_dst_gpu = recv_buf[p + 1];
-
-            int local_src_gpu = -1;
+    // Incoming request nodes determine what this rank must send to each peer.
+    for (int dst_rank = 0; dst_rank < nranks; dst_rank++) {
+        for (int p = incoming_displs[dst_rank]; p < incoming_displs[dst_rank + 1]; p++) {
+            int global_node = incoming_nodes[p];
+            int src_gpu = -1;
             int src_local_node = -1;
 
             for (int g = 0; g < ngpu; g++) {
-                if (global_node >= gpus[g].row_start_node &&
-                    global_node <  gpus[g].row_end_node) {
-                    local_src_gpu = g;
+                if (global_node >= gpus[g].row_start_node && global_node < gpus[g].row_end_node) {
+                    src_gpu = g;
                     src_local_node = global_node - gpus[g].row_start_node;
                     break;
                 }
             }
 
-            if (local_src_gpu < 0) {
-                printf("rank %d ERROR: peer %d requested non-owned node %d\n",
-                       my_rank, peer, global_node);
-                MPI_Abort(MPI_COMM_WORLD, 11);
+            if (src_gpu < 0) {
+                printf("rank %d ERROR: peer requested node %d, but it is not locally owned\n",
+                       my_rank, global_node);
+                MPI_Abort(MPI_COMM_WORLD, 2);
             }
 
-            PeerGpuLink<T> *link = nullptr;
-
-            for (auto &L : plans[peer].send_links) {
-                if (L.peer_rank == peer &&
-                    L.local_gpu == local_src_gpu &&
-                    L.remote_gpu == remote_dst_gpu) {
-                    link = &L;
-                    break;
-                }
-            }
-
-            if (!link) {
-                PeerGpuLink<T> L;
-                L.peer_rank = peer;
-                L.local_gpu = local_src_gpu;
-                L.remote_gpu = remote_dst_gpu;
-                plans[peer].send_links.push_back(L);
-                link = &plans[peer].send_links.back();
-            }
-
-            link->h_send_src_nodes_vec.push_back(src_local_node);
+            RemoteSend<T> ss;
+            ss.dst_rank = dst_rank;
+            ss.local_gpu = src_gpu;
+            ss.src_local_node = src_local_node;
+            ss.global_node = global_node;
+            plans[dst_rank].sends.push_back(ss);
         }
     }
 
-    // ------------------------------------------------------------------
-    // Allocate device maps and contiguous buffers.
-    // ------------------------------------------------------------------
-    for (int peer = 0; peer < nranks; peer++) {
-        if (peer == my_rank) continue;
+    for (int r = 0; r < nranks; r++) {
+        if (r == my_rank) continue;
 
-        for (auto &L : plans[peer].send_links) {
-            L.count = (int)L.h_send_src_nodes_vec.size();
-            if (L.count == 0) continue;
+        plans[r].send_nodes = (int)plans[r].sends.size();
+        plans[r].recv_nodes = (int)plans[r].recvs.size();
 
-            CHECK_CUDA(cudaSetDevice(gpus[L.local_gpu].dev));
-
-            CHECK_CUDA(cudaMalloc((void **)&L.d_send_src_nodes,
-                                  L.count * sizeof(int)));
-
-            CHECK_CUDA(cudaMemcpy(L.d_send_src_nodes,
-                                  L.h_send_src_nodes_vec.data(),
-                                  L.count * sizeof(int),
-                                  cudaMemcpyHostToDevice));
-
-            CHECK_CUDA(cudaMalloc((void **)&L.d_buf,
-                                  L.count * block_dim * sizeof(T)));
-
-            CHECK_CUDA(cudaHostAlloc((void **)&L.h_buf,
-                                     L.count * block_dim * sizeof(T),
+        if (plans[r].send_nodes > 0) {
+            CHECK_CUDA(cudaHostAlloc((void **)&plans[r].h_send,
+                                     plans[r].send_nodes * block_dim * sizeof(T),
                                      cudaHostAllocPortable));
+            CHECK_CUDA(cudaMalloc((void **)&plans[r].d_send,
+                                  plans[r].send_nodes * block_dim * sizeof(T)));
         }
-
-        for (auto &L : plans[peer].recv_links) {
-            L.count = (int)L.h_recv_dst_ext_nodes_vec.size();
-            if (L.count == 0) continue;
-
-            CHECK_CUDA(cudaSetDevice(gpus[L.local_gpu].dev));
-
-            CHECK_CUDA(cudaMalloc((void **)&L.d_recv_dst_ext_nodes,
-                                  L.count * sizeof(int)));
-
-            CHECK_CUDA(cudaMemcpy(L.d_recv_dst_ext_nodes,
-                                  L.h_recv_dst_ext_nodes_vec.data(),
-                                  L.count * sizeof(int),
-                                  cudaMemcpyHostToDevice));
-
-            CHECK_CUDA(cudaMalloc((void **)&L.d_buf,
-                                  L.count * block_dim * sizeof(T)));
-
-            CHECK_CUDA(cudaHostAlloc((void **)&L.h_buf,
-                                     L.count * block_dim * sizeof(T),
+        if (plans[r].recv_nodes > 0) {
+            CHECK_CUDA(cudaHostAlloc((void **)&plans[r].h_recv,
+                                     plans[r].recv_nodes * block_dim * sizeof(T),
                                      cudaHostAllocPortable));
+            CHECK_CUDA(cudaMalloc((void **)&plans[r].d_recv,
+                                  plans[r].recv_nodes * block_dim * sizeof(T)));
         }
     }
 }
@@ -689,212 +494,135 @@ void exchangeGhosts(std::vector<GPUData<T>> &gpus,
                     int ngpu,
                     int block_dim,
                     bool cuda_aware_mpi) {
-    const int threads = 256;
-
-    // ---------------------------------------------------------------
-    // Copy owned part into x_ext.
-    // ---------------------------------------------------------------
+    // First copy owned part into the beginning of x_ext on every local GPU.
 #pragma omp parallel for if (ngpu > 1)
     for (int g = 0; g < ngpu; g++) {
         CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-        CHECK_CUDA(cudaMemcpyAsync(gpus[g].d_x_ext,
-                                   gpus[g].d_x_owned,
+        CHECK_CUDA(cudaMemcpyAsync(gpus[g].d_x_ext, gpus[g].d_x_owned,
                                    gpus[g].local_N * sizeof(T),
-                                   cudaMemcpyDeviceToDevice,
-                                   gpus[g].stream));
+                                   cudaMemcpyDeviceToDevice, gpus[g].stream));
     }
 
-    // ---------------------------------------------------------------
-    // Same-rank same-node GPU ghosts.
-    // Keep this path as peer copies.
-    // ---------------------------------------------------------------
+    // Same-rank ghost copies stay on GPUs and do not touch MPI.
     for (int dst = 0; dst < ngpu; dst++) {
         CHECK_CUDA(cudaSetDevice(gpus[dst].dev));
-
         for (const auto &cp : gpus[dst].ghost_copies) {
-            if (cp.src_rank != my_rank) continue;
-
-            int src = cp.src_gpu;
-
-            int can_access = 0;
-            CHECK_CUDA(cudaDeviceCanAccessPeer(&can_access,
-                                               gpus[dst].dev,
-                                               gpus[src].dev));
-
-            if (src != dst && can_access) {
-                cudaError_t err = cudaDeviceEnablePeerAccess(gpus[src].dev, 0);
-                if (err != cudaSuccess && err != cudaErrorPeerAccessAlreadyEnabled) {
-                    CHECK_CUDA(err);
+            if (cp.src_rank == my_rank) {
+                int src = cp.src_gpu;
+                int can_access = 0;
+                CHECK_CUDA(cudaDeviceCanAccessPeer(&can_access, gpus[dst].dev, gpus[src].dev));
+                if (src != dst && can_access) {
+                    // Peer access may already be enabled; ignore cudaErrorPeerAccessAlreadyEnabled.
+                    cudaError_t err = cudaDeviceEnablePeerAccess(gpus[src].dev, 0);
+                    if (err != cudaSuccess && err != cudaErrorPeerAccessAlreadyEnabled) {
+                        CHECK_CUDA(err);
+                    }
+                    cudaGetLastError();
                 }
-                cudaGetLastError();
-            }
 
-            if (src == dst) {
-                CHECK_CUDA(cudaMemcpyAsync(
-                    gpus[dst].d_x_ext + cp.dst_ext_node * block_dim,
-                    gpus[src].d_x_owned + cp.src_local_node * block_dim,
-                    block_dim * sizeof(T),
-                    cudaMemcpyDeviceToDevice,
-                    gpus[dst].stream));
-            } else if (can_access) {
-                CHECK_CUDA(cudaMemcpyPeerAsync(
-                    gpus[dst].d_x_ext + cp.dst_ext_node * block_dim,
-                    gpus[dst].dev,
-                    gpus[src].d_x_owned + cp.src_local_node * block_dim,
-                    gpus[src].dev,
-                    block_dim * sizeof(T),
-                    gpus[dst].stream));
-            } else {
-                T tmp[64];
-                assert(block_dim <= 64);
-
-                CHECK_CUDA(cudaSetDevice(gpus[src].dev));
-                CHECK_CUDA(cudaMemcpy(tmp,
-                                      gpus[src].d_x_owned + cp.src_local_node * block_dim,
-                                      block_dim * sizeof(T),
-                                      cudaMemcpyDeviceToHost));
-
-                CHECK_CUDA(cudaSetDevice(gpus[dst].dev));
-                CHECK_CUDA(cudaMemcpyAsync(
-                    gpus[dst].d_x_ext + cp.dst_ext_node * block_dim,
-                    tmp,
-                    block_dim * sizeof(T),
-                    cudaMemcpyHostToDevice,
-                    gpus[dst].stream));
+                if (src == dst) {
+                    CHECK_CUDA(cudaMemcpyAsync(gpus[dst].d_x_ext + cp.dst_ext_node * block_dim,
+                                               gpus[src].d_x_owned + cp.src_local_node * block_dim,
+                                               block_dim * sizeof(T), cudaMemcpyDeviceToDevice,
+                                               gpus[dst].stream));
+                } else if (can_access) {
+                    CHECK_CUDA(cudaMemcpyPeerAsync(gpus[dst].d_x_ext + cp.dst_ext_node * block_dim,
+                                                   gpus[dst].dev,
+                                                   gpus[src].d_x_owned + cp.src_local_node * block_dim,
+                                                   gpus[src].dev,
+                                                   block_dim * sizeof(T),
+                                                   gpus[dst].stream));
+                } else {
+                    // Rare same-node fallback if peer access is unavailable.
+                    T tmp[64];
+                    assert(block_dim <= 64);
+                    CHECK_CUDA(cudaSetDevice(gpus[src].dev));
+                    CHECK_CUDA(cudaMemcpy(tmp, gpus[src].d_x_owned + cp.src_local_node * block_dim,
+                                          block_dim * sizeof(T), cudaMemcpyDeviceToHost));
+                    CHECK_CUDA(cudaSetDevice(gpus[dst].dev));
+                    CHECK_CUDA(cudaMemcpyAsync(gpus[dst].d_x_ext + cp.dst_ext_node * block_dim,
+                                               tmp, block_dim * sizeof(T),
+                                               cudaMemcpyHostToDevice, gpus[dst].stream));
+                }
             }
         }
     }
 
-    // ---------------------------------------------------------------
-    // Pack remote sends with one gather kernel per link.
-    // ---------------------------------------------------------------
-    for (int peer = 0; peer < nranks; peer++) {
-        if (peer == my_rank) continue;
+    // Pack remote send buffers. This uses tiny per-node copies; for production,
+    // replace this with a GPU gather kernel per peer/rank.
+    for (int r = 0; r < nranks; r++) {
+        if (r == my_rank) continue;
+        auto &p = plans[r];
 
-        for (auto &L : plans[peer].send_links) {
-            if (L.count == 0) continue;
-
-            int g = L.local_gpu;
-            CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-
-            int nthreads = L.count * block_dim;
-            int blocks = (nthreads + threads - 1) / threads;
-
-            k_gather_remote_send<T><<<blocks, threads, 0, gpus[g].stream>>>(
-                L.count,
-                block_dim,
-                L.d_send_src_nodes,
-                gpus[g].d_x_owned,
-                L.d_buf);
-
-            CHECK_CUDA(cudaGetLastError());
-
-            if (!cuda_aware_mpi) {
-                CHECK_CUDA(cudaMemcpyAsync(L.h_buf,
-                                           L.d_buf,
-                                           L.count * block_dim * sizeof(T),
-                                           cudaMemcpyDeviceToHost,
-                                           gpus[g].stream));
+        if (p.send_nodes > 0) {
+            for (int i = 0; i < p.send_nodes; i++) {
+                const auto &s = p.sends[i];
+                CHECK_CUDA(cudaSetDevice(gpus[s.local_gpu].dev));
+                CHECK_CUDA(cudaMemcpyAsync(p.h_send + i * block_dim,
+                                           gpus[s.local_gpu].d_x_owned + s.src_local_node * block_dim,
+                                           block_dim * sizeof(T), cudaMemcpyDeviceToHost,
+                                           gpus[s.local_gpu].stream));
             }
         }
     }
 
-    // Need send buffers ready before MPI.
     for (int g = 0; g < ngpu; g++) {
         CHECK_CUDA(cudaSetDevice(gpus[g].dev));
         CHECK_CUDA(cudaStreamSynchronize(gpus[g].stream));
     }
 
-    // ---------------------------------------------------------------
-    // MPI exchange.
-    // Tags distinguish:
-    //   sender local source GPU
-    //   receiver local destination GPU
-    // ---------------------------------------------------------------
     std::vector<MPI_Request> reqs;
-    reqs.reserve(2 * nranks * ngpu * ngpu);
+    reqs.reserve(2 * nranks);
 
-    auto tag = [ngpu](int src_gpu, int dst_gpu) {
-        return 2000 + src_gpu * ngpu + dst_gpu;
-    };
+    for (int r = 0; r < nranks; r++) {
+        if (r == my_rank) continue;
+        auto &p = plans[r];
 
-    for (int peer = 0; peer < nranks; peer++) {
-        if (peer == my_rank) continue;
-
-        for (auto &L : plans[peer].recv_links) {
-            if (L.count == 0) continue;
-
+        if (p.recv_nodes > 0) {
             MPI_Request req;
-            void *recv_ptr = cuda_aware_mpi ? (void *)L.d_buf : (void *)L.h_buf;
-
-            MPI_Irecv(recv_ptr,
-                      L.count * block_dim,
-                      mpiType<T>(),
-                      peer,
-                      tag(L.remote_gpu, L.local_gpu),
-                      MPI_COMM_WORLD,
-                      &req);
-
+            void *recv_ptr = cuda_aware_mpi ? (void *)p.d_recv : (void *)p.h_recv;
+            MPI_Irecv(recv_ptr, p.recv_nodes * block_dim, mpiType<T>(), r, 1000 + my_rank,
+                      MPI_COMM_WORLD, &req);
             reqs.push_back(req);
         }
-    }
 
-    for (int peer = 0; peer < nranks; peer++) {
-        if (peer == my_rank) continue;
-
-        for (auto &L : plans[peer].send_links) {
-            if (L.count == 0) continue;
-
+        if (p.send_nodes > 0) {
             MPI_Request req;
-            void *send_ptr = cuda_aware_mpi ? (void *)L.d_buf : (void *)L.h_buf;
-
-            MPI_Isend(send_ptr,
-                      L.count * block_dim,
-                      mpiType<T>(),
-                      peer,
-                      tag(L.local_gpu, L.remote_gpu),
-                      MPI_COMM_WORLD,
-                      &req);
-
-            reqs.push_back(req);
-        }
-    }
-
-    if (!reqs.empty()) {
-        MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
-    }
-
-    // ---------------------------------------------------------------
-    // Unpack remote receives with one scatter kernel per link.
-    // ---------------------------------------------------------------
-    for (int peer = 0; peer < nranks; peer++) {
-        if (peer == my_rank) continue;
-
-        for (auto &L : plans[peer].recv_links) {
-            if (L.count == 0) continue;
-
-            int g = L.local_gpu;
-            CHECK_CUDA(cudaSetDevice(gpus[g].dev));
-
-            if (!cuda_aware_mpi) {
-                CHECK_CUDA(cudaMemcpyAsync(L.d_buf,
-                                           L.h_buf,
-                                           L.count * block_dim * sizeof(T),
-                                           cudaMemcpyHostToDevice,
-                                           gpus[g].stream));
+            void *send_ptr = cuda_aware_mpi ? (void *)p.d_send : (void *)p.h_send;
+            if (cuda_aware_mpi) {
+                // If CUDA-aware MPI is requested, copy host staging into d_send first.
+                // For production, pack d_send directly with a gather kernel.
+                CHECK_CUDA(cudaMemcpy(p.d_send, p.h_send,
+                                      p.send_nodes * block_dim * sizeof(T),
+                                      cudaMemcpyHostToDevice));
             }
+            MPI_Isend(send_ptr, p.send_nodes * block_dim, mpiType<T>(), r, 1000 + r,
+                      MPI_COMM_WORLD, &req);
+            reqs.push_back(req);
+        }
+    }
 
-            int nthreads = L.count * block_dim;
-            int blocks = (nthreads + threads - 1) / threads;
+    if (!reqs.empty()) MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
 
-            k_scatter_remote_recv<T><<<blocks, threads, 0, gpus[g].stream>>>(
-                L.count,
-                block_dim,
-                L.d_recv_dst_ext_nodes,
-                L.d_buf,
-                gpus[g].d_x_ext);
+    // Unpack remote receives into local GPUs' x_ext ghost slots.
+    for (int r = 0; r < nranks; r++) {
+        if (r == my_rank) continue;
+        auto &p = plans[r];
+        if (p.recv_nodes == 0) continue;
 
-            CHECK_CUDA(cudaGetLastError());
+        if (cuda_aware_mpi) {
+            CHECK_CUDA(cudaMemcpy(p.h_recv, p.d_recv,
+                                  p.recv_nodes * block_dim * sizeof(T),
+                                  cudaMemcpyDeviceToHost));
+        }
+
+        for (int i = 0; i < p.recv_nodes; i++) {
+            const auto &rr = p.recvs[i];
+            CHECK_CUDA(cudaSetDevice(gpus[rr.local_gpu].dev));
+            CHECK_CUDA(cudaMemcpyAsync(gpus[rr.local_gpu].d_x_ext + rr.dst_ext_node * block_dim,
+                                       p.h_recv + i * block_dim,
+                                       block_dim * sizeof(T), cudaMemcpyHostToDevice,
+                                       gpus[rr.local_gpu].stream));
         }
     }
 
@@ -965,27 +693,12 @@ void cleanupMultiGPU(std::vector<GPUData<T>> &gpus,
         if (gd.h_vals) free(gd.h_vals);
     }
 
-    // for (auto &p : plans) {
-    //     if (p.rank == my_rank) continue;
-    //     if (p.h_send) cudaFreeHost(p.h_send);
-    //     if (p.h_recv) cudaFreeHost(p.h_recv);
-    //     if (p.d_send) cudaFree(p.d_send);
-    //     if (p.d_recv) cudaFree(p.d_recv);
-    // }
     for (auto &p : plans) {
         if (p.rank == my_rank) continue;
-
-        for (auto &L : p.send_links) {
-            if (L.d_send_src_nodes) cudaFree(L.d_send_src_nodes);
-            if (L.d_buf) cudaFree(L.d_buf);
-            if (L.h_buf) cudaFreeHost(L.h_buf);
-        }
-
-        for (auto &L : p.recv_links) {
-            if (L.d_recv_dst_ext_nodes) cudaFree(L.d_recv_dst_ext_nodes);
-            if (L.d_buf) cudaFree(L.d_buf);
-            if (L.h_buf) cudaFreeHost(L.h_buf);
-        }
+        if (p.h_send) cudaFreeHost(p.h_send);
+        if (p.h_recv) cudaFreeHost(p.h_recv);
+        if (p.d_send) cudaFree(p.d_send);
+        if (p.d_recv) cudaFree(p.d_recv);
     }
 }
 
@@ -1131,19 +844,7 @@ int main(int argc, char **argv) {
                             rank_starts, rank_ends, gpu_starts, gpu_ends);
 
     std::vector<RankCommPlan<T>> plans;
-    // buildRankCommPlans<T>(gpus, my_rank, nranks, ngpu, block_dim, plans);
-    buildRankCommPlans<T>(
-        gpus,
-        my_rank,
-        nranks,
-        ngpu,
-        block_dim,
-        rank_starts,
-        rank_ends,
-        gpu_starts,
-        gpu_ends,
-        plans
-    );
+    buildRankCommPlans<T>(gpus, my_rank, nranks, ngpu, block_dim, plans);
 
     // scatterOwnedXToGPUs<T>(gpus, ngpu, block_dim, x);
     // multiGpuGhostedBSRMatVec<T>(gpus, plans, my_rank, nranks, ngpu, block_dim, cuda_aware_mpi);
