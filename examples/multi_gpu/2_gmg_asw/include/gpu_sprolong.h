@@ -55,8 +55,8 @@ class MultiGPUStructuredProlongation {
         weights->reduceFromLocal();
         weights->expandToLocal();
 
-        printf("s_prolong weights\n");
-        weights->printValuesOnHost();
+        // printf("s_prolong weights\n");
+        // weights->printValuesOnHost();
     }
 
     void prolongate(Vec *coarse_in, Vec *fine_out) {
