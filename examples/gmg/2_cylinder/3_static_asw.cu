@@ -217,6 +217,13 @@ void multigrid_solve(int nxe, double SR, int nsmooth, int ninnercyc, T omega, st
         printf("fine rhs\n");
         printVecOnHost<T>(grids[0].d_defect);
 
+        // pre-smooth
+        grids[0].smoothDefect(2, false, 1);
+        printf("fine defect after pre-smooth\n");
+        printVecOnHost<T>(grids[0].d_defect);
+        printf("fine soln after pre-smooth\n");
+        printVecOnHost<T>(grids[0].d_soln);
+
         grids[1].restrict_defect(grids[0].d_defect);
         // un-permute to Visualization order
         grids[1].d_defect.permuteData(6, grids[1].d_perm);

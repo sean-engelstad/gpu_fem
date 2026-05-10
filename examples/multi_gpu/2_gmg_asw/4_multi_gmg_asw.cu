@@ -50,12 +50,12 @@ T get_max_disp(DeviceVec<T> &d_soln, int idof = 2) {
 
 
 int main(int argc, char *argv[]) {
-    // int nxe = 128; // default
+    int nxe = 128; // default
     // int nxe = 64;
-    int nxe = 8;
+    // int nxe = 8;
 
-    double SR = 1e1;
-    // double SR = 1e2;
+    // double SR = 1e1;
+    double SR = 1e2;
     // double SR = 1e3;
     double pressure = 8e6;
 
@@ -153,7 +153,7 @@ int main(int argc, char *argv[]) {
         
         // build matrix and vectors
         // ---------------------------------------------
-        printf("\tmake GPUbsrmat\n");
+        // printf("\tmake GPUbsrmat\n");
         auto kmat = new GPUbsrmat<T, Partitioner>(ctx, part, block_dim);
         // printf("\tmake GPUvecs\n");
         auto rhs = new GPUvec<T, Partitioner>(ctx, part, block_dim);
@@ -201,9 +201,9 @@ int main(int argc, char *argv[]) {
         // T omega = 0.2;
         T omega = 0.15;
         int nsmooth = 2;
-        printf("\tbuild ASW preconditioner\n");
+        // printf("\tbuild ASW preconditioner\n");
         auto smoother = new ASW(ctx, part, kmat, omega, nsmooth);
-        printf("\tASW->factor()\n");
+        // printf("\tASW->factor()\n");
         smoother->factor();
         smoothers.push_back(smoother);
 
@@ -224,19 +224,19 @@ int main(int argc, char *argv[]) {
         if (c_nxe == nxe_min) {
             // rebuild assembler in SingleGPU partition format
             // TODO : need some way to build single GPU partitioned assembler here..
-            printf("coarse mesh: create single GPU cylinder assembler\n");
+            // printf("coarse mesh: create single GPU cylinder assembler\n");
             auto sgpu_assembler = createGPUCylinderAssembler<Assembler>(sgpu_ctx, c_nxe, c_nxe, L, R, E, nu, thick, 
                 imperfection, imp_x, imp_hoop);
             coarse_assembler = sgpu_assembler;
             auto sgpu_part = sgpu_assembler->getPartition();
             // TODO : does this make a matrix on a singleGPU?
             // need a different context too?
-            printf("\tcoarse mesh: single GPU add jacobian\n");
+            // printf("\tcoarse mesh: single GPU add jacobian\n");
             auto sgpu_mat = new GPUbsrmat<T, Partitioner>(sgpu_ctx, sgpu_part, block_dim);
             sgpu_assembler->add_jacobian(sgpu_mat);
             sgpu_assembler->apply_bcs(sgpu_mat);
 
-            printf("\tcoarse mesh: build CoarseSolver\n");
+            // printf("\tcoarse mesh: build CoarseSolver\n");
             coarse_solver = new CoarseSolver(ctx, part, sgpu_part, sgpu_mat);
             coarse_solver->factor();
 
@@ -279,7 +279,7 @@ int main(int argc, char *argv[]) {
 
         printf("level %d: create prolongation\n", level);
         auto prolongation = new Prolongation(ctx, fine_part, coarse_part, nxe_fine, nxe_coarse, block_dim);
-        printf("\tdone create prolongation on level %d\n", level);
+        // printf("\tdone create prolongation on level %d\n", level);
         prolongations.push_back(prolongation);
     }
 
@@ -295,7 +295,7 @@ int main(int argc, char *argv[]) {
     T rtol = 1e-6, atol = 1e-30, LS_min = 1e-2, LS_max = 2.0;
     bool PRINT = false; // no print on Vcyc for K-cycle GMG
     int print_freq = 10; // but not printing anyways
-    printf("Build GMG object\n");
+    // printf("Build GMG object\n");
     auto gmg = new GMG(ctx, assemblers, mats, smoothers, prolongations, coarse_solver, 
         NSTEPS, rtol, atol, PRINT, print_freq, LS_min, LS_max);
 
@@ -308,6 +308,13 @@ int main(int argc, char *argv[]) {
         fine_rhs->printValuesOnHost();
         auto fine_defect = assemblers[0]->createGPUVec();
         fine_rhs->copyTo(fine_defect);
+
+        // pre-smooth
+        smoothers[0]->smoothDefect(fine_defect, fine_soln);
+        printf("fine_defect after pre-smooth\n");
+        fine_defect->printValuesOnHost();
+        printf("fine_soln after pre-smooth\n");
+        fine_soln->printValuesOnHost();
 
         auto crs_defect = assemblers[1]->createGPUVec();
         prolongations[0]->restrict_vec(fine_defect, crs_defect);
@@ -345,14 +352,14 @@ int main(int argc, char *argv[]) {
     // ------------------------------------------
 
     auto pc = gmg;   
-    printf("build PCG\n");
+    // printf("build PCG\n");
 
     // debug
-    gmg->MAX_STEPS = 100;
-    gmg->solve(fine_rhs, fine_soln);
+    // gmg->MAX_STEPS = 100;
+    // gmg->solve(fine_rhs, fine_soln);
 
     auto pcg = new PCG(ctx, fine_part, fine_kmat, pc, fine_N, block_dim);
-    printf("\tdone build PCG\n");
+    // printf("\tdone build PCG\n");
 
     // ---------------------------------------------
     // perform the linear solve
@@ -363,7 +370,7 @@ int main(int argc, char *argv[]) {
     T rtol2 = 1e-6, atol2 = 1e-30;
     bool can_print = true;
 
-    printf("begin PCG solve\n");
+    // printf("begin PCG solve\n");
     int exp_iters = pcg->solve(fine_rhs, fine_soln, max_iter, atol2, rtol2, print_freq2, can_print);
 
     // ---------------------------------------------

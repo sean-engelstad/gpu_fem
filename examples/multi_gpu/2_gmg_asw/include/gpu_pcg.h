@@ -33,10 +33,10 @@ class GPU_PCG {
         ctx->sync();
         auto start = std::chrono::high_resolution_clock::now();
 
-        printf("get residual in PCG step 1\n");
+        // printf("get residual in PCG step 1\n");
         rhs->copyTo(resid);
 
-        printf("get residual in PCG step 2\n");
+        // printf("get residual in PCG step 2\n");
         a = -1.0;
         b = 1.0;
         A->mult(a, x, b, resid);

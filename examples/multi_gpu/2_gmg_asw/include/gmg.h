@@ -26,7 +26,7 @@ class MultiGPUGeometricMultigrid {
           prolongations(prolongations_),
           coarse_solver(coarse_solver_) {
         nlevels = assemblers.size();
-        printf("nlevels=%d\n", nlevels);
+        printf("created GMG with nlevels=%d\n", nlevels);
         MAX_STEPS = MAX_STEPS_;
         line_search_min = line_search_min_;
         line_search_max = line_search_max_;
@@ -64,7 +64,7 @@ class MultiGPUGeometricMultigrid {
             for (int level = 0; level < nlevels - 1; level++) {
                 // pre-smooth (solve here is equivalent to smoothDefect)
                 // printf("Vcyc step %d: pre-smooth on level %d\n", STEP, level);
-                smoothers[level]->solve(d_defects[level], d_solns[level]);
+                smoothers[level]->smoothDefect(d_defects[level], d_solns[level]);
 
                 // restrict
                 // printf("Vcyc step %d: restrict on level %d\n", STEP, level);
@@ -83,7 +83,7 @@ class MultiGPUGeometricMultigrid {
 
                 // post-smooth
                 // printf("Vcyc step %d: post-smooth on level %d\n", STEP, level);
-                smoothers[level]->solve(d_defects[level], d_solns[level]);
+                smoothers[level]->smoothDefect(d_defects[level], d_solns[level]);
             }
 
             // convergence check
