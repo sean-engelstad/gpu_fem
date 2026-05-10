@@ -70,11 +70,10 @@ class MultiGPUStructuredProlongation {
                                                  loc_weights, loc_coarse, loc_fine);
             CHECK_CUDA(cudaGetLastError());
         }
+        ctx->sync();
 
         // TODO : does reduceFromLocal give equivalent result to single GPU with multi GPUs?
         fine_out->reduceFromLocal();
-
-        ctx->sync();
     }
 
     void restrict_vec(Vec *fine_in, Vec *coarse_out) {
@@ -95,9 +94,9 @@ class MultiGPUStructuredProlongation {
                                                                    loc_fine, loc_coarse);
             CHECK_CUDA(cudaGetLastError());
         }
-        coarse_out->reduceFromLocal();
-
         ctx->sync();
+
+        coarse_out->reduceFromLocal();
     }
 
     void free() {

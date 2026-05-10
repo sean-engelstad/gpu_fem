@@ -303,7 +303,7 @@ int main(int argc, char *argv[]) {
     // DEBUG section
     // -------------------------------------------
 
-    if (nxe * nxe < 100) {
+    if (nxe * nxe < 400) {
         printf("fine_rhs\n");
         fine_rhs->printValuesOnHost();
         auto fine_defect = assemblers[0]->createGPUVec();
