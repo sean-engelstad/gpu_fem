@@ -21,9 +21,7 @@
 
 1. [ ] Finish multi-GPU development
    - [x] GMG-ASW on multi-GPU
-      - [ ] speedup setup time for multi-GPU ASW precond ghost flags.. maybe for matrix copy (see where host side bottleneck)
-      - [ ] do unstructured prolong for wing case now (with ghost)
-      - [ ] do multi-CPU + multi-GPU for it?
+      - [ ] do unstructured prolong for wing case now - TacsComponentPartitioner + unstructured prolongation classes (no additional ghost nodes needed probably)
    - [ ] 2-level BDDC-LU on multi-GPU
       - [ ] CuDSS multi-GPU Schur complement for coarse direct solve
    - [ ] maybe also try multi CPU + GPU (for really high DOF problems)? Is it worth it for more than 4 GPUs?
@@ -40,7 +38,7 @@
 
 4. [ ] writing
    - [ ] add brief element affect on multigrid (beam, plates, shells)
-   - [ ] add multilevel BDDC to scatter plots, table (fix any issues with it also if need to)
+   - [ ] add multilevel BDDC to a prelim scatter plots, table (fix any issues with it also if need to)
       * or just in a separate plot comparing 2-level, 3-level and 4-level BDDC maybe (would need dev for 4-level also)
    - [ ] evidence that BDDC wraparound is good
    - [ ] comparison of unstructured + structured BDDC
