@@ -5,9 +5,9 @@ enum NodeType { INTERIOR = 0, INTERFACE = 1 };
 
 class TacsComponentGPUPartitioner {
    public:
-    StructuredGPUPartitioner(int ngpus_, int num_nodes_, int num_elements_, int nodes_per_elem_,
-                             int *h_elem_conn_, int num_components_, int *h_elem_components_,
-                             bool debug_ = false)
+    TacsComponentGPUPartitioner(int ngpus_, int num_nodes_, int num_elements_, int nodes_per_elem_,
+                                int *h_elem_conn_, int num_components_, int *h_elem_components_,
+                                bool debug_ = false)
         : ngpus(ngpus_),
           num_nodes(num_nodes_),
           num_elements(num_elements_),

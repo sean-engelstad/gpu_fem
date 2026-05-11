@@ -75,7 +75,8 @@ class GPUElementAssembler {
         // bool debug = true;
         bool debug = false;
         part = new Partitioner(ngpus, num_nodes, num_elements, vars_nodes_per_elem,
-                               h_elem_conn->getPtr(), debug);
+                               h_elem_conn->getPtr(), num_components, h_elem_components->getPtr(),
+                               debug);
         // printf("\tdone creating partitioner\n");
 
         d_xpts = new Vec(ctx, part, spatial_dim);
@@ -129,8 +130,8 @@ class GPUElementAssembler {
     // void moveBsrDataToDevice() { this->bsr_data = bsr_data.createDeviceBsrData(); }
     // void moveBsrDataToHost() { this->bsr_data = bsr_data.createHostBsrData(); }
 
-    static DerivedAssembler createFromBDF(MultiGPUContext *ctx_, TACSMeshLoader &mesh_loader,
-                                          Data single_data) {
+    static DerivedAssembler *createFromBDF(MultiGPUContext *ctx_, TACSMeshLoader &mesh_loader,
+                                           Data single_data) {
         int vars_per_node = Phys::vars_per_node;  // input
 
         int num_nodes, num_elements, num_bcs, num_components;
@@ -150,8 +151,8 @@ class GPUElementAssembler {
         // printf("num_components = %d\n", num_components);
 
         // call base constructor
-        return ElemGroup(ctx_, num_nodes, num_nodes, num_elements, &elem_conn_vec, &xpts_vec,
-                         &bcs_vec, &compData_vec, num_components, &elem_components_vec);
+        return new ElemGroup(ctx_, num_nodes, num_elements, &elem_conn_vec, &xpts_vec, &bcs_vec,
+                             &compData_vec, num_components, &elem_components_vec);
     }
 
     void apply_bcs(Vec *vec) { vec->apply_bcs(n_owned_bcs, d_owned_bcs, n_local_bcs, d_local_bcs); }
@@ -291,11 +292,13 @@ class GPUElementAssembler {
     // util functions
     // BsrData &getBsrData() { return bsr_data; }
     HostVec<T> *getXpts() { return h_xpts; }
+    Vec *getDeviceXpts() { return d_xpts; }
     HostVec<T> *getVars() { return h_vars; }
     // Vec<int> getBCs() { return bcs; }
     HostVec<int> *getConn() { return h_elem_conn; }
     HostVec<Data> *getCompData() { return h_compData; }
     HostVec<int> *getElemComponents() { return h_elem_components; }
+    int *getLocalElemComponents(int g) { return h_loc_elem_components[g]; }
     int get_num_xpts() { return num_nodes * spatial_dim; }
     int get_num_vars() { return num_nodes * vars_per_node; }
     int get_num_dvs() { return num_components * Data::ndvs_per_comp; }

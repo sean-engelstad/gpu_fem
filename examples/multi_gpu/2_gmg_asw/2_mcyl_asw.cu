@@ -5,7 +5,7 @@
 #include "include/gpumat.h"
 #include "include/gpuvec.h"
 #include "include/gpu_print_vtk.h"
-#include "include/cylinder.h"
+#include "include/fea.h"
 #include "include/multigpu_context.h"
 #include "include/structured_gpu_partitioner.h"
 

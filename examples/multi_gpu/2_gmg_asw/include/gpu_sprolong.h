@@ -83,8 +83,6 @@ class MultiGPUStructuredProlongation {
             CHECK_CUDA(cudaGetLastError());
         }
         ctx->sync();
-
-        // TODO : does reduceFromLocal give equivalent result to single GPU with multi GPUs?
         fine_out->reduceFromLocal();
     }
 

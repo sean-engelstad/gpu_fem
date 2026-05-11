@@ -105,6 +105,11 @@ class GPUvec {
         ctx->sync();
     }
 
+    T *getLocalVecOnHost(int g) {
+        T *h_vals_local = DeviceVec<T>(local_N[g], d_vals_local[g]).createHostVec().getPtr();
+        return h_vals_local;
+    }
+
     void allocate_owned() {
         owned_N = new int[ngpus];
         d_vals_owned = new T *[ngpus];
@@ -646,6 +651,7 @@ class GPUvec {
     T *getRedPtr(int dst, int src) { return d_vals_red[pair_index(dst, src)]; }
     T *getRedDstPtr(int dst, int src) { return d_vals_red_dst[pair_index(dst, src)]; }
 
+    // TODO : nomenclature change here (getLocalSize should not be for owned_N, etc..)
     int getLocalSize(int g) const { return owned_N[g]; }
     int getExpandedSize(int g) const { return local_N[g]; }
     int getLocalNodes(int g) const { return part->owned_nnodes[g]; }
