@@ -129,6 +129,7 @@ class TacsComponentGPUPartitioner {
             int g = h_elem_assigned_gpu[e];
             int ered = elem_ctr[g];
             h_loc_elem_comp[g][ered] = h_elem_comp[e];
+            elem_ctr[g]++;
         }
 
         for (int g = 0; g < ngpus; g++) {
@@ -138,6 +139,7 @@ class TacsComponentGPUPartitioner {
             CHECK_CUDA(cudaMemcpy(d_loc_elem_comp[g], h_loc_elem_comp[g],
                                   local_nelems * sizeof(int), cudaMemcpyHostToDevice));
         }
+        delete[] elem_ctr;
     }
 
    private:

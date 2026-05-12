@@ -3,6 +3,7 @@
 #include "mesh/TACSMeshLoader.h"
 #include "mesh/vtk_writer.h"
 #include "solvers/_solvers.h"
+#include <cstdlib>
 
 // shell imports
 #include "assembler.h"
@@ -110,7 +111,9 @@ void solve_linear_multigrid(MPI_Comm &comm, int level, double SR, int nsmooth, i
 
         // read the ESP/CAPS => nastran mesh for TACS
         TACSMeshLoader mesh_loader{comm};
-        std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
+        // std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
+        std::string fname =
+            std::string(std::getenv("HOME")) + "/git/gpu_fem/examples/gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(i) + ".bdf";
         mesh_loader.scanBDFFile(fname.c_str());
         double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties (start thicker first try)
         // TODO : run optimized design from AOB case
@@ -293,7 +296,9 @@ void solve_linear_direct(MPI_Comm &comm, int level, double SR) {
   auto start0 = std::chrono::high_resolution_clock::now();
 
   TACSMeshLoader mesh_loader{comm};
-  std::string fname = "meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+//   std::string fname = "meshes/aob_wing_L" + std::to_string(level) + ".bdf";
+    std::string fname =
+        std::string(std::getenv("HOME")) + "/git/gpu_fem/examples/gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(level) + ".bdf";
   mesh_loader.scanBDFFile(fname.c_str());
 
   //   double E = 70e9, nu = 0.3, thick = 0.005;  // material & thick properties

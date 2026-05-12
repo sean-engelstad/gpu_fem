@@ -7,9 +7,9 @@
 
 #include <iostream>
 
-#include "../../cuda_utils.h"
 #include "_utils.h"
 #include "chrono"
+#include "cuda_utils.h"
 
 namespace CUSPARSE {
 

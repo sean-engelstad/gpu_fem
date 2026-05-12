@@ -7,10 +7,10 @@
 #include <chrono>
 #include <iostream>
 
-#include "../../cuda_utils.h"
 #include "_cusparse_utils.h"
 #include "_utils.h"
 #include "cublas_v2.h"
+#include "cuda_utils.h"
 
 namespace CUSPARSE {
 
@@ -78,7 +78,7 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
     // T eta = 1e-8;
     if (eta != 0.0) {
         printf("diag frac eta %.8e in use\n", eta);
-    #ifdef USE_GPU
+#ifdef USE_GPU
         dim3 block(32);
         int nblocks = (nnzb + block.x - 1) / block.x;
         dim3 grid(nblocks);
@@ -86,9 +86,8 @@ void GMRES_solve(BsrMat<DeviceVec<T>> &mat, DeviceVec<T> &rhs, DeviceVec<T> &sol
         // adds eta * I to the diag where eta > 0 is a scalar
         add_nodal_block_diag_kernel<T><<<grid, block>>>(nnzb, block_dim, d_vals_ILU0, eta);
         CHECK_CUDA(cudaDeviceSynchronize());
-    #endif  // USE_GPU
+#endif  // USE_GPU
     }
-    
 
     // just add diagonal to precond only?, temp debug
     // int ndiag = mb * block_dim;

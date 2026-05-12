@@ -6,11 +6,11 @@
 
 #include <iostream>
 
-#include "../../cuda_utils.h"
 #include "_cusparse_utils.h"
 #include "_utils.h"
 #include "chrono"
 #include "cublas_v2.h"
+#include "cuda_utils.h"
 
 namespace CUSPARSE {
 

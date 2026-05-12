@@ -57,12 +57,13 @@ int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
     MPI_Comm comm = MPI_COMM_WORLD;
 
-    int level = 3;
+    // int level = 3;
+    int level = 2;
 
     // double SR = 1e1;
-    double SR = 1e2;
+    // double SR = 1e2;
+    double SR = 300;
     // double SR = 1e3;
-    double pressure = 8e6;
 
     // just type ./2_multi_asw.out 256 >> out.txt for instance (no --nxe)
     if (argc > 1) {
@@ -129,7 +130,8 @@ int main(int argc, char *argv[]) {
 
         // read the ESP/CAPS => nastran mesh for TACS
         TACSMeshLoader mesh_loader{comm};
-        std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
+        // std::string fname = "meshes/aob_wing_L" + std::to_string(i) + ".bdf";
+        std::string fname = std::string(std::getenv("HOME")) + "/git/gpu_fem/examples/gmg/3_aob_wing/meshes/aob_wing_L" + std::to_string(i) + ".bdf";
         mesh_loader.scanBDFFile(fname.c_str());
         double E = 70e9, nu = 0.3, thick = 2.0 / SR;  // material & thick properties (start thicker first try)
         // TODO : run optimized design from AOB case
@@ -169,15 +171,17 @@ int main(int argc, char *argv[]) {
         // ---------------------------------------------
         // printf("\trhs->setValuesFromHost\n");
         rhs->setValuesFromHost(my_loads);
-        printf("\tadd jacobian\n");
+        // printf("\tadd jacobian\n");
         assembler->add_jacobian(kmat);
+        // printf("\tdone with add jacobian\n");
         assembler->apply_bcs(kmat);
         assembler->apply_bcs(rhs);
+        // printf("\tdone with apply bcs\n");
 
         auto test_vec = new GPUvec<T, Partitioner>(ctx, part, block_dim);
-        kmat->mult(rhs, test_vec);
 
         // if (nxe * nxe <= 100) {
+        //    kmat->mult(rhs, test_vec);
         //     // printf("kmat before bcs\n");
         //     // assembler->printMatrixOnHost(kmat);
         //     T rhs_norm = rhs->norm();
@@ -192,7 +196,7 @@ int main(int argc, char *argv[]) {
         ctx->sync();
 
         mats.push_back(kmat);
-        if (i == 0) {
+        if (i == level) {
             fine_rhs = rhs;
             fine_soln = assembler->createGPUVec();
             fine_N = N;
@@ -204,7 +208,8 @@ int main(int argc, char *argv[]) {
         // ---------------------------------------------
         // T omega = 0.2;
         T omega = 0.15;
-        int nsmooth = 2;
+        // int nsmooth = 2;
+        int nsmooth = 4;
         // printf("\tbuild ASW preconditioner\n");
         auto smoother = new ASW(ctx, part, kmat, omega, nsmooth);
         // printf("\tASW->factor()\n");
@@ -228,8 +233,11 @@ int main(int argc, char *argv[]) {
         if (i == 0) {
             // rebuild assembler in SingleGPU partition format
             // TODO : need some way to build single GPU partitioned assembler here..
-            // printf("coarse mesh: create single GPU cylinder assembler\n");   
-            auto sgpu_assembler = Assembler::createFromBDF(sgpu_ctx, mesh_loader, Data(E, nu, thick));
+            TACSMeshLoader mesh_loader2{comm};
+            mesh_loader2.scanBDFFile(fname.c_str());
+
+            // printf("coarse mesh: create single GPU wing assembler\n");   
+            auto sgpu_assembler = Assembler::createFromBDF(sgpu_ctx, mesh_loader2, Data(E, nu, thick));
             coarse_assembler = sgpu_assembler;
             auto sgpu_part = sgpu_assembler->getPartition();
             // TODO : does this make a matrix on a singleGPU?
@@ -264,7 +272,7 @@ int main(int argc, char *argv[]) {
             // }
         }
 
-        if (i == 0) {
+        if (i == level) {
             fine_rhs->setValuesFromHost(my_loads);
             assemblers[0]->apply_bcs(fine_rhs);
         }
@@ -382,10 +390,12 @@ int main(int argc, char *argv[]) {
     // ---------------------------------------------
 
     // get host solution
+    printf("print to VTK\n");
     T *h_soln = new T[fine_N];
     memset(h_soln, 0, fine_N * sizeof(T));
     fine_soln->getValuesToHost(h_soln);
-    printToVTK_v2<T, Assembler>(*fine_assembler, h_soln, "./out/cyl_gmg4.vtk");
+    printToVTK_v2<T, Assembler>(*fine_assembler, h_soln, "./out/wing_gmg6.vtk");
+    printf("\tdone with print to VTK\n");
 
     // FREE
     // TODO : free section

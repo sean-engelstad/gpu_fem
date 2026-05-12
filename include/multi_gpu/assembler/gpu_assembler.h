@@ -128,17 +128,18 @@ class GPUElementAssembler {
                                             num_components, elem_conn, bcs, elem_components, xpts);
 
         // make HostVec objects here for Assembler
-        HostVec<int> elem_conn_vec(vars_nodes_per_elem * num_elements, elem_conn);
-        HostVec<int> bcs_vec(num_bcs, bcs);
-        HostVec<int> elem_components_vec(num_elements, elem_components);
-        HostVec<T> xpts_vec(spatial_dim * num_nodes, xpts);
-        HostVec<Data> compData_vec(num_components, single_data);
+        auto elem_conn_vec = new HostVec<int>(vars_nodes_per_elem * num_elements, elem_conn);
+        auto xpts_vec = new HostVec<T>(spatial_dim * num_nodes, xpts);
+        auto bcs_vec = new HostVec<int>(num_bcs, bcs);
+        auto compData_vec = new HostVec<Data>(num_components, single_data);
+        auto elem_components_vec = new HostVec<int>(num_elements, elem_components);
 
+        // printf("num_nodes %d, num_elements %d\n", num_nodes, num_elements);
         // printf("num_components = %d\n", num_components);
 
         // call base constructor
-        return new ElemGroup(ctx_, num_nodes, num_elements, &elem_conn_vec, &xpts_vec, &bcs_vec,
-                             &compData_vec, num_components, &elem_components_vec);
+        return new ElemGroup(ctx_, num_nodes, num_elements, elem_conn_vec, xpts_vec, bcs_vec,
+                             compData_vec, num_components, elem_components_vec);
     }
 
     void apply_bcs(Vec *vec) { vec->apply_bcs(n_owned_bcs, d_owned_bcs, n_local_bcs, d_local_bcs); }
