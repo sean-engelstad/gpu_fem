@@ -2,7 +2,7 @@ A2D_DIR := ${HOME}/git/_archive/a2d
 A2D_INCLUDE := -I${A2D_DIR}/include
 
 GPU_FEM_DIR = ${HOME}/git/gpu_fem
-GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include
+GPU_FEM_INCLUDE = -I${GPU_FEM_DIR}/include -I${GPU_FEM_DIR}/include/single_gpu -I${GPU_FEM_DIR}/include/multi_gpu
 TACS_DIR = ${HOME}/git/_archive/tacs
 
 # USE_GPU := 1

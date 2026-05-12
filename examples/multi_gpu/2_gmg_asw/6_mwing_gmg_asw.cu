@@ -3,19 +3,20 @@
 // and assembler will use single-GPU partition 
 // and then copy into LU pattern of SingleGPUDirectLU class
 
-#include "include/gpu_assembler.h"
-#include "include/gpu_asw.h"
-#include "include/gpu_mitc_shell.h"
-#include "include/gpu_pcg.h"
-#include "include/gpumat.h"
-#include "include/gpuvec.h"
-#include "include/gpu_print_vtk.h"
-#include "include/fea.h"
-#include "include/multigpu_context.h"
-#include "include/component_partitioner.h"
-#include "include/gpu_uprolong.h"
-#include "include/sgpu_direct.h"
-#include "include/gmg.h"
+
+#include "assembler/gpu_assembler.h"
+#include "smoothers/gpu_asw.h"
+#include "assembler/gpu_mitc_shell.h"
+#include "solvers/gpu_pcg.h"
+#include "matvec/gpumat.h"
+#include "matvec/gpuvec.h"
+#include "utils/gpu_print_vtk.h"
+#include "utils/fea.h"
+#include "utils/multigpu_context.h"
+#include "partition/component_partitioner.h"
+#include "prolongation/gpu_uprolong.h"
+#include "solvers/sgpu_direct.h"
+#include "solvers/gmg.h"
 
 
 // shell imports
@@ -65,7 +66,7 @@ int main(int argc, char *argv[]) {
 
     // just type ./2_multi_asw.out 256 >> out.txt for instance (no --nxe)
     if (argc > 1) {
-        nxe = atoi(argv[1]);
+        level = atoi(argv[1]);
     }
 
     // ---------------------------------------------
@@ -90,7 +91,7 @@ int main(int argc, char *argv[]) {
 
     // multigrid objects
     using ASW = MultiGPUElementASW<T, Partitioner>;
-    using Prolongation = MultiGPUUnstructuredProlongation<T, Assembler, Partitioner, Basis>;
+    using Prolongation = MultiGPUUnstructuredProlongation<T, Assembler, Partitioner>;
     using CoarseSolver = SingleGPUDirectLU<T, Partitioner, Partitioner>;
     using GMG = MultiGPUGeometricMultigrid<T, Partitioner, Assembler, ASW, Prolongation, CoarseSolver>;
 
@@ -100,7 +101,7 @@ int main(int argc, char *argv[]) {
     const int block_dim = Physics::vars_per_node;
 
 
-    int nxe_min = (nxe > 32) ? 32 : (nxe / 2);
+    // int nxe_min = (nxe > 32) ? 32 : (nxe / 2);
 
     // ---------------------------------------------
     // start multi GPU device context
@@ -138,8 +139,8 @@ int main(int argc, char *argv[]) {
         auto assembler = Assembler::createFromBDF(ctx, mesh_loader, Data(E, nu, thick));
 
         // create the loads (really only needed on finer mesh.. TBD how to setup nonlinear case..)
-        int nvars = assembler.get_num_vars();
-        int nnodes = assembler.get_num_nodes();
+        int nvars = assembler->get_num_vars();
+        int nnodes = assembler->get_num_nodes();
         HostVec<T> h_loads(nvars);
         double load_mag = 1e3;
         double *my_loads = h_loads.getPtr();
@@ -191,7 +192,7 @@ int main(int argc, char *argv[]) {
         ctx->sync();
 
         mats.push_back(kmat);
-        if (c_nxe == nxe) {
+        if (i == 0) {
             fine_rhs = rhs;
             fine_soln = assembler->createGPUVec();
             fine_N = N;
@@ -224,7 +225,7 @@ int main(int argc, char *argv[]) {
         // }
 
         // build coarse solver
-        if (c_nxe == nxe_min) {
+        if (i == 0) {
             // rebuild assembler in SingleGPU partition format
             // TODO : need some way to build single GPU partitioned assembler here..
             // printf("coarse mesh: create single GPU cylinder assembler\n");   
@@ -263,7 +264,7 @@ int main(int argc, char *argv[]) {
             // }
         }
 
-        if (c_nxe == nxe) {
+        if (i == 0) {
             fine_rhs->setValuesFromHost(my_loads);
             assemblers[0]->apply_bcs(fine_rhs);
         }
@@ -271,17 +272,17 @@ int main(int argc, char *argv[]) {
 
     // now build prolongations (on fine-coarse pairs)
     int nlevels = assemblers.size();
-    for (int level = 0; level < nlevels - 1; level++) {
-        auto fine_assembler = assemblers[level];
-        auto coarse_assembler = assemblers[level+1];
+    for (int i = 0; i < nlevels - 1; i++) {
+        auto fine_assembler = assemblers[i];
+        auto coarse_assembler = assemblers[i+1];
 
         auto fine_part = fine_assembler->getPartition();
         auto coarse_part = coarse_assembler->getPartition();
 
-        printf("level %d: create prolongation\n", level);
+        printf("level %d: create prolongation\n", i);
         int ELEM_MAX = 10;
         auto prolongation = new Prolongation(ctx, fine_part, coarse_part, fine_assembler, coarse_assembler,
-            block_dim, mats[level], mats[level+1], ELEM_MAX);
+            block_dim, mats[i], mats[i+1], ELEM_MAX);
         // printf("\tdone create prolongation on level %d\n", level);
         prolongations.push_back(prolongation);
     }
@@ -306,7 +307,7 @@ int main(int argc, char *argv[]) {
     // DEBUG section
     // -------------------------------------------
 
-    if (nxe * nxe < 400) {
+    if (level <= 1) {
         printf("fine_rhs\n");
         fine_rhs->printValuesOnHost();
         auto fine_defect = assemblers[0]->createGPUVec();

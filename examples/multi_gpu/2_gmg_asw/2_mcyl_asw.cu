@@ -1,13 +1,13 @@
-#include "include/gpu_assembler.h"
-#include "include/gpu_asw.h"
-#include "include/gpu_mitc_shell.h"
-#include "include/gpu_pcg.h"
-#include "include/gpumat.h"
-#include "include/gpuvec.h"
-#include "include/gpu_print_vtk.h"
-#include "include/fea.h"
-#include "include/multigpu_context.h"
-#include "include/structured_gpu_partitioner.h"
+#include "assembler/gpu_assembler.h"
+#include "smoothers/gpu_asw.h"
+#include "assembler/gpu_mitc_shell.h"
+#include "solvers/gpu_pcg.h"
+#include "matvec/gpumat.h"
+#include "matvec/gpuvec.h"
+#include "utils/gpu_print_vtk.h"
+#include "utils/fea.h"
+#include "utils/multigpu_context.h"
+#include "partition/structured_gpu_partitioner.h"
 
 
 // shell imports
@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
     // ---------------------------------------------
     // get mesh partitioner
     printf("get mesh partitioner\n");
-    auto part = assembler.getPartitioner();
+    auto part = assembler->getPartitioner();
     
     // build matrix and vectors
     // ---------------------------------------------
@@ -121,7 +121,7 @@ int main(int argc, char *argv[]) {
     printf("make GPUvecs\n");
     auto rhs = new GPUvec<T, Partitioner>(ctx, part, block_dim);
     auto soln = new GPUvec<T, Partitioner>(ctx, part, block_dim);
-    int N = assembler.get_num_vars();
+    int N = assembler->get_num_vars();
 
 
     // ---------------------------------------------
@@ -130,24 +130,24 @@ int main(int argc, char *argv[]) {
     printf("rhs->setValuesFromHost\n");
     rhs->setValuesFromHost(my_loads);
     printf("add jacobian\n");
-    assembler.add_jacobian(kmat);
+    assembler->add_jacobian(kmat);
 
     printf("add jacobian post-sync\n");
     ctx->sync();
 
     if (nxe * nxe <= 100) {
         printf("kmat before bcs\n");
-        assembler.printMatrixOnHost(kmat);
+        assembler->printMatrixOnHost(kmat);
     }
 
     printf("apply bcs to kmat\n");
-    assembler.apply_bcs(kmat);
+    assembler->apply_bcs(kmat);
     printf("apply bcs to rhs\n");
-    assembler.apply_bcs(rhs);
+    assembler->apply_bcs(rhs);
 
     if (nxe * nxe <= 30) {
         printf("kmat after bcs\n");
-        assembler.printMatrixOnHost(kmat);
+        assembler->printMatrixOnHost(kmat);
     }
 
     if (nxe * nxe <= 100) {
@@ -222,5 +222,5 @@ int main(int argc, char *argv[]) {
     T *h_soln = new T[N];
     memset(h_soln, 0, N * sizeof(T));
     soln->getValuesToHost(h_soln);
-    printToVTK_v2<T, Assembler>(assembler, h_soln, "./out/plate_kry_lin.vtk");
+    printToVTK_v2<T, Assembler>(*assembler, h_soln, "./out/plate_kry_lin.vtk");
 };

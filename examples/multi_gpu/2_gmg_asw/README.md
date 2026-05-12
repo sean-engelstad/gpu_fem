@@ -1,3 +1,26 @@
+## File Naming Conventions
+
+Naming convention:
+* s = single GPU
+* m = multi GPU
+* cyl = cylindrical shell problem
+* wing = AOB wing shell problem
+* asw = additive Schwarz preconditioner/smoother
+* gmg = geometric multigrid
+
+Verification cases:
+* Compare 1 vs. 2 to verify multi-GPU ASW matches the single-GPU implementation
+    * 1_scyl_asw.cu
+    * 2_mcyl_asw.cu
+
+* Compare 3 vs. 4 to verify multi-GPU GMG-ASW matches the single-GPU implementation on the cylinder problem
+    * 3_scyl_gmg_asw.cu
+    * 4_mcyl_gmg_asw.cu
+
+* Compare 5 vs. 6 to verify multi-GPU GMG-ASW matches the single-GPU implementation on the wing problem
+    * 5_swing_gmg_asw.cu
+    * 6_mwing_gmg_asw.cu
+
 ## Multi-GPU Additive Schwarz PCG Demo for Shell Element Cylinder
 
 * MITC4 shells

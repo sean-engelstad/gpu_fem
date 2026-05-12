@@ -3,19 +3,19 @@
 // and assembler will use single-GPU partition 
 // and then copy into LU pattern of SingleGPUDirectLU class
 
-#include "include/gpu_assembler.h"
-#include "include/gpu_asw.h"
-#include "include/gpu_mitc_shell.h"
-#include "include/gpu_pcg.h"
-#include "include/gpumat.h"
-#include "include/gpuvec.h"
-#include "include/gpu_print_vtk.h"
-#include "include/fea.h"
-#include "include/multigpu_context.h"
-#include "include/structured_gpu_partitioner.h"
-#include "include/gpu_sprolong.h"
-#include "include/sgpu_direct.h"
-#include "include/gmg.h"
+#include "assembler/gpu_assembler.h"
+#include "smoothers/gpu_asw.h"
+#include "assembler/gpu_mitc_shell.h"
+#include "solvers/gpu_pcg.h"
+#include "matvec/gpumat.h"
+#include "matvec/gpuvec.h"
+#include "utils/gpu_print_vtk.h"
+#include "utils/fea.h"
+#include "utils/multigpu_context.h"
+#include "partition/structured_gpu_partitioner.h"
+#include "prolongation/gpu_sprolong.h"
+#include "solvers/sgpu_direct.h"
+#include "solvers/gmg.h"
 
 
 // shell imports
