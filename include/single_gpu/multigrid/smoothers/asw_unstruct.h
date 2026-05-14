@@ -18,30 +18,32 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
 
     // Constructor: fill specifies how many fill iterations to perform.
     // This implementation assumes T is double.
+    // Main constructor: no assembler
     UnstructuredQuadElementAdditiveSchwarzSmoother(cublasHandle_t &cublasHandle_,
                                                    cusparseHandle_t &cusparseHandle_,
-                                                   Assembler &assembler_,
+                                                   int num_elements_, DeviceVec<int> &elem_conn_,
+                                                   int num_vars_, int block_dim_,
                                                    BsrMat<DeviceVec<T>> kmat_, T omega_ = 0.25,
                                                    int iters_ = 5)
         : cublasHandle(cublasHandle_),
           cusparseHandle(cusparseHandle_),
-          assembler(assembler_),
-          kmat(kmat_) {
-        // Retrieve problem dimensions from the assembler.
-        block_dim = assembler_.getBsrData().block_dim;
-        N = assembler_.get_num_vars();
+          kmat(kmat_),
+          d_elem_conn(elem_conn_) {
+        block_dim = block_dim_;
+        N = num_vars_;
         nnodes = N / block_dim;
-        // get data out of kmat
+
+        printf("checkpt1\n");
         auto d_kmat_bsr_data = kmat.getBsrData();
         d_kmat_vals = kmat.getVec().getPtr();
         d_kmat_rowp = d_kmat_bsr_data.rowp;
         d_kmat_rows = d_kmat_bsr_data.rows;
         d_kmat_cols = d_kmat_bsr_data.cols;
         kmat_nnzb = d_kmat_bsr_data.nnzb;
-        d_elem_conn = assembler.getConn();
+
+        printf("checkpt2\n");
         h_elem_conn = d_elem_conn.createHostVec();
 
-        // printf("omega = %.4e\n", omega);
         omega = omega_;
         iters = iters_;
 
@@ -52,23 +54,28 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         nodes_per_elem2 = nodes_per_elem * nodes_per_elem;
         block_dim2 = block_dim * block_dim;
 
-        n = nodes_per_elem * block_dim;  // Block dimension (default leads to 24x24 matrices)
-        int num_elements = assembler.get_num_elements();
-        batchSize = num_elements;
-        // printf("batchSize = %d\n", batchSize);
+        n = nodes_per_elem * block_dim;
+        batchSize = num_elements_;
 
         static_assert(std::is_same<T, double>::value, "ASW smoother currently requires T=double");
 
-        // Allocate batched device memory for pointers and individual blocks.
-        // printf("1 - allocate batched memory\n");
+        printf("checkpt3\n");
         _allocateBatchedMemory();
-        // debugCheckPointerListOnly("after allocation (before fill kernel)");
-        // printf("2 - compute Schwarz NZ patterns\n");
+        printf("checkpt4\n");
         _computeNZPatterns();
-
-        // Compute the Schwarz factorization during construction.
-        // printf("3 - initCuda\n");
+        printf("checkpt5\n");
         _initCuda();
+    }
+
+    // Convenience constructor: assembler version
+    UnstructuredQuadElementAdditiveSchwarzSmoother(cublasHandle_t &cublasHandle_,
+                                                   cusparseHandle_t &cusparseHandle_,
+                                                   Assembler &assembler_,
+                                                   BsrMat<DeviceVec<T>> kmat_, T omega_ = 0.25,
+                                                   int iters_ = 5)
+        : UnstructuredQuadElementAdditiveSchwarzSmoother(
+              cublasHandle_, cusparseHandle_, assembler_.get_num_elements(), assembler_.getConn(),
+              assembler_.get_num_vars(), assembler_.getBsrData().block_dim, kmat_, omega_, iters_) {
     }
 
     void factor() {
@@ -255,7 +262,7 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
     cusparseMatDescr_t descrKmat = 0;
 
     // Problem data from assembler.
-    Assembler assembler;
+    // Assembler assembler;
     int N, block_dim, nnodes;
     int block_dim2;
     int size, size2, size4;
@@ -443,9 +450,11 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         // compute nonzero patterns for the copying of the matrix kmat into batched form
         // for a structured plate or cylinder grid in lexigraphic order
 
+        printf("checkpt 4.1\n");
         h_kmat_rowp = DeviceVec<int>(nnodes + 1, d_kmat_rowp).createHostVec().getPtr();
         h_kmat_cols = DeviceVec<int>(kmat_nnzb, d_kmat_cols).createHostVec().getPtr();
 
+        printf("checkpt 4.2\n");
         // copying batchSize * size2 blocks from original matrix into batched matrix
         // need to compute nz pattern + map to facilitate the copy process
         n_batch_blocks = batchSize * nodes_per_elem2;  // number of mat blocks to handle
@@ -457,6 +466,7 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         // h_colInds = new int[n_batch_blocks];
         // memset(h_colInds, 0, n_batch_blocks * sizeof(int));
 
+        printf("checkpt 4.3\n");
         // loop over each batch / coupled group
         int *elem_conn = h_elem_conn.getPtr();
         for (int ibatch = 0; ibatch < batchSize; ibatch++) {
@@ -485,12 +495,14 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         }
 
         // now copy host to device pointers
+        printf("checkpt 4.4\n");
         d_blockInds = HostVec<int>(n_batch_blocks, h_blockInds).createDeviceVec().getPtr();
 
         // ==================================================
         /* now also compute the RHS block map */
         // ==================================================
 
+        printf("checkpt 4.5\n");
         n_rhs_batch_blocks = batchSize * nodes_per_elem;  // number of rhs blocks to handle
         h_RHSblockMap = new int[n_rhs_batch_blocks];      // block ind of kmat for each of batchSize
                                                           // * n * n values
@@ -508,6 +520,7 @@ class UnstructuredQuadElementAdditiveSchwarzSmoother : public BaseSolver {
         }
 
         // now copy host to device pointers
+        printf("checkpt 4.6\n");
         d_RHSblockMap = HostVec<int>(n_rhs_batch_blocks, h_RHSblockMap).createDeviceVec().getPtr();
     }
 };

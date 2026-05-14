@@ -4478,10 +4478,10 @@ class FetidpSolver : public BaseSolver {
         }
         coarse_num_nodes = Vc_nnodes;
         coarse_num_elements = num_subdomains;
-        printf("coarse_num_nodes %d, coarse_num_elements %d\n", coarse_num_nodes,
-               coarse_num_elements);
-        printf("elem_sd_ind1: ");
-        printVec<int>(num_elements, elem_sd_ind1);
+        // printf("coarse_num_nodes %d, coarse_num_elements %d\n", coarse_num_nodes,
+        //        coarse_num_elements);
+        // printf("elem_sd_ind1: ");
+        // printVec<int>(num_elements, elem_sd_ind1);
 
         // build coarse element connectivity from elem_sd_ind1 (first refinement level)
         int *coarse_elem_cts = new int[coarse_num_elements];
@@ -4496,15 +4496,15 @@ class FetidpSolver : public BaseSolver {
                 }
             }
         }
-        printf("coarse_elem_cts: ");
-        printVec<int>(coarse_num_elements, coarse_elem_cts);
+        // printf("coarse_elem_cts: ");
+        // printVec<int>(coarse_num_elements, coarse_elem_cts);
         coarse_elem_ptr = new int[coarse_num_elements + 1];
         memset(coarse_elem_ptr, 0, (coarse_num_elements + 1) * sizeof(int));
         for (int ic = 0; ic < coarse_num_elements; ic++) {
             coarse_elem_ptr[ic + 1] = coarse_elem_ptr[ic] + coarse_elem_cts[ic];
         }
-        printf("coarse_elem_ptr (nelems %d): ", coarse_num_elements);
-        printVec<int>(coarse_num_elements + 1, coarse_elem_ptr);
+        // printf("coarse_elem_ptr (nelems %d): ", coarse_num_elements);
+        // printVec<int>(coarse_num_elements + 1, coarse_elem_ptr);
         coarse_elem_nnz = coarse_elem_ptr[coarse_num_elements];
         printf("celem_nnz %d\n", coarse_elem_nnz);
         coarse_elem_conn = new int[coarse_elem_nnz];
@@ -4562,14 +4562,14 @@ class FetidpSolver : public BaseSolver {
         // d_coarse_xpts = HostVec<T>(3 * coarse_num_nodes, h_coarse_xpts).createDeviceVec();
 
         // then run greater refined subdomain splitting
-        printf("second setup structured subdomains\n");
+        // printf("second setup structured subdomains\n");
         this->setup_structured_subdomains(nxe_, nye_, nxs2_, nys2_, close_hoop);
-        printf("\tdone with second setup structured subdomains\n");
+        // printf("\tdone with second setup structured subdomains\n");
         for (int i = 0; i < num_elements; i++) {
             elem_sd_ind2[i] = elem_sd_ind[i];
         }
-        printf("elem_sd_ind2: ");
-        printVec<int>(num_elements, elem_sd_ind2);
+        // printf("elem_sd_ind2: ");
+        // printVec<int>(num_elements, elem_sd_ind2);
 
         // then build coarse_elem_sd_ind
         coarse_elem_sd_ind = new int[coarse_num_elements];
@@ -4583,8 +4583,8 @@ class FetidpSolver : public BaseSolver {
             coarse_elem_sd_ind[celem] = c_subdomain;
             // coarse_fine_sd_map[c_subdomain] = celem;
         }
-        printf("coarse_elem_sd_ind: ");
-        printVec<int>(coarse_num_elements, coarse_elem_sd_ind);
+        // printf("coarse_elem_sd_ind: ");
+        // printVec<int>(coarse_num_elements, coarse_elem_sd_ind);
     }
 
     void setup_coarse_tacs_component_subdomains(const int nxse_, const int nyse_, const int nxse2_,

@@ -281,9 +281,19 @@ class GPUElementAssembler {
     HostVec<T> *getXpts() { return h_xpts; }
     Vec *getDeviceXpts() { return d_xpts; }
     HostVec<T> *getVars() { return h_vars; }
+    Vec *getDeviceVars() { return d_vars; }
     // Vec<int> getBCs() { return bcs; }
+    int **getDeviceElemComponents() { return d_loc_elem_components; }
     HostVec<int> *getConn() { return h_elem_conn; }
     HostVec<Data> *getCompData() { return h_compData; }
+    Data **getDeviceCompData() { return d_loc_comp_data; }
+    void getLocalDeviceBCs(int *n_owned_bcs_, int *n_local_bcs_, int **d_owned_bcs_,
+                           int **d_local_bcs_) {
+        n_owned_bcs_ = n_owned_bcs;
+        n_local_bcs_ = n_local_bcs;
+        d_owned_bcs_ = d_owned_bcs;
+        d_local_bcs_ = d_local_bcs;
+    }
     HostVec<int> *getElemComponents() { return h_elem_components; }
     int *getLocalElemComponents(int g) { return h_loc_elem_components[g]; }
     int get_num_xpts() { return num_nodes * spatial_dim; }

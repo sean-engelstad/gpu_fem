@@ -17,14 +17,19 @@
 
 ## Journal paper tasks
 
-- [ ] add README.md for gpu_fem to show highly scalable structural analysis pictures (and make people interested in using it)
+
+0. [ ] multi-GPU direct-LU solver to use for BDDC
+   - [ ] try single GPU direct solve on root GPU (just with larger subdomains)
+   - [ ] try CuDSS multi-GPU direct solve again has to be copied to root GPU so may not be great
+   - [ ] try to write my own distributed multi-GPU direct solve and see if it is better.. multifrontal or MUUMPS? Schur complement-LU? or sequential factorization?
+   * CuDSS probably won't work that great for high DOF cause must be on root GPU first? So would have to copy it there?
 
 1. [ ] Finish multi-GPU development
    - [x] GMG-ASW on multi-GPU
       - [ ] do unstructured prolong for wing case now - TacsComponentPartitioner + unstructured prolongation classes (no additional ghost nodes needed probably)
    - [ ] 2-level BDDC-LU on multi-GPU
-      - [ ] CuDSS multi-GPU Schur complement for coarse direct solve
-   - [ ] maybe also try multi CPU + GPU (for really high DOF problems)? Is it worth it for more than 4 GPUs?
+      * tried CuDSS multi-GPU Schur complement for coarse direct solve but not compatible with my BSR matrices and distributed mem S_VV (it expects on root GPU).. not great for my application
+   - [ ] maybe also try multi CPU + GPU (for really high DOF problems)? Worth for more than 4 GPUs?
 
 2. [ ] finish unstructured BDDC (do need this for paper)
    - [ ] unstructured BDDC on plate/cylinder case
@@ -38,8 +43,9 @@
 
 4. [ ] writing
    - [ ] add brief element affect on multigrid (beam, plates, shells)
-   - [ ] add multilevel BDDC to a prelim scatter plots, table (fix any issues with it also if need to)
-      * or just in a separate plot comparing 2-level, 3-level and 4-level BDDC maybe (would need dev for 4-level also)
+   - [ ] show that iterative solvers don't work well for 2-level BDDC coarse Schur complement
+      * previous papers with BDDC-AMG or multilevel BDDC are poisson or incomp N-S, so not as bad ill-cond https://arxiv.org/html/2410.14786v1, https://epubs.siam.org/doi/10.1137/19M1276479
+      * show this is true for the BDDC-AMG, BDDC-BDDC (or BDDC3) and BDDC-ASW (in its own plot)
    - [ ] evidence that BDDC wraparound is good
    - [ ] comparison of unstructured + structured BDDC
 
@@ -50,4 +56,21 @@
       - [ ] BDDC wraparound for unstructured meshes (and gen single-patch), min # corners and other metrics maybe
       - [ ] BDDC with more general simply supported vs clamped BCs (prob just duplicate node and make some DOF one in each view)
 
+## DONE
 
+- [x] add README.md for gpu_fem to show highly scalable structural analysis pictures (and make people interested in using it)
+
+
+## Archived
+
+0. Get a scalable multi-GPU coarse solver for BDDC-LU S_VV problem
+   - [x] look at this source and high performance BDDC? https://arxiv.org/html/2410.14786v1
+      * at least state in paper that they can more easily use multilevel BDDC or stuff like that cause it's poisson? Multilevel BDDC (here https://epubs.siam.org/doi/10.1137/19M1276479 has only been used for incompressible NS, so less ill-cond issues, pattern here)
+      * conclusion: iterative solvers do not work for S_VV with thin shells (too ill-cond) need direct solver.
+   * maybe: see if edge average constraints make S_VV conditioning more benign?
+      * how to make coarse S_VV problem easier to solve
+      * maybe try this in python first.. (journal would probably ask about this)
+   - [ ] somehow need multi-GPU direct-LU solver
+      * must write my own and somehow avoid large inter-GPU copying..
+      * try multifrontal solving, do more research on how to do this.. will have to do it myself
+   - [ ] show in paper that AMG, ASW and other BDDC solve thick plate but not thin shell well
