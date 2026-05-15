@@ -336,18 +336,181 @@ class MultiGPUBDDC_LUSolver {
         }
     }
     void build_IE_I_V_maps() {
-        // TODO;
+        IE_nodes = new int *[ngpus];
+        I_nodes = new int *[ngpus];
+        IEVtoIE_map = new int *[ngpus];
+        IEVtoI_map = new int *[ngpus];
+
+        for (int g = 0; g < ngpus; g++) {
+            IE_nodes[g] = new int[IE_nnodes[g]];
+            I_nodes[g] = new int[I_nnodes[g]];
+            IEVtoIE_map[g] = new int[IEV_nnodes[g]];
+            IEVtoI_map[g] = new int[IEV_nnodes[g]];
+
+            std::memset(IEVtoIE_map[g], -1, IEV_nnodes[g] * sizeof(int));
+            std::memset(IEVtoI_map[g], -1, IEV_nnodes[g] * sizeof(int));
+
+            int IE_ind = 0;
+            int I_ind = 0;
+
+            for (int iev = 0; iev < IEV_nnodes; iev++) {
+                int gnode = IEV_nodes[g][iev];
+                int cls = node_class_ind[g][gnode];
+
+                bool is_I = (cls == INTERIOR || cls == DIRICHLET_EDGE);
+                bool is_IE = is_I || cls == EDGE;
+
+                if (is_IE) {
+                    IE_nodes[g][IE_ind] = gnode;
+                    IEVtoIE_map[g][iev] = IE_ind;
+                    IE_ind++;
+                }
+
+                if (is_I) {
+                    I_nodes[g][I_ind] = gnode;
+                    IEVtoI_map[g][iev] = I_ind;
+                    I_ind++;
+                }
+            }
+        }
+
         build_Vc_and_gam_maps();
     }
-    void build_Vc_and_gam_maps() {}
-    void build_IEV_sparsity() {}
-    void allocate_vectors() {}
+    void build_Vc_and_gam_maps() {
+        Vc_nodes = new int *[ngpus];
+        Vc_inodes = new int *[ngpus];
+        IEVtoV_imap = new int *[ngpus];
+        VctoV_imap = new int *[ngpus];
+        d_IEVtoV_imap = new int *[ngpus];
+        d_VctoV_imap = new int *[ngpus];
+
+        n_edge = new int[ngpus];
+        ngam = new int[ngpus];
+        gam_nodes = new int *[ngpus];
+        d_Vc_nodes = new int *[ngpus];
+
+        for (int g = 0; g < ngpus; g++) {
+            std::unordered_set<int> Vc_set;
+
+            for (int iev = 0; iev < IEV_nnodes[g]; iev++) {
+                int gnode = IEV_nodes[g][iev];
+                if (node_class_ind[g][gnode] == VERTEX) {
+                    Vc_set.insert(gnode);
+                }
+            }
+
+            std::vector<int> Vc_vec(Vc_set.begin(), Vc_set.end());
+            std::sort(Vc_vec.begin(), Vc_vec.end());
+
+            Vc_nodes[g] = new int[Vc_vec.size()];
+            for (int i = 0; i < (int)Vc_vec.size(); i++) {
+                Vc_nodes[g][i] = Vc_vec[i];
+            }
+
+            std::vector<int> Vc_inodes(num_nodes, -1);
+            for (int i = 0; i < (int)Vc_vec.size(); i++) {
+                Vc_inodes[g][Vc_vec[i]] = i;
+            }
+
+            int V_ind = 0;
+            for (int iev = 0; iev < IEV_nnodes[g]; iev++) {
+                int gnode = IEV_nodes[g][iev];
+                if (node_class_ind[g][gnode] == VERTEX) {
+                    IEVtoV_imap[g][V_ind] = iev;
+                    VctoV_imap[g][V_ind] = Vc_inodes[g][gnode];
+                    V_ind++;
+                }
+            }
+
+            d_IEVtoV_imap[g] = HostVec<int>(V_nnodes[g], IEVtoV_imap[g]).createDeviceVec().getPtr();
+            d_VctoV_imap[g] = HostVec<int>(V_nnodes[g], VctoV_imap[g]).createDeviceVec().getPtr();
+
+            n_edge[g] = lam_nnodes[g];
+            ngam[g] = n_edge[g] + Vc_nnodes[g];
+            gam_nodes[g] = new int[ngam[g]];
+
+            int e = 0;
+            for (int inode = 0; inode < part->local_nnodes[g]; inode++) {
+                if (node_class_ind[g][inode] == EDGE) {
+                    if (e < n_edge) gam_nodes[g][e++] = inode;
+                }
+            }
+
+            for (int i = 0; i < Vc_nnodes[g]; i++) {
+                gam_nodes[g][n_edge + i] = Vc_nodes[g][i];
+            }
+
+            d_Vc_nodes[g] = HostVec<int>(Vc_nnodes[g], Vc_nodes[g]).createDeviceVec().getPtr();
+        }
+    }
+    void build_IEV_sparsity() {
+        IEV_bsr_data = new BsrData *[ngpus];
+        IEV_rowp = new int *[ngpus];
+        IEV_cols = new int *[ngpus];
+        IEV_nnzb = new int[ngpus];
+        IEV_rows = new int *[ngpus];
+        for (int g = 0; g < ngpus; g++) {
+            IEV_bsr_data[g] = BsrData(part->local_nelems[g], IEV_nnodes[g], nodes_per_elem,
+                                      block_dim, IEV_elem_conn[g]);
+            IEV_rowp[g] = IEV_bsr_data[g].rowp;
+            IEV_cols[g] = IEV_bsr_data[g].rowp;
+            IEV_nnzb[g] = IEV_bsr_data[g].nnzb;
+            IEV_rows[g] = new int[IEV_nnzb[g]];
+
+            for (int i = 0; i < IEV_nnodes[g]; i++) {
+                for (int jp = IEV_rowp[g][i]; jp < IEV_rowp[g][i + 1]; jp++) {
+                    IEV_rows[g][jp] = i;
+                }
+            }
+        }
+    }
+    void allocate_vectors() {
+        d_IEV_xpts = new Vec(ctx, part_IEV, block_dim);
+        d_IEV_vars = new Vec(ctx, part_IEV, block_dim);
+        fext_IEV = new Vec(ctx, part_IEV, block_dim);
+        fint_IEV = new Vec(ctx, part_IEV, block_dim);
+        res_IEV = new Vec(ctx, part_IEV, block_dim);
+        f_IEV = new Vec(ctx, part_IEV, block_dim);
+        u_IEV = new Vec(ctx, part_IEV, block_dim);
+        temp_IEV = new Vec(ctx, part_IEV, block_dim);
+
+        // TBD : do these ones need diff partitioner not part_IEV?
+        // or they need to be double pointers? prob double pointers..
+
+        f_IE = new T *[ngpus];
+        u_IE = new T *[ngpus];
+        f_I = new T *[ngpus];
+        u_I = new T *[ngpus];
+        f_V = new T *[ngpus];
+        u_V = new T *[ngpus];
+        temp_lam = new T *[ngpus];
+        temp_lam2 = new T *[ngpus];
+        d_coarse_vars = new T *[ngpus];
+        for (int g = 0; g < ngpus; g++) {
+            f_IE[g] = DeviceVec<T>(block_dim * IE_nnodes[g]);
+            u_IE[g] = DeviceVec<T>(block_dim * IE_nnodes[g]);
+            f_I[g] = DeviceVec<T>(block_dim * I_nnodes[g]);
+            u_I[g] = DeviceVec<T>(block_dim * I_nnodes[g]);
+            f_V[g] = DeviceVec<T>(block_dim * Vc_nnodes[g]);
+            u_V[g] = DeviceVec<T>(block_dim * Vc_nnodes[g]);
+            temp_lam[g] = DeviceVec<T>(block_dim * lam_nnodes[g]);
+            temp_lam2[g] = DeviceVec<T>(block_dim * lam_nnodes[g]);
+            d_coarse_vars[g] = DeviceVec<T>(block_dim * Vc_nnodes[g]);
+        }
+    }
     void clear_host_data() {}
     void assemble_subdomains() {
         addVec_globalToIEV(d_xpts, d_xpts_IEV, 3, 1.0, 0.0);
         addVec_globalToIEV(d_vars, d_vars_IEV, block_dim, 1.0, 0.0);
 
         add_IEV_jacobian();
+
+        // TODO : something like this here.. but for each GPU matrix..
+        kmat_IEV->apply_bcs(d_IEV_bcs);
+        kmat_IE->zeroValues();
+        kmat_I->zeroValues();
+        copyKmat_IEVtoIE();
+        copyKmat_IEVtoI();
     }
     void add_IEV_jacobian() {
         int cols_per_elem = 24;  // for 1st order element
@@ -396,24 +559,194 @@ class MultiGPUBDDC_LUSolver {
         computeSvvInverseTerm();
         CHECK_CUDA(cudaDeviceSynchronize());
     }
-    void copyKmat_IEVtoIE() {}
-    void copyKmat_IEVtoI() {}
+    void copyKmat_IEVtoIE() {
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
+
+            int n_IE_vals = IE_nofill_nnzb[g] * block_dim2;
+            dim3 block(32), grid((n_IE_vals + 31) / 32);
+            k_copyMatToMat_restrict<T><<<grid, block, 0, streams[g]>>>(
+                IE_nofill_nnzb[g], block_dim, d_kmat_IEtoIEV_map[g], d_kmat_IEnofill_map[g],
+                d_IEV_vals[g].getPtr(), d_IE_vals[g].getPtr());
+
+            CHECK_CUDA(cudaGetLastError());
+        }
+    }
+    void copyKmat_IEVtoI() {
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
+
+            int n_I_vals = I_nofill_nnzb[g] * block_dim2;
+            dim3 block(32), grid((n_I_vals + 31) / 32);
+            k_copyMatToMat_restrict<T><<<grid, block, 0, streams[g]>>>(
+                I_nofill_nnzb[g], block_dim, d_kmat_ItoIEV_map[g], d_kmat_Inofill_map[g],
+                d_IEV_vals[g].getPtr(), d_I_vals[g].getPtr());
+
+            CHECK_CUDA(cudaGetLastError());
+        }
+    }
     void copyKmat_IEVtoSvv() {
         // TBD: may also need kmat_IEV on root GPU to ensure copy to S_VV on root GPU (can't be
         // partitioned maybe) or if there's some way I can assemble that part directly into Svv?
+
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
+
+            int n_Svv_vals = Svv_copy_nnzb[g] * block_dim2;
+            dim3 block(32), grid((n_Svv_vals + 31) / 32);
+            k_copyMatToMat_restrict<T, true><<<grid, block, 0, streams[g]>>>(
+                Svv_copy_nnzb[g], block_dim, d_Svv_IEV_copyBlocks[g], d_Svv_Vc_copyBlocks[g],
+                d_IEV_vals[g].getPtr(), d_Svv_vals[g].getPtr());
+
+            CHECK_CUDA(cudaGetLastError());
+        }
     }
     void computeSvvInverseTerm() {
         // TODO: this is problem with using CuDSS, how do we do the inverse term ghost transfer
         // then to root a ton of times? Isn't that really expensive?
+
+        // for (int g = 0; g < ngpus; g++) {
+        //     // TODO: this may not be right location to put ngpus
+
+        int ncols = MAX_NUM_VERTEX_PER_SUBDOMAIN * block_dim;
+        for (int icol = 0; icol < ncols; icol++) {
+            u_IEV.zeroValues();
+            setVec_IEVtoV_vals(u_IEV, icol, 1.0);  // set these vals to 1.0 and all else 0
+
+            sparseMatVec(*kmat_IEV, u_IEV, 1.0, 0.0, f_IEV);
+            addVecIEVtoIE(f_IEV, f_IE, 1.0, 0.0);
+            solveSubdomainIE(f_IE, u_IE);
+            addVecIEtoIEV(u_IE, u_IEV, 1.0, 0.0);
+
+            sparseMatVec(*kmat_IEV, u_IEV, -1.0, 0.0, f_IEV);
+            // CHECK_CUDA(cudaDeviceSynchronize());
+            // printf("after sparseMatVec #2 icol %d\n", icol);
+
+            // CHECK_CUDA(cudaDeviceSynchronize());
+            // printf("computeSvvInverseTerm pre-addMat sync ok icol %d\n", icol);
+
+            // printf("computeSvvInverseTerm entering addMat_IEVtoV_v?als icol %d\n", icol);
+            addMat_IEVtoV_vals(icol, f_IEV);
+            // CHECK_CUDA(cudaDeviceSynchronize());
+            // printf("computeSvvInverseTerm finished addMat_IEVtoV_vals icol %d\n", icol);
+        }
+
+        // TODO : copy to root GPU? How to setup direct solver?
+
+        // }
     }
-    void sparseMatVec(Mat *A, Vec *x, T alpha, T beta, Vec *y) {}
-    void factorIEsubdomains() {}
-    void factorIsubdomains() {}
-    void assemble_coarse_problem() {}
-    void factorCoarseVertex() {}
-    void solveSubdomainIE(Vec *rhs_in, Vec *sol_out) {}
-    void solveSubdomainI(Vec *rhs_in, Vec *sol_out) {}
-    void solveCoarse(Vec *rhs_in, Vec *sol_out) {}
+    void sparseMatVec(Mat *A, Vec *x, T alpha, T beta, Vec *y) { A->mult(alpha, x, beta, y); }
+    void factorIEsubdomains() {
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
+
+            auto bsr_data = IE_bsr_data[g];
+            int mb = bsr_data.nnodes;
+            int nnzb = bsr_data.nnzb;
+            int *d_rowp = bsr_data.rowp;
+            int *d_cols = bsr_data.cols;
+            T *d_vals_ILU0 = d_IE_vals[g];
+
+            // perform ILU numeric factorization (with M policy)
+            CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandles[g], dir, mb, nnzb, descr_M,
+                                             d_vals_ILU0, d_rowp, d_cols, block_dim, info_M,
+                                             policy_M, pBuffer));
+            status = cusparseXbsrilu02_zeroPivot(cusparseHandles[g], info_M, &numerical_zero);
+            if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+                printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
+            }
+        }
+    }
+    void factorIsubdomains() {
+        for (int g = 0; g < ngpus; g++) {
+            CHECK_CUDA(cudaSetDevice(g));
+
+            auto bsr_data = I_bsr_data[g];
+            int mb = bsr_data.nnodes;
+            int nnzb = bsr_data.nnzb;
+            int *d_rowp = bsr_data.rowp;
+            int *d_cols = bsr_data.cols;
+            T *d_vals_ILU0 = d_I_vals[g];
+
+            // perform ILU numeric factorization (with M policy)
+            CHECK_CUSPARSE(cusparseDbsrilu02(cusparseHandles[g], dir, mb, nnzb, descr_M,
+                                             d_vals_ILU0, d_rowp, d_cols, block_dim, info_M,
+                                             policy_M, pBuffer));
+            status = cusparseXbsrilu02_zeroPivot(cusparseHandles[g], info_M, &numerical_zero);
+            if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
+                printf("block U(%d,%d) is not invertible\n", numerical_zero, numerical_zero);
+            }
+        }
+    }
+    void assemble_coarse_problem() {
+        S_VV->zeroValues();
+        copyKmat_IEVtoSvv();
+        computeSvvInverseTerm();
+    }
+    void factorCoarseVertex() {
+        // TODO : may need multi-GPU for the S_VV.. TBD
+    }
+    void solveSubdomainIE(Vec *rhs_in, Vec *sol_out) {
+        rhs_in->expandFromLocal();  // need this?
+        for (int g = 0; g < ngpus; g++) {
+            // coarse grid directLU solve
+            CHECK_CUDA(cudaSetDevice(g));
+
+            auto bsr_data = IE_bsr_data[g];
+            int mb = bsr_data.nnodes;
+            int nnzb = bsr_data.nnzb;
+            int *d_rowp = bsr_data.rowp;
+            int *d_cols = bsr_data.cols;
+            T *d_vals_ILU0 = d_IE_vals[g];
+            T *loc_rhs = rhs_in->getLocalPtr(g);
+            T *loc_temp = temp->getLocalPtr(g);
+            T *loc_soln = sol_out->getLocalPtr(g);
+
+            // triangular solve L*z = x
+            const double alpha = 1.0;
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandles[g], dir, trans_L, mb, nnzb, &alpha,
+                                                 descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_L, loc_rhs, loc_temp, policy_L, pBuffer));
+
+            // triangular solve U*y = z
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandles[g], dir, trans_U, mb, nnzb, &alpha,
+                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_U, loc_temp, loc_soln, policy_U, pBuffer));
+        }
+        sol_out->reduceFromLocal();  // need this?
+    }
+    void solveSubdomainI(Vec *rhs_in, Vec *sol_out) {
+        rhs_in->expandFromLocal();  // need this?
+        for (int g = 0; g < ngpus; g++) {
+            // coarse grid directLU solve
+            CHECK_CUDA(cudaSetDevice(g));
+
+            auto bsr_data = I_bsr_data[g];
+            int mb = bsr_data.nnodes;
+            int nnzb = bsr_data.nnzb;
+            int *d_rowp = bsr_data.rowp;
+            int *d_cols = bsr_data.cols;
+            T *d_vals_ILU0 = d_I_vals[g];
+            T *loc_rhs = rhs_in->getLocalPtr(g);
+            T *loc_temp = temp->getLocalPtr(g);
+            T *loc_soln = sol_out->getLocalPtr(g);
+
+            // triangular solve L*z = x
+            const double alpha = 1.0;
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandles[g], dir, trans_L, mb, nnzb, &alpha,
+                                                 descr_L, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_L, loc_rhs, loc_temp, policy_L, pBuffer));
+
+            // triangular solve U*y = z
+            CHECK_CUSPARSE(cusparseDbsrsv2_solve(cusparseHandles[g], dir, trans_U, mb, nnzb, &alpha,
+                                                 descr_U, d_vals_ILU0, d_rowp, d_cols, block_dim,
+                                                 info_U, loc_temp, loc_soln, policy_U, pBuffer));
+        }
+        sol_out->reduceFromLocal();  // need this?
+    }
+    void solveCoarse(Vec *rhs_in, Vec *sol_out) {
+        // TBD on how to do this one..
+    }
     void zeroInteriorIE(Vec *x) {}
     template <bool SCALED = false>
     void addVecIEVtoGam(const Vec *vec_IEV, Vec *vec_gam, T alpha, T beta) {}

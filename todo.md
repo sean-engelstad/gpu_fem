@@ -17,12 +17,15 @@
 
 ## Journal paper tasks
 
-
 0. [ ] multi-GPU direct-LU solver to use for BDDC
    - [ ] try single GPU direct solve on root GPU (just with larger subdomains)
    - [ ] try CuDSS multi-GPU direct solve again has to be copied to root GPU so may not be great
    - [ ] try to write my own distributed multi-GPU direct solve and see if it is better.. multifrontal or MUUMPS? Schur complement-LU? or sequential factorization?
+   - [ ] double check CuDSS can/can't use distributed matrix formats
    * CuDSS probably won't work that great for high DOF cause must be on root GPU first? So would have to copy it there?
+   - [ ] could try distributed CSR matrices, then using Lapack level 3 mat-mat operations may be able to assemble Schur complement myself? This is something that can be done for CSR but not BSR with CuSparse
+   - [ ] Ali said maybe SuperLU_dist has a multi-GPU Schur complement solver (try it out).. https://www.exascaleproject.org/wp-content/uploads/2022/06/LiSherrySparseBofSlides.pdf, also maybe see if hypre can do it. 
+   - [ ] look at the solver on this paper now, https://www.sciencedirect.com/science/article/abs/pii/S0167819122000059
 
 1. [ ] Finish multi-GPU development
    - [x] GMG-ASW on multi-GPU
